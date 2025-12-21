@@ -1,90 +1,107 @@
 mod discovery;
+mod logcapture;
+mod protocol;
+mod resolver;
+mod scheduler;
 mod zygote;
 
 use anyhow::Result;
+use logcapture::LogCapture;
 use nix::sys::wait::waitpid;
 use nix::unistd::{fork, ForkResult};
-use std::fs;
-use std::io::{Read, Write};
+use resolver::{FixtureRegistry, Resolver};
+use scheduler::Scheduler;
+use std::io::Read;
 use std::os::unix::net::UnixStream;
-use std::thread;
-use std::time::Duration;
 
 fn main() -> Result<()> {
     // --- DISCOVERY PHASE ---
     let cwd = std::env::current_dir()?;
-    println!("[supervisor] Scanning {}...", cwd.display());
+    eprintln!("[supervisor] Scanning {}...", cwd.display());
 
-    let discovery = discovery::scan_project(&cwd)?;
-    println!(
-        "[supervisor] Found {} tests and {} fixtures.",
-        discovery.tests.len(),
-        discovery.fixtures.len()
+    let start = std::time::Instant::now();
+    let discovery_result = discovery::discover(&cwd)?;
+    eprintln!(
+        "[supervisor] Discovered {} tests, {} fixtures in {:?}",
+        discovery_result.test_count(),
+        discovery_result.fixture_count(),
+        start.elapsed()
     );
 
-    if !discovery.tests.is_empty() {
-        println!("[supervisor] Example: {:?}", discovery.tests[0]);
-    }
-    // ------------------------
+    // --- RESOLUTION PHASE ---
+    let registry = FixtureRegistry::from_discovery(&discovery_result);
+    let resolver = Resolver::new(&registry);
+    let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
 
-    let (mut supervisor_sock, zygote_sock) = UnixStream::pair()?;
-    println!("[supervisor] Forking Zygote...");
+    eprintln!(
+        "[supervisor] Resolved {} tests ({} errors)",
+        runnable_tests.len(),
+        errors.len()
+    );
+
+    for error in &errors {
+        match error {
+            resolver::ResolutionError::MissingFixture { test, fixture } => {
+                eprintln!("  ⚠ {} - missing: {}", test, fixture);
+            }
+            resolver::ResolutionError::CyclicDependency { test, cycle } => {
+                eprintln!("  ⚠ {} - cycle: {:?}", test, cycle);
+            }
+        }
+    }
+
+    if runnable_tests.is_empty() {
+        eprintln!("[supervisor] No tests to run.");
+        return Ok(());
+    }
+
+    // --- CREATE LOG CAPTURE BEFORE FORK ---
+    let max_workers = num_cpus::get().min(runnable_tests.len()).max(1);
+    let log_capture = LogCapture::new(max_workers)?;
+    eprintln!("[supervisor] Created {} log buffers (memfd)", max_workers);
+
+    // --- CREATE DUAL SOCKET PAIRS ---
+    let (sup_cmd_sock, zyg_cmd_sock) = UnixStream::pair()?;
+    let (sup_result_sock, zyg_result_sock) = UnixStream::pair()?;
+
+    eprintln!("[supervisor] Forking Zygote...");
 
     match unsafe { fork() }? {
         ForkResult::Child => {
-            drop(supervisor_sock);
-            if let Err(e) = zygote::entrypoint(zygote_sock) {
+            drop(sup_cmd_sock);
+            drop(sup_result_sock);
+            std::mem::forget(log_capture); // Don't close FDs
+
+            if let Err(e) = zygote::entrypoint(zyg_cmd_sock, zyg_result_sock) {
                 eprintln!("[zygote] Error: {:?}", e);
                 std::process::exit(1);
             }
             std::process::exit(0);
         }
         ForkResult::Parent { child: zygote_pid } => {
-            drop(zygote_sock);
-            println!("[supervisor] Zygote PID: {}", zygote_pid);
+            drop(zyg_cmd_sock);
+            drop(zyg_result_sock);
+            eprintln!("[supervisor] Zygote PID: {}", zygote_pid);
 
+            // Wait for READY
             let mut ready_buf = [0u8; 1];
-            supervisor_sock.read_exact(&mut ready_buf)?;
+            let mut cmd_sock_clone = sup_cmd_sock.try_clone()?;
+            cmd_sock_clone.read_exact(&mut ready_buf)?;
             if ready_buf[0] == 0x42 {
-                println!("[supervisor] Zygote is READY.");
+                eprintln!("[supervisor] Zygote is READY.\n");
             }
 
-            // Spawn 3 workers for quick test
-            for i in 1..=3 {
-                supervisor_sock.write_all(&[0x01])?;
-                let mut pid_buf = [0u8; 4];
-                supervisor_sock.read_exact(&mut pid_buf)?;
-                println!(
-                    "[supervisor] Worker #{} spawned: {}",
-                    i,
-                    i32::from_le_bytes(pid_buf)
-                );
-            }
+            // --- SCHEDULER PHASE ---
+            let mut scheduler = Scheduler::new(sup_cmd_sock, sup_result_sock, log_capture)?;
 
-            thread::sleep(Duration::from_millis(100));
-            supervisor_sock.write_all(&[0x00])?;
+            scheduler.run(runnable_tests)?;
+
+            // Shutdown
+            scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
-            println!("[supervisor] Done.");
+            eprintln!("[supervisor] Done.");
         }
     }
+
     Ok(())
-}
-
-fn read_memory_stats(pid: i32) -> Result<(u64, u64)> {
-    let content = fs::read_to_string(format!("/proc/{}/smaps_rollup", pid))?;
-    let mut rss = 0u64;
-    let mut pss = 0u64;
-
-    for line in content.lines() {
-        if line.starts_with("Rss:") {
-            if let Some(val) = line.split_whitespace().nth(1) {
-                rss = val.parse().unwrap_or(0);
-            }
-        } else if line.starts_with("Pss:") {
-            if let Some(val) = line.split_whitespace().nth(1) {
-                pss = val.parse().unwrap_or(0);
-            }
-        }
-    }
-    Ok((rss, pss))
 }
