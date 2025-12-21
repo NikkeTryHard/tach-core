@@ -1,3 +1,4 @@
+mod discovery;
 mod zygote;
 
 use anyhow::Result;
@@ -10,6 +11,22 @@ use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<()> {
+    // --- DISCOVERY PHASE ---
+    let cwd = std::env::current_dir()?;
+    println!("[supervisor] Scanning {}...", cwd.display());
+
+    let discovery = discovery::scan_project(&cwd)?;
+    println!(
+        "[supervisor] Found {} tests and {} fixtures.",
+        discovery.tests.len(),
+        discovery.fixtures.len()
+    );
+
+    if !discovery.tests.is_empty() {
+        println!("[supervisor] Example: {:?}", discovery.tests[0]);
+    }
+    // ------------------------
+
     let (mut supervisor_sock, zygote_sock) = UnixStream::pair()?;
     println!("[supervisor] Forking Zygote...");
 
@@ -26,56 +43,24 @@ fn main() -> Result<()> {
             drop(zygote_sock);
             println!("[supervisor] Zygote PID: {}", zygote_pid);
 
-            // Wait for READY signal
             let mut ready_buf = [0u8; 1];
             supervisor_sock.read_exact(&mut ready_buf)?;
             if ready_buf[0] == 0x42 {
                 println!("[supervisor] Zygote is READY.");
             }
 
-            // Spawn 10 workers
-            let mut worker_pids = Vec::new();
-            println!("[supervisor] Spawning 10 workers...");
-
-            for _ in 0..10 {
+            // Spawn 3 workers for quick test
+            for i in 1..=3 {
                 supervisor_sock.write_all(&[0x01])?;
                 let mut pid_buf = [0u8; 4];
                 supervisor_sock.read_exact(&mut pid_buf)?;
-                worker_pids.push(i32::from_le_bytes(pid_buf));
+                println!(
+                    "[supervisor] Worker #{} spawned: {}",
+                    i,
+                    i32::from_le_bytes(pid_buf)
+                );
             }
 
-            // Measure memory
-            println!("[supervisor] Measuring memory usage...");
-            thread::sleep(Duration::from_millis(500));
-
-            let mut total_rss_kb = 0u64;
-            let mut total_pss_kb = 0u64;
-
-            for pid in &worker_pids {
-                if let Ok((rss, pss)) = read_memory_stats(*pid) {
-                    total_rss_kb += rss;
-                    total_pss_kb += pss;
-                }
-            }
-
-            println!("\n--- MEMORY REPORT ---");
-            println!("Workers: 10");
-            println!("Zygote Payload: 100 MB");
-            println!("Total RSS (Virtual): {} MB", total_rss_kb / 1024);
-            println!("Total PSS (Physical): {} MB", total_pss_kb / 1024);
-
-            if total_rss_kb > 0 {
-                let savings = 1.0 - (total_pss_kb as f64 / total_rss_kb as f64);
-                println!("Deduplication Ratio: {:.2}%", savings * 100.0);
-
-                if savings > 0.8 {
-                    println!("PASS: Copy-on-Write is working.");
-                } else {
-                    println!("FAIL: Memory is being duplicated.");
-                }
-            }
-
-            // Cleanup
             thread::sleep(Duration::from_millis(100));
             supervisor_sock.write_all(&[0x00])?;
             waitpid(zygote_pid, None)?;
