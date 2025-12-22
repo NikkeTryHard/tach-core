@@ -251,4 +251,73 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"error\""));
     }
+
+    #[test]
+    fn test_run_start_event() {
+        let event = MachineEvent::RunStart { count: 42 };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"run_start\""));
+        assert!(json.contains("\"count\":42"));
+    }
+
+    #[test]
+    fn test_run_finished_event() {
+        let event = MachineEvent::RunFinished {
+            passed: 10,
+            failed: 2,
+            skipped: 1,
+            duration_ms: 5000,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"run_finished\""));
+        assert!(json.contains("\"passed\":10"));
+        assert!(json.contains("\"failed\":2"));
+        assert!(json.contains("\"skipped\":1"));
+    }
+
+    #[test]
+    fn test_test_start_event() {
+        let event = MachineEvent::TestStart {
+            id: "test_foo.py::test_bar",
+            file: "test_foo.py",
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"test_start\""));
+        assert!(json.contains("\"file\":\"test_foo.py\""));
+    }
+
+    #[test]
+    fn test_multi_reporter_creation() {
+        let reporters: Vec<Box<dyn Reporter>> =
+            vec![Box::new(HumanReporter), Box::new(JsonReporter)];
+        let _multi = MultiReporter::new(reporters);
+        // Should compile and not panic
+    }
+
+    #[test]
+    fn test_multi_reporter_empty() {
+        let reporters: Vec<Box<dyn Reporter>> = vec![];
+        let mut multi = MultiReporter::new(reporters);
+        // Operations should not panic on empty reporter list
+        multi.on_run_start(10);
+        multi.on_test_start("test", "file.py");
+        multi.on_test_finished("test", "pass", 100, None);
+        multi.on_run_finished(1, 0, 0, 100);
+        multi.on_error("error");
+    }
+
+    #[test]
+    fn test_status_strings() {
+        // Ensure common status strings work
+        for status in &["pass", "fail", "skip"] {
+            let event = MachineEvent::TestFinished {
+                id: "test",
+                status,
+                duration_ms: 1,
+                message: None,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            assert!(json.contains(status));
+        }
+    }
 }

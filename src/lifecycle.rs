@@ -172,4 +172,42 @@ mod tests {
         assert!(IS_DEBUGGING.load(Ordering::SeqCst));
         IS_DEBUGGING.store(false, Ordering::SeqCst);
     }
+
+    #[test]
+    fn test_default_trait() {
+        let guard = CleanupGuard::default();
+        assert_eq!(guard.get_worker_pids().len(), 0);
+    }
+
+    #[test]
+    fn test_track_socket() {
+        let guard = CleanupGuard::new();
+        guard.track_socket(PathBuf::from("/tmp/test.sock"));
+        guard.track_socket(PathBuf::from("/tmp/test2.sock"));
+        // We can't directly access socket_paths, but the operation should not panic
+    }
+
+    #[test]
+    fn test_set_zygote_pid() {
+        let guard = CleanupGuard::new();
+        guard.set_zygote_pid(9999);
+        // The PID is tracked internally
+    }
+
+    #[test]
+    fn test_track_multiple_workers() {
+        let guard = CleanupGuard::new();
+        for i in 0..100 {
+            guard.track_worker(i);
+        }
+        assert_eq!(guard.get_worker_pids().len(), 100);
+    }
+
+    #[test]
+    fn test_untrack_nonexistent_worker() {
+        let guard = CleanupGuard::new();
+        guard.track_worker(1);
+        guard.untrack_worker(999); // doesn't exist
+        assert_eq!(guard.get_worker_pids().len(), 1);
+    }
 }
