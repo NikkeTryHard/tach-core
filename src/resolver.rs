@@ -30,6 +30,43 @@ pub enum ResolutionError {
     CyclicDependency { test: String, cycle: Vec<String> },
 }
 
+/// pytest builtin fixtures that are provided at runtime, not discovered statically.
+/// These are injected by pytest's fixture machinery, not user-defined.
+const PYTEST_BUILTINS: &[&str] = &[
+    // Monkey-patching and environment
+    "monkeypatch",
+    // Temporary directories
+    "tmp_path",
+    "tmp_path_factory",
+    "tmpdir",
+    "tmpdir_factory",
+    // Output capture
+    "capsys",
+    "capfd",
+    "capsysbinary",
+    "capfdbinary",
+    "caplog",
+    // Fixture metadata
+    "request",
+    // Caching
+    "cache",
+    // Recording
+    "record_property",
+    "record_testsuite_property",
+    "record_xml_attribute",
+    // Doctest
+    "doctest_namespace",
+    // Recwarn
+    "recwarn",
+    // Pytestconfig
+    "pytestconfig",
+];
+
+/// Check if a fixture name is a pytest builtin
+fn is_builtin_fixture(name: &str) -> bool {
+    PYTEST_BUILTINS.contains(&name)
+}
+
 /// Registry holding all discovered fixtures
 pub struct FixtureRegistry {
     /// Global fixtures from conftest.py files
@@ -162,6 +199,14 @@ impl<'a> Resolver<'a> {
                 test: test_name.to_string(),
                 cycle: stack.clone(),
             });
+        }
+
+        // PHASE 6: Skip resolution for pytest builtin fixtures
+        // These are provided by pytest at runtime, not discovered statically.
+        // We mark them as visited and continue - pytest will inject them.
+        if is_builtin_fixture(name) {
+            visited.insert(name.to_string());
+            return Ok(());
         }
 
         // Look up fixture
@@ -370,5 +415,91 @@ mod tests {
         assert_eq!(test.fixtures[0].name, "base");
         assert_eq!(test.fixtures[1].name, "connection");
         assert_eq!(test.fixtures[2].name, "db");
+    }
+
+    // =========================================================================
+    // Phase 6: Builtin Fixture Tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_builtin_fixture_common() {
+        assert!(is_builtin_fixture("monkeypatch"));
+        assert!(is_builtin_fixture("tmp_path"));
+        assert!(is_builtin_fixture("tmp_path_factory"));
+        assert!(is_builtin_fixture("capsys"));
+        assert!(is_builtin_fixture("capfd"));
+        assert!(is_builtin_fixture("request"));
+    }
+
+    #[test]
+    fn test_is_builtin_fixture_all() {
+        for name in PYTEST_BUILTINS {
+            assert!(is_builtin_fixture(name), "Expected {} to be builtin", name);
+        }
+    }
+
+    #[test]
+    fn test_is_builtin_fixture_negative() {
+        assert!(!is_builtin_fixture("my_custom_fixture"));
+        assert!(!is_builtin_fixture("db"));
+        assert!(!is_builtin_fixture("mock_page"));
+    }
+
+    #[test]
+    fn test_builtin_fixture_resolves_without_error() {
+        // Test that depends on builtin fixture should resolve without error
+        let discovery = DiscoveryResult {
+            modules: vec![TestModule {
+                path: PathBuf::from("test_builtins.py"),
+                tests: vec![
+                    make_test("test_with_monkeypatch", vec!["monkeypatch"]),
+                    make_test("test_with_tmp_path", vec!["tmp_path"]),
+                    make_test("test_with_capsys", vec!["capsys"]),
+                    make_test("test_with_request", vec!["request"]),
+                ],
+                fixtures: vec![],
+            }],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        // All tests should resolve - builtins are skipped, not errors
+        assert!(
+            errors.is_empty(),
+            "Builtin fixtures should not cause errors: {:?}",
+            errors
+        );
+        assert_eq!(runnable.len(), 4);
+    }
+
+    #[test]
+    fn test_mixed_builtin_and_user_fixtures() {
+        // Test depends on both builtin and user-defined fixture
+        let discovery = DiscoveryResult {
+            modules: vec![
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("db", vec![])],
+                },
+                TestModule {
+                    path: PathBuf::from("test_mixed.py"),
+                    tests: vec![make_test("test_db_with_tmp", vec!["db", "tmp_path"])],
+                    fixtures: vec![],
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        assert!(errors.is_empty());
+        assert_eq!(runnable.len(), 1);
+        // Only user fixture should be in resolved list (builtin is skipped)
+        assert_eq!(runnable[0].fixtures.len(), 1);
+        assert_eq!(runnable[0].fixtures[0].name, "db");
     }
 }
