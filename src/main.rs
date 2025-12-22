@@ -25,6 +25,14 @@ fn main() -> Result<()> {
     let is_json = cli.format == OutputFormat::Json;
     let is_watch = cli.watch;
 
+    // Set TACH_NO_ISOLATION env var from CLI flag (inherits to all children)
+    if cli.no_isolation {
+        std::env::set_var("TACH_NO_ISOLATION", "1");
+    }
+    
+    // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
+    std::env::set_var("TACH_TARGET_PATH", &cli.path);
+
     // --- PHASE 4.2: LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
@@ -54,14 +62,15 @@ fn main() -> Result<()> {
         let junit_path = cli.junit_xml.clone();
         let format = cli.format.clone();
         let cwd_clone = cwd.clone();
+        let path_clone = cli.path.clone();
 
         return watch::start_watch_loop(&cwd, move || {
-            execute_session(&cwd_clone, &format, &junit_path)
+            execute_session(&cwd_clone, &format, &junit_path, &path_clone)
         });
     }
 
     // --- SINGLE RUN MODE ---
-    execute_session(&cwd, &cli.format, &cli.junit_xml)
+    execute_session(&cwd, &cli.format, &cli.junit_xml, &cli.path)
 }
 
 /// Execute a complete test session (discovery → resolution → zygote → run)
@@ -70,6 +79,7 @@ fn execute_session(
     cwd: &PathBuf,
     format: &OutputFormat,
     junit_path: &Option<PathBuf>,
+    target_path: &str,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
@@ -127,15 +137,39 @@ fn execute_session(
         }
     }
 
-    if runnable_tests.is_empty() {
+    // --- PHASE 8.3: PATH FILTERING ---
+    // Filter tests to only include those matching the target path
+    let target = std::path::Path::new(target_path);
+    let target_canonical = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    
+    let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
+        .into_iter()
+        .filter(|test| {
+            let test_path = std::path::Path::new(&test.file_path);
+            let test_canonical = test_path.canonicalize().unwrap_or_else(|_| test_path.to_path_buf());
+            
+            // Match if test is under target directory OR matches exactly
+            test_canonical.starts_with(&target_canonical) || 
+            test_canonical == target_canonical ||
+            // Handle relative path matching
+            test_path.starts_with(target)
+        })
+        .collect();
+
+    if !is_json {
+        eprintln!("[supervisor] Selected {} tests to run (filtered by path: {})", 
+            filtered_tests.len(), target_path);
+    }
+
+    if filtered_tests.is_empty() {
         if !is_json {
-            eprintln!("[supervisor] No tests to run.");
+            eprintln!("[supervisor] No tests found matching path: {}", target_path);
         }
         return Ok(());
     }
 
     // --- RUN TESTS ---
-    run_tests(&cleanup, runnable_tests, &mut reporter, is_json)
+    run_tests(&cleanup, filtered_tests, &mut reporter, is_json)
 }
 
 /// Handle the `list` subcommand
@@ -181,6 +215,12 @@ fn run_tests(
 
     // --- LOAD CONFIG ---
     config::load_env_from_pyproject(&cwd);
+
+    // --- NO-ISOLATION MODE ---
+    // Set env var so workers can check it (must be before fork to inherit)
+    if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
+        eprintln!("[supervisor] Isolation disabled via TACH_NO_ISOLATION");
+    }
 
     if !is_json {
         eprintln!("[supervisor] Forking Zygote...");

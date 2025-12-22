@@ -1,5 +1,6 @@
 //! Zygote: Fork server with dual-channel IPC
 
+use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, MSG_READY};
 use anyhow::Result;
@@ -32,7 +33,14 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
     unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }?;
 
     eprintln!("[zygote] Initializing Python...");
-    let cwd = env::current_dir()?.to_string_lossy().to_string();
+    let cwd = env::current_dir()?;
+    let cwd_str = cwd.to_string_lossy().to_string();
+
+    // Phase 8: Detect venv and get site-packages path
+    let site_packages = find_site_packages(&cwd);
+    if let Some(ref sp) = site_packages {
+        eprintln!("[zygote] Found venv: {}", sp.display());
+    }
 
     Python::with_gil(|py| -> Result<()> {
         let sys = py.import("sys")?;
@@ -40,8 +48,23 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         let path: &Bound<PyList> = path_attr
             .downcast()
             .map_err(|e| anyhow::anyhow!("sys.path not a list: {}", e))?;
-        path.insert(0, &cwd)?;
-        py.import("pytest")?;
+
+        // Phase 8: Inject venv site-packages FIRST (highest priority)
+        if let Some(ref sp) = site_packages {
+            path.insert(0, sp.to_string_lossy().to_string())?;
+        }
+
+        // Add project root
+        path.insert(0, &cwd_str)?;
+
+        // Now pytest should be importable from venv
+        match py.import("pytest") {
+            Ok(_) => eprintln!("[zygote] pytest loaded successfully"),
+            Err(e) => {
+                eprintln!("[zygote] Error: {}", e);
+                return Err(anyhow::anyhow!("Failed to import pytest: {}", e));
+            }
+        }
 
         // Django Detection & Setup (Batteries-Included)
         // Initialize Django in Zygote so workers inherit the pre-warmed state
@@ -81,7 +104,14 @@ except Exception as e:
         let harness_code = std::ffi::CString::new(TACH_HARNESS_PY)
             .map_err(|e| anyhow::anyhow!("Failed to create CString: {}", e))?;
         let harness = PyModule::from_code(py, &harness_code, c"tach_harness.py", c"tach_harness")?;
+
+        // ZYGOTE COLLECTION: Pre-collect tests for TARGET PATH only (not entire project)
+        // This avoids importing test files outside the requested scope
+        let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
+        harness.getattr("init_session")?.call1((&target_path,))?;
+
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
+
         Ok(())
     })?;
 

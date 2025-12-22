@@ -22,7 +22,14 @@ use std::process::Command;
 /// 4. Remount root as RO
 /// 5. Mount tmpfs (allowed over RO dir)
 /// 6. Mount overlays
+///
+/// If TACH_NO_ISOLATION=1 is set, skip all isolation (for benchmarking/debugging)
 pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
+    // Phase 8.1: Allow skipping isolation for raw speed benchmarks
+    if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
+        return Ok(());
+    }
+
     // 1. Create new mount AND network namespaces
     unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET)
         .context("unshare(CLONE_NEWNS | CLONE_NEWNET) failed - requires CAP_SYS_ADMIN")?;

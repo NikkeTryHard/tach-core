@@ -36,6 +36,8 @@ pub struct FixtureDefinition {
     /// Some([]) = empty params list
     /// Some(["a", "b"]) = static params extracted from AST
     pub params: Option<Vec<String>>,
+    /// If Some, this fixture is scoped to the given class (class-method fixture)
+    pub class_scope: Option<String>,
 }
 
 /// A test case (function)
@@ -211,6 +213,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         scope: extract_scope_from_decorators(&func.decorator_list),
                         dependencies: extract_args_from_arguments(&func.args),
                         params: extract_params_from_decorators(&func.decorator_list),
+                        class_scope: None, // Top-level async fixture
                     });
                 }
             }
@@ -220,6 +223,19 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                     for stmt in &class.body {
                         if let ast::Stmt::FunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
+
+                            // Phase 7c: Detect class-method fixtures
+                            if has_fixture_decorator(&func.decorator_list) {
+                                fixtures.push(FixtureDefinition {
+                                    name: method_name.to_string(),
+                                    scope: extract_scope_from_decorators(&func.decorator_list),
+                                    dependencies: extract_args_from_arguments(&func.args),
+                                    params: extract_params_from_decorators(&func.decorator_list),
+                                    class_scope: Some(class_name.to_string()),
+                                });
+                            }
+
+                            // Existing: Detect test methods
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
@@ -236,6 +252,19 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
+
+                            // Phase 7c: Detect async class-method fixtures
+                            if has_fixture_decorator(&func.decorator_list) {
+                                fixtures.push(FixtureDefinition {
+                                    name: method_name.to_string(),
+                                    scope: extract_scope_from_decorators(&func.decorator_list),
+                                    dependencies: extract_args_from_arguments(&func.args),
+                                    params: extract_params_from_decorators(&func.decorator_list),
+                                    class_scope: Some(class_name.to_string()),
+                                });
+                            }
+
+                            // Existing: Detect async test methods
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
@@ -294,6 +323,7 @@ fn analyze_function(
             scope: extract_scope_from_decorators(&func.decorator_list),
             dependencies: extract_args_from_arguments(&func.args),
             params: extract_params_from_decorators(&func.decorator_list),
+            class_scope: None, // Top-level fixture
         });
     }
 }
@@ -495,7 +525,6 @@ fn extract_parametrized_args(decorators: &[ast::Expr]) -> Vec<String> {
 }
 
 /// Check if a decorator is @patch or @unittest.mock.patch
-/// These inject mock objects as function parameters
 fn is_patch_decorator(expr: &ast::Expr) -> bool {
     match expr {
         ast::Expr::Call(call) => is_patch_decorator(&call.func),
@@ -509,27 +538,65 @@ fn is_patch_decorator(expr: &ast::Expr) -> bool {
     }
 }
 
-/// Count @patch decorators to determine how many trailing args are injected
-/// Each @patch decorator injects one mock object as a function parameter
-/// Parameters are injected in reverse decorator order (bottom decorator = first param)
+/// Check if a @patch decorator injects a function argument.
+///
+/// @patch(target) - INJECTS arg (the mock)
+/// @patch(target, replacement) - NO injection (replacement is used directly)
+/// @patch(target, new=replacement) - NO injection
+///
+/// We need to distinguish these cases to correctly count injected args.
+fn patch_injects_arg(expr: &ast::Expr) -> bool {
+    if !is_patch_decorator(expr) {
+        return false;
+    }
+
+    // Get the call expression
+    match expr {
+        ast::Expr::Call(call) => {
+            // If there's a second positional arg, it's a replacement value (no injection)
+            if call.args.len() >= 2 {
+                return false;
+            }
+            // If there's a "new" keyword arg, it's also a replacement (no injection)
+            for kw in &call.keywords {
+                if let Some(ref arg_name) = kw.arg {
+                    if arg_name.as_str() == "new" {
+                        return false;
+                    }
+                }
+            }
+            // Otherwise, @patch(target) injects the mock as a function arg
+            true
+        }
+        // Bare @patch without call (unlikely but handle it)
+        _ => false,
+    }
+}
+
+/// Count @patch decorators that inject function arguments.
+/// Only patches without a replacement value inject mock objects as parameters.
 fn count_patch_decorators(decorators: &[ast::Expr]) -> usize {
-    decorators.iter().filter(|d| is_patch_decorator(d)).count()
+    decorators.iter().filter(|d| patch_injects_arg(d)).count()
 }
 
 /// Extract all injected (non-fixture) argument names from decorators
 /// Combines:
 /// 1. @pytest.mark.parametrize args (explicit parameter names)
-/// 2. @patch args (trailing N args injected by N patch decorators)
+/// 2. @patch args (FIRST N args after self/cls, where N = patch decorator count)
+///
+/// Phase 7.4 Fix: unittest.mock.patch injects args at the START (after self),
+/// not at the end. The bottom-most @patch decorator's mock becomes the first arg.
 fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<String> {
     let mut injected = extract_parametrized_args(decorators);
 
-    // Count @patch decorators - each injects one arg from the end of func_args
+    // Count @patch decorators - each injects one arg at the START of func_args
+    // (after self/cls which are already filtered out by extract_args_from_arguments)
     let patch_count = count_patch_decorators(decorators);
     if patch_count > 0 && func_args.len() >= patch_count {
-        // Take the LAST `patch_count` arguments as patch-injected
-        // (skip self/cls which are already filtered out)
-        let start_idx = func_args.len().saturating_sub(patch_count);
-        for arg in &func_args[start_idx..] {
+        // Phase 7.4: Take the FIRST `patch_count` arguments as patch-injected
+        // Example: @patch("a") @patch("b") def test(self, mock_b, mock_a, fixture):
+        //          -> mock_b and mock_a are injected, fixture is a real fixture
+        for arg in func_args.iter().take(patch_count) {
             if !injected.contains(arg) {
                 injected.push(arg.clone());
             }
@@ -589,6 +656,7 @@ mod tests {
                         scope: FixtureScope::Module,
                         dependencies: vec![],
                         params: None,
+                        class_scope: None,
                     }],
                 },
                 TestModule {

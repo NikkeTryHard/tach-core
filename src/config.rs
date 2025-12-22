@@ -38,6 +38,10 @@ pub struct Cli {
     #[arg(long, short = 'w')]
     pub watch: bool,
 
+    /// Disable filesystem and network isolation (runs without CAP_SYS_ADMIN)
+    #[arg(long)]
+    pub no_isolation: bool,
+
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,

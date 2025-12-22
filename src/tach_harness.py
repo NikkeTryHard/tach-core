@@ -24,125 +24,90 @@ STATUS_HARNESS_ERROR = 4
 # TTY Proxy: Interactive Debugging Support
 # =============================================================================
 
-# Module-level state for debug socket path (set by worker initialization)
 _debug_socket_path = None
 
 
 def set_debug_socket_path(path: str):
-    """Called by worker initialization to set the debug socket path.
-
-    This is called from Rust (zygote.rs) after fork() with the socket path
-    where the supervisor's debug server is listening.
-    """
+    """Called by worker initialization to set the debug socket path."""
     global _debug_socket_path
     _debug_socket_path = path
 
 
 class TachPdb(pdb.Pdb):
-    """PDB subclass that uses a Unix socket for I/O.
-
-    This allows debugging in workers that have no TTY. The socket connects
-    to the supervisor, which proxies stdin/stdout from the user's terminal.
-    """
+    """PDB subclass that uses a Unix socket for I/O."""
 
     def __init__(self, sock_file):
-        # Use the socket file for both stdin and stdout
-        # Skip readline/history to avoid issues over socket
         super().__init__(stdin=sock_file, stdout=sock_file)
-        self.use_rawinput = False  # Don't use readline (no TTY!)
+        self.use_rawinput = False
 
 
 def tach_breakpointhook(*args, **kwargs):
-    """Custom breakpoint hook that tunnels to supervisor.
-
-    Replaces sys.breakpointhook so `breakpoint()` works in forked workers
-    that have no controlling terminal.
-
-    When called:
-    1. Connects to supervisor's debug socket
-    2. Redirects pdb I/O through the socket
-    3. Starts a debug session at the caller's frame
-    """
+    """Custom breakpoint hook that tunnels to supervisor."""
     global _debug_socket_path
 
     if not _debug_socket_path:
-        # Fallback: No debug socket configured
-        # This happens if running outside tach or socket wasn't set
         print(
-            "[tach] WARNING: breakpoint() called but no debug socket available.",
-            file=sys.stderr,
+            "[tach] WARNING: breakpoint() called but no debug socket.", file=sys.stderr
         )
-        print(
-            "[tach] Running in non-interactive mode. Test will continue.",
-            file=sys.stderr,
-        )
-        return  # Don't hang, just continue
+        return
 
     try:
-        # Connect to supervisor's debug socket
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(_debug_socket_path)
-
-        # Create file-like wrapper for pdb
-        # Line buffered for interactive use
         sock_file = sock.makefile("rw", buffering=1, encoding="utf-8")
-
-        # Create our custom pdb instance
         debugger = TachPdb(sock_file)
-
-        # Get the caller's frame (skip this hook function)
         frame = sys._getframe(1)
-
-        # Start debugging at caller's frame
         debugger.set_trace(frame)
-
-        # Cleanup after debug session ends
         try:
             sock_file.close()
             sock.close()
         except Exception:
             pass
-
-    except ConnectionRefusedError:
-        print(
-            f"[tach] ERROR: Could not connect to debug socket at {_debug_socket_path}",
-            file=sys.stderr,
-        )
-        print("[tach] Is the supervisor running? Test will continue.", file=sys.stderr)
     except Exception as e:
-        # Connection failed - don't hang, log and continue
         print(f"[tach] ERROR: Failed to start debug session: {e}", file=sys.stderr)
 
 
-# Install our breakpoint hook at module load time
-# This overrides the built-in breakpoint() behavior
 sys.breakpointhook = tach_breakpointhook
 
 
 def inject_entropy():
-    """Re-seed RNGs to break the Clone Curse.
-
-    Workers inherit Zygote's PRNG state via fork(). Without re-seeding,
-    all workers generate identical random sequences, causing "hidden flaky tests"
-    that pass locally but fail in production.
-
-    We re-seed using high-resolution time to ensure each worker gets unique
-    random sequences.
-    """
+    """Re-seed RNGs and reset fork-unsafe state to break the Clone Curse."""
     import random
+    import logging
+    import threading
 
-    # Use nanosecond timestamp for high entropy
     seed = time.time_ns() % (2**32)
     random.seed(seed)
 
-    # Optional: Re-seed numpy if present
+    # CRITICAL: Reset logging module locks after fork
+    # The logging module uses RLocks that become corrupted after fork()
+    # because the lock state is shared but the threads are not
+    try:
+        import logging
+        import threading
+
+        # Recreate ALL module-level locks
+        logging._lock = threading.RLock()
+
+        # The Manager's lock is the main culprit
+        if hasattr(logging.Logger, "manager") and logging.Logger.manager:
+            logging.Logger.manager._lock = threading.RLock()
+
+        # Recreate locks for root logger and all handlers
+        logging.root.handlers = []  # Clear handlers to avoid lock issues
+
+        # Reset the logger dict to force fresh loggers
+        if hasattr(logging.Logger, "manager") and logging.Logger.manager:
+            logging.Logger.manager.loggerDict = {}
+    except Exception:
+        pass  # Best effort
+
     if "numpy" in sys.modules:
         try:
             sys.modules["numpy"].random.seed(seed)
         except Exception:
             pass
 
-    # Optional: Re-seed torch if present
     if "torch" in sys.modules:
         try:
             sys.modules["torch"].manual_seed(seed)
@@ -150,148 +115,144 @@ def inject_entropy():
             pass
 
 
+# =============================================================================
+# ZYGOTE COLLECTION PATTERN
+# Pytest session is initialized ONCE in Zygote, workers inherit via fork CoW
+# =============================================================================
+
+_SESSION = None
+_ITEMS_MAP = {}  # nodeid -> pytest Item
+
+
+def init_session(root_dir: str):
+    """Initialize pytest session in Zygote BEFORE forking workers.
+
+    This pays the "Pytest Tax" (config parsing, plugin loading, test collection)
+    exactly ONCE. Workers inherit the session via Copy-on-Write fork semantics.
+    """
+    global _SESSION, _ITEMS_MAP
+    import os
+
+    os.write(2, f"[harness] init_session: {root_dir}\n".encode())
+
+    args = [
+        root_dir,
+        "-s",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:terminal",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:cov",
+        "-p",
+        "no:xdist",
+        "-p",
+        "no:sugar",
+        "-p",
+        "no:asyncio",
+        "-p",
+        "no:trio",
+        "-p",
+        "no:django",
+    ]
+
+    cfg = _pytest.config._prepareconfig(args)
+    cfg._do_configure()
+
+    _SESSION = _pytest.main.Session.from_config(cfg)
+    cfg.hook.pytest_sessionstart(session=_SESSION)
+
+    _SESSION.perform_collect()
+
+    for item in _SESSION.items:
+        _ITEMS_MAP[item.nodeid] = item
+
+    os.write(2, f"[harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
+
+
 def run_test(file_path: str, node_id: str) -> tuple:
     """
-    Execute a single pytest test item.
+    Execute a single pytest test item using pre-collected session.
 
-    Args:
-        file_path: Path to the test file (relative to project root)
-        node_id: The FULL node identifier (e.g., "tests/test_foo.py::test_bar")
-                 This must match pytest's nodeid exactly.
-
-    Returns:
-        (status_code, duration_seconds, message)
+    FAST PATH: Item lookup is O(1) from _ITEMS_MAP.
+    No pytest config, no collection, just run the test.
     """
-    # Inject entropy FIRST to break the Clone Curse
-    inject_entropy()
+    global _SESSION, _ITEMS_MAP
 
+    # CRITICAL: Reset logging lock FIRST before anything else
+    # fork() corrupts the logging module's RLock, causing segfaults
+    import logging
+    import threading
+
+    logging._lock = threading.RLock()
+
+    inject_entropy()
     start = time.perf_counter()
 
     try:
-        # 1. Initialize pytest config with minimal plugins
-        # -s: disable capture (we use memfd), -p no:terminal: disable terminal reporter
-        # --collect-only would skip execution, we don't use it here
-        # Disable plugins: terminal (we use memfd), cacheprovider, and async plugins
-        # CRITICAL: no:asyncio and no:trio ensure WE own async execution, not plugins
-        # CRITICAL: no:django ensures WE own DB isolation, not pytest-django
-        args = [
-            file_path,
-            "-s",
-            "-p",
-            "no:terminal",
-            "-p",
-            "no:cacheprovider",
-            "-p",
-            "no:asyncio",  # Disable pytest-asyncio to own async execution
-            "-p",
-            "no:trio",  # Disable pytest-trio to prevent conflicts
-            "-p",
-            "no:django",  # Disable pytest-django to own DB isolation
-        ]
-
-        # Use _prepareconfig which properly initializes all default plugins
-        # This is the same function pytest.main() uses internally
-        cfg = _pytest.config._prepareconfig(args)
-
-        # Critical: run _do_configure to set up all stash keys and hooks
-        # This matches what wrap_session does in pytest.main()
-        cfg._do_configure()
-
-        # 2. Create Session and perform surgical collection
-        session = _pytest.main.Session.from_config(cfg)
-        cfg.hook.pytest_sessionstart(session=session)
-
-        # Collect only this file
-        session.perform_collect([file_path])
-
-        # 3. Find the specific test item by EXACT node_id match
-        # This avoids ambiguity (e.g., test_bar vs test_foo_bar)
-        target_item = None
-        for item in session.items:
-            if item.nodeid == node_id:
-                target_item = item
-                break
+        # O(1) lookup from pre-collected items
+        target_item = _ITEMS_MAP.get(node_id)
 
         if not target_item:
             duration = time.perf_counter() - start
-            # Provide helpful debug info
-            collected_ids = [item.nodeid for item in session.items]
             return (
                 STATUS_HARNESS_ERROR,
                 duration,
-                f"Test not found: {node_id}\nCollected: {collected_ids}",
+                f"Test not found in Zygote session: {node_id}\nAvailable: {len(_ITEMS_MAP)} items",
             )
 
-        # 4. Native Async Support: Wrap coroutine functions with event loop
-        # We detect if the test function is a coroutine and wrap it ourselves
-        # This implements the "Batteries-Included" philosophy - no pytest-asyncio needed
+        # Native Async Support
         original_obj = target_item.obj
-
-        # Handle both regular functions and bound methods
-        # Bound methods wrap the underlying function, so we need to check __func__
         func_to_check = original_obj
         if hasattr(original_obj, "__func__"):
-            # Bound method - get the underlying function for coroutine check
             func_to_check = original_obj.__func__
 
         if inspect.iscoroutinefunction(func_to_check):
-            # Create a sync wrapper that runs the coroutine in a fresh event loop
-            # Fresh loop per test ensures isolation - no state leakage between tests
+
             def make_sync_wrapper(async_fn):
                 def sync_wrapper(*args, **kwargs):
-                    # Create a fresh event loop for this test (isolation)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
-                        # Run the coroutine to completion
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
-                        # Cleanup: close loop to prevent resource leaks
                         loop.close()
                         asyncio.set_event_loop(None)
 
                 return sync_wrapper
 
-            # Replace the test function with our sync wrapper
             target_item.obj = make_sync_wrapper(original_obj)
 
-        # 4.5. Django Transaction Isolation: Wrap test in atomic block with rollback
-        # This ensures DB changes are rolled back after each test (isolation!)
+        # Django Transaction Isolation
         django_atomics = []
         if "django" in sys.modules:
             try:
                 from django.conf import settings
 
-                # Only attempt DB operations if Django is properly configured
                 if settings.configured:
                     from django.db import connections, transaction
 
-                    # CRITICAL: Close connections inherited from Zygote and reopen fresh
-                    # SQLite connections don't survive fork() properly - they get corrupted
-                    # Closing all connections forces Django to create new ones for this worker
                     try:
                         connections.close_all()
                     except Exception:
-                        pass  # Connection might not exist yet
-
-                    # Enter atomic block for ALL database connections
+                        pass
                     for alias in connections:
                         try:
                             atomic = transaction.atomic(using=alias)
                             atomic.__enter__()
                             django_atomics.append((alias, atomic))
                         except Exception:
-                            pass  # Connection might not be available
+                            pass
             except ImportError:
                 pass
 
         try:
-            # 5. Execute test (setup -> call -> teardown)
             reports = _pytest.runner.runtestprotocol(
                 target_item, nextitem=None, log=False
             )
         finally:
-            # Rollback all Django transactions (cleanup regardless of test result)
             if django_atomics:
                 from django.db import transaction
 
@@ -300,11 +261,10 @@ def run_test(file_path: str, node_id: str) -> tuple:
                         transaction.set_rollback(True, using=alias)
                         atomic.__exit__(None, None, None)
                     except Exception:
-                        pass  # Best effort cleanup
+                        pass
 
         duration = time.perf_counter() - start
 
-        # 6. Analyze reports
         failed_report = None
         skipped_report = None
 
@@ -315,24 +275,19 @@ def run_test(file_path: str, node_id: str) -> tuple:
                 skipped_report = report
 
         if failed_report:
-            # Extract traceback
             longrepr = failed_report.longrepr
-            if longrepr:
-                msg = str(longrepr)
-            else:
-                msg = "Test failed (no traceback)"
+            msg = str(longrepr) if longrepr else "Test failed (no traceback)"
             return (STATUS_FAIL, duration, msg)
 
         if skipped_report:
-            skip_reason = ""
-            if skipped_report.longrepr:
-                skip_reason = str(skipped_report.longrepr)
+            skip_reason = (
+                str(skipped_report.longrepr) if skipped_report.longrepr else ""
+            )
             return (STATUS_SKIP, duration, f"Skipped: {skip_reason}")
 
         return (STATUS_PASS, duration, "")
 
     except SystemExit as e:
-        # pytest may call sys.exit() on certain errors
         duration = time.perf_counter() - start
         return (STATUS_HARNESS_ERROR, duration, f"SystemExit: {e.code}")
 
@@ -342,6 +297,5 @@ def run_test(file_path: str, node_id: str) -> tuple:
         return (STATUS_HARNESS_ERROR, duration, f"Harness Error: {e}\n{tb}")
 
     finally:
-        # CRITICAL: Flush buffers to memfd
         sys.stdout.flush()
         sys.stderr.flush()
