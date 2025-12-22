@@ -1,16 +1,13 @@
-mod discovery;
-mod logcapture;
-mod protocol;
-mod resolver;
-mod scheduler;
-mod zygote;
+use tach_core::config;
+use tach_core::discovery;
+use tach_core::logcapture::LogCapture;
+use tach_core::resolver::{self, FixtureRegistry, Resolver};
+use tach_core::scheduler::Scheduler;
+use tach_core::zygote;
 
 use anyhow::Result;
-use logcapture::LogCapture;
 use nix::sys::wait::waitpid;
 use nix::unistd::{fork, ForkResult};
-use resolver::{FixtureRegistry, Resolver};
-use scheduler::Scheduler;
 use std::io::Read;
 use std::os::unix::net::UnixStream;
 
@@ -63,6 +60,11 @@ fn main() -> Result<()> {
     // --- CREATE DUAL SOCKET PAIRS ---
     let (sup_cmd_sock, zyg_cmd_sock) = UnixStream::pair()?;
     let (sup_result_sock, zyg_result_sock) = UnixStream::pair()?;
+
+    // --- LOAD CONFIG ---
+    // Load environment variables from pyproject.toml BEFORE forking
+    // so the Zygote inherits them and passes them to workers
+    config::load_env_from_pyproject(&cwd);
 
     eprintln!("[supervisor] Forking Zygote...");
 

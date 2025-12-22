@@ -71,7 +71,13 @@ pub fn discover(root: &Path) -> Result<DiscoveryResult> {
         .build()
         .filter_map(|e| e.ok())
         .filter(|e| is_test_file(e.path()))
-        .map(|e| e.path().to_path_buf())
+        .map(|e| {
+            // Convert to relative path for pytest node_id compatibility
+            e.path()
+                .strip_prefix(root)
+                .unwrap_or(e.path())
+                .to_path_buf()
+        })
         .collect();
 
     let modules: Vec<TestModule> = paths
@@ -243,4 +249,316 @@ fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
         }
     }
     FixtureScope::Function
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Helper to parse a Python source string and return TestModule
+    fn parse_source(source: &str) -> TestModule {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(source.as_bytes()).unwrap();
+        parse_module(file.path()).unwrap()
+    }
+
+    #[test]
+    fn test_fixture_scope_default() {
+        assert_eq!(FixtureScope::default(), FixtureScope::Function);
+    }
+
+    #[test]
+    fn test_discovery_result_counts() {
+        let result = DiscoveryResult {
+            modules: vec![
+                TestModule {
+                    path: PathBuf::from("test_a.py"),
+                    tests: vec![
+                        TestCase {
+                            name: "test_1".into(),
+                            dependencies: vec![],
+                            is_async: false,
+                        },
+                        TestCase {
+                            name: "test_2".into(),
+                            dependencies: vec![],
+                            is_async: true,
+                        },
+                    ],
+                    fixtures: vec![FixtureDefinition {
+                        name: "db".into(),
+                        scope: FixtureScope::Module,
+                        dependencies: vec![],
+                    }],
+                },
+                TestModule {
+                    path: PathBuf::from("test_b.py"),
+                    tests: vec![TestCase {
+                        name: "test_3".into(),
+                        dependencies: vec!["db".into()],
+                        is_async: false,
+                    }],
+                    fixtures: vec![],
+                },
+            ],
+        };
+        assert_eq!(result.test_count(), 3);
+        assert_eq!(result.fixture_count(), 1);
+    }
+
+    #[test]
+    fn test_discovery_result_empty() {
+        let result = DiscoveryResult { modules: vec![] };
+        assert_eq!(result.test_count(), 0);
+        assert_eq!(result.fixture_count(), 0);
+    }
+
+    #[test]
+    fn test_fixture_scope_equality() {
+        assert_eq!(FixtureScope::Function, FixtureScope::Function);
+        assert_eq!(FixtureScope::Class, FixtureScope::Class);
+        assert_eq!(FixtureScope::Module, FixtureScope::Module);
+        assert_eq!(FixtureScope::Session, FixtureScope::Session);
+        assert_ne!(FixtureScope::Function, FixtureScope::Session);
+    }
+
+    // =========================================================================
+    // AST Parsing Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_simple_test_function() {
+        let source = r#"
+def test_simple():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test_simple");
+        assert!(!module.tests[0].is_async);
+        assert!(module.tests[0].dependencies.is_empty());
+    }
+
+    #[test]
+    fn test_parse_async_test_function() {
+        let source = r#"
+async def test_async():
+    await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test_async");
+        assert!(module.tests[0].is_async);
+    }
+
+    #[test]
+    fn test_parse_test_with_dependencies() {
+        let source = r#"
+def test_with_deps(db, cache, client):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].dependencies, vec!["db", "cache", "client"]);
+    }
+
+    #[test]
+    fn test_parse_fixture_simple() {
+        let source = r#"
+import pytest
+
+@pytest.fixture
+def my_fixture():
+    return 42
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.fixtures.len(), 1);
+        assert_eq!(module.fixtures[0].name, "my_fixture");
+        assert_eq!(module.fixtures[0].scope, FixtureScope::Function);
+    }
+
+    #[test]
+    fn test_parse_fixture_with_scope() {
+        let source = r#"
+import pytest
+
+@pytest.fixture(scope="module")
+def module_fixture():
+    return "module"
+
+@pytest.fixture(scope="session")
+def session_fixture():
+    return "session"
+
+@pytest.fixture(scope="class")
+def class_fixture():
+    return "class"
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.fixtures.len(), 3);
+
+        let scopes: Vec<_> = module.fixtures.iter().map(|f| f.scope.clone()).collect();
+        assert!(scopes.contains(&FixtureScope::Module));
+        assert!(scopes.contains(&FixtureScope::Session));
+        assert!(scopes.contains(&FixtureScope::Class));
+    }
+
+    #[test]
+    fn test_parse_fixture_with_dependencies() {
+        let source = r#"
+import pytest
+
+@pytest.fixture
+def derived_fixture(base_fixture, db):
+    return base_fixture + db
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.fixtures.len(), 1);
+        assert_eq!(module.fixtures[0].dependencies, vec!["base_fixture", "db"]);
+    }
+
+    #[test]
+    fn test_parse_test_class() {
+        let source = r#"
+class TestMyClass:
+    def test_method_one(self):
+        pass
+    
+    def test_method_two(self, db):
+        pass
+    
+    def helper_not_a_test(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+        assert!(module
+            .tests
+            .iter()
+            .any(|t| t.name == "TestMyClass::test_method_one"));
+        assert!(module
+            .tests
+            .iter()
+            .any(|t| t.name == "TestMyClass::test_method_two"));
+    }
+
+    #[test]
+    fn test_parse_async_test_in_class() {
+        let source = r#"
+class TestAsync:
+    async def test_async_method(self, client):
+        await client.get()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "TestAsync::test_async_method");
+        assert!(module.tests[0].is_async);
+        assert_eq!(module.tests[0].dependencies, vec!["client"]);
+    }
+
+    #[test]
+    fn test_parse_non_test_functions_ignored() {
+        let source = r#"
+def helper_function():
+    pass
+
+def setup_module():
+    pass
+
+def teardown():
+    pass
+"#;
+        let module = parse_source(source);
+        assert!(module.tests.is_empty());
+        assert!(module.fixtures.is_empty());
+    }
+
+    #[test]
+    fn test_parse_non_test_class_ignored() {
+        let source = r#"
+class MyClass:
+    def test_looks_like_test(self):
+        pass
+"#;
+        let module = parse_source(source);
+        // Class doesn't start with "Test", so methods should be ignored
+        assert!(module.tests.is_empty());
+    }
+
+    #[test]
+    fn test_parse_self_and_cls_excluded_from_deps() {
+        let source = r#"
+class TestWithSelf:
+    def test_method(self, db, cache):
+        pass
+    
+    @classmethod
+    def test_classmethod(cls, db):
+        pass
+"#;
+        let module = parse_source(source);
+
+        for test in &module.tests {
+            assert!(!test.dependencies.contains(&"self".to_string()));
+            assert!(!test.dependencies.contains(&"cls".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_file() {
+        let source = "";
+        let module = parse_source(source);
+        assert!(module.tests.is_empty());
+        assert!(module.fixtures.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mixed_content() {
+        let source = r#"
+import pytest
+
+@pytest.fixture(scope="module")
+def db():
+    return "connection"
+
+def test_with_db(db):
+    assert db == "connection"
+
+class TestIntegration:
+    def test_in_class(self, db):
+        pass
+
+async def test_async_standalone():
+    await asyncio.sleep(0)
+"#;
+        let module = parse_source(source);
+
+        assert_eq!(module.fixtures.len(), 1);
+        assert_eq!(module.fixtures[0].name, "db");
+        assert_eq!(module.fixtures[0].scope, FixtureScope::Module);
+
+        assert_eq!(module.tests.len(), 3);
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_with_db"));
+        assert!(test_names.contains(&"TestIntegration::test_in_class"));
+        assert!(test_names.contains(&"test_async_standalone"));
+    }
+
+    #[test]
+    fn test_parse_bare_fixture_decorator() {
+        let source = r#"
+@fixture
+def bare_fixture():
+    return 1
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.fixtures.len(), 1);
+        assert_eq!(module.fixtures[0].name, "bare_fixture");
+    }
 }

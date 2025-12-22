@@ -194,3 +194,180 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a fixture definition
+    fn make_fixture(name: &str, deps: Vec<&str>) -> FixtureDefinition {
+        FixtureDefinition {
+            name: name.to_string(),
+            scope: FixtureScope::Function,
+            dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Helper to create a test case
+    fn make_test(name: &str, deps: Vec<&str>) -> TestCase {
+        TestCase {
+            name: name.to_string(),
+            dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
+            is_async: false,
+        }
+    }
+
+    #[test]
+    fn test_fixture_lookup_local_over_global() {
+        // Create discovery with both global (conftest.py) and local fixtures
+        let discovery = DiscoveryResult {
+            modules: vec![
+                // Global conftest.py with a "db" fixture (no dependencies)
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("db", vec![])],
+                },
+                // Local module with same-named "db" fixture (has dependencies)
+                TestModule {
+                    path: PathBuf::from("test_local.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("db", vec!["connection"])],
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+
+        // Local lookup should return local fixture (has deps)
+        let local_path = PathBuf::from("test_local.py");
+        let (fixture, _) = registry.lookup("db", &local_path).unwrap();
+        assert!(
+            !fixture.dependencies.is_empty(),
+            "Local fixture should have dependencies"
+        );
+
+        // Other module lookup should return global fixture (no deps)
+        let other_path = PathBuf::from("test_other.py");
+        let (fixture, _) = registry.lookup("db", &other_path).unwrap();
+        assert!(
+            fixture.dependencies.is_empty(),
+            "Global fixture should have no dependencies"
+        );
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        // Create a cyclic dependency: a -> b -> a
+        let discovery = DiscoveryResult {
+            modules: vec![
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![
+                        make_fixture("a", vec!["b"]),
+                        make_fixture("b", vec!["a"]), // Cycle!
+                    ],
+                },
+                TestModule {
+                    path: PathBuf::from("test_cycle.py"),
+                    tests: vec![make_test("test_foo", vec!["a"])],
+                    fixtures: vec![],
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        // Should have no runnable tests and one error
+        assert!(
+            runnable.is_empty(),
+            "Cyclic dependency should fail resolution"
+        );
+        assert!(!errors.is_empty(), "Should have resolution error");
+
+        // Verify it's a CyclicDependency error
+        match &errors[0] {
+            ResolutionError::CyclicDependency { cycle, .. } => {
+                assert!(cycle.contains(&"a".to_string()), "Cycle should contain 'a'");
+                assert!(cycle.contains(&"b".to_string()), "Cycle should contain 'b'");
+            }
+            _ => panic!("Expected CyclicDependency error"),
+        }
+    }
+
+    #[test]
+    fn test_missing_fixture_error() {
+        // Create a test that depends on a non-existent fixture
+        let discovery = DiscoveryResult {
+            modules: vec![TestModule {
+                path: PathBuf::from("test_missing.py"),
+                tests: vec![make_test("test_foo", vec!["nonexistent"])],
+                fixtures: vec![],
+            }],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        // Should have no runnable tests and one error
+        assert!(
+            runnable.is_empty(),
+            "Missing fixture should fail resolution"
+        );
+        assert!(!errors.is_empty(), "Should have resolution error");
+
+        // Verify it's a MissingFixture error
+        match &errors[0] {
+            ResolutionError::MissingFixture { fixture, test } => {
+                assert_eq!(fixture, "nonexistent");
+                assert_eq!(test, "test_foo");
+            }
+            _ => panic!("Expected MissingFixture error"),
+        }
+    }
+
+    #[test]
+    fn test_transitive_dependency_resolution() {
+        // Create a chain: test_foo -> db -> connection -> base
+        let discovery = DiscoveryResult {
+            modules: vec![
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![
+                        make_fixture("base", vec![]),
+                        make_fixture("connection", vec!["base"]),
+                        make_fixture("db", vec!["connection"]),
+                    ],
+                },
+                TestModule {
+                    path: PathBuf::from("test_chain.py"),
+                    tests: vec![make_test("test_foo", vec!["db"])],
+                    fixtures: vec![],
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        assert!(errors.is_empty(), "Should have no errors");
+        assert_eq!(runnable.len(), 1);
+
+        // Fixtures should be in topological order (dependencies first)
+        let test = &runnable[0];
+        assert_eq!(test.fixtures.len(), 3);
+        assert_eq!(test.fixtures[0].name, "base");
+        assert_eq!(test.fixtures[1].name, "connection");
+        assert_eq!(test.fixtures[2].name, "db");
+    }
+}

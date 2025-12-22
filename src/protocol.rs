@@ -15,6 +15,7 @@ pub const STATUS_FAIL: u8 = 1;
 pub const STATUS_SKIP: u8 = 2;
 pub const STATUS_CRASH: u8 = 3;
 pub const STATUS_ERROR: u8 = 4;
+pub const STATUS_HARNESS_ERROR: u8 = 5;
 
 /// Payload sent to Zygote with fork command
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +95,7 @@ impl TestResult {
             STATUS_SKIP => "SKIP",
             STATUS_CRASH => "CRASH",
             STATUS_ERROR => "ERROR",
+            STATUS_HARNESS_ERROR => "HARNESS_ERROR",
             _ => "UNKNOWN",
         }
     }
@@ -105,6 +107,7 @@ impl TestResult {
             STATUS_SKIP => "○",
             STATUS_CRASH => "💥",
             STATUS_ERROR => "!",
+            STATUS_HARNESS_ERROR => "⚠",
             _ => "?",
         }
     }
@@ -131,4 +134,149 @@ pub fn encode_with_length<T: Serialize>(value: &T) -> Result<Vec<u8>, bincode::E
     result.extend_from_slice(&len.to_le_bytes());
     result.extend_from_slice(&payload);
     Ok(result)
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_result_pass_constructor() {
+        let result = TestResult::pass(42, 1_000_000);
+        assert_eq!(result.test_id, 42);
+        assert_eq!(result.status, STATUS_PASS);
+        assert_eq!(result.duration_ns, 1_000_000);
+        assert!(result.message.is_empty());
+    }
+
+    #[test]
+    fn test_result_fail_constructor() {
+        let result = TestResult::fail(42, 1_000_000, "assertion error".to_string());
+        assert_eq!(result.test_id, 42);
+        assert_eq!(result.status, STATUS_FAIL);
+        assert_eq!(result.duration_ns, 1_000_000);
+        assert_eq!(result.message, "assertion error");
+    }
+
+    #[test]
+    fn test_result_crash_constructor() {
+        let result = TestResult::crash(42);
+        assert_eq!(result.test_id, 42);
+        assert_eq!(result.status, STATUS_CRASH);
+        assert_eq!(result.duration_ns, 0);
+        assert!(result.message.contains("crashed"));
+    }
+
+    #[test]
+    fn test_status_str_mappings() {
+        assert_eq!(TestResult::pass(0, 0).status_str(), "PASS");
+        assert_eq!(TestResult::fail(0, 0, "".into()).status_str(), "FAIL");
+        assert_eq!(TestResult::crash(0).status_str(), "CRASH");
+
+        // Test all status codes directly
+        let mut r = TestResult::pass(0, 0);
+        r.status = STATUS_SKIP;
+        assert_eq!(r.status_str(), "SKIP");
+        r.status = STATUS_ERROR;
+        assert_eq!(r.status_str(), "ERROR");
+        r.status = STATUS_HARNESS_ERROR;
+        assert_eq!(r.status_str(), "HARNESS_ERROR");
+        r.status = 255; // Unknown
+        assert_eq!(r.status_str(), "UNKNOWN");
+    }
+
+    #[test]
+    fn test_duration_ms_conversion() {
+        // 1.5ms = 1,500,000 ns
+        let result = TestResult::pass(0, 1_500_000);
+        assert!((result.duration_ms() - 1.5).abs() < 0.001);
+
+        // 0ms
+        let zero = TestResult::pass(0, 0);
+        assert_eq!(zero.duration_ms(), 0.0);
+
+        // 1 second = 1,000,000,000 ns = 1000ms
+        let one_sec = TestResult::pass(0, 1_000_000_000);
+        assert!((one_sec.duration_ms() - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_truncate_message_edge_cases() {
+        // Short message - no truncation
+        let short = truncate_message("hello".to_string());
+        assert_eq!(short, "hello");
+
+        // Empty message
+        let empty = truncate_message(String::new());
+        assert_eq!(empty, "");
+
+        // Exactly 4096 chars - no truncation
+        let exact = "x".repeat(4096);
+        let result = truncate_message(exact.clone());
+        assert_eq!(result.len(), 4096);
+        assert!(!result.contains("truncated"));
+
+        // Over 4096 - truncated with suffix
+        let long = "y".repeat(5000);
+        let truncated = truncate_message(long);
+        assert!(truncated.ends_with("... [truncated]"));
+        assert!(truncated.len() < 5000);
+        // Should be 4096 + "... [truncated]".len()
+        assert_eq!(truncated.len(), 4096 + 15);
+    }
+
+    #[test]
+    fn test_encode_with_length_roundtrip() {
+        let payload = TestPayload {
+            test_id: 42,
+            file_path: "tests/test_foo.py".to_string(),
+            test_name: "test_bar".to_string(),
+            is_async: true,
+            fixtures: vec![FixtureInfo {
+                name: "db".to_string(),
+                scope: "module".to_string(),
+            }],
+            log_fd: -1,
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+
+        // First 4 bytes are length prefix (little-endian u32)
+        let len = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+        assert_eq!(len, encoded.len() - 4);
+
+        // Verify we can deserialize the payload correctly
+        let decoded: TestPayload = bincode::deserialize(&encoded[4..]).unwrap();
+        assert_eq!(decoded.test_id, 42);
+        assert_eq!(decoded.file_path, "tests/test_foo.py");
+        assert_eq!(decoded.test_name, "test_bar");
+        assert!(decoded.is_async);
+        assert_eq!(decoded.fixtures.len(), 1);
+        assert_eq!(decoded.fixtures[0].name, "db");
+        assert_eq!(decoded.log_fd, -1);
+    }
+
+    #[test]
+    fn test_fixture_info_from_scope() {
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Function).scope,
+            "function"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Class).scope,
+            "class"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Module).scope,
+            "module"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Session).scope,
+            "session"
+        );
+    }
 }

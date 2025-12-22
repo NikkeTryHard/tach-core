@@ -1,0 +1,4 @@
+[tool.pytest_env]
+TACH_TEST_VAR = "hello_from_pyproject"
+TACH_DEBUG_MODE = "true"
+TACH_PHASE3_VERIFIED = "true"
