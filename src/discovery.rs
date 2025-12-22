@@ -31,6 +31,11 @@ pub struct FixtureDefinition {
     pub name: String,
     pub scope: FixtureScope,
     pub dependencies: Vec<String>,
+    /// Parametrization values (if @pytest.fixture(params=[...]))
+    /// None = no params or dynamic (e.g., params=load_from_db())
+    /// Some([]) = empty params list
+    /// Some(["a", "b"]) = static params extracted from AST
+    pub params: Option<Vec<String>>,
 }
 
 /// A test case (function)
@@ -198,6 +203,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         name: name.to_string(),
                         scope: extract_scope_from_decorators(&func.decorator_list),
                         dependencies: extract_args_from_arguments(&func.args),
+                        params: extract_params_from_decorators(&func.decorator_list),
                     });
                 }
             }
@@ -268,6 +274,7 @@ fn analyze_function(
             name: name.to_string(),
             scope: extract_scope_from_decorators(&func.decorator_list),
             dependencies: extract_args_from_arguments(&func.args),
+            params: extract_params_from_decorators(&func.decorator_list),
         });
     }
 }
@@ -320,6 +327,76 @@ fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
     FixtureScope::Function
 }
 
+/// Extract params from @pytest.fixture(params=[...]) decorator
+/// Returns None if:
+/// - No params keyword
+/// - Dynamic params (e.g., params=load_from_db())
+/// Returns Some(vec) if static literal list
+fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String>> {
+    for decorator in decorators {
+        if let ast::Expr::Call(call) = decorator {
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg {
+                    if arg.as_str() == "params" {
+                        // Try to extract literals from the params value
+                        return extract_literal_list(&keyword.value);
+                    }
+                }
+            }
+        }
+    }
+    None // No params keyword found
+}
+
+/// Extract literals from a List or Tuple expression
+/// Returns None if the expression is not a static list of literals
+fn extract_literal_list(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::List(list) => {
+            let mut values = Vec::new();
+            for elt in &list.elts {
+                if let Some(s) = expr_to_string(elt) {
+                    values.push(s);
+                } else {
+                    // Non-literal element - bail out
+                    return None;
+                }
+            }
+            Some(values)
+        }
+        ast::Expr::Tuple(tuple) => {
+            let mut values = Vec::new();
+            for elt in &tuple.elts {
+                if let Some(s) = expr_to_string(elt) {
+                    values.push(s);
+                } else {
+                    return None;
+                }
+            }
+            Some(values)
+        }
+        _ => None, // Dynamic expression (function call, variable, etc.)
+    }
+}
+
+/// Convert an AST expression to its string representation
+/// Only handles literals (int, str, bool, None)
+fn expr_to_string(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Constant(c) => match &c.value {
+            ast::Constant::Int(i) => Some(i.to_string()),
+            ast::Constant::Str(s) => Some(s.to_string()),
+            ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
+            ast::Constant::None => Some("None".to_string()),
+            ast::Constant::Float(f) => Some(f.to_string()),
+            _ => None,
+        },
+        // Handle simple Name expressions (like exception classes)
+        ast::Expr::Name(n) => Some(n.id.to_string()),
+        _ => None,
+    }
+}
+
 // =============================================================================
 // Unit Tests
 // =============================================================================
@@ -366,6 +443,7 @@ mod tests {
                         name: "db".into(),
                         scope: FixtureScope::Module,
                         dependencies: vec![],
+                        params: None,
                     }],
                 },
                 TestModule {

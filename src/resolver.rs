@@ -254,6 +254,7 @@ mod tests {
             name: name.to_string(),
             scope: FixtureScope::Function,
             dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
+            params: None,
         }
     }
 
