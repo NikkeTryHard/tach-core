@@ -157,8 +157,17 @@ impl<'a> Resolver<'a> {
         let mut visited = HashSet::new();
         let mut stack = Vec::new();
 
-        // Resolve each direct dependency
+        // Phase 7b: Filter out parametrized args - they're NOT fixtures
+        // @pytest.mark.parametrize("arg") injects arg from the decorator, not fixture system
+        let parametrized_set: HashSet<_> = test.parametrized_args.iter().collect();
+
+        // Resolve each direct dependency (excluding parametrized args)
         for dep_name in &test.dependencies {
+            // Skip if this is a parametrized arg (NOT a fixture)
+            if parametrized_set.contains(dep_name) {
+                continue;
+            }
+
             self.resolve_fixture(
                 dep_name,
                 module_path,
@@ -265,6 +274,7 @@ mod tests {
             dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
             is_async: false,
             line_number: 1,
+            parametrized_args: vec![],
         }
     }
 

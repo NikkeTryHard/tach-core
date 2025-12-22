@@ -45,6 +45,9 @@ pub struct TestCase {
     pub dependencies: Vec<String>,
     pub is_async: bool,
     pub line_number: usize,
+    /// Arguments provided by @pytest.mark.parametrize (NOT fixtures)
+    /// These should be excluded from fixture resolution
+    pub parametrized_args: Vec<String>,
 }
 
 /// A Python test module (.py file)
@@ -196,6 +199,10 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         dependencies: extract_args_from_arguments(&func.args),
                         is_async: true,
                         line_number,
+                        parametrized_args: extract_injected_args(
+                            &func.decorator_list,
+                            &extract_args_from_arguments(&func.args),
+                        ),
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -221,6 +228,10 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: false,
                                     line_number,
+                                    parametrized_args: extract_injected_args(
+                                        &func.decorator_list,
+                                        &extract_args_from_arguments(&func.args),
+                                    ),
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
@@ -233,6 +244,10 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: true,
                                     line_number,
+                                    parametrized_args: extract_injected_args(
+                                        &func.decorator_list,
+                                        &extract_args_from_arguments(&func.args),
+                                    ),
                                 });
                             }
                         }
@@ -266,6 +281,10 @@ fn analyze_function(
             dependencies: extract_args_from_arguments(&func.args),
             is_async,
             line_number,
+            parametrized_args: extract_injected_args(
+                &func.decorator_list,
+                &extract_args_from_arguments(&func.args),
+            ),
         });
     }
 
@@ -398,7 +417,131 @@ fn expr_to_string(expr: &ast::Expr) -> Option<String> {
 }
 
 // =============================================================================
+// Phase 7b: @pytest.mark.parametrize Extraction
+// =============================================================================
+
+/// Check if a decorator is @pytest.mark.parametrize
+fn is_parametrize_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_parametrize_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            // Check for pattern: X.parametrize
+            if attr.attr.as_str() == "parametrize" {
+                // Could be pytest.mark.parametrize or mark.parametrize
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Extract argument names from @pytest.mark.parametrize decorators
+/// Handles both formats:
+/// - @pytest.mark.parametrize("arg1,arg2", [...]) - comma-separated string
+/// - @pytest.mark.parametrize(["arg1", "arg2"], [...]) - list of strings
+fn extract_parametrized_args(decorators: &[ast::Expr]) -> Vec<String> {
+    let mut args = Vec::new();
+
+    for decorator in decorators {
+        if !is_parametrize_decorator(decorator) {
+            continue;
+        }
+
+        // Get the call expression
+        if let ast::Expr::Call(call) = decorator {
+            // First argument contains the parameter names
+            if let Some(first_arg) = call.args.first() {
+                match first_arg {
+                    // Case 1: "arg1, arg2" (comma-separated string)
+                    ast::Expr::Constant(c) => {
+                        if let ast::Constant::Str(s) = &c.value {
+                            // Split by comma and trim whitespace
+                            for name in s.as_str().split(',') {
+                                let trimmed = name.trim();
+                                if !trimmed.is_empty() {
+                                    args.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Case 2: ["arg1", "arg2"] (list of strings)
+                    ast::Expr::List(list) => {
+                        for elt in &list.elts {
+                            if let ast::Expr::Constant(c) = elt {
+                                if let ast::Constant::Str(s) = &c.value {
+                                    args.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Case 3: ("arg1", "arg2") (tuple of strings)
+                    ast::Expr::Tuple(tuple) => {
+                        for elt in &tuple.elts {
+                            if let ast::Expr::Constant(c) = elt {
+                                if let ast::Constant::Str(s) = &c.value {
+                                    args.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    args
+}
+
+/// Check if a decorator is @patch or @unittest.mock.patch
+/// These inject mock objects as function parameters
+fn is_patch_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_patch_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            let name = attr.attr.as_str();
+            // Match: mock.patch, patch.object, etc.
+            name == "patch" || name.starts_with("patch.")
+        }
+        ast::Expr::Name(name) => name.id.as_str() == "patch",
+        _ => false,
+    }
+}
+
+/// Count @patch decorators to determine how many trailing args are injected
+/// Each @patch decorator injects one mock object as a function parameter
+/// Parameters are injected in reverse decorator order (bottom decorator = first param)
+fn count_patch_decorators(decorators: &[ast::Expr]) -> usize {
+    decorators.iter().filter(|d| is_patch_decorator(d)).count()
+}
+
+/// Extract all injected (non-fixture) argument names from decorators
+/// Combines:
+/// 1. @pytest.mark.parametrize args (explicit parameter names)
+/// 2. @patch args (trailing N args injected by N patch decorators)
+fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<String> {
+    let mut injected = extract_parametrized_args(decorators);
+
+    // Count @patch decorators - each injects one arg from the end of func_args
+    let patch_count = count_patch_decorators(decorators);
+    if patch_count > 0 && func_args.len() >= patch_count {
+        // Take the LAST `patch_count` arguments as patch-injected
+        // (skip self/cls which are already filtered out)
+        let start_idx = func_args.len().saturating_sub(patch_count);
+        for arg in &func_args[start_idx..] {
+            if !injected.contains(arg) {
+                injected.push(arg.clone());
+            }
+        }
+    }
+
+    injected
+}
+
+// =============================================================================
 // Unit Tests
+
 // =============================================================================
 
 #[cfg(test)]
@@ -431,12 +574,14 @@ mod tests {
                             dependencies: vec![],
                             is_async: false,
                             line_number: 1,
+                            parametrized_args: vec![],
                         },
                         TestCase {
                             name: "test_2".into(),
                             dependencies: vec![],
                             is_async: true,
                             line_number: 1,
+                            parametrized_args: vec![],
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -453,6 +598,7 @@ mod tests {
                         dependencies: vec!["db".into()],
                         is_async: false,
                         line_number: 1,
+                        parametrized_args: vec![],
                     }],
                     fixtures: vec![],
                 },
