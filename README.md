@@ -40,7 +40,7 @@ Traditional pytest execution:
 ```
 Tach execution:
 ┌────────────────────────────────────────────────────────────┐
-│                         ZYGOTE                              │
+│                         ZYGOTE                             │
 │  ▸ Import lib (ONCE)                                       │
 │  ▸ Load frameworks (ONCE)                                  │
 │  ▸ Warm DB connections (ONCE)                              │
