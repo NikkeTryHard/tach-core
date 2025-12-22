@@ -6,6 +6,7 @@
 pub mod config;
 pub mod debugger;
 pub mod discovery;
+pub mod environment;
 pub mod isolation;
 pub mod junit;
 pub mod lifecycle;
