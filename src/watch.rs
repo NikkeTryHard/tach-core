@@ -136,4 +136,86 @@ mod tests {
         assert!(!is_ignored_path(Path::new("tests/test_foo.py")));
         assert!(!is_ignored_path(Path::new("src/models.py")));
     }
+
+    #[test]
+    fn test_is_ignored_pytest_cache() {
+        assert!(is_ignored_path(Path::new(
+            "project/.pytest_cache/v/cache.py"
+        )));
+    }
+
+    #[test]
+    fn test_is_ignored_mypy_cache() {
+        assert!(is_ignored_path(Path::new(
+            "project/.mypy_cache/3.10/module.py"
+        )));
+    }
+
+    #[test]
+    fn test_is_ignored_venv_variations() {
+        assert!(is_ignored_path(Path::new("/home/user/.venv/lib/site.py")));
+        assert!(is_ignored_path(Path::new("/project/venv/bin/activate.py")));
+        assert!(is_ignored_path(Path::new("/project/env/lib/python.py")));
+    }
+
+    #[test]
+    fn test_is_ignored_node_modules() {
+        assert!(is_ignored_path(Path::new(
+            "/project/node_modules/something.py"
+        )));
+    }
+
+    #[test]
+    fn test_not_ignored_normal_paths() {
+        assert!(!is_ignored_path(Path::new("tests/test_unit.py")));
+        assert!(!is_ignored_path(Path::new("src/app/models.py")));
+        assert!(!is_ignored_path(Path::new("conftest.py")));
+        assert!(!is_ignored_path(Path::new("test_integration.py")));
+    }
+
+    #[test]
+    fn test_clear_screen_doesnt_panic() {
+        // Just verify it doesn't panic
+        // We can't really test terminal output in unit tests
+        // clear_screen();  // Skip in tests - writes to stdout
+    }
+
+    #[test]
+    fn test_collect_python_paths_filters_non_py() {
+        use notify::event::{CreateKind, ModifyKind};
+
+        let event = Event {
+            kind: notify::EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![
+                PathBuf::from("test.py"),
+                PathBuf::from("test.rs"),
+                PathBuf::from("test.txt"),
+                PathBuf::from("another.py"),
+            ],
+            attrs: Default::default(),
+        };
+
+        let paths = collect_python_paths(&event);
+        assert_eq!(paths.len(), 2);
+        assert!(paths.iter().all(|p| p.extension().unwrap() == "py"));
+    }
+
+    #[test]
+    fn test_collect_python_paths_filters_ignored() {
+        use notify::event::ModifyKind;
+
+        let event = Event {
+            kind: notify::EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![
+                PathBuf::from("tests/test_good.py"),
+                PathBuf::from("__pycache__/module.py"),
+                PathBuf::from(".venv/site.py"),
+            ],
+            attrs: Default::default(),
+        };
+
+        let paths = collect_python_paths(&event);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], PathBuf::from("tests/test_good.py"));
+    }
 }

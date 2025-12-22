@@ -234,4 +234,98 @@ mod tests {
         let output = strip_ansi_codes(input);
         assert_eq!(output, "textwithnulls");
     }
+
+    #[test]
+    fn test_strip_ansi_complex_escape_sequences() {
+        // Bold + color + reset
+        let input = "\x1b[1;31;40mColored\x1b[0m normal";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "Colored normal");
+    }
+
+    #[test]
+    fn test_strip_ansi_cursor_movement() {
+        // Cursor movement codes
+        let input = "\x1b[2Jcleared\x1b[1;1H";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "cleared");
+    }
+
+    #[test]
+    fn test_junit_reporter_creation() {
+        let reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        assert!(reporter.cases.is_empty());
+    }
+
+    #[test]
+    fn test_junit_reporter_buffers_tests() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+
+        reporter.on_run_start(2);
+        reporter.on_test_start("test.py::test_foo", "test.py");
+        reporter.on_test_finished("test.py::test_foo", "pass", 42, None);
+        reporter.on_test_start("test.py::test_bar", "test.py");
+        reporter.on_test_finished("test.py::test_bar", "fail", 100, Some("assertion failed"));
+
+        assert_eq!(reporter.cases.len(), 2);
+        assert_eq!(reporter.cases[0].name, "test_foo");
+        assert_eq!(reporter.cases[1].name, "test_bar");
+        assert!(reporter.cases[0].failure.is_none());
+        assert!(reporter.cases[1].failure.is_some());
+    }
+
+    #[test]
+    fn test_junit_classname_parsing() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished("path/to/test_module.py::test_func", "pass", 10, None);
+
+        // path/to/test_module.py -> path.to.test_module
+        assert_eq!(reporter.cases[0].classname, "path.to.test_module");
+        assert_eq!(reporter.cases[0].name, "test_func");
+    }
+
+    #[test]
+    fn test_junit_time_conversion() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished("test.py::test_a", "pass", 1500, None); // 1500ms = 1.5s
+
+        assert!((reporter.cases[0].time - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_junit_failure_strips_ansi() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished(
+            "test.py::test_fail",
+            "fail",
+            50,
+            Some("\x1b[31mAssertionError\x1b[0m: expected True"),
+        );
+
+        let failure = reporter.cases[0].failure.as_ref().unwrap();
+        assert_eq!(failure.body, "AssertionError: expected True");
+        assert!(!failure.body.contains("\x1b"));
+    }
+
+    #[test]
+    fn test_junit_on_error_stores_message() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_error("Zygote crashed");
+        assert_eq!(reporter.error_message, Some("Zygote crashed".to_string()));
+    }
+
+    #[test]
+    fn test_junit_run_start_clears_state() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_test_finished("test.py::test_a", "pass", 10, None);
+        reporter.on_error("some error");
+
+        // Start new run should clear
+        reporter.on_run_start(0);
+        assert!(reporter.cases.is_empty());
+        assert!(reporter.error_message.is_none());
+    }
 }

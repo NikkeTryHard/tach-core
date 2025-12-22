@@ -220,3 +220,127 @@ fn test_binary_handles_missing_directory() {
         stderr
     );
 }
+
+// =============================================================================
+// Phase 5.2/5.3 CLI Feature Tests
+// =============================================================================
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_list_command_human() {
+    let output = run_tach(&["list"]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should output test names in human format
+    assert!(
+        stderr.contains("test_") || stderr.contains("::"),
+        "List command should output test names. Got: {}",
+        stderr
+    );
+}
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_list_command_json() {
+    let output = run_tach(&["--format=json", "list"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should output valid JSON with tests array
+    assert!(
+        stdout.contains("\"tests\"") && stdout.contains("["),
+        "JSON list should contain tests array. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_json_format_to_stdout() {
+    let output = run_tach(&["--format=json", "list"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // JSON should be on stdout, not stderr
+    assert!(stdout.len() > 0, "JSON output should be on stdout");
+
+    // Should be parseable JSON
+    assert!(
+        stdout.starts_with("{") || stdout.starts_with("["),
+        "JSON output should start with {{ or [. Got: {}",
+        &stdout[..stdout.len().min(100)]
+    );
+}
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_help_shows_watch_flag() {
+    let binary = binary_path();
+
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--watch") || stdout.contains("-w"),
+        "Help should show --watch flag. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_help_shows_format_flag() {
+    let binary = binary_path();
+
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--format"),
+        "Help should show --format flag. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+#[ignore] // Requires built binary
+fn test_binary_help_shows_junit_xml_flag() {
+    let binary = binary_path();
+
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--junit-xml"),
+        "Help should show --junit-xml flag. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+#[ignore] // Requires sudo and built binary
+fn test_binary_json_discovery_has_line_numbers() {
+    let output = run_tach(&["--format=json", "list"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // JSON should contain line numbers for tests
+    assert!(
+        stdout.contains("\"line\""),
+        "JSON discovery should include line numbers. Got: {}",
+        stdout
+    );
+}
