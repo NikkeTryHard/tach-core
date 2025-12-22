@@ -218,6 +218,7 @@ mod tests {
             name: name.to_string(),
             dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
             is_async: false,
+            line_number: 1,
         }
     }
 

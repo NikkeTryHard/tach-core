@@ -7,6 +7,8 @@ import time
 import traceback
 import asyncio
 import inspect
+import socket
+import pdb
 import _pytest.runner
 import _pytest.main
 import _pytest.config
@@ -17,6 +19,104 @@ STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
 STATUS_HARNESS_ERROR = 4
+
+# =============================================================================
+# TTY Proxy: Interactive Debugging Support
+# =============================================================================
+
+# Module-level state for debug socket path (set by worker initialization)
+_debug_socket_path = None
+
+
+def set_debug_socket_path(path: str):
+    """Called by worker initialization to set the debug socket path.
+
+    This is called from Rust (zygote.rs) after fork() with the socket path
+    where the supervisor's debug server is listening.
+    """
+    global _debug_socket_path
+    _debug_socket_path = path
+
+
+class TachPdb(pdb.Pdb):
+    """PDB subclass that uses a Unix socket for I/O.
+
+    This allows debugging in workers that have no TTY. The socket connects
+    to the supervisor, which proxies stdin/stdout from the user's terminal.
+    """
+
+    def __init__(self, sock_file):
+        # Use the socket file for both stdin and stdout
+        # Skip readline/history to avoid issues over socket
+        super().__init__(stdin=sock_file, stdout=sock_file)
+        self.use_rawinput = False  # Don't use readline (no TTY!)
+
+
+def tach_breakpointhook(*args, **kwargs):
+    """Custom breakpoint hook that tunnels to supervisor.
+
+    Replaces sys.breakpointhook so `breakpoint()` works in forked workers
+    that have no controlling terminal.
+
+    When called:
+    1. Connects to supervisor's debug socket
+    2. Redirects pdb I/O through the socket
+    3. Starts a debug session at the caller's frame
+    """
+    global _debug_socket_path
+
+    if not _debug_socket_path:
+        # Fallback: No debug socket configured
+        # This happens if running outside tach or socket wasn't set
+        print(
+            "[tach] WARNING: breakpoint() called but no debug socket available.",
+            file=sys.stderr,
+        )
+        print(
+            "[tach] Running in non-interactive mode. Test will continue.",
+            file=sys.stderr,
+        )
+        return  # Don't hang, just continue
+
+    try:
+        # Connect to supervisor's debug socket
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(_debug_socket_path)
+
+        # Create file-like wrapper for pdb
+        # Line buffered for interactive use
+        sock_file = sock.makefile("rw", buffering=1, encoding="utf-8")
+
+        # Create our custom pdb instance
+        debugger = TachPdb(sock_file)
+
+        # Get the caller's frame (skip this hook function)
+        frame = sys._getframe(1)
+
+        # Start debugging at caller's frame
+        debugger.set_trace(frame)
+
+        # Cleanup after debug session ends
+        try:
+            sock_file.close()
+            sock.close()
+        except Exception:
+            pass
+
+    except ConnectionRefusedError:
+        print(
+            f"[tach] ERROR: Could not connect to debug socket at {_debug_socket_path}",
+            file=sys.stderr,
+        )
+        print("[tach] Is the supervisor running? Test will continue.", file=sys.stderr)
+    except Exception as e:
+        # Connection failed - don't hang, log and continue
+        print(f"[tach] ERROR: Failed to start debug session: {e}", file=sys.stderr)
+
+
+# Install our breakpoint hook at module load time
+# This overrides the built-in breakpoint() behavior
+sys.breakpointhook = tach_breakpointhook
 
 
 def inject_entropy():

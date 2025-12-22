@@ -6,6 +6,7 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use rustpython_ast as ast;
 use rustpython_parser::parse_program;
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,7 @@ pub struct TestCase {
     pub name: String,
     pub dependencies: Vec<String>,
     pub is_async: bool,
+    pub line_number: usize,
 }
 
 /// A Python test module (.py file)
@@ -62,6 +64,62 @@ impl DiscoveryResult {
     pub fn fixture_count(&self) -> usize {
         self.modules.iter().map(|m| m.fixtures.len()).sum()
     }
+}
+
+/// Convert byte offset to line number (1-indexed)
+fn get_line_number(source: &str, byte_offset: usize) -> usize {
+    source[..byte_offset.min(source.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+        + 1
+}
+
+/// JSON-serializable test information for `tach list --json`
+#[derive(Serialize)]
+pub struct JsonTestInfo {
+    pub id: String,
+    pub file: String,
+    pub line: usize,
+    pub is_async: bool,
+}
+
+/// JSON output for discovery listing
+#[derive(Serialize)]
+struct JsonDiscoveryOutput {
+    version: u32,
+    tests: Vec<JsonTestInfo>,
+}
+
+/// Dump discovery result as JSON to stdout
+///
+/// Used by `tach list --format=json` for IDE integration.
+/// Output format:
+/// ```json
+/// { "version": 1, "tests": [{ "id": "...", "file": "...", "line": 1 }] }
+/// ```
+pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
+    let tests: Vec<JsonTestInfo> = result
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module.tests.iter().map(move |test| {
+                let file = module.path.to_string_lossy().to_string();
+                JsonTestInfo {
+                    id: format!("{}::{}", file, test.name),
+                    file,
+                    line: test.line_number,
+                    is_async: test.is_async,
+                }
+            })
+        })
+        .collect();
+
+    let output = JsonDiscoveryOutput { version: 1, tests };
+
+    // ONLY dump_json touches stdout with JSON
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 /// Scan project for test files and parse them in parallel
@@ -122,15 +180,17 @@ fn parse_module(path: &Path) -> Result<TestModule> {
     for stmt in suite {
         match stmt {
             ast::Stmt::FunctionDef(func) => {
-                analyze_function(&func, &mut tests, &mut fixtures, false);
+                analyze_function(&func, &source, &mut tests, &mut fixtures, false);
             }
             ast::Stmt::AsyncFunctionDef(func) => {
                 let name = func.name.as_str();
                 if name.starts_with("test_") {
+                    let line_number = get_line_number(&source, func.range.start().to_usize());
                     tests.push(TestCase {
                         name: name.to_string(),
                         dependencies: extract_args_from_arguments(&func.args),
                         is_async: true,
+                        line_number,
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -148,19 +208,25 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         if let ast::Stmt::FunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
                             if method_name.starts_with("test_") {
+                                let line_number =
+                                    get_line_number(&source, func.range.start().to_usize());
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: false,
+                                    line_number,
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
                             if method_name.starts_with("test_") {
+                                let line_number =
+                                    get_line_number(&source, func.range.start().to_usize());
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: true,
+                                    line_number,
                                 });
                             }
                         }
@@ -180,6 +246,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
 
 fn analyze_function(
     func: &ast::StmtFunctionDef,
+    source: &str,
     tests: &mut Vec<TestCase>,
     fixtures: &mut Vec<FixtureDefinition>,
     is_async: bool,
@@ -187,10 +254,12 @@ fn analyze_function(
     let name = func.name.as_str();
 
     if name.starts_with("test_") {
+        let line_number = get_line_number(source, func.range.start().to_usize());
         tests.push(TestCase {
             name: name.to_string(),
             dependencies: extract_args_from_arguments(&func.args),
             is_async,
+            line_number,
         });
     }
 
@@ -284,11 +353,13 @@ mod tests {
                             name: "test_1".into(),
                             dependencies: vec![],
                             is_async: false,
+                            line_number: 1,
                         },
                         TestCase {
                             name: "test_2".into(),
                             dependencies: vec![],
                             is_async: true,
+                            line_number: 1,
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -303,6 +374,7 @@ mod tests {
                         name: "test_3".into(),
                         dependencies: vec!["db".into()],
                         is_async: false,
+                        line_number: 1,
                     }],
                     fixtures: vec![],
                 },

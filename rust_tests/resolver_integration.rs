@@ -39,16 +39,19 @@ fn create_test_discovery() -> DiscoveryResult {
                         name: "test_simple".to_string(),
                         dependencies: vec![],
                         is_async: false,
+                        line_number: 1,
                     },
                     TestCase {
                         name: "test_with_db".to_string(),
                         dependencies: vec!["db".to_string()],
                         is_async: false,
+                        line_number: 1,
                     },
                     TestCase {
                         name: "test_with_client".to_string(),
                         dependencies: vec!["client".to_string()],
                         is_async: true,
+                        line_number: 1,
                     },
                 ],
                 fixtures: vec![],
@@ -117,6 +120,7 @@ fn test_missing_fixture_error() {
                 name: "test_with_missing".to_string(),
                 dependencies: vec!["nonexistent_fixture".to_string()],
                 is_async: false,
+                line_number: 1,
             }],
             fixtures: vec![],
         }],
@@ -149,6 +153,7 @@ fn test_cyclic_dependency_error() {
                 name: "test_cyclic".to_string(),
                 dependencies: vec!["fixture_a".to_string()],
                 is_async: false,
+                line_number: 1,
             }],
             fixtures: vec![
                 FixtureDefinition {

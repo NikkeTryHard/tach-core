@@ -4,10 +4,16 @@
 //! The binary entry point is in main.rs.
 
 pub mod config;
+pub mod debugger;
 pub mod discovery;
 pub mod isolation;
+pub mod junit;
+pub mod lifecycle;
 pub mod logcapture;
 pub mod protocol;
+pub mod reporter;
 pub mod resolver;
 pub mod scheduler;
+pub mod signals;
+pub mod watch;
 pub mod zygote;

@@ -21,6 +21,13 @@ const TACH_HARNESS_PY: &str = include_str!("tach_harness.py");
 
 /// Zygote with separate command and result channels
 pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<()> {
+    // DEAD MAN'S SWITCH (Phase 4.2): If supervisor dies, we die
+    // This is the ultimate safety net - no orphaned zygotes
+    // Must be the FIRST thing we do, before any resource allocation
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+    }
+
     // Prevent zombies
     unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }?;
 
@@ -154,6 +161,12 @@ except Exception as e:
                     Ok(ForkResult::Child) => {
                         drop(parent_sock);
 
+                        // 0. DEAD MAN'S SWITCH (Phase 4.2): If Zygote dies, worker dies
+                        // Must be FIRST - before any resource allocation
+                        unsafe {
+                            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                        }
+
                         // 1. CRITICAL: Restore default signal handling
                         // Parent sets SIG_IGN to avoid zombies, but this breaks Command::new()
                         // because waitpid fails when kernel auto-reaps children
@@ -178,7 +191,20 @@ except Exception as e:
                             let _ = redirect_output(payload.log_fd);
                         }
 
-                        // 3. Run test
+                        // 5. Set debug socket path for breakpoint() support
+                        // This enables interactive debugging via TTY proxy
+                        if !payload.debug_socket_path.is_empty() {
+                            Python::with_gil(|py| -> Result<(), PyErr> {
+                                let harness = py.import("tach_harness")?;
+                                harness
+                                    .getattr("set_debug_socket_path")?
+                                    .call1((&payload.debug_socket_path,))?;
+                                Ok(())
+                            })
+                            .ok(); // Non-fatal if this fails
+                        }
+
+                        // 6. Run test
                         let result = run_worker(&payload);
 
                         // 4. Flush and send result

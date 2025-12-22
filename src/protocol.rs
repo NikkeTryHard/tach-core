@@ -27,6 +27,8 @@ pub struct TestPayload {
     pub fixtures: Vec<FixtureInfo>,
     /// File descriptor for log capture (memfd)
     pub log_fd: i32,
+    /// Path to supervisor's debug socket for breakpoint() support
+    pub debug_socket_path: String,
 }
 
 /// Fixture info for payload
@@ -241,6 +243,7 @@ mod tests {
                 scope: "module".to_string(),
             }],
             log_fd: -1,
+            debug_socket_path: String::new(),
         };
 
         let encoded = encode_with_length(&payload).unwrap();

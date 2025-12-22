@@ -1,78 +1,198 @@
-use tach_core::config;
+use tach_core::config::{self, Cli, Commands, OutputFormat};
+use tach_core::debugger::{self, DebugServer};
 use tach_core::discovery;
+use tach_core::junit::JunitReporter;
+use tach_core::lifecycle::CleanupGuard;
 use tach_core::logcapture::LogCapture;
+use tach_core::reporter::{HumanReporter, JsonReporter, MultiReporter, Reporter};
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
+use tach_core::signals;
+use tach_core::watch;
 use tach_core::zygote;
 
 use anyhow::Result;
+use clap::Parser;
 use nix::sys::wait::waitpid;
 use nix::unistd::{fork, ForkResult};
 use std::io::Read;
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
-    // --- DISCOVERY PHASE ---
+    // Parse CLI arguments FIRST
+    let cli = Cli::parse();
+    let is_json = cli.format == OutputFormat::Json;
+    let is_watch = cli.watch;
+
+    // --- PHASE 4.2: LIFECYCLE SETUP ---
+    debugger::install_panic_hook();
+
+    if let Err(e) = signals::install_signal_handlers() {
+        if !is_json {
+            eprintln!(
+                "[supervisor] Warning: Failed to install signal handlers: {}",
+                e
+            );
+        }
+    }
+
     let cwd = std::env::current_dir()?;
-    eprintln!("[supervisor] Scanning {}...", cwd.display());
+
+    // Handle `list` subcommand (no watch mode)
+    if let Some(Commands::List) = cli.command {
+        return handle_list_command(&cwd, is_json);
+    }
+
+    // --- WATCH MODE ---
+    if is_watch {
+        if is_json {
+            eprintln!("[tach] Warning: JSON output not recommended in watch mode");
+        }
+
+        // Clone config values for the closure
+        let junit_path = cli.junit_xml.clone();
+        let format = cli.format.clone();
+        let cwd_clone = cwd.clone();
+
+        return watch::start_watch_loop(&cwd, move || {
+            execute_session(&cwd_clone, &format, &junit_path)
+        });
+    }
+
+    // --- SINGLE RUN MODE ---
+    execute_session(&cwd, &cli.format, &cli.junit_xml)
+}
+
+/// Execute a complete test session (discovery → resolution → zygote → run)
+/// This is the reusable function that watch mode calls repeatedly.
+fn execute_session(
+    cwd: &PathBuf,
+    format: &OutputFormat,
+    junit_path: &Option<PathBuf>,
+) -> Result<()> {
+    let is_json = *format == OutputFormat::Json;
+
+    // Create reporters
+    let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
+    match format {
+        OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
+        OutputFormat::Human => reporters.push(Box::new(HumanReporter)),
+    }
+    if let Some(path) = junit_path {
+        reporters.push(Box::new(JunitReporter::new(path.clone())));
+    }
+    let mut reporter = MultiReporter::new(reporters);
+
+    let cleanup = CleanupGuard::new();
+
+    // --- DISCOVERY PHASE ---
+    if !is_json {
+        eprintln!("[supervisor] Scanning {}...", cwd.display());
+    }
 
     let start = std::time::Instant::now();
-    let discovery_result = discovery::discover(&cwd)?;
-    eprintln!(
-        "[supervisor] Discovered {} tests, {} fixtures in {:?}",
-        discovery_result.test_count(),
-        discovery_result.fixture_count(),
-        start.elapsed()
-    );
+    let discovery_result = discovery::discover(cwd)?;
+
+    if !is_json {
+        eprintln!(
+            "[supervisor] Discovered {} tests, {} fixtures in {:?}",
+            discovery_result.test_count(),
+            discovery_result.fixture_count(),
+            start.elapsed()
+        );
+    }
 
     // --- RESOLUTION PHASE ---
     let registry = FixtureRegistry::from_discovery(&discovery_result);
     let resolver = Resolver::new(&registry);
     let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
 
-    eprintln!(
-        "[supervisor] Resolved {} tests ({} errors)",
-        runnable_tests.len(),
-        errors.len()
-    );
+    if !is_json {
+        eprintln!(
+            "[supervisor] Resolved {} tests ({} errors)",
+            runnable_tests.len(),
+            errors.len()
+        );
 
-    for error in &errors {
-        match error {
-            resolver::ResolutionError::MissingFixture { test, fixture } => {
-                eprintln!("  ⚠ {} - missing: {}", test, fixture);
-            }
-            resolver::ResolutionError::CyclicDependency { test, cycle } => {
-                eprintln!("  ⚠ {} - cycle: {:?}", test, cycle);
+        for error in &errors {
+            match error {
+                resolver::ResolutionError::MissingFixture { test, fixture } => {
+                    eprintln!("  ⚠ {} - missing: {}", test, fixture);
+                }
+                resolver::ResolutionError::CyclicDependency { test, cycle } => {
+                    eprintln!("  ⚠ {} - cycle: {:?}", test, cycle);
+                }
             }
         }
     }
 
     if runnable_tests.is_empty() {
-        eprintln!("[supervisor] No tests to run.");
+        if !is_json {
+            eprintln!("[supervisor] No tests to run.");
+        }
         return Ok(());
     }
 
-    // --- CREATE LOG CAPTURE BEFORE FORK ---
+    // --- RUN TESTS ---
+    run_tests(&cleanup, runnable_tests, &mut reporter, is_json)
+}
+
+/// Handle the `list` subcommand
+fn handle_list_command(cwd: &PathBuf, is_json: bool) -> Result<()> {
+    let discovery_result = discovery::discover(cwd)?;
+
+    if is_json {
+        discovery::dump_json(&discovery_result)?;
+    } else {
+        for module in &discovery_result.modules {
+            for test in &module.tests {
+                eprintln!("{}::{}", module.path.display(), test.name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_tests(
+    cleanup: &CleanupGuard,
+    runnable_tests: Vec<resolver::RunnableTest>,
+    reporter: &mut dyn Reporter,
+    is_json: bool,
+) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+
+    // --- CREATE DEBUG SERVER ---
+    let debug_server = DebugServer::new()?;
+    let debug_socket_path = debug_server.socket_path().to_path_buf();
+    cleanup.track_socket(debug_socket_path.clone());
+
+    // --- CREATE LOG CAPTURE ---
     let max_workers = num_cpus::get().min(runnable_tests.len()).max(1);
     let log_capture = LogCapture::new(max_workers)?;
-    eprintln!("[supervisor] Created {} log buffers (memfd)", max_workers);
 
-    // --- CREATE DUAL SOCKET PAIRS ---
+    if !is_json {
+        eprintln!("[supervisor] Created {} log buffers (memfd)", max_workers);
+    }
+
+    // --- SOCKET PAIRS ---
     let (sup_cmd_sock, zyg_cmd_sock) = UnixStream::pair()?;
     let (sup_result_sock, zyg_result_sock) = UnixStream::pair()?;
 
     // --- LOAD CONFIG ---
-    // Load environment variables from pyproject.toml BEFORE forking
-    // so the Zygote inherits them and passes them to workers
     config::load_env_from_pyproject(&cwd);
 
-    eprintln!("[supervisor] Forking Zygote...");
+    if !is_json {
+        eprintln!("[supervisor] Forking Zygote...");
+    }
 
     match unsafe { fork() }? {
         ForkResult::Child => {
             drop(sup_cmd_sock);
             drop(sup_result_sock);
-            std::mem::forget(log_capture); // Don't close FDs
+            std::mem::forget(debug_server);
+            std::mem::forget(log_capture);
+            std::mem::forget(unsafe { std::ptr::read(cleanup) });
 
             if let Err(e) = zygote::entrypoint(zyg_cmd_sock, zyg_result_sock) {
                 eprintln!("[zygote] Error: {:?}", e);
@@ -83,25 +203,39 @@ fn main() -> Result<()> {
         ForkResult::Parent { child: zygote_pid } => {
             drop(zyg_cmd_sock);
             drop(zyg_result_sock);
-            eprintln!("[supervisor] Zygote PID: {}", zygote_pid);
+
+            cleanup.set_zygote_pid(zygote_pid.as_raw());
+
+            if !is_json {
+                eprintln!("[supervisor] Zygote PID: {}", zygote_pid);
+            }
 
             // Wait for READY
             let mut ready_buf = [0u8; 1];
             let mut cmd_sock_clone = sup_cmd_sock.try_clone()?;
             cmd_sock_clone.read_exact(&mut ready_buf)?;
-            if ready_buf[0] == 0x42 {
+
+            if ready_buf[0] == 0x42 && !is_json {
                 eprintln!("[supervisor] Zygote is READY.\n");
             }
 
             // --- SCHEDULER PHASE ---
-            let mut scheduler = Scheduler::new(sup_cmd_sock, sup_result_sock, log_capture)?;
+            let mut scheduler = Scheduler::new(
+                sup_cmd_sock,
+                sup_result_sock,
+                log_capture,
+                debug_socket_path,
+            )?;
 
-            scheduler.run(runnable_tests)?;
+            scheduler.run(runnable_tests, reporter)?;
 
             // Shutdown
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
-            eprintln!("[supervisor] Done.");
+
+            if !is_json {
+                eprintln!("[supervisor] Done.");
+            }
         }
     }
 

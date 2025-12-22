@@ -1,10 +1,63 @@
 //! Configuration Loader
-//! Reads pyproject.toml for environment variables (pytest-env replacement).
+//! - Reads pyproject.toml for environment variables (pytest-env replacement)
+//! - Provides CLI argument parsing with clap (Phase 5.1)
 
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+// =============================================================================
+// CLI Configuration (Phase 5.1)
+// =============================================================================
+
+/// Output format for tach results
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum OutputFormat {
+    /// Human-readable CLI output (to stderr)
+    #[default]
+    Human,
+    /// Machine-readable NDJSON (to stdout)
+    Json,
+}
+
+/// Tach CLI - Fast Python Test Runner
+#[derive(Parser)]
+#[command(name = "tach", version, about = "Fast Python Test Runner")]
+pub struct Cli {
+    /// Output format (also: TACH_FORMAT env var)
+    #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
+    pub format: OutputFormat,
+
+    /// Path to generate JUnit XML report (also: TACH_JUNIT_XML env var)
+    #[arg(long, env = "TACH_JUNIT_XML")]
+    pub junit_xml: Option<std::path::PathBuf>,
+
+    /// Watch for changes and re-run tests automatically
+    #[arg(long, short = 'w')]
+    pub watch: bool,
+
+    /// Test directory or file pattern
+    #[arg(default_value = ".")]
+    pub path: String,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+/// Subcommands
+#[derive(Subcommand, Clone)]
+pub enum Commands {
+    /// Run tests (default if no subcommand)
+    Test,
+    /// List discovered tests without running
+    List,
+}
+
+// =============================================================================
+// PyProject Configuration
+// =============================================================================
 
 #[derive(Deserialize, Default)]
 struct PyProject {

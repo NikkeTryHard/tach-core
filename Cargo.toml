@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }
 anyhow = "1.0"
-nix = { version = "0.29", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched"] }
+nix = { version = "0.29", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched", "term"] }
 
 # Discovery Stack
 rustpython-parser = "0.4"
@@ -32,6 +32,20 @@ libc = "0.2"
 
 # Config Loading
 toml = "0.8"
+
+# Lifecycle & Signal Handling (Phase 4.2)
+signal-hook = "0.3"
+
+# CLI & JSON Protocol (Phase 5.1)
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = "1.0"
+
+# JUnit XML (Phase 5.2)
+quick-xml = { version = "0.31", features = ["serialize"] }
+
+# Watch Mode (Phase 5.3)
+notify = "6.1"
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
