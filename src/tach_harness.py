@@ -116,6 +116,56 @@ def inject_entropy():
 
 
 # =============================================================================
+# POST-FORK INITIALIZATION: Snapshot Mode Handshake
+# =============================================================================
+
+# Global flag tracking whether this worker can be recycled via userfaultfd
+_CAN_RECYCLE = False
+
+
+def post_fork_init() -> bool:
+    """Initialize worker after fork - called ONCE at start of worker lifecycle.
+
+    This function:
+    1. Performs post-fork hygiene (RNG reseed, logging reset)
+    2. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
+    3. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
+
+    Returns True if snapshot mode is enabled, False otherwise.
+    """
+    global _CAN_RECYCLE
+
+    # 1. Post-fork hygiene
+    inject_entropy()
+
+    # 2. Check if snapshot mode is enabled
+    import os
+
+    supervisor_sock = os.environ.get("TACH_SUPERVISOR_SOCK")
+    if not supervisor_sock:
+        # No snapshot mode - standard fork-server behavior
+        return False
+
+    # 3. Initialize snapshot mode via Rust FFI
+    try:
+        import tach_rust
+
+        _CAN_RECYCLE = tach_rust.init_snapshot_mode(supervisor_sock)
+        return _CAN_RECYCLE
+    except ImportError:
+        print("[harness] WARN: tach_rust module not available", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"[harness] WARN: Snapshot init failed: {e}", file=sys.stderr)
+        return False
+
+
+def can_recycle() -> bool:
+    """Returns True if this worker can be recycled via userfaultfd reset."""
+    return _CAN_RECYCLE
+
+
+# =============================================================================
 # ZYGOTE COLLECTION PATTERN
 # Pytest session is initialized ONCE in Zygote, workers inherit via fork CoW
 # =============================================================================

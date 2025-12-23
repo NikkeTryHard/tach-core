@@ -16,10 +16,83 @@ use clap::Parser;
 use nix::sys::wait::waitpid;
 use nix::unistd::{fork, ForkResult};
 use std::io::Read;
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use uuid::Uuid;
+
+// =============================================================================
+// RunContext: Manages per-session resources including UFFD listener
+// =============================================================================
+
+/// Runtime context for a test session.
+/// Creates a unique run directory for sockets and manages UFFD listener.
+pub struct RunContext {
+    /// Unique run directory: /tmp/tach_run_{uuid}/
+    pub run_dir: PathBuf,
+    /// Path to UFFD socket: /tmp/tach_run_{uuid}/uffd.sock
+    pub uffd_sock_path: PathBuf,
+    /// UFFD listener for worker handshakes (None if snapshot mode disabled)
+    pub uffd_listener: Option<UnixListener>,
+}
+
+impl RunContext {
+    /// Create a new run context with UFFD listener
+    pub fn new() -> Result<Self> {
+        let uuid = Uuid::new_v4();
+        let run_dir = PathBuf::from(format!("/tmp/tach_run_{}", uuid));
+        std::fs::create_dir_all(&run_dir)?;
+
+        let uffd_sock_path = run_dir.join("uffd.sock");
+
+        // Try to create UFFD listener (may fail if userfaultfd not available)
+        let uffd_listener = match UnixListener::bind(&uffd_sock_path) {
+            Ok(listener) => {
+                // Set TACH_SUPERVISOR_SOCK so workers know where to connect
+                std::env::set_var("TACH_SUPERVISOR_SOCK", &uffd_sock_path);
+                Some(listener)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.",
+                    e
+                );
+                None
+            }
+        };
+
+        Ok(Self {
+            run_dir,
+            uffd_sock_path,
+            uffd_listener,
+        })
+    }
+
+    /// Check if snapshot mode is available
+    pub fn snapshot_enabled(&self) -> bool {
+        self.uffd_listener.is_some()
+    }
+}
+
+impl Drop for RunContext {
+    fn drop(&mut self) {
+        // Clean up run directory on exit
+        if self.run_dir.exists() {
+            let _ = std::fs::remove_dir_all(&self.run_dir);
+        }
+    }
+}
 
 fn main() -> Result<()> {
+    // ==========================================================================
+    // PHASE 1.1: FORCE SYSTEM ALLOCATOR (Snapshot-Hypervisor "Physics" Fix)
+    // ==========================================================================
+    // Python's obmalloc desynchronizes during snapshot/fork operations.
+    // glibc's malloc is robust if we disable the thread cache (tcache).
+    // These MUST be set before ANY Python operations or fork() calls.
+    // See: implementation_plan.md Phase 1 for details.
+    std::env::set_var("PYTHONMALLOC", "malloc");
+    std::env::set_var("GLIBC_TUNABLES", "glibc.malloc.tcache_count=0");
+
     // Parse CLI arguments FIRST
     let cli = Cli::parse();
     let is_json = cli.format == OutputFormat::Json;
@@ -222,6 +295,14 @@ fn run_tests(
         eprintln!("[supervisor] Isolation disabled via TACH_NO_ISOLATION");
     }
 
+    // --- CREATE RUN CONTEXT (Snapshot Mode) ---
+    // This creates the UFFD listener socket and sets TACH_SUPERVISOR_SOCK env var
+    // Must be before fork so the env var is inherited by Zygote
+    let run_context = RunContext::new()?;
+    if run_context.snapshot_enabled() && !is_json {
+        eprintln!("[supervisor] Snapshot mode enabled: {}", run_context.uffd_sock_path.display());
+    }
+
     if !is_json {
         eprintln!("[supervisor] Forking Zygote...");
     }
@@ -232,6 +313,7 @@ fn run_tests(
             drop(sup_result_sock);
             std::mem::forget(debug_server);
             std::mem::forget(log_capture);
+            std::mem::forget(run_context); // Don't cleanup in child
             std::mem::forget(unsafe { std::ptr::read(cleanup) });
 
             if let Err(e) = zygote::entrypoint(zyg_cmd_sock, zyg_result_sock) {

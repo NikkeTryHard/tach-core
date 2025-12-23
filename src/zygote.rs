@@ -3,6 +3,7 @@
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, MSG_READY};
+use crate::snapshot::send_fd;
 use anyhow::Result;
 use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::{fork, ForkResult};
@@ -11,14 +12,156 @@ use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule};
 use std::env;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::process;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
+use userfaultfd::UffdBuilder;
 
 /// Embedded Python harness for pytest execution
 const TACH_HARNESS_PY: &str = include_str!("tach_harness.py");
+
+// =============================================================================
+// tach_rust Module: Native FFI for Python Harness
+// =============================================================================
+
+/// Cached memory regions for worker self-reset (Seppuku pattern)
+/// These are populated during init_snapshot_mode and used by reset_memory.
+/// We exclude stack to avoid "standing on the floor we're demolishing".
+static mut RESET_REGIONS: Vec<(usize, usize)> = Vec::new(); // (start, len)
+static mut SNAPSHOT_ENABLED: bool = false;
+
+/// Initialize snapshot mode by creating UFFD and sending to Supervisor
+///
+/// Called by Python after post-fork hygiene (RNG reseed, logging reset).
+/// Returns true if snapshotting is enabled, false if falling back to fork-server.
+#[pyfunction]
+fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
+    use crate::snapshot::parse_memory_maps;
+    use nix::unistd::Pid;
+
+    let pid = std::process::id() as i32;
+
+    // 1. Create UFFD
+    let uffd = match UffdBuilder::new()
+        .close_on_exec(true)
+        .non_blocking(false)
+        .create()
+    {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!(
+                "[tach_rust] WARN: Failed to create userfaultfd: {}. Snapshotting disabled.",
+                e
+            );
+            return Ok(false); // Fallback to fork-server
+        }
+    };
+
+    // 2. Connect to Supervisor
+    let sock = match UnixStream::connect(sock_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "[tach_rust] WARN: Failed to connect to supervisor: {}. Snapshotting disabled.",
+                e
+            );
+            return Ok(false);
+        }
+    };
+
+    // 3. Send PID + UFFD via SCM_RIGHTS
+    if let Err(e) = send_fd(&sock, pid, uffd.as_raw_fd()) {
+        eprintln!(
+            "[tach_rust] WARN: Failed to send UFFD: {}. Snapshotting disabled.",
+            e
+        );
+        return Ok(false);
+    }
+
+    // 4. Cache memory regions for self-reset (BEFORE snapshot)
+    // We cache Heap + libpython data/bss + anonymous mappings
+    // We EXCLUDE stack to avoid suicide (can't madvise the stack you're on)
+    if let Ok(regions) = parse_memory_maps(Pid::from_raw(pid)) {
+        unsafe {
+            RESET_REGIONS = regions
+                .iter()
+                .filter(|r| r.should_snapshot() && !r.is_stack())
+                .map(|r| (r.start, r.len))
+                .collect();
+            eprintln!(
+                "[tach_rust] Cached {} regions for self-reset",
+                RESET_REGIONS.len()
+            );
+        }
+    }
+
+    // 5. Freeze self - Supervisor will capture snapshot and SIGCONT us
+    eprintln!("[tach_rust] Freezing for snapshot (PID {})...", pid);
+    if let Err(e) = nix::sys::signal::raise(Signal::SIGSTOP) {
+        return Err(pyo3::exceptions::PyOSError::new_err(format!(
+            "Failed to SIGSTOP: {}",
+            e
+        )));
+    }
+
+    // 6. We're back! Supervisor has registered our memory.
+    unsafe {
+        SNAPSHOT_ENABLED = true;
+    }
+    eprintln!("[tach_rust] Resumed after snapshot capture");
+    Ok(true)
+}
+
+/// Reset memory by calling madvise(MADV_DONTNEED) on cached regions
+///
+/// This is the "Seppuku" pattern - the Worker zaps its own memory.
+/// The next access to these pages will trigger UFFD faults,
+/// which the Supervisor handles by restoring golden pages.
+#[pyfunction]
+fn reset_memory() -> PyResult<()> {
+    unsafe {
+        if !SNAPSHOT_ENABLED {
+            eprintln!("[tach_rust] reset_memory called but snapshot not enabled");
+            return Ok(());
+        }
+
+        for &(start, len) in &RESET_REGIONS {
+            let ret = libc::madvise(start as *mut libc::c_void, len, libc::MADV_DONTNEED);
+            if ret != 0 {
+                eprintln!(
+                    "[tach_rust] madvise failed for region {:x}-{:x}: {}",
+                    start,
+                    start + len,
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+
+        eprintln!(
+            "[tach_rust] Self-reset complete: invalidated {} regions",
+            RESET_REGIONS.len()
+        );
+    }
+    Ok(())
+}
+
+/// Register the tach_rust module into sys.modules
+pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
+    let tach_mod = PyModule::new(py, "tach_rust")?;
+
+    // Add functions to module
+    tach_mod.add_function(wrap_pyfunction!(init_snapshot_mode, &tach_mod)?)?;
+    tach_mod.add_function(wrap_pyfunction!(reset_memory, &tach_mod)?)?;
+
+    // Inject into sys.modules so 'import tach_rust' works
+    let sys = py.import("sys")?;
+    sys.getattr("modules")?.set_item("tach_rust", tach_mod)?;
+
+    Ok(())
+}
 
 /// Zygote with separate command and result channels
 pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<()> {
@@ -98,6 +241,10 @@ except Exception as e:
             None,
             None,
         )?;
+
+        // CRITICAL: Inject tach_rust module BEFORE loading harness
+        // This allows 'import tach_rust' in Python code
+        inject_tach_rust_module(py)?;
 
         // Load the tach harness module
         // Convert &str to CString for PyModule::from_code
@@ -234,7 +381,18 @@ except Exception as e:
                             .ok(); // Non-fatal if this fails
                         }
 
-                        // 6. Run test
+                        // 6. POST-FORK INIT: Snapshot mode handshake
+                        // This performs hygiene (RNG reseed, logging reset) and
+                        // initiates snapshot if TACH_SUPERVISOR_SOCK is set.
+                        // Worker will SIGSTOP here; Supervisor captures snapshot and SIGCONTs.
+                        Python::with_gil(|py| -> Result<(), PyErr> {
+                            let harness = py.import("tach_harness")?;
+                            harness.getattr("post_fork_init")?.call0()?;
+                            Ok(())
+                        })
+                        .ok(); // Continue even if snapshot fails (graceful degradation)
+
+                        // 7. Run test
                         let result = run_worker(&payload);
 
                         // 4. Flush and send result

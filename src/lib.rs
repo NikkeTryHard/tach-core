@@ -16,5 +16,6 @@ pub mod reporter;
 pub mod resolver;
 pub mod scheduler;
 pub mod signals;
+pub mod snapshot;
 pub mod watch;
 pub mod zygote;
