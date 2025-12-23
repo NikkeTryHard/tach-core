@@ -10,6 +10,7 @@ pub mod environment;
 pub mod isolation;
 pub mod junit;
 pub mod lifecycle;
+pub mod loader;
 pub mod logcapture;
 pub mod protocol;
 pub mod reporter;

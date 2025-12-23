@@ -3,6 +3,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discovery;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
+use tach_core::loader;
 use tach_core::logcapture::LogCapture;
 use tach_core::reporter::{HumanReporter, JsonReporter, MultiReporter, Reporter};
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
@@ -186,9 +187,49 @@ fn execute_session(
         );
     }
 
+    // --- PHASE 2: EAGER COMPILATION (Zero-Copy Loader) ---
+    // Compile ALL .py files in project and populate global registry BEFORE fork.
+    // Workers will inherit this registry via CoW (copy-on-write).
+    let start_compile = std::time::Instant::now();
+    
+    // Collect ALL .py files in project (not just test modules)
+    let py_files: Vec<std::path::PathBuf> = walkdir::WalkDir::new(cwd)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let path = e.path();
+            // Include only .py files
+            path.extension().map_or(false, |ext| ext == "py")
+                // Exclude hidden directories, __pycache__, .git, etc.
+                && !path.ancestors().any(|p| {
+                    p.file_name().map_or(false, |name| {
+                        let n = name.to_string_lossy();
+                        n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
+                    })
+                })
+        })
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    
+    // Initialize registry and compile
+    let registry = loader::init_registry(cwd.clone());
+    if let Ok(compiler) = loader::BytecodeCompiler::new(cwd) {
+        let compiled = compiler.compile_batch(&py_files, registry);
+        if !is_json {
+            eprintln!(
+                "[supervisor] Compiled {} of {} modules for zero-copy loading in {:?}",
+                compiled,
+                py_files.len(),
+                start_compile.elapsed()
+            );
+        }
+    } else if !is_json {
+        eprintln!("[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib");
+    }
+
     // --- RESOLUTION PHASE ---
-    let registry = FixtureRegistry::from_discovery(&discovery_result);
-    let resolver = Resolver::new(&registry);
+    let fixture_registry = FixtureRegistry::from_discovery(&discovery_result);
+    let resolver = Resolver::new(&fixture_registry);
     let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
 
     if !is_json {

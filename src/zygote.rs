@@ -152,9 +152,18 @@ fn reset_memory() -> PyResult<()> {
 pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
     let tach_mod = PyModule::new(py, "tach_rust")?;
 
-    // Add functions to module
+    // Phase 1: Snapshot mode functions
     tach_mod.add_function(wrap_pyfunction!(init_snapshot_mode, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(reset_memory, &tach_mod)?)?;
+
+    // Phase 2: Zero-Copy Loader functions (Request Model)
+    tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module, &tach_mod)?)?;
+    tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module_path, &tach_mod)?)?;
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::loader::is_module_package,
+        &tach_mod
+    )?)?;
+    tach_mod.add_function(wrap_pyfunction!(crate::loader::load_module, &tach_mod)?)?;
 
     // Inject into sys.modules so 'import tach_rust' works
     let sys = py.import("sys")?;

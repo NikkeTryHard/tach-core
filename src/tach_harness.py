@@ -116,6 +116,160 @@ def inject_entropy():
 
 
 # =============================================================================
+# ZERO-COPY LOADER: sys.meta_path Import Hook (Phase 2)
+# =============================================================================
+
+import importlib.abc
+import importlib.machinery
+import importlib.util
+
+# Flag to track if the import hook is installed
+_TACH_IMPORT_HOOK_INSTALLED = False
+
+
+class TachLoader(importlib.abc.Loader):
+    """Custom loader that uses Rust FFI to load bytecode directly.
+
+    This loader bypasses importlib's file reading and uses pre-compiled,
+    header-stripped bytecode from the Rust ModuleRegistry.
+    """
+
+    def __init__(self, name: str, bytecode: bytes, source_path: str, is_package: bool):
+        self.name = name
+        self.bytecode = bytecode
+        self.source_path = source_path
+        self.is_package = is_package
+
+    def create_module(self, spec):
+        """Let the default machinery create the module object."""
+        return None  # Use default semantics
+
+    def exec_module(self, module):
+        """Execute the module using Rust FFI.
+
+        Calls tach_rust.load_module which uses PyMarshal_ReadObjectFromString
+        and PyImport_ExecCodeModuleObject to inject the bytecode directly.
+        """
+        try:
+            import tach_rust
+
+            success = tach_rust.load_module(self.name, self.source_path, self.bytecode)
+            if not success:
+                raise ImportError(f"tach_rust.load_module failed for {self.name}")
+        except Exception as e:
+            # Log error and re-raise - let Python handle it
+            print(f"[tach] ERROR: Failed to load {self.name}: {e}", file=sys.stderr)
+            raise
+
+
+class TachMetaPathFinder(importlib.abc.MetaPathFinder):
+    """Meta path finder that intercepts imports and routes to Rust loader.
+
+    Installed at sys.meta_path[0] to have first priority.
+    If the module is in the Rust registry, we return a TachLoader.
+    Otherwise, we return None to let standard importlib handle it.
+    """
+
+    def find_spec(self, fullname, path, target=None):
+        """Find module spec for the given module name.
+
+        Args:
+            fullname: Fully qualified module name (e.g., "foo.bar")
+            path: Parent package's __path__ (for submodules)
+            target: Optional target module (used for reloading)
+
+        Returns:
+            ModuleSpec if module is in Rust registry, None otherwise.
+        """
+        try:
+            import tach_rust
+        except ImportError:
+            return None  # tach_rust not available, fall back to standard import
+
+        # Check if module is in registry
+        bytecode = tach_rust.get_module(fullname)
+        if bytecode is None:
+            # Not in registry - check if it's a namespace package (directory without __init__.py)
+            # For now, let standard importlib handle it
+            return None
+
+        # Get source path for __file__ attribute
+        source_path = tach_rust.get_module_path(fullname) or ""
+
+        # Check if it's a package
+        is_package = tach_rust.is_module_package(fullname) or False
+
+        # Determine submodule search locations for packages
+        submodule_search_locations = None
+        if is_package and source_path:
+            import os
+
+            parent_dir = os.path.dirname(source_path)
+            submodule_search_locations = [parent_dir]
+
+        # Create loader
+        loader = TachLoader(fullname, bytecode, source_path, is_package)
+
+        # Create and return ModuleSpec
+        spec = importlib.machinery.ModuleSpec(
+            name=fullname,
+            loader=loader,
+            origin=source_path,
+            is_package=is_package,
+        )
+        if submodule_search_locations:
+            spec.submodule_search_locations = submodule_search_locations
+
+        return spec
+
+
+def install_tach_import_hook():
+    """Install the Tach import hook at sys.meta_path[0].
+
+    This gives Tach first priority for module resolution.
+    Standard importlib remains as fallback for modules not in registry.
+    """
+    global _TACH_IMPORT_HOOK_INSTALLED
+
+    if _TACH_IMPORT_HOOK_INSTALLED:
+        return  # Already installed
+
+    # Check if tach_rust module is available
+    try:
+        import tach_rust
+
+        # Verify the loader functions exist
+        if not hasattr(tach_rust, "get_module"):
+            print(
+                "[tach] WARN: get_module not available, skipping import hook",
+                file=sys.stderr,
+            )
+            return
+    except ImportError:
+        print(
+            "[tach] WARN: tach_rust not available, skipping import hook",
+            file=sys.stderr,
+        )
+        return
+
+    # Install at position 0 for highest priority
+    finder = TachMetaPathFinder()
+    sys.meta_path.insert(0, finder)
+    _TACH_IMPORT_HOOK_INSTALLED = True
+    print("[tach] Import hook installed at sys.meta_path[0]", file=sys.stderr)
+
+
+def uninstall_tach_import_hook():
+    """Remove the Tach import hook from sys.meta_path."""
+    global _TACH_IMPORT_HOOK_INSTALLED
+
+    sys.meta_path[:] = [
+        f for f in sys.meta_path if not isinstance(f, TachMetaPathFinder)
+    ]
+    _TACH_IMPORT_HOOK_INSTALLED = False
+
+
+# =============================================================================
 # POST-FORK INITIALIZATION: Snapshot Mode Handshake
 # =============================================================================
 
@@ -128,8 +282,9 @@ def post_fork_init() -> bool:
 
     This function:
     1. Performs post-fork hygiene (RNG reseed, logging reset)
-    2. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
-    3. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
+    2. Installs the Tach import hook for zero-copy module loading
+    3. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
+    4. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
 
     Returns True if snapshot mode is enabled, False otherwise.
     """
@@ -138,7 +293,11 @@ def post_fork_init() -> bool:
     # 1. Post-fork hygiene
     inject_entropy()
 
-    # 2. Check if snapshot mode is enabled
+    # 2. Install import hook for zero-copy module loading (Phase 2)
+    # This must be done BEFORE snapshot to be part of the golden state
+    install_tach_import_hook()
+
+    # 3. Check if snapshot mode is enabled
     import os
 
     supervisor_sock = os.environ.get("TACH_SUPERVISOR_SOCK")
@@ -146,7 +305,7 @@ def post_fork_init() -> bool:
         # No snapshot mode - standard fork-server behavior
         return False
 
-    # 3. Initialize snapshot mode via Rust FFI
+    # 4. Initialize snapshot mode via Rust FFI
     try:
         import tach_rust
 

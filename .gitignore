@@ -2,3 +2,5 @@
 /.venv
 Cargo.lock
 __pycache__/
+.tach/
+*.pyc
