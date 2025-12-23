@@ -110,7 +110,7 @@ fn test_snapshot_manager_creation() {
     // Either available or graceful fallback
     eprintln!(
         "[physics_check] SnapshotManager available: {}",
-        mgr.is_available()
+        mgr.available
     );
 }
 
@@ -146,7 +146,7 @@ fn test_physics_check_memory_reset() {
         }
     };
 
-    if !snapshot_mgr.is_available() {
+    if !snapshot_mgr.available {
         eprintln!("[physics_check] UFFD not available. Skipping Physics Check.");
         cleanup_test_run_dir(&run_dir);
         return;

@@ -76,3 +76,8 @@ path = "rust_tests/implementation_tests.rs"
 [[test]]
 name = "physics_check"
 path = "rust_tests/physics_check.rs"
+
+[[test]]
+name = "snapshot_integration"
+path = "rust_tests/snapshot_integration.rs"
+

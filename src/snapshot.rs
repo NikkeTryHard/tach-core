@@ -572,6 +572,10 @@ impl SnapshotManager {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // Memory Region Parsing Tests
+    // =========================================================================
+
     #[test]
     fn test_parse_self_maps() {
         let pid = Pid::from_raw(std::process::id() as i32);
@@ -579,19 +583,32 @@ mod tests {
 
         assert!(!regions.is_empty());
 
-        // Should find at least heap and stack
-        let has_heap = regions.iter().any(|r| r.name.contains("[heap]"));
+        // Should find at least stack
         let has_stack = regions.iter().any(|r| r.name.contains("[stack]"));
 
         eprintln!("Found {} regions", regions.len());
-        eprintln!("Has heap: {}, Has stack: {}", has_heap, has_stack);
+        eprintln!("Has stack: {}", has_stack);
 
-        // These should exist for any normal process
+        // Stack should exist for any normal process
         assert!(has_stack, "Should find stack region");
     }
 
     #[test]
-    fn test_region_filtering() {
+    fn test_parse_self_maps_has_readable_regions() {
+        let pid = Pid::from_raw(std::process::id() as i32);
+        let regions = parse_memory_maps(pid).expect("Failed to parse maps");
+
+        // At least some regions should be readable
+        let readable_count = regions.iter().filter(|r| r.perms.contains('r')).count();
+        assert!(readable_count > 0, "Should have readable regions");
+    }
+
+    // =========================================================================
+    // Memory Region Filtering Tests
+    // =========================================================================
+
+    #[test]
+    fn test_region_filtering_heap() {
         let heap = MemoryRegion {
             start: 0x1000,
             end: 0x2000,
@@ -599,9 +616,12 @@ mod tests {
             perms: "rw-p".to_string(),
             name: "[heap]".to_string(),
         };
-        assert!(heap.should_snapshot());
-        assert!(!heap.is_stack());
+        assert!(heap.should_snapshot(), "Heap should be snapshotted");
+        assert!(!heap.is_stack(), "Heap is not stack");
+    }
 
+    #[test]
+    fn test_region_filtering_stack() {
         let stack = MemoryRegion {
             start: 0x3000,
             end: 0x4000,
@@ -609,9 +629,12 @@ mod tests {
             perms: "rw-p".to_string(),
             name: "[stack]".to_string(),
         };
-        assert!(stack.should_snapshot());
-        assert!(stack.is_stack());
+        assert!(stack.should_snapshot(), "Stack should be snapshotted");
+        assert!(stack.is_stack(), "Stack is_stack() should be true");
+    }
 
+    #[test]
+    fn test_region_filtering_vdso_excluded() {
         let vdso = MemoryRegion {
             start: 0x5000,
             end: 0x6000,
@@ -619,6 +642,141 @@ mod tests {
             perms: "r-xp".to_string(),
             name: "[vdso]".to_string(),
         };
-        assert!(!vdso.should_snapshot());
+        assert!(!vdso.should_snapshot(), "vDSO should be excluded");
+    }
+
+    #[test]
+    fn test_region_filtering_vsyscall_excluded() {
+        let vsyscall = MemoryRegion {
+            start: 0x7000,
+            end: 0x8000,
+            len: 0x1000,
+            perms: "r-xp".to_string(),
+            name: "[vsyscall]".to_string(),
+        };
+        assert!(!vsyscall.should_snapshot(), "vsyscall should be excluded");
+    }
+
+    #[test]
+    fn test_region_filtering_readonly_excluded() {
+        let readonly = MemoryRegion {
+            start: 0x9000,
+            end: 0xa000,
+            len: 0x1000,
+            perms: "r--p".to_string(),
+            name: "/lib/libc.so".to_string(),
+        };
+        assert!(!readonly.should_snapshot(), "Read-only regions excluded");
+    }
+
+    #[test]
+    fn test_region_filtering_anonymous_included() {
+        let anon = MemoryRegion {
+            start: 0xb000,
+            end: 0xc000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "".to_string(),
+        };
+        assert!(
+            anon.should_snapshot(),
+            "Anonymous writable regions included"
+        );
+    }
+
+    #[test]
+    fn test_region_filtering_libpython_included() {
+        let libpython = MemoryRegion {
+            start: 0xd000,
+            end: 0xe000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "/usr/lib/libpython3.12.so".to_string(),
+        };
+        assert!(
+            libpython.should_snapshot(),
+            "libpython data segment included"
+        );
+    }
+
+    // =========================================================================
+    // Page Alignment Tests
+    // =========================================================================
+
+    #[test]
+    fn test_page_alignment_already_aligned() {
+        assert_eq!(align_to_page(0x1000), 0x1000);
+        assert_eq!(align_to_page(0x2000), 0x2000);
+        assert_eq!(align_to_page(0x0), 0x0);
+    }
+
+    #[test]
+    fn test_page_alignment_unaligned() {
+        assert_eq!(align_to_page(0x1001), 0x1000);
+        assert_eq!(align_to_page(0x1fff), 0x1000);
+        assert_eq!(align_to_page(0x2345), 0x2000);
+    }
+
+    #[test]
+    fn test_page_alignment_large_addresses() {
+        // Test with realistic 64-bit addresses
+        assert_eq!(align_to_page(0x7f1234560000), 0x7f1234560000);
+        assert_eq!(align_to_page(0x7f1234560abc), 0x7f1234560000);
+        assert_eq!(align_to_page(0x7f1234560fff), 0x7f1234560000);
+    }
+
+    // =========================================================================
+    // SnapshotManager Tests
+    // =========================================================================
+
+    #[test]
+    fn test_snapshot_manager_creation() {
+        // This may fail if UFFD is not available, which is okay
+        let result = SnapshotManager::new();
+        assert!(result.is_ok(), "SnapshotManager::new() should not panic");
+
+        let mgr = result.unwrap();
+        // available may be true or false depending on system
+        eprintln!("SnapshotManager available: {}", mgr.available);
+    }
+
+    #[test]
+    fn test_snapshot_manager_no_workers_initially() {
+        let mgr = SnapshotManager::new().unwrap();
+        assert!(
+            mgr.worker_pids().is_empty(),
+            "No workers registered initially"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_manager_get_nonexistent_worker() {
+        let mgr = SnapshotManager::new().unwrap();
+        let fake_pid = Pid::from_raw(99999);
+        assert!(
+            mgr.get_worker_uffd(fake_pid).is_none(),
+            "Nonexistent worker should return None"
+        );
+    }
+
+    // =========================================================================
+    // SCM_RIGHTS Tests (require actual socket, basic validation only)
+    // =========================================================================
+
+    #[test]
+    fn test_pid_bytes_roundtrip() {
+        let pid: i32 = 12345;
+        let bytes = pid.to_le_bytes();
+        let recovered = i32::from_le_bytes(bytes);
+        assert_eq!(pid, recovered);
+    }
+
+    #[test]
+    fn test_negative_pid_roundtrip() {
+        // PID -1 is special (wait for any child)
+        let pid: i32 = -1;
+        let bytes = pid.to_le_bytes();
+        let recovered = i32::from_le_bytes(bytes);
+        assert_eq!(pid, recovered);
     }
 }

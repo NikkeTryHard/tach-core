@@ -2,256 +2,247 @@
 
 <div align="center">
 
-**A Runtime Hypervisor for Python Tests**
+**A Snapshot-Hypervisor for Python Tests**
 
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)](https://www.python.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green?logo=linux)](https://kernel.org/)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
 
-_Replace pytest's execution model with sub-millisecond fork latency_
+_Replace pytest's execution model with microsecond-scale memory snapshots_
 
 </div>
 
 ---
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Performance Metrics](#performance-metrics)
+- [Architecture](#architecture)
+  - [The Jedi Protocol](#the-jedi-protocol)
+  - [Physics Engine](#physics-engine)
+  - [Zero-Copy Loader](#zero-copy-loader)
+  - [Toxicity Analysis](#toxicity-analysis)
+- [System Requirements](#system-requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Development](#development)
+- [Implementation Roadmap](#implementation-roadmap)
+- [Test Coverage](#test-coverage)
+
+---
+
 ## Overview
 
-Tach is not a test runner—it's a high-performance **test execution engine** built in Rust that replaces pytest's execution model with a **Zygote/Fork architecture** using Linux kernel primitives (`ptrace`, `clone`, `namespaces`).
+Tach is a **Hypervisor for Python**. It abandons the traditional process creation model (`fork()` or `spawn()`) in favor of **Snapshot/Restore** architecture using Linux `userfaultfd`.
 
-### The Problem with Traditional Test Runners
+Instead of creating a new process for every test (taking approximately 2ms plus import time), Tach creates a process **once**, captures a memory snapshot, runs a test, and then **restores** the memory state in **less than 50 microseconds**.
 
-```
-Traditional pytest execution:
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   test_a.py  │    │   test_b.py  │    │   test_c.py  │
-│              │    │              │    │              │
-│ ▸ Import lib │    │ ▸ Import lib │    │ ▸ Import lib │
-│ ▸ Load frames│    │ ▸ Load frames│    │ ▸ Load frames│
-│ ▸ Run test   │    │ ▸ Run test   │    │ ▸ Run test   │
-└──────────────┘    └──────────────┘    └──────────────┘
-    ~200ms              ~200ms              ~200ms
-```
+### The Problem: Import Tax and Fork Safety
 
-**Every test pays the Python startup tax.** For codebases with thousands of tests, this adds up to minutes of wasted time.
+Traditional test runners suffer from three fundamental performance bottlenecks:
 
-### The Tach Solution: Zygote Pattern
+1. **Import Tax:** Python module imports are expensive. `import pandas` takes 200ms or more. Even with `fork()`, this penalty is paid in the Zygote initialization.
 
-```
-Tach execution:
-┌────────────────────────────────────────────────────────────┐
-│                         ZYGOTE                             │
-│  ▸ Import lib (ONCE)                                       │
-│  ▸ Load frameworks (ONCE)                                  │
-│  ▸ Warm DB connections (ONCE)                              │
-│  ▸ Collect all tests (ONCE)                                │
-└─────────────┬────────────────────┬────────────────────┬────┘
-              │ fork()             │ fork()             │ fork()
-              ▼                    ▼                    ▼
-        ┌──────────┐         ┌──────────┐         ┌──────────┐
-        │ Worker 1 │         │ Worker 2 │         │ Worker N │
-        │  test_a  │         │  test_b  │         │  test_n  │
-        │   ~1ms   │         │   ~1ms   │         │   ~1ms   │
-        └──────────┘         └──────────┘         └──────────┘
-```
+2. **Fork Safety:** The `fork()` system call copies locked mutexes from background threads (such as logging handlers), causing deadlocks in child processes.
 
-**Pay the startup cost ONCE.** Workers inherit the fully-initialized Python environment via Copy-on-Write (CoW) fork semantics.
+3. **Allocator Churn:** Python's `obmalloc` fragments memory over time, making standard memory snapshots unstable.
+
+### The Tach Solution
+
+Tach implements a three-pronged approach to eliminate these bottlenecks:
+
+1. **Zero-Copy Loading:** Bypasses Python's `importlib` entirely. Rust compiles `.py` source files to `.pyc` bytecode, memory-maps them, and injects them directly into the Python interpreter via C-API.
+
+2. **Snapshot Isolation:** Uses `userfaultfd` to track memory writes and capture "golden" snapshots of worker memory state.
+
+3. **Instant Reset:** After test execution, dirty pages are dropped via `madvise(MADV_DONTNEED)`. Subsequent memory access triggers page faults, which are serviced from the golden snapshot.
 
 ---
 
-## Performance Comparison
+## Performance Metrics
 
-| Metric                  | pytest                | Tach                | Improvement      |
-| ----------------------- | --------------------- | ------------------- | ---------------- |
-| **Interpreter Startup** | Per-test (~200ms)     | **Once**            | 10-100x          |
-| **Process Isolation**   | Docker/subprocess     | **fork()**          | ~1ms latency     |
-| **Test Discovery**      | Import all modules    | **Static AST**      | 5-20x            |
-| **Memory Usage**        | Full copy per worker  | **Copy-on-Write**   | 60-80% reduction |
-| **Parallel Scheduling** | pytest-xdist (pickle) | **Unix Socket IPC** | Zero-copy        |
+| Metric                 | pytest (Standard)    | Tach (Legacy Fork) | Tach (Hypervisor)    |
+| :--------------------- | :------------------- | :----------------- | :------------------- |
+| **Isolation Strategy** | Process Spawn        | `fork()`           | Memory Reset         |
+| **Reset Latency**      | ~200ms               | ~1ms               | **< 50μs**           |
+| **Throughput**         | 1x                   | 50x                | **100x+**            |
+| **Fork Safety**        | Safe (Slow)          | Unsafe (Deadlocks) | Safe (Lock Reset)    |
+| **Memory Overhead**    | Full copy per worker | CoW sharing        | Minimal (page-level) |
 
 ---
 
-## System Architecture
+## Architecture
 
-### High-Level Overview
+### The Jedi Protocol
+
+The Jedi Protocol describes the communication flow between the Rust Supervisor and Python Workers:
+
+```mermaid
+flowchart LR
+    subgraph Supervisor["RUST SUPERVISOR"]
+        Compiler["Bytecode Compiler"]
+        Uffd["Userfaultfd Manager"]
+        Scheduler["Test Scheduler"]
+    end
+
+    subgraph Worker["PYTHON WORKER"]
+        direction TB
+        Init["Initialize & Handshake"]
+        Snapshot["SIGSTOP (Snapshot Point)"]
+        Run["Execute Test"]
+        Reset["Memory Reset"]
+    end
+
+    Compiler -->|"Inject .pyc (Zero-Copy)"| Init
+    Init --> Snapshot
+    Snapshot --> Run
+    Run -->|"Report Result"| Scheduler
+    Run -->|"Dirty Pages"| Uffd
+    Uffd -->|"MADV_DONTNEED"| Reset
+    Reset --> Snapshot
+```
+
+**Protocol Phases:**
+
+1. **Initialization:** Worker process starts, performs UFFD handshake with Supervisor via SCM_RIGHTS
+2. **Snapshot Capture:** Worker issues SIGSTOP; Supervisor captures golden memory state
+3. **Test Execution:** Worker resumes, executes assigned test, reports results
+4. **Memory Reset:** Worker invalidates dirty pages; page faults restore golden state
+
+---
+
+### Physics Engine
+
+The Physics Engine (`snapshot.rs`) implements kernel-level memory management:
 
 ```mermaid
 flowchart TB
-    subgraph Supervisor["SUPERVISOR (Rust Binary)"]
-        CLI["CLI Parser<br/>(clap)"]
-        Discovery["Discovery<br/>(ruff AST)"]
-        Resolver["Resolver<br/>(DAG Toposort)"]
-        Scheduler["Scheduler<br/>(tokio async)"]
-        Reporter["Reporter<br/>(JSON/JUnit)"]
-
-        CLI --> Discovery --> Resolver --> Scheduler --> Reporter
+    subgraph Capture["GOLDEN SNAPSHOT CAPTURE"]
+        Maps["Parse /proc/pid/maps"]
+        Filter["Filter Regions\n(heap, stack, BSS, anon)"]
+        Copy["process_vm_readv\n(Direct Memory Copy)"]
+        Store["Store in HashMap\n(page_addr → page_data)"]
     end
 
-    subgraph Zygote["ZYGOTE (Python Process)"]
-        PyInit["Pre-initialized CPython<br/>• sys.path configured<br/>• pytest session created<br/>• All tests collected<br/>• Django/asyncio ready"]
+    subgraph Reset["MEMORY RESET CYCLE"]
+        Invalidate["madvise(MADV_DONTNEED)\n(Seppuku Pattern)"]
+        Fault["Page Fault Triggered"]
+        Restore["Uffd::copy()\n(Restore from Golden)"]
     end
 
-    subgraph Workers["WORKERS (Forked Processes)"]
-        W1["Worker 1<br/>test_a"]
-        W2["Worker 2<br/>test_b"]
-        WN["Worker N<br/>test_n"]
-    end
-
-    Supervisor <-->|"Unix Socket<br/>Command/Result"| Zygote
-    Zygote -->|"fork()<br/>CoW Memory"| W1
-    Zygote -->|"fork()"| W2
-    Zygote -->|"fork()"| WN
+    Maps --> Filter --> Copy --> Store
+    Store --> Invalidate
+    Invalidate --> Fault --> Restore
+    Restore --> Invalidate
 ```
 
-### Layer-by-Layer Breakdown
+**Technical Implementation:**
 
-#### Layer 1: The Supervisor (Rust)
-
-The Supervisor is the main binary. It orchestrates the entire test run without executing Python code directly.
-
-| Component     | Technology           | Responsibility                   |
-| ------------- | -------------------- | -------------------------------- |
-| **CLI**       | `clap`               | Argument parsing, configuration  |
-| **Discovery** | `ruff_python_parser` | Static AST parsing of test files |
-| **Resolver**  | Custom DAG           | Fixture dependency resolution    |
-| **Scheduler** | `tokio`              | Async worker pool management     |
-| **Reporter**  | Trait-based          | Human, NDJSON, JUnit XML output  |
-| **Lifecycle** | `nix` crate          | Signal handling, process cleanup |
-
-#### Layer 2: The Static Frontend (AST Analysis)
-
-Instead of importing Python files (which executes code), Tach parses them as text.
-
-```rust
-// discovery.rs - Simplified
-pub fn discover_tests(path: &Path) -> Vec<TestCase> {
-    let ast = ruff_python_parser::parse(source);
-
-    ast.statements
-        .filter(|stmt| matches!(stmt, FunctionDef { name, .. } if name.starts_with("test_")))
-        .map(|stmt| extract_test_metadata(stmt))
-        .collect()
-}
-```
-
-**Benefits:**
-
-- No Python execution during discovery
-- Dependency graph computed before any fork
-- 5-20x faster than pytest's import-based discovery
-
-#### Layer 3: The Zygote (Python Process)
-
-The Zygote is a pre-warmed Python process that:
-
-1. **Configures `sys.path`** with venv site-packages
-2. **Imports pytest** and all test dependencies
-3. **Collects all tests** via `session.perform_collect()`
-4. **Indexes tests** into O(1) lookup map by nodeid
-5. **Waits for fork commands** from the Supervisor
-
-```python
-# tach_harness.py - Zygote initialization
-def init_session(target_path: str):
-    global _SESSION, _ITEMS_MAP
-
-    cfg = _pytest.config._prepareconfig([target_path, "-s", "-p", "no:terminal"])
-    _SESSION = Session.from_config(cfg)
-    _SESSION.perform_collect()
-
-    # O(1) lookup for workers
-    for item in _SESSION.items:
-        _ITEMS_MAP[item.nodeid] = item
-```
-
-#### Layer 4: The Workers (Forked Processes)
-
-Each worker is a `fork()` of the Zygote with:
-
-- **Copy-on-Write memory**: Pages shared until modified
-- **Inherited session**: No re-collection needed
-- **O(1) test lookup**: Just run `runtestprotocol(item)`
-- **Isolated namespaces**: Private `/tmp`, private network (optional)
-
-```python
-# tach_harness.py - Worker execution (FAST PATH)
-def run_test(file_path: str, node_id: str) -> tuple:
-    # O(1) lookup - no collection, no config parsing
-    target_item = _ITEMS_MAP.get(node_id)
-
-    # Just run the test
-    reports = runtestprotocol(target_item, nextitem=None, log=False)
-
-    return (STATUS_PASS if all(r.passed for r in reports) else STATUS_FAIL, duration, msg)
-```
+| Component         | System Call              | Purpose                                                |
+| :---------------- | :----------------------- | :----------------------------------------------------- |
+| Memory Capture    | `process_vm_readv`       | Copy worker memory to Supervisor without ptrace attach |
+| Page Tracking     | `userfaultfd`            | Register memory regions for fault notification         |
+| Page Invalidation | `madvise(MADV_DONTNEED)` | Drop pages, forcing re-fault on next access            |
+| Page Restoration  | `ioctl(UFFDIO_COPY)`     | Copy golden page back to worker address space          |
 
 ---
 
-## Kernel Primitives
+### Zero-Copy Loader
 
-Tach leverages low-level Linux kernel features for maximum performance:
+The Zero-Copy Loader (`zygote.rs`) bypasses Python's import machinery:
 
-| Primitive                | Syscall                   | Usage                                              |
-| ------------------------ | ------------------------- | -------------------------------------------------- |
-| **Fork**                 | `fork()`                  | Clone Zygote with CoW semantics                    |
-| **Clone**                | `clone()`                 | Fine-grained process creation with namespace flags |
-| **Mount Namespace**      | `CLONE_NEWNS`             | Isolated `/tmp` per worker (OverlayFS)             |
-| **Network Namespace**    | `CLONE_NEWNET`            | Private loopback, no port conflicts                |
-| **Memory File**          | `memfd_create()`          | Anonymous file-backed log buffers                  |
-| **Process Death Signal** | `prctl(PR_SET_PDEATHSIG)` | Auto-cleanup on supervisor crash                   |
-| **Unix Sockets**         | `AF_UNIX`                 | Zero-copy IPC between processes                    |
+```mermaid
+flowchart LR
+    subgraph Rust["RUST SUPERVISOR"]
+        Source[".py Source Files"]
+        Compile["Compile to .pyc"]
+        Cache["Bytecode Cache\n(DashMap)"]
+        Mmap["Memory Map"]
+    end
 
-### Filesystem Isolation (The Matrix)
+    subgraph Python["PYTHON WORKER"]
+        Marshal["PyMarshal_ReadObjectFromString"]
+        Exec["PyImport_ExecCodeModuleObject"]
+        Module["Loaded Module"]
+    end
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    WORKER 1 VIEW                            │
-│  /tmp               → tmpfs (private, overlay)              │
-│  /project           → overlayfs (CoW writes)                │
-│  /etc, /usr, /lib   → read-only bind mount                  │
-│  127.0.0.1:8080     → private loopback (no conflict)        │
-└─────────────────────────────────────────────────────────────┘
+    Source --> Compile --> Cache --> Mmap
+    Mmap -->|"Direct Injection"| Marshal
+    Marshal --> Exec --> Module
 ```
 
-**Result:** Tests that write to hardcoded paths like `/tmp/cache.db` work in parallel without conflict.
+**Advantages over `importlib`:**
+
+- No filesystem traversal (`sys.path` scanning)
+- No disk I/O (bytecode pre-loaded in RAM)
+- No repeated compilation (cached once)
+- Sub-millisecond module materialization
 
 ---
 
-## Features
+### Toxicity Analysis
 
-### Core Execution Engine
+The Toxicity Analyzer (`discovery.rs`) identifies modules that cannot be safely snapshotted:
 
-- [x] **Zygote Pattern**: Initialize Python once, fork workers with CoW
-- [x] **Static Discovery**: Parse tests via AST, no imports needed
-- [x] **Fixture Resolution**: Topological sort with conftest hierarchy
-- [x] **Parallel Scheduler**: N workers with timeout and crash recovery
-- [x] **Log Capture**: memfd-backed buffers, per-test isolation
+```mermaid
+flowchart TB
+    subgraph Analysis["STATIC TOXICITY ANALYSIS"]
+        AST["Parse AST\n(ruff_python_parser)"]
+        Detect["Detect Toxic Patterns"]
+        Propagate["Propagate Toxicity\n(Transitive Imports)"]
+    end
 
-### Batteries-Included Compatibility
+    subgraph Patterns["TOXIC PATTERNS"]
+        Threading["threading.Thread"]
+        Socket["socket.socket"]
+        Ctypes["ctypes.CDLL"]
+        GRPC["grpc.insecure_channel"]
+    end
 
-No plugins needed—Tach implements native support for common patterns:
+    subgraph Strategy["EXECUTION STRATEGY"]
+        Safe["Safe Test\n→ Run → Reset"]
+        Toxic["Toxic Test\n→ Run → Kill"]
+    end
 
-| Feature         | pytest Plugin  | Tach Implementation                            |
-| --------------- | -------------- | ---------------------------------------------- |
-| **Async Tests** | pytest-asyncio | Auto-detect `async def`, create event loop     |
-| **Django DB**   | pytest-django  | Transaction savepoints, auto-rollback          |
-| **Fixtures**    | Built-in       | `monkeypatch`, `tmp_path`, `capsys`, `request` |
-| **Parametrize** | Built-in       | Static AST extraction of param names           |
-| **Mocking**     | unittest.mock  | `@patch` decorator argument detection          |
+    AST --> Detect
+    Patterns --> Detect
+    Detect --> Propagate
+    Propagate --> Safe
+    Propagate --> Toxic
+```
 
-### Developer Experience
+**Toxicity Rules:**
 
-- [x] **Watch Mode**: `--watch` for instant re-run on file changes
-- [x] **Debug Support**: `pdb` via TTY proxy through Unix sockets
-- [x] **Line Numbers**: Accurate source locations for IDE goto
-- [x] **Error Messages**: Rich tracebacks with full context
+| Module/Call        | Toxicity Reason                                 |
+| :----------------- | :---------------------------------------------- |
+| `threading.Thread` | Creates OS threads that persist across snapshot |
+| `multiprocessing`  | Spawns subprocesses with shared state           |
+| `socket.socket`    | File descriptors inherit incorrectly            |
+| `ctypes`, `cffi`   | Native code may hold locks                      |
+| `grpc`             | Background connection threads                   |
 
-### CI/CD Integration
+---
 
-- [x] **NDJSON Protocol**: Machine-readable event stream
-- [x] **JUnit XML**: Standard CI report format
-- [x] **Exit Codes**: Non-zero on failure
-- [x] **Environment Variables**: `TACH_FORMAT`, `TACH_JUNIT_XML`, `TACH_NO_ISOLATION`
+## System Requirements
+
+| Requirement          | Specification                                              |
+| :------------------- | :--------------------------------------------------------- |
+| **Operating System** | Linux Kernel 5.11+ (Ubuntu 22.04+, Fedora 34+, AWS AL2023) |
+| **Privileges**       | `CAP_SYS_PTRACE` (standard in most CI environments)        |
+| **Python Version**   | Python 3.10+                                               |
+| **Rust Version**     | Rust 1.75+                                                 |
+| **Allocator**        | Forced `PYTHONMALLOC=malloc`, glibc tcache disabled        |
+
+**Docker Configuration:**
+
+```yaml
+security_opt:
+  - seccomp:unconfined
+cap_add:
+  - SYS_PTRACE
+```
 
 ---
 
@@ -260,260 +251,153 @@ No plugins needed—Tach implements native support for common patterns:
 ### From Source
 
 ```bash
-# Requirements: Rust 1.70+, Python 3.10+, Linux
-
+# Clone repository
+git clone https://github.com/NikkeTryHard/tach-core.git
 cd tach-core
-python -m venv .venv && source .venv/bin/activate
+
+# Setup Python virtual environment
+python -m venv .venv
+source .venv/bin/activate
 pip install pytest
 
-export PYO3_PYTHON=$(which python)
+# Build Rust binary
 cargo build --release
 
-# The binary is at ./target/release/tach-core
+# Verify kernel support (Physics Check)
+sudo -E cargo test --test physics_check -- --ignored
 ```
-
-### Requirements
-
-| Requirement       | Version              | Notes                                                            |
-| ----------------- | -------------------- | ---------------------------------------------------------------- |
-| **OS**            | Linux x86_64/aarch64 | Uses `fork()`, namespaces                                        |
-| **Rust**          | 1.70+                | For building                                                     |
-| **Python**        | 3.10+                | Runtime target                                                   |
-| **pytest**        | Any                  | Must be installed in venv                                        |
-| **CAP_SYS_ADMIN** | Optional             | Required for namespace isolation; use `--no-isolation` to bypass |
 
 ---
 
 ## Usage
 
-### Basic Commands
+### Basic Execution
 
 ```bash
 # Run all tests in current directory
-tach-core
+sudo ./target/release/tach-core .
 
-# Run tests in specific path
-tach-core tests/unit/
+# Run specific test file
+sudo ./target/release/tach-core tests/test_example.py
 
-# Run single test file
-tach-core tests/test_auth.py
-
-# List discovered tests
-tach-core list
-
-# Watch mode (auto-rerun on changes)
-tach-core --watch
-tach-core -w
+# Run without namespace isolation (development mode)
+./target/release/tach-core --no-isolation .
 ```
 
-### Output Formats
+### CLI Options
 
-```bash
-# Human-readable (default)
-tach-core
-
-# NDJSON event stream (for IDEs/tools)
-tach-core --format=json
-
-# JUnit XML report (for CI)
-tach-core --junit-xml=report.xml
-
-# Combine: JSON to stdout + JUnit file
-tach-core --format=json --junit-xml=report.xml
-```
-
-### Performance Flags
-
-```bash
-# Disable filesystem/network isolation (no sudo required)
-tach-core --no-isolation
-
-# Filter by test name pattern (planned)
-tach-core -k "test_auth"
-```
-
----
-
-## Configuration
-
-### pyproject.toml
-
-```toml
-[tool.tach]
-# Environment variables injected into tests
-env = { DATABASE_URL = "sqlite://:memory:", DEBUG = "true" }
-
-# Additional Python paths
-python_path = [".", "src"]
-
-# Timeout per test (seconds)
-timeout = 30
-
-# Number of parallel workers (default: CPU count)
-workers = 8
-```
-
-### Environment Variables
-
-| Variable            | Description                       | Default     |
-| ------------------- | --------------------------------- | ----------- |
-| `TACH_FORMAT`       | Output format (`human`, `json`)   | `human`     |
-| `TACH_JUNIT_XML`    | Path for JUnit XML report         | None        |
-| `TACH_NO_ISOLATION` | Skip namespace setup (`1` = skip) | None        |
-| `TACH_TARGET_PATH`  | Override test path (internal)     | CLI arg     |
-| `VIRTUAL_ENV`       | Python venv path                  | Auto-detect |
-| `PYO3_PYTHON`       | Python interpreter for PyO3       | Auto-detect |
-
----
-
-## Module Reference
-
-### Rust Modules
-
-| Module           | Lines | Purpose                                   |
-| ---------------- | ----- | ----------------------------------------- |
-| `main.rs`        | ~280  | Entry point, CLI, lifecycle orchestration |
-| `discovery.rs`   | ~600  | AST parsing, test/fixture extraction      |
-| `resolver.rs`    | ~500  | DAG construction, topological sort        |
-| `scheduler.rs`   | ~300  | Async worker pool, IPC dispatch           |
-| `zygote.rs`      | ~300  | Python initialization, fork handling      |
-| `protocol.rs`    | ~200  | Binary message encoding (zero-copy)       |
-| `reporter.rs`    | ~400  | Human, NDJSON, JUnit output               |
-| `watch.rs`       | ~200  | Filesystem monitoring, debounce           |
-| `lifecycle.rs`   | ~150  | Signal handling, process cleanup          |
-| `isolation.rs`   | ~150  | Namespace setup, OverlayFS mounts         |
-| `environment.rs` | ~100  | Venv detection, site-packages discovery   |
-| `debugger.rs`    | ~200  | pdb TTY proxy, panic hooks                |
-| `logcapture.rs`  | ~200  | memfd buffers, stdout/stderr redirect     |
-| `config.rs`      | ~250  | TOML parsing, CLI struct                  |
-
-### Python Harness
-
-| File              | Purpose                                    |
-| ----------------- | ------------------------------------------ |
-| `tach_harness.py` | Embedded in binary, handles test execution |
-
----
-
-## Roadmap / TODO
-
-### Completed ✅
-
-- [x] **Phase 0**: Physics Check - Validate fork() latency and CoW
-- [x] **Phase 1**: Core Engine - AST discovery, tokio scheduler, log capture
-- [x] **Phase 2**: Isolation Layer - CLONE_NEWNS, CLONE_NEWNET, OverlayFS
-- [x] **Phase 3**: Native Integrations - Async support, DB transaction hooks
-- [x] **Phase 4**: Lifecycle & Debugging - TTY proxy, signal handling, cleanup
-- [x] **Phase 5**: Developer Experience - NDJSON, JUnit, watch mode
-- [x] **Phase 6**: Builtins - monkeypatch, tmp_path, capsys, request
-- [x] **Phase 7**: Parametrization - @pytest.mark.parametrize, @patch support
-- [x] **Phase 8.1**: Venv Discovery - Auto-detect .venv, VIRTUAL_ENV
-- [x] **Phase 8.2**: Path Injection - sys.path configuration
-- [x] **Phase 8.3**: --no-isolation Flag - Run without CAP_SYS_ADMIN
-- [x] **Phase 8.4**: Harness Sanitization - pytest arg conflicts fixed
-- [x] **Phase 8.5**: Path Filtering - CLI path filters test selection
-- [x] **Phase 8.6**: Zygote Collection - Collect once, O(1) worker lookup
-
-### In Progress 🔄
-
-- [ ] **Phase 8.7**: Fork Safety - Logging module lock reset
-- [ ] **Phase 9**: Performance Benchmark - Flask test suite comparison
-- [ ] **Phase 10**: Production Hardening - Error handling, edge cases
-
-### Planned 📋
-
-- [ ] **Spawned Workers**: Optional `spawn` instead of `fork` for problematic codebases
-- [ ] **Test Selection**: `-k` pattern matching for test names
-- [ ] **Retry Mechanism**: `--retries=N` for flaky tests
-- [ ] **Coverage Integration**: Native lcov/cobertura output
-- [ ] **Distributed Mode**: Multi-machine test execution
-- [ ] **macOS Support**: (Requires spawn-based workers, no namespaces)
-
-### Known Issues ⚠️
-
-- [ ] **Logging Segfault**: Python's `logging` module RLocks don't survive `fork()`. Workaround: Use `--no-isolation` on logging-heavy test suites.
-- [ ] **Thread-unsafe Libraries**: Some C extensions (e.g., `sqlite3` in threading mode) may crash after fork. Workaround: Close connections in fixtures.
+| Flag                 | Description                                   |
+| :------------------- | :-------------------------------------------- |
+| `--format json`      | Output results as JSON to stdout              |
+| `--junit-xml <path>` | Generate JUnit XML report                     |
+| `--watch`            | Watch mode: re-run on file changes            |
+| `--no-isolation`     | Disable namespace isolation (for development) |
+| `--list`             | List discovered tests without running         |
+| `-v, --verbose`      | Increase output verbosity                     |
 
 ---
 
 ## Development
 
-### Setup
+### Project Structure
 
-```bash
-# Create Python venv
-uv venv && source .venv/bin/activate
-pip install pytest
-
-# Build debug
-export PYO3_PYTHON=$(which python)
-cargo build
-
-# Build release
-cargo build --release
-
-# Run Rust tests
-cargo test
-
-# Run on test fixtures
-cd tests && ../target/debug/tach-core
+```
+tach-core/
+├── src/
+│   ├── main.rs           # CLI entry point
+│   ├── discovery.rs      # AST-based test discovery
+│   ├── resolver.rs       # Fixture dependency resolution
+│   ├── scheduler.rs      # Async test scheduler
+│   ├── zygote.rs         # Python process lifecycle
+│   ├── snapshot.rs       # Userfaultfd memory management
+│   ├── isolation.rs      # Linux namespace isolation
+│   ├── tach_harness.py   # Python test harness
+│   └── ...
+├── rust_tests/           # Rust integration tests
+│   ├── physics_check.rs  # UFFD memory reset verification
+│   ├── snapshot_integration.rs
+│   └── ...
+└── tests/                # Python test fixtures
+    ├── gauntlet/         # Stress/security tests
+    ├── gauntlet_phase1/  # Memory reset verification
+    └── ...
 ```
 
-### Debugging
+### Running Tests
 
 ```bash
-# Enable debug output
-RUST_LOG=debug cargo run -- tests/
+# Rust unit tests
+cargo test --lib
 
-# Run with GDB
-gdb --args ./target/debug/tach-core tests/
+# Rust integration tests
+cargo test --test snapshot_integration
+cargo test --test physics_check -- --ignored  # Requires sudo
 
-# Trace syscalls
-strace -f ./target/release/tach-core tests/ 2>&1 | grep -E "clone|fork|unshare"
+# Python gauntlet
+./target/debug/tach-core --no-isolation tests/gauntlet_phase1/
 ```
 
 ---
 
-## Technical Decisions
+## Implementation Roadmap
 
-### Why Rust?
+### Phase 1: Physics Check (COMPLETE)
 
-1. **Zero-overhead FFI**: PyO3 provides safe, efficient Python embedding
-2. **Memory Safety**: No segfaults from manual memory management
-3. **Async Runtime**: Tokio for high-concurrency IPC
-4. **Static Linking**: Single binary, no runtime dependencies
+Memory snapshot and reset mechanism verified:
 
-### Why Not Plugin Support?
+- [x] Force system allocator (`PYTHONMALLOC=malloc`)
+- [x] Userfaultfd-based page tracking
+- [x] Golden snapshot capture via `process_vm_readv`
+- [x] Memory reset via `madvise(MADV_DONTNEED)`
+- [x] Page restoration via `Uffd::copy()`
 
-Traditional `pluggy` plugins execute Python code during test collection and execution. This:
+### Phase 2: Zero-Copy Loader
 
-- Defeats the purpose of static discovery
-- Prevents namespace isolation (Python imports before fork)
-- Adds 100-500ms overhead per test
+Bypass `importlib` for instant module loading:
 
-**Tach implements the 90% case natively** (Django, asyncio, fixtures) and skips the plugin architecture entirely.
+- [ ] Rust-side `.py` to `.pyc` compilation
+- [ ] Bytecode cache (`DashMap<PathBuf, Vec<u8>>`)
+- [ ] `PyMarshal_ReadObjectFromString` injection
+- [ ] Namespace patching (`__path__`, `__package__`)
 
-### Why Fork Instead of Spawn?
+### Phase 3: Toxicity Filter
 
-| Aspect            | `fork()`              | `spawn()`         |
-| ----------------- | --------------------- | ----------------- |
-| **Memory**        | CoW sharing           | Full copy         |
-| **Latency**       | ~1ms                  | ~200ms            |
-| **State**         | Inherits everything   | Fresh interpreter |
-| **Compatibility** | Some libraries unsafe | Universal         |
+Identify and isolate unsafe modules:
 
-Tach uses `fork()` for speed, with planned `spawn()` fallback for problematic codebases.
+- [ ] AST-based toxicity detection
+- [ ] Transitive toxicity propagation
+- [ ] Safe tests: Reset; Toxic tests: Kill
+
+### Phase 4: Scheduler Refactor
+
+Connect Physics Engine to test queue:
+
+- [ ] Async event loop (`tokio::select!`)
+- [ ] Worker state machine (Booting → Idle → Running → Resetting)
+- [ ] Fragmentation cap (kill after 1000 resets)
+
+---
+
+## Test Coverage
+
+| Category                                   | Tests | Status  |
+| :----------------------------------------- | :---- | :------ |
+| Rust Unit Tests (snapshot.rs)              | 17    | Passing |
+| Rust Integration (snapshot_integration.rs) | 7     | Passing |
+| Python Gauntlet Phase 1                    | 28    | Passing |
+| Python Gauntlet (crash signals)            | 8     | Passing |
+| Python Gauntlet (fs protection)            | 5     | Passing |
 
 ---
 
 ## License
 
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-**Built with 🦀 Rust and ❤️ for fast tests**
+**Built with Rust for performance and reliability**
 
 </div>
