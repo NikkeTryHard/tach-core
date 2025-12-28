@@ -1,4 +1,8 @@
 //! Parallel Scheduler with crash timeout detection
+//!
+//! Phase 4: Dual-Path Scheduler
+//! - Safe tests run first (high throughput via Hypervisor Mode)
+//! - Toxic tests run last (containment via Isolation Mode)
 
 use crate::logcapture::LogCapture;
 use crate::protocol::{FixtureInfo, TestPayload, TestResult, CMD_EXIT, CMD_FORK, STATUS_PASS};
@@ -6,7 +10,7 @@ use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
 use crate::signals;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -20,7 +24,11 @@ struct ActiveWorker {
     start_time: Instant,
 }
 
-/// Scheduler with crash detection
+/// Scheduler with crash detection and dual-path execution
+///
+/// Phase 4: Dual queues for safe/toxic test separation
+/// - Safe tests execute first (Hypervisor Mode - workers reset and loop)
+/// - Toxic tests execute last (Isolation Mode - workers exit after each test)
 pub struct Scheduler {
     cmd_socket: UnixStream,
     result_socket: Arc<Mutex<UnixStream>>,
@@ -28,6 +36,9 @@ pub struct Scheduler {
     active_workers: Arc<Mutex<HashMap<u32, ActiveWorker>>>,
     max_workers: usize,
     debug_socket_path: PathBuf,
+    // Phase 4: Dual queues for priority dispatch
+    safe_queue: VecDeque<(u32, RunnableTest)>,
+    toxic_queue: VecDeque<(u32, RunnableTest)>,
 }
 
 impl Scheduler {
@@ -49,7 +60,42 @@ impl Scheduler {
             active_workers: Arc::new(Mutex::new(HashMap::new())),
             max_workers,
             debug_socket_path,
+            // Phase 4: Initialize empty queues (populated in run())
+            safe_queue: VecDeque::new(),
+            toxic_queue: VecDeque::new(),
         })
+    }
+
+    /// Sort tests into safe/toxic queues for dual-path execution
+    /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
+    fn populate_queues(&mut self, tests: Vec<RunnableTest>) {
+        let mut safe_count = 0usize;
+        let mut toxic_count = 0usize;
+
+        for (idx, test) in tests.into_iter().enumerate() {
+            let test_id = idx as u32;
+            if test.is_toxic {
+                self.toxic_queue.push_back((test_id, test));
+                toxic_count += 1;
+            } else {
+                self.safe_queue.push_back((test_id, test));
+                safe_count += 1;
+            }
+        }
+
+        eprintln!(
+            "[scheduler] Phase 4 queue split: {} safe (Hypervisor), {} toxic (Isolation)",
+            safe_count, toxic_count
+        );
+    }
+
+    /// Get next test from queues (safe first, then toxic)
+    fn next_test(&mut self) -> Option<(u32, RunnableTest)> {
+        // Priority: Safe tests first (high throughput via reset)
+        // Then toxic tests (containment via exit)
+        self.safe_queue
+            .pop_front()
+            .or_else(|| self.toxic_queue.pop_front())
     }
 
     pub fn run(
@@ -63,17 +109,14 @@ impl Scheduler {
         let mut failed = 0usize;
         let mut collected = 0usize;
 
+        // Phase 4: Populate dual queues (safe first, toxic last)
+        self.populate_queues(tests);
+
         // Emit run_start event
         reporter.on_run_start(total);
 
-        // Dispatch all tests
-        let mut queue: Vec<(u32, RunnableTest)> = tests
-            .into_iter()
-            .enumerate()
-            .map(|(i, t)| (i as u32, t))
-            .collect();
-
-        for (test_id, test) in queue.drain(..) {
+        // Dispatch tests from queues (safe first, then toxic)
+        while let Some((test_id, test)) = self.next_test() {
             // Check for shutdown signal (Ctrl+C)
             if signals::shutdown_requested() {
                 reporter.on_error("Shutdown requested");
@@ -216,6 +259,7 @@ impl Scheduler {
                 .collect(),
             log_fd,
             debug_socket_path: self.debug_socket_path.to_string_lossy().to_string(),
+            is_toxic: test.is_toxic,
         };
 
         let payload_bytes = bincode::serialize(&payload)?;

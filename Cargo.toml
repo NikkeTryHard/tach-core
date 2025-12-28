@@ -25,6 +25,9 @@ ignore = "0.4"
 walkdir = "2.4"
 rayon = "1.10"
 
+# Phase 3: Toxicity Analysis
+petgraph = "0.6"
+
 # Scheduler Stack
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -86,4 +89,16 @@ path = "rust_tests/snapshot_integration.rs"
 [[test]]
 name = "loader_integration"
 path = "rust_tests/loader_integration.rs"
+
+[[test]]
+name = "toxicity_integration"
+path = "rust_tests/toxicity_integration.rs"
+
+[[test]]
+name = "tagging_integrity"
+path = "rust_tests/tagging_integrity.rs"
+
+[[test]]
+name = "phase4_integration"
+path = "rust_tests/phase4_integration.rs"
 

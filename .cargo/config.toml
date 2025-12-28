@@ -1,0 +1,22 @@
+# Cargo configuration for memory-constrained systems (7.7GB RAM)
+# Prevents OOM crashes during PyO3 compilation and testing
+
+[build]
+# Limit to 1 parallel compilation job to minimize memory spikes
+# PyO3 + tokio + pyo3-macros can use 2-3GB per job
+jobs = 1
+
+[env]
+# Reduce codegen units for lower memory usage during linking
+CARGO_PROFILE_DEV_CODEGEN_UNITS = "1"
+
+# Optimize test profile for lower memory usage
+[profile.test]
+# Fewer codegen units = less memory during compilation
+codegen-units = 1
+# No LTO in tests (LTO uses massive memory)
+lto = false
+# Keep some debug info but not full
+debug = 1
+# Optimize slightly to reduce binary size
+opt-level = 1

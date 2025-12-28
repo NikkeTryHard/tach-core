@@ -1,6 +1,8 @@
 use tach_core::config::{self, Cli, Commands, OutputFormat};
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discovery;
+use tach_core::discover_with_toxicity;
+use tach_core::graph::ToxicityGraph;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -170,20 +172,24 @@ fn execute_session(
 
     let cleanup = CleanupGuard::new();
 
-    // --- DISCOVERY PHASE ---
+    // --- DISCOVERY PHASE (with Toxicity Analysis) ---
     if !is_json {
         eprintln!("[supervisor] Scanning {}...", cwd.display());
     }
 
     let start = std::time::Instant::now();
-    let discovery_result = discovery::discover(cwd)?;
+    let (discovery_result, toxicity_graph) = discover_with_toxicity(cwd)?;
 
     if !is_json {
+        let toxic_count = toxicity_graph.toxic_modules().len();
+        let safe_count = toxicity_graph.safe_modules().len();
         eprintln!(
-            "[supervisor] Discovered {} tests, {} fixtures in {:?}",
+            "[supervisor] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
             discovery_result.test_count(),
             discovery_result.fixture_count(),
-            start.elapsed()
+            start.elapsed(),
+            toxic_count,
+            safe_count
         );
     }
 
@@ -249,6 +255,26 @@ fn execute_session(
                 }
             }
         }
+    }
+
+    // --- PHASE 3.3: TOXICITY TAGGING ---
+    // Tag each resolved test with its toxicity status from the graph.
+    // Toxic tests will use fork/kill instead of snapshot/reset in Phase 4.
+    let mut runnable_tests = runnable_tests;
+    let mut toxic_test_count = 0;
+    for test in &mut runnable_tests {
+        test.is_toxic = toxicity_graph.is_toxic(&test.file_path);
+        if test.is_toxic {
+            toxic_test_count += 1;
+        }
+    }
+
+    if !is_json && toxic_test_count > 0 {
+        eprintln!(
+            "[supervisor] Toxicity: {} of {} tests marked toxic (will use fork/kill)",
+            toxic_test_count,
+            runnable_tests.len()
+        );
     }
 
     // --- PHASE 8.3: PATH FILTERING ---

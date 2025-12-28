@@ -58,6 +58,9 @@ pub struct TestModule {
     pub path: PathBuf,
     pub tests: Vec<TestCase>,
     pub fixtures: Vec<FixtureDefinition>,
+    /// Whether this module is toxic (requires fork/kill instead of reset)
+    /// Set by toxicity analysis in Phase 3
+    pub is_toxic: bool,
 }
 
 /// Discovery result containing all parsed modules
@@ -180,6 +183,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                 path: path.to_path_buf(),
                 tests: vec![],
                 fixtures: vec![],
+                is_toxic: false, // Set later by ToxicityGraph
             });
         }
     };
@@ -291,6 +295,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
         path: path.to_path_buf(),
         tests,
         fixtures,
+        is_toxic: false, // Set later by ToxicityGraph
     })
 }
 
@@ -658,6 +663,7 @@ mod tests {
                         params: None,
                         class_scope: None,
                     }],
+                    is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_b.py"),
@@ -669,6 +675,7 @@ mod tests {
                         parametrized_args: vec![],
                     }],
                     fixtures: vec![],
+                    is_toxic: false,
                 },
             ],
         };

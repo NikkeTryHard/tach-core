@@ -36,6 +36,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         class_scope: None,
                     },
                 ],
+                is_toxic: false,
             },
             // Module with tests
             TestModule {
@@ -64,6 +65,7 @@ fn create_test_discovery() -> DiscoveryResult {
                     },
                 ],
                 fixtures: vec![],
+                is_toxic: false,
             },
         ],
     }
@@ -133,6 +135,7 @@ fn test_missing_fixture_error() {
                 parametrized_args: vec![],
             }],
             fixtures: vec![],
+            is_toxic: false,
         }],
     };
 
@@ -182,6 +185,7 @@ fn test_cyclic_dependency_error() {
                     class_scope: None,
                 },
             ],
+            is_toxic: false,
         }],
     };
 

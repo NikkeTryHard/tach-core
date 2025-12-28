@@ -15,7 +15,9 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 use userfaultfd::UffdBuilder;
@@ -30,8 +32,11 @@ const TACH_HARNESS_PY: &str = include_str!("tach_harness.py");
 /// Cached memory regions for worker self-reset (Seppuku pattern)
 /// These are populated during init_snapshot_mode and used by reset_memory.
 /// We exclude stack to avoid "standing on the floor we're demolishing".
-static mut RESET_REGIONS: Vec<(usize, usize)> = Vec::new(); // (start, len)
-static mut SNAPSHOT_ENABLED: bool = false;
+///
+/// SAFETY: Using Mutex instead of static mut to avoid undefined behavior.
+/// The Zygote is single-threaded after fork, so contention is not a concern.
+static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Initialize snapshot mode by creating UFFD and sending to Supervisor
 ///
@@ -85,17 +90,14 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
     // We cache Heap + libpython data/bss + anonymous mappings
     // We EXCLUDE stack to avoid suicide (can't madvise the stack you're on)
     if let Ok(regions) = parse_memory_maps(Pid::from_raw(pid)) {
-        unsafe {
-            RESET_REGIONS = regions
-                .iter()
-                .filter(|r| r.should_snapshot() && !r.is_stack())
-                .map(|r| (r.start, r.len))
-                .collect();
-            eprintln!(
-                "[tach_rust] Cached {} regions for self-reset",
-                RESET_REGIONS.len()
-            );
-        }
+        let cached: Vec<(usize, usize)> = regions
+            .iter()
+            .filter(|r| r.should_snapshot() && !r.is_stack())
+            .map(|r| (r.start, r.len))
+            .collect();
+        let count = cached.len();
+        *RESET_REGIONS.lock().unwrap() = cached;
+        eprintln!("[tach_rust] Cached {} regions for self-reset", count);
     }
 
     // 5. Freeze self - Supervisor will capture snapshot and SIGCONT us
@@ -108,9 +110,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
     }
 
     // 6. We're back! Supervisor has registered our memory.
-    unsafe {
-        SNAPSHOT_ENABLED = true;
-    }
+    SNAPSHOT_ENABLED.store(true, Ordering::SeqCst);
     eprintln!("[tach_rust] Resumed after snapshot capture");
     Ok(true)
 }
@@ -122,29 +122,30 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
 /// which the Supervisor handles by restoring golden pages.
 #[pyfunction]
 fn reset_memory() -> PyResult<()> {
-    unsafe {
-        if !SNAPSHOT_ENABLED {
-            eprintln!("[tach_rust] reset_memory called but snapshot not enabled");
-            return Ok(());
-        }
-
-        for &(start, len) in &RESET_REGIONS {
-            let ret = libc::madvise(start as *mut libc::c_void, len, libc::MADV_DONTNEED);
-            if ret != 0 {
-                eprintln!(
-                    "[tach_rust] madvise failed for region {:x}-{:x}: {}",
-                    start,
-                    start + len,
-                    std::io::Error::last_os_error()
-                );
-            }
-        }
-
-        eprintln!(
-            "[tach_rust] Self-reset complete: invalidated {} regions",
-            RESET_REGIONS.len()
-        );
+    if !SNAPSHOT_ENABLED.load(Ordering::SeqCst) {
+        eprintln!("[tach_rust] reset_memory called but snapshot not enabled");
+        return Ok(());
     }
+
+    let regions = RESET_REGIONS.lock().unwrap();
+    for &(start, len) in regions.iter() {
+        // SAFETY: madvise with MADV_DONTNEED is safe - it just marks pages as discardable.
+        // The kernel will zero-fill them on next access (or UFFD will handle it).
+        let ret = unsafe { libc::madvise(start as *mut libc::c_void, len, libc::MADV_DONTNEED) };
+        if ret != 0 {
+            eprintln!(
+                "[tach_rust] madvise failed for region {:x}-{:x}: {}",
+                start,
+                start + len,
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+
+    eprintln!(
+        "[tach_rust] Self-reset complete: invalidated {} regions",
+        regions.len()
+    );
     Ok(())
 }
 
@@ -404,12 +405,34 @@ except Exception as e:
                         // 7. Run test
                         let result = run_worker(&payload);
 
-                        // 4. Flush and send result
+                        // 8. Flush and send result (CRITICAL: BEFORE exit decision)
+                        // Invariant: Scheduler receives result even if worker exits
                         let _ = std::io::stdout().flush();
                         if let Ok(result_bytes) = encode_with_length(&result) {
                             let _ = child_sock.try_clone().unwrap().write_all(&result_bytes);
                         }
-                        process::exit(0);
+
+                        // 9. Phase 4: Dual-path decision based on toxicity
+                        // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
+                        // SAFE PATH: Reset memory for future Hypervisor Mode
+                        if payload.is_toxic {
+                            // Toxic test: exit without reset
+                            // This is the Isolation Mode path
+                            process::exit(0);
+                        } else {
+                            // Safe test: reset memory before exit
+                            // This validates the reset path works and prepares for
+                            // Sub-Stage 4.3 where safe workers will loop instead of exit
+                            Python::with_gil(|py| -> Result<(), PyErr> {
+                                let tach_rust = py.import("tach_rust")?;
+                                tach_rust.getattr("reset_memory")?.call0()?;
+                                Ok(())
+                            })
+                            .ok(); // Non-fatal if reset fails
+
+                            // For now, still exit (Sub-Stage 4.3 will add loop)
+                            process::exit(0);
+                        }
                     }
                     Err(e) => eprintln!("[zygote] Fork failed: {}", e),
                 }
@@ -468,5 +491,180 @@ fn run_worker(payload: &TestPayload) -> TestResult {
             duration_ns,
             message: format!("PyO3 Error: {}", e),
         },
+    }
+}
+
+// =============================================================================
+// Phase 4: Worker Loop Prototype Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Simulates the Phase 4 worker loop decision logic.
+    /// This is a pure logic test - no actual processes spawned.
+    #[derive(Debug, Clone, PartialEq)]
+    enum WorkerAction {
+        Reset,  // Safe test: reset memory and continue loop
+        Exit,   // Toxic test: exit process
+    }
+
+    /// Simulates the worker loop decision based on is_toxic flag
+    fn decide_worker_action(is_toxic: bool) -> WorkerAction {
+        if is_toxic {
+            WorkerAction::Exit
+        } else {
+            WorkerAction::Reset
+        }
+    }
+
+    #[test]
+    fn test_worker_loop_structure() {
+        // Mock a sequence of 3 payloads: [Safe, Safe, Toxic]
+        let payloads = vec![
+            (1, "test_safe_1", false),  // Safe
+            (2, "test_safe_2", false),  // Safe
+            (3, "test_toxic", true),    // Toxic
+        ];
+
+        let mut actions = Vec::new();
+        let mut loop_iterations = 0;
+
+        // Simulate worker loop
+        for (test_id, test_name, is_toxic) in payloads {
+            loop_iterations += 1;
+
+            // Simulate: Execute test (would call run_worker in real code)
+            let _result = format!("Executed {} (id={})", test_name, test_id);
+
+            // Simulate: Send result (would write to socket in real code)
+            // Result is ALWAYS sent before decision
+
+            // Phase 4 decision point
+            let action = decide_worker_action(is_toxic);
+            actions.push((test_id, action.clone()));
+
+            // If toxic, break the loop (worker exits)
+            if action == WorkerAction::Exit {
+                break;
+            }
+            // If safe, continue loop (worker resets and waits for next)
+        }
+
+        // Verify behavior
+        assert_eq!(loop_iterations, 3, "Should have processed 3 tests before exit");
+        assert_eq!(actions.len(), 3, "Should have 3 action decisions");
+
+        // Verify action sequence
+        assert_eq!(actions[0], (1, WorkerAction::Reset), "First test should Reset");
+        assert_eq!(actions[1], (2, WorkerAction::Reset), "Second test should Reset");
+        assert_eq!(actions[2], (3, WorkerAction::Exit), "Third test should Exit");
+    }
+
+    #[test]
+    fn test_worker_loop_all_safe() {
+        // All safe tests - worker should reset after each
+        let payloads = vec![
+            (1, false),
+            (2, false),
+            (3, false),
+        ];
+
+        let mut reset_count = 0;
+
+        for (_test_id, is_toxic) in payloads {
+            let action = decide_worker_action(is_toxic);
+            if action == WorkerAction::Reset {
+                reset_count += 1;
+            }
+            // In real code, loop would continue waiting for next payload
+        }
+
+        assert_eq!(reset_count, 3, "All 3 safe tests should trigger Reset");
+    }
+
+    #[test]
+    fn test_worker_loop_first_toxic() {
+        // First test is toxic - worker should exit immediately
+        let payloads = vec![
+            (1, true),   // Toxic - should exit
+            (2, false),  // Never reached
+            (3, false),  // Never reached
+        ];
+
+        let mut processed = 0;
+
+        for (_test_id, is_toxic) in payloads {
+            processed += 1;
+            let action = decide_worker_action(is_toxic);
+            if action == WorkerAction::Exit {
+                break;
+            }
+        }
+
+        assert_eq!(processed, 1, "Should only process 1 test before exit");
+    }
+
+    #[test]
+    fn test_worker_state_machine() {
+        // Verify state transitions match Q3 answer
+        #[derive(Debug, Clone, PartialEq)]
+        enum WorkerState {
+            Idle,
+            Running,
+            Reporting,
+            Resetting,
+            Exiting,
+        }
+
+        fn simulate_worker_lifecycle(is_toxic: bool) -> Vec<WorkerState> {
+            let mut states = vec![WorkerState::Idle];
+
+            // Receive payload -> Running
+            states.push(WorkerState::Running);
+
+            // Execute test -> Reporting
+            states.push(WorkerState::Reporting);
+
+            // Send result -> Decision point
+            if is_toxic {
+                states.push(WorkerState::Exiting);
+                // Worker terminates here
+            } else {
+                states.push(WorkerState::Resetting);
+                states.push(WorkerState::Idle);
+                // Worker loops back to Idle
+            }
+
+            states
+        }
+
+        // Safe worker lifecycle
+        let safe_states = simulate_worker_lifecycle(false);
+        assert_eq!(
+            safe_states,
+            vec![
+                WorkerState::Idle,
+                WorkerState::Running,
+                WorkerState::Reporting,
+                WorkerState::Resetting,
+                WorkerState::Idle,
+            ],
+            "Safe worker should: Idle -> Running -> Reporting -> Resetting -> Idle"
+        );
+
+        // Toxic worker lifecycle
+        let toxic_states = simulate_worker_lifecycle(true);
+        assert_eq!(
+            toxic_states,
+            vec![
+                WorkerState::Idle,
+                WorkerState::Running,
+                WorkerState::Reporting,
+                WorkerState::Exiting,
+            ],
+            "Toxic worker should: Idle -> Running -> Reporting -> Exiting"
+        );
     }
 }

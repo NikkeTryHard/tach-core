@@ -1,6 +1,10 @@
 # tach_harness.py - Embedded Python Harness for Tach
 # This module is loaded directly into the worker process to execute tests.
 # DO NOT MODIFY: This file is embedded via include_str! in zygote.rs
+#
+# Phase 4: Dual-Path Execution Support
+# - Safe tests: Workers can reset memory and loop (Hypervisor Mode)
+# - Toxic tests: Workers exit after execution (Isolation Mode)
 
 import sys
 import time
@@ -508,3 +512,93 @@ def run_test(file_path: str, node_id: str) -> tuple:
     finally:
         sys.stdout.flush()
         sys.stderr.flush()
+
+
+# =============================================================================
+# PHASE 4: WORKER LOOP INFRASTRUCTURE
+# Prepared for Sub-Stage 4.3 (Persistent Workers)
+# =============================================================================
+
+
+def reset_worker_state() -> bool:
+    """Reset worker memory state for next test execution.
+
+    This is the Python-side of the Hypervisor Mode reset.
+    Called after a safe test completes to prepare for the next test.
+
+    Returns True if reset succeeded, False otherwise.
+    """
+    try:
+        import tach_rust
+
+        tach_rust.reset_memory()
+        return True
+    except ImportError:
+        print("[harness] WARN: tach_rust not available for reset", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"[harness] WARN: reset_memory failed: {e}", file=sys.stderr)
+        return False
+
+
+def should_worker_exit(is_toxic: bool) -> bool:
+    """Determine if worker should exit after test execution.
+
+    Phase 4 Dual-Path Decision:
+    - Toxic tests: Always exit (Isolation Mode)
+    - Safe tests: Can continue if reset succeeds (Hypervisor Mode)
+
+    Args:
+        is_toxic: Whether the test was marked as toxic
+
+    Returns:
+        True if worker should exit, False if it can continue
+    """
+    if is_toxic:
+        # TOXIC PATH: Always exit
+        # OS cleans up threads, file descriptors, network connections, etc.
+        return True
+    else:
+        # SAFE PATH: Can continue if reset succeeds
+        # Sub-Stage 4.3 will use this to keep workers alive
+        return False
+
+
+# =============================================================================
+# PHASE 4.3: PERSISTENT WORKER LOOP (FUTURE)
+# This function will be called by zygote.rs when Hypervisor Mode is enabled
+# =============================================================================
+
+
+def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple:
+    """Execute one iteration of the worker loop.
+
+    This is the main entry point for Phase 4.3 persistent workers.
+    It combines test execution with the dual-path decision.
+
+    Args:
+        file_path: Path to the test file
+        node_id: Full pytest node ID
+        is_toxic: Whether this test is toxic
+
+    Returns:
+        Tuple of (status, duration, message, should_exit)
+        - status: Test result status code
+        - duration: Execution time in seconds
+        - message: Error message if any
+        - should_exit: Whether worker should exit after this test
+    """
+    # 1. Execute the test
+    status, duration, message = run_test(file_path, node_id)
+
+    # 2. Determine if worker should exit
+    exit_after = should_worker_exit(is_toxic)
+
+    # 3. If continuing (safe test), reset memory
+    if not exit_after:
+        if not reset_worker_state():
+            # Reset failed - must exit to be safe
+            exit_after = True
+            print("[harness] Reset failed, forcing exit", file=sys.stderr)
+
+    return (status, duration, message, exit_after)

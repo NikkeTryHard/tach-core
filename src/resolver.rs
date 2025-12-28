@@ -13,6 +13,9 @@ pub struct RunnableTest {
     pub is_async: bool,
     /// Fixtures in topological order (dependencies first)
     pub fixtures: Vec<ResolvedFixture>,
+    /// Whether this test is toxic (requires fork/kill instead of reset)
+    /// Set by toxicity analysis in Phase 3
+    pub is_toxic: bool,
 }
 
 /// A resolved fixture with full context
@@ -216,6 +219,7 @@ impl<'a> Resolver<'a> {
             test_name: test.name.clone(),
             is_async: test.is_async,
             fixtures: resolved_fixtures,
+            is_toxic: false, // Set later by ToxicityGraph
         })
     }
 
@@ -323,12 +327,14 @@ mod tests {
                     path: PathBuf::from("conftest.py"),
                     tests: vec![],
                     fixtures: vec![make_fixture("db", vec![])],
+                    is_toxic: false,
                 },
                 // Local module with same-named "db" fixture (has dependencies)
                 TestModule {
                     path: PathBuf::from("test_local.py"),
                     tests: vec![],
                     fixtures: vec![make_fixture("db", vec!["connection"])],
+                    is_toxic: false,
                 },
             ],
         };
@@ -365,11 +371,13 @@ mod tests {
                         make_fixture("a", vec!["b"]),
                         make_fixture("b", vec!["a"]), // Cycle!
                     ],
+                    is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_cycle.py"),
                     tests: vec![make_test("test_foo", vec!["a"])],
                     fixtures: vec![],
+                    is_toxic: false,
                 },
             ],
         };
@@ -403,6 +411,7 @@ mod tests {
                 path: PathBuf::from("test_missing.py"),
                 tests: vec![make_test("test_foo", vec!["nonexistent"])],
                 fixtures: vec![],
+                is_toxic: false,
             }],
         };
 
@@ -440,11 +449,13 @@ mod tests {
                         make_fixture("connection", vec!["base"]),
                         make_fixture("db", vec!["connection"]),
                     ],
+                    is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_chain.py"),
                     tests: vec![make_test("test_foo", vec!["db"])],
                     fixtures: vec![],
+                    is_toxic: false,
                 },
             ],
         };
@@ -505,6 +516,7 @@ mod tests {
                     make_test("test_with_request", vec!["request"]),
                 ],
                 fixtures: vec![],
+                is_toxic: false,
             }],
         };
 
@@ -530,11 +542,13 @@ mod tests {
                     path: PathBuf::from("conftest.py"),
                     tests: vec![],
                     fixtures: vec![make_fixture("db", vec![])],
+                    is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_mixed.py"),
                     tests: vec![make_test("test_db_with_tmp", vec!["db", "tmp_path"])],
                     fixtures: vec![],
+                    is_toxic: false,
                 },
             ],
         };

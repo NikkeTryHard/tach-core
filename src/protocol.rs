@@ -29,6 +29,9 @@ pub struct TestPayload {
     pub log_fd: i32,
     /// Path to supervisor's debug socket for breakpoint() support
     pub debug_socket_path: String,
+    /// Whether this test is toxic (requires fork/kill instead of reset)
+    /// Phase 4: Toxic tests exit after run, Safe tests reset and loop
+    pub is_toxic: bool,
 }
 
 /// Fixture info for payload
@@ -244,6 +247,7 @@ mod tests {
             }],
             log_fd: -1,
             debug_socket_path: String::new(),
+            is_toxic: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();

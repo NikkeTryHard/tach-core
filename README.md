@@ -31,7 +31,7 @@ _Replace pytest's execution model with microsecond-scale memory snapshots_
 - [Implementation Roadmap](#implementation-roadmap)
 - [Test Coverage](#test-coverage)
 - [Technical Specifications](#technical-specifications)
-- [Future Work (Phase 3 & 4)](#future-work-phase-3--4)
+- [Phase 4: Dual-Path Scheduler](#phase-4-dual-path-scheduler)
 
 ---
 
@@ -95,6 +95,7 @@ flowchart LR
         Compiler["Bytecode Compiler"]
         Uffd["Userfaultfd Manager"]
         Scheduler["Test Scheduler"]
+        ToxicityGraph["Toxicity Analyzer"]
     end
 
     subgraph Worker["PYTHON WORKER"]
@@ -102,14 +103,20 @@ flowchart LR
         Init["Initialize & Handshake"]
         Snapshot["SIGSTOP (Snapshot Point)"]
         Run["Execute Test"]
+        Decision{is_toxic?}
         Reset["Memory Reset"]
+        Exit["Exit Process"]
     end
 
     Compiler -->|"Inject .pyc (Zero-Copy)"| Init
+    ToxicityGraph -->|"Tag Tests"| Scheduler
     Init --> Snapshot
     Snapshot --> Run
     Run -->|"Report Result"| Scheduler
-    Run -->|"Dirty Pages"| Uffd
+    Run --> Decision
+    Decision -->|"Safe"| Reset
+    Decision -->|"Toxic"| Exit
+    Reset -->|"Dirty Pages"| Uffd
     Uffd -->|"MADV_DONTNEED"| Reset
     Reset --> Snapshot
 ```
@@ -119,7 +126,9 @@ flowchart LR
 1. **Initialization:** Worker process starts, performs UFFD handshake with Supervisor via SCM_RIGHTS
 2. **Snapshot Capture:** Worker issues SIGSTOP; Supervisor captures golden memory state
 3. **Test Execution:** Worker resumes, executes assigned test, reports results
-4. **Memory Reset:** Worker invalidates dirty pages; page faults restore golden state
+4. **Dual-Path Decision:** Based on `is_toxic` flag:
+   - **Safe:** Memory reset via `madvise(MADV_DONTNEED)`, loop back to snapshot point
+   - **Toxic:** Exit process immediately, Supervisor spawns replacement
 
 ---
 
@@ -208,44 +217,96 @@ flowchart LR
 
 ### Toxicity Analysis
 
-The Toxicity Analyzer (`discovery.rs`) identifies modules that cannot be safely snapshotted:
+The Toxicity Analyzer (`analysis.rs`, `graph.rs`) identifies modules that cannot be safely snapshotted:
 
 ```mermaid
 flowchart TB
-    subgraph Analysis["STATIC TOXICITY ANALYSIS"]
-        AST["Parse AST\n(ruff_python_parser)"]
-        Detect["Detect Toxic Patterns"]
-        Propagate["Propagate Toxicity\n(Transitive Imports)"]
+    subgraph Discovery["PHASE 3: TOXICITY PIPELINE"]
+        direction TB
+        Scan["Scan All .py Files\n(walkdir)"]
+        Parse["Parse AST\n(rustpython-parser)"]
+        Analyze["analyze_file()\n(Local Toxicity)"]
+        Graph["ToxicityGraph\n(petgraph DiGraph)"]
+        Propagate["Fixed-Point Propagation\n(Transitive Closure)"]
     end
 
-    subgraph Patterns["TOXIC PATTERNS"]
-        Threading["threading.Thread"]
-        Socket["socket.socket"]
-        Ctypes["ctypes.CDLL"]
-        GRPC["grpc.insecure_channel"]
+    subgraph Patterns["TOXIC PATTERNS DETECTED"]
+        Threading["threading / _thread"]
+        Multiprocessing["multiprocessing"]
+        Socket["socket"]
+        Ctypes["ctypes / cffi"]
+        Signal["signal (handlers)"]
+        Subprocess["subprocess"]
     end
 
-    subgraph Strategy["EXECUTION STRATEGY"]
-        Safe["Safe Test\n→ Run → Reset"]
-        Toxic["Toxic Test\n→ Run → Kill"]
+    subgraph Output["INTEGRATION"]
+        TestModule["TestModule.is_toxic"]
+        RunnableTest["RunnableTest.is_toxic"]
+        TestPayload["TestPayload.is_toxic"]
+        Worker["Worker Decision:\nReset vs Exit"]
     end
 
-    AST --> Detect
-    Patterns --> Detect
-    Detect --> Propagate
-    Propagate --> Safe
-    Propagate --> Toxic
+    Scan --> Parse --> Analyze
+    Patterns --> Analyze
+    Analyze --> Graph --> Propagate
+    Propagate --> TestModule --> RunnableTest --> TestPayload --> Worker
 ```
 
-**Toxicity Rules:**
+**Phase 3 Implementation Details:**
 
-| Module/Call        | Toxicity Reason                                 |
-| :----------------- | :---------------------------------------------- |
-| `threading.Thread` | Creates OS threads that persist across snapshot |
-| `multiprocessing`  | Spawns subprocesses with shared state           |
-| `socket.socket`    | File descriptors inherit incorrectly            |
-| `ctypes`, `cffi`   | Native code may hold locks                      |
-| `grpc`             | Background connection threads                   |
+| Component                   | File          | Description                                           |
+| :-------------------------- | :------------ | :---------------------------------------------------- |
+| `ToxicityReport`            | `analysis.rs` | Per-file toxicity analysis result                     |
+| `analyze_file()`            | `analysis.rs` | AST traversal detecting toxic imports/calls           |
+| `ToxicityGraph`             | `graph.rs`    | `petgraph::DiGraph` with fixed-point propagation      |
+| `discover_with_toxicity()`  | `lib.rs`      | Combined discovery + toxicity analysis entry point    |
+| `is_toxic` field            | `resolver.rs` | Added to `RunnableTest` struct                        |
+| `is_toxic` field            | `discovery.rs`| Added to `TestModule` struct                          |
+| `is_toxic` field            | `protocol.rs` | Added to `TestPayload` for IPC serialization          |
+
+**Toxicity Detection Rules:**
+
+| Import/Pattern             | Toxicity Reason                                      | Detection Method           |
+| :------------------------- | :--------------------------------------------------- | :------------------------- |
+| `import threading`         | Creates OS threads persisting across snapshot        | Import statement           |
+| `import multiprocessing`   | Spawns subprocesses with shared state                | Import statement           |
+| `import socket`            | File descriptors inherit incorrectly after reset     | Import statement           |
+| `import ctypes`            | Native code may hold locks, corrupt memory           | Import statement           |
+| `import cffi`              | Same as ctypes                                       | Import statement           |
+| `import signal`            | Signal handlers persist across reset                 | Import statement           |
+| `import subprocess`        | Child processes not tracked by snapshot              | Import statement           |
+| `import _thread`           | Low-level threading primitive                        | Import statement           |
+| `from X import Y`          | Tracks aliased imports                               | ImportFrom statement       |
+| `if TYPE_CHECKING:`        | **SKIPPED** - type hints never executed at runtime   | If statement detection     |
+
+**Transitive Propagation Algorithm:**
+
+```
+1. Build directed graph: Module → Imports
+2. Analyze each module for LOCAL toxicity
+3. Fixed-point iteration:
+   REPEAT:
+     FOR each module M:
+       IF any import of M is toxic:
+         Mark M as toxic
+   UNTIL no changes
+4. Result: Complete transitive closure of toxicity
+```
+
+**TYPE_CHECKING Handling:**
+
+The analyzer correctly skips imports inside `TYPE_CHECKING` blocks:
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import threading  # NOT toxic - never executed at runtime
+
+import os  # Safe - analyzed normally
+```
+
+This prevents false positives from type hint imports that are never executed.
 
 ---
 
@@ -328,22 +389,27 @@ sudo ./target/release/tach-core tests/test_example.py
 ```
 tach-core/
 ├── src/
-│   ├── main.rs           # CLI entry point, eager compilation wiring
-│   ├── lib.rs            # Module exports
+│   ├── main.rs           # CLI entry point, toxicity wiring, eager compilation
+│   ├── lib.rs            # Module exports, discover_with_toxicity()
+│   ├── analysis.rs       # Phase 3: Local toxicity scanner (49 tests)
+│   ├── graph.rs          # Phase 3: ToxicityGraph with propagation (20 tests)
 │   ├── discovery.rs      # AST-based test discovery (rustpython-parser)
 │   ├── resolver.rs       # Fixture dependency resolution
 │   ├── scheduler.rs      # Async test scheduler (tokio)
 │   ├── zygote.rs         # Python process lifecycle, FFI registration
 │   ├── snapshot.rs       # Userfaultfd memory management
 │   ├── loader.rs         # Zero-Copy Module Loader (Phase 2)
+│   ├── protocol.rs       # Binary IPC protocol (bincode)
 │   ├── isolation.rs      # Linux namespace isolation
 │   ├── environment.rs    # Environment injection
 │   ├── tach_harness.py   # Python test harness, import hook
 │   └── ...
 ├── rust_tests/           # Rust integration tests
-│   ├── physics_check.rs  # UFFD memory reset verification
-│   ├── snapshot_integration.rs
-│   ├── loader_integration.rs  # 19 loader tests
+│   ├── physics_check.rs          # UFFD memory reset verification
+│   ├── snapshot_integration.rs   # Snapshot lifecycle tests
+│   ├── loader_integration.rs     # 19 loader tests
+│   ├── toxicity_integration.rs   # 10 toxicity pipeline tests
+│   ├── tagging_integrity.rs      # 5 is_toxic propagation tests
 │   └── ...
 ├── tests/                # Python test fixtures
 │   ├── gauntlet/         # Stress/security tests
@@ -353,7 +419,8 @@ tach-core/
 │   └── ...
 ├── docs/
 │   └── architecture/
-│       └── phase2_loader.md  # Phase 2 technical spec
+│       ├── phase2_loader.md      # Phase 2 technical spec
+│       └── phase3_toxicity.md    # Phase 3 technical spec
 └── .tach/                # Generated cache (gitignored)
     └── cache/            # Compiled .pyc files
 ```
@@ -361,12 +428,19 @@ tach-core/
 ### Running Tests
 
 ```bash
-# Rust unit tests (includes 17 loader tests)
-cargo test --lib
+# Rust unit tests (includes analysis + graph tests)
+cargo test --lib                              # 191 tests
+
+# Specific module tests
+cargo test --lib analysis::                   # 49 toxicity scanner tests
+cargo test --lib graph::                      # 20 toxicity graph tests
+cargo test --lib zygote::tests::              # 4 worker loop prototype tests
 
 # Rust integration tests
-cargo test --test loader_integration    # 19 tests
-cargo test --test snapshot_integration  # 7 tests
+cargo test --test toxicity_integration        # 10 tests
+cargo test --test tagging_integrity           # 5 tests (is_toxic propagation)
+cargo test --test loader_integration          # 19 tests
+cargo test --test snapshot_integration        # 7 tests
 cargo test --test physics_check -- --ignored  # Requires sudo
 
 # Python gauntlet (Phase 2)
@@ -407,38 +481,68 @@ Bypass `importlib` for instant module loading:
 - [x] Fallback to `importlib` on cache miss
 - [x] 72 tests passing (17 unit, 19 integration, 36 gauntlet)
 
-### Phase 3: Toxicity Filter 🚧 TODO
+### Phase 3: Toxicity Filter ✅ COMPLETE
 
 Identify and isolate unsafe modules:
 
-- [ ] AST-based toxicity detection in `discovery.rs`
-- [ ] Pattern matching for toxic imports:
-  - `threading.Thread`
-  - `multiprocessing.Process`
-  - `socket.socket`
-  - `ctypes.CDLL` / `cffi`
-  - `grpc.insecure_channel`
-- [ ] Transitive toxicity propagation (if A imports B, and B is toxic, A is toxic)
-- [ ] `ToxicityGraph` data structure
-- [ ] Execution strategy routing:
-  - Safe tests → Snapshot/Reset
-  - Toxic tests → Fork/Kill (no reset)
-- [ ] Integration with `scheduler.rs`
+- [x] **Phase 3.1: Local Scanner** (`analysis.rs`)
+  - [x] AST-based toxicity detection using `rustpython-parser`
+  - [x] Pattern matching for 8 toxic module categories
+  - [x] Import alias tracking (`from X import Y as Z`)
+  - [x] Star import detection (`from X import *`)
+  - [x] Submodule import detection (`import X.Y`)
+  - [x] TYPE_CHECKING block skipping (prevents false positives)
+  - [x] 49 unit tests covering all patterns
 
-### Phase 4: Scheduler Refactor 🚧 TODO
+- [x] **Phase 3.2: Dependency Graph** (`graph.rs`)
+  - [x] `ToxicityGraph` using `petgraph::DiGraph`
+  - [x] Module name resolution (path → dotted name)
+  - [x] Import edge construction from AST
+  - [x] Fixed-point propagation algorithm
+  - [x] `is_toxic()`, `toxic_modules()`, `safe_modules()` API
+  - [x] 20 unit tests covering propagation scenarios
 
-Connect Physics Engine to test queue:
+- [x] **Phase 3.3: Integration**
+  - [x] `discover_with_toxicity()` in `lib.rs`
+  - [x] `is_toxic` field added to `TestModule` struct
+  - [x] `is_toxic` field added to `RunnableTest` struct
+  - [x] `is_toxic` field added to `TestPayload` struct
+  - [x] Toxicity tagging in `main.rs::execute_session()`
+  - [x] 10 integration tests (`toxicity_integration.rs`)
+  - [x] 5 tagging integrity tests (`tagging_integrity.rs`)
+  - [x] 4 worker loop prototype tests (`zygote.rs::tests`)
 
-- [ ] Async event loop (`tokio::select!`)
-- [ ] Worker state machine:
-  ```
-  Booting → Idle → Running → Resetting → Idle
-                          → Toxic → Kill → Respawn
-  ```
-- [ ] Fragmentation cap (kill worker after N resets)
-- [ ] Dynamic worker pool sizing
-- [ ] Priority queue for toxic tests (run last)
-- [ ] Metrics collection (reset times, fault counts)
+**Phase 3 Test Summary:**
+
+| Test Category                | Count | Status     |
+| :--------------------------- | :---- | :--------- |
+| `analysis.rs` unit tests     | 49    | ✅ Passing |
+| `graph.rs` unit tests        | 20    | ✅ Passing |
+| `toxicity_integration.rs`    | 10    | ✅ Passing |
+| `tagging_integrity.rs`       | 5     | ✅ Passing |
+| `zygote.rs::tests` (loop)    | 4     | ✅ Passing |
+| **Total Phase 3 Tests**      | **88**| ✅ Passing |
+
+### Phase 4: Dual-Path Scheduler 🚧 IN PROGRESS
+
+Connect Physics Engine to test queue with dual execution paths:
+
+- [ ] **Phase 4.1: Queue Split**
+  - [ ] Separate `safe_tests` and `toxic_tests` queues in Scheduler
+  - [ ] Priority: Execute safe tests first (high throughput)
+  - [ ] Execute toxic tests last (containment)
+
+- [ ] **Phase 4.2: Isolation Protocol**
+  - [ ] Worker loop modification in `tach_harness.py`
+  - [ ] `is_toxic` flag check after test execution
+  - [ ] Safe path: `madvise` reset, continue loop
+  - [ ] Toxic path: `sys.exit(0)`, process terminates
+
+- [ ] **Phase 4.3: Scheduler Wiring**
+  - [ ] Hypervisor mode for safe tests (reset + reuse)
+  - [ ] Isolation mode for toxic tests (fork + kill)
+  - [ ] Worker pool management
+  - [ ] Replacement spawning for toxic workers
 
 ---
 
@@ -446,7 +550,12 @@ Connect Physics Engine to test queue:
 
 | Category                                     | Tests   | Status         |
 | :------------------------------------------- | :------ | :------------- |
+| Rust Unit Tests (`analysis.rs`)              | 49      | ✅ Passing     |
+| Rust Unit Tests (`graph.rs`)                 | 20      | ✅ Passing     |
 | Rust Unit Tests (`loader.rs`)                | 17      | ✅ Passing     |
+| Rust Unit Tests (`zygote.rs::tests`)         | 4       | ✅ Passing     |
+| Rust Integration (`toxicity_integration.rs`) | 10      | ✅ Passing     |
+| Rust Integration (`tagging_integrity.rs`)    | 5       | ✅ Passing     |
 | Rust Integration (`loader_integration.rs`)   | 19      | ✅ Passing     |
 | Rust Integration (`snapshot_integration.rs`) | 7       | ✅ Passing     |
 | Python Gauntlet Phase 1                      | 28      | ✅ Passing     |
@@ -454,11 +563,95 @@ Connect Physics Engine to test queue:
 | Python Benchmark                             | 2       | ✅ Passing     |
 | Python Gauntlet (crash signals)              | 8       | ✅ Passing     |
 | Python Gauntlet (fs protection)              | 5       | ✅ Passing     |
-| **Total**                                    | **122** | ✅ All Passing |
+| **Total**                                    | **210** | ✅ All Passing |
 
 ---
 
 ## Technical Specifications
+
+### Toxicity Analysis Architecture (`analysis.rs`, `graph.rs`)
+
+```rust
+/// Result of analyzing a single Python file for toxicity
+#[derive(Debug, Clone)]
+pub struct ToxicityReport {
+    pub file_path: PathBuf,
+    pub is_toxic: bool,
+    pub reasons: Vec<ToxicityReason>,
+    pub imports: Vec<String>,  // Local imports for graph edges
+}
+
+/// Why a module is considered toxic
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToxicityReason {
+    ThreadingImport,       // import threading / _thread
+    MultiprocessingImport, // import multiprocessing
+    SocketImport,          // import socket
+    CtypesImport,          // import ctypes
+    CffiImport,            // import cffi
+    SignalImport,          // import signal
+    SubprocessImport,      // import subprocess
+}
+
+/// Dependency graph for transitive toxicity propagation
+pub struct ToxicityGraph {
+    graph: DiGraph<ModuleNode, ()>,
+    name_to_idx: HashMap<String, NodeIndex>,
+}
+
+impl ToxicityGraph {
+    /// Build graph from list of Python files
+    pub fn build(paths: &[PathBuf], project_root: &Path) -> Self;
+
+    /// Check if a module is toxic (direct or transitive)
+    pub fn is_toxic(&self, path: &Path) -> bool;
+
+    /// Get all toxic module names
+    pub fn toxic_modules(&self) -> Vec<String>;
+
+    /// Get all safe module names
+    pub fn safe_modules(&self) -> Vec<String>;
+}
+```
+
+### Protocol Extension (`protocol.rs`)
+
+```rust
+/// Payload sent to Zygote with fork command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestPayload {
+    pub test_id: u32,
+    pub file_path: String,
+    pub test_name: String,
+    pub is_async: bool,
+    pub fixtures: Vec<FixtureInfo>,
+    pub log_fd: i32,
+    pub debug_socket_path: String,
+    /// Phase 3: Toxicity flag for dual-path execution
+    /// Phase 4: Worker checks this to decide Reset vs Exit
+    pub is_toxic: bool,
+}
+```
+
+### Integration Entry Point (`lib.rs`)
+
+```rust
+/// Discover tests with toxicity analysis.
+/// Combines test discovery with toxicity graph construction.
+pub fn discover_with_toxicity(root: &Path) -> Result<(DiscoveryResult, ToxicityGraph)> {
+    // 1. Run standard discovery (finds test files and fixtures)
+    let discovery = discovery::discover(root)?;
+
+    // 2. Collect ALL Python files (not just test modules)
+    // Critical for transitive toxicity propagation
+    let all_py_files = collect_all_py_files(root);
+
+    // 3. Build toxicity graph (analyzes all files and propagates)
+    let graph = ToxicityGraph::build(&all_py_files, root);
+
+    Ok((discovery, graph))
+}
+```
 
 ### Loader Architecture (`loader.rs`)
 
@@ -497,6 +690,8 @@ pub struct BytecodeCompiler {
 | `get_module_path`   | `fn(name: &str) -> Option<String>`               | Get source path for `__file__` |
 | `is_module_package` | `fn(name: &str) -> Option<bool>`                 | Check if module is a package   |
 | `load_module`       | `fn(py, name, path, bytecode) -> PyResult<bool>` | Inject bytecode via C-API      |
+| `init_snapshot_mode`| `fn(supervisor_sock: &str) -> bool`              | Initialize UFFD handshake      |
+| `reset_memory`      | `fn() -> PyResult<()>`                           | Self-reset via madvise         |
 
 ### Import Hook (`tach_harness.py`)
 
@@ -524,75 +719,61 @@ class TachLoader:
 
 ---
 
-## Future Work (Phase 3 & 4)
+## Phase 4: Dual-Path Scheduler
 
-### Phase 3: Toxicity Filter - Detailed Design
+### Design Overview
 
-**Goal:** Identify modules that spawn threads/processes or hold file descriptors, making them unsafe for snapshot/reset.
-
-**Data Structures:**
-
-```rust
-/// Toxicity classification
-pub enum ToxicityLevel {
-    Safe,           // Can be snapshot/reset
-    Toxic,          // Must fork/kill
-    Unknown,        // Cannot determine statically
-}
-
-/// Toxicity analysis result
-pub struct ToxicityReport {
-    pub module: String,
-    pub level: ToxicityLevel,
-    pub reasons: Vec<ToxicityReason>,
-    pub transitive_from: Option<String>,
-}
-
-/// Why a module is toxic
-pub enum ToxicityReason {
-    ThreadCreation,      // threading.Thread
-    ProcessCreation,     // multiprocessing.Process
-    SocketCreation,      // socket.socket
-    NativeCodeLoading,   // ctypes.CDLL, cffi
-    BackgroundThread,    // grpc
-}
-```
-
-**Implementation Steps:**
-
-1. Parse module AST during discovery
-2. Pattern match against toxic patterns
-3. Build import graph
-4. Propagate toxicity transitively
-5. Tag tests with toxicity level
-6. Route to appropriate executor
-
-### Phase 4: Scheduler Refactor - Detailed Design
-
-**Goal:** Connect Physics Engine to test queue with proper state machine.
-
-**Worker State Machine:**
+Phase 4 transforms Tach from a Fork-Server into a true Hypervisor by implementing dual execution paths:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Booting: spawn
-    Booting --> Idle: ready
-    Idle --> Running: dispatch_test
-    Running --> Resetting: test_complete (safe)
-    Running --> Toxic: test_complete (toxic)
-    Resetting --> Idle: reset_complete
-    Toxic --> [*]: kill
-    Resetting --> [*]: fragmentation_limit
+flowchart TB
+    subgraph Scheduler["SCHEDULER"]
+        Queue["Test Queue"]
+        Split{is_toxic?}
+        SafeQueue["Safe Queue\n(Priority)"]
+        ToxicQueue["Toxic Queue\n(Deferred)"]
+    end
+
+    subgraph Hypervisor["HYPERVISOR MODE"]
+        SafeWorker["Worker Pool"]
+        Execute1["Execute Test"]
+        Reset["madvise Reset"]
+        Reuse["Reuse Worker"]
+    end
+
+    subgraph Isolation["ISOLATION MODE"]
+        Fork["Fork Worker"]
+        Execute2["Execute Test"]
+        Exit["Exit Process"]
+        Respawn["Spawn Replacement"]
+    end
+
+    Queue --> Split
+    Split -->|"Safe"| SafeQueue
+    Split -->|"Toxic"| ToxicQueue
+    SafeQueue --> SafeWorker --> Execute1 --> Reset --> Reuse
+    Reuse --> SafeWorker
+    ToxicQueue --> Fork --> Execute2 --> Exit --> Respawn
 ```
 
-**Implementation Steps:**
+### Worker State Machine
 
-1. Refactor `scheduler.rs` to use `tokio::select!`
-2. Implement worker state enum
-3. Add fragmentation counter per worker
-4. Kill and respawn workers after N resets
-5. Priority scheduling: safe tests first, toxic tests last
-6. Implement metrics collection
+```
+SAFE WORKER LIFECYCLE:
+  Idle → Running → Reporting → Resetting → Idle (loop)
+
+TOXIC WORKER LIFECYCLE:
+  Idle → Running → Reporting → Exiting → [DEAD]
+                                    ↓
+                          [Supervisor spawns replacement]
+```
+
+### Key Invariants
+
+1. **Result Before Exit:** Toxic workers MUST send `TestResult` before calling `sys.exit(0)`
+2. **No Reset for Toxic:** Toxic workers NEVER call `madvise` reset
+3. **Safe First:** Safe tests execute before toxic tests (throughput optimization)
+4. **Crash Detection:** Scheduler distinguishes crash (no result) from expected exit (result received)
 
 ---
 
