@@ -9,7 +9,7 @@
 [![Linux](https://img.shields.io/badge/Platform-Linux-green?logo=linux)](https://kernel.org/)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
 
-_Replace pytest's execution model with microsecond-scale memory snapshots_
+_Replace pytest's execution model with microsecond-scale memory snapshots._
 
 </div>
 
@@ -24,14 +24,18 @@ _Replace pytest's execution model with microsecond-scale memory snapshots_
   - [Physics Engine](#physics-engine)
   - [Zero-Copy Loader](#zero-copy-loader)
   - [Toxicity Analysis](#toxicity-analysis)
+  - [Worker Loop](#worker-loop)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Development](#development)
+  - [Project Structure](#project-structure)
+  - [Running Tests](#running-tests)
+  - [Remote Development](#remote-development)
 - [Implementation Roadmap](#implementation-roadmap)
 - [Test Coverage](#test-coverage)
 - [Technical Specifications](#technical-specifications)
-- [Phase 4: Dual-Path Scheduler](#phase-4-dual-path-scheduler)
+- [Phase 4: Worker Loop & Dual-Path Scheduler](#phase-4-worker-loop--dual-path-scheduler)
 
 ---
 
@@ -310,6 +314,76 @@ This prevents false positives from type hint imports that are never executed.
 
 ---
 
+### Worker Loop
+
+The Worker Loop (`zygote.rs`, `tach_harness.py`) implements the dual-path execution model:
+
+```mermaid
+flowchart TB
+    subgraph Worker["PYTHON WORKER LOOP"]
+        direction TB
+        Receive["Receive Test Payload"]
+        Execute["Execute Test"]
+        Report["Send Result"]
+        Decision{is_toxic?}
+        Reset["madvise(MADV_DONTNEED)<br/>Memory Reset"]
+        Exit["sys.exit(0)<br/>Process Terminates"]
+    end
+
+    subgraph Supervisor["RUST SUPERVISOR"]
+        ReadyQueue["Ready Queue"]
+        Dispatch["Dispatch"]
+        Collect["Collect Result"]
+        Spawn["Spawn Replacement"]
+    end
+
+    ReadyQueue --> Dispatch --> Receive
+    Receive --> Execute --> Report --> Collect
+    Report --> Decision
+    Decision -->|"Safe"| Reset
+    Decision -->|"Toxic"| Exit
+    Reset -->|"Loop"| Receive
+    Exit --> Spawn --> ReadyQueue
+```
+
+**Dual-Path Decision Logic:**
+
+| Test Type | After Execution | Worker Fate |
+|:----------|:----------------|:------------|
+| Safe (non-toxic) | `madvise(MADV_DONTNEED)` | Continues loop |
+| Toxic | `sys.exit(0)` | Terminates, replaced |
+
+**Memory Reset Mechanism:**
+
+```rust
+// The "Seppuku Pattern" - worker invalidates its own memory
+#[pyfunction]
+fn reset_memory() -> PyResult<()> {
+    let regions = RESET_REGIONS.lock().unwrap();
+    for &(start, len) in regions.iter() {
+        unsafe {
+            libc::madvise(start as *mut _, len, libc::MADV_DONTNEED);
+        }
+    }
+    Ok(())
+}
+```
+
+After `MADV_DONTNEED`:
+1. Kernel marks pages as discardable
+2. Next access triggers page fault
+3. userfaultfd notifies Supervisor
+4. Supervisor restores golden page via `UFFDIO_COPY`
+5. Worker continues with pristine memory state
+
+**Key Invariants:**
+
+1. **Result Before Exit:** Toxic workers MUST send result before `sys.exit(0)`
+2. **No Reset for Toxic:** Toxic workers never call `reset_memory()`
+3. **Dead Man's Switch:** Workers die if Supervisor dies (`PR_SET_PDEATHSIG`)
+
+---
+
 ## System Requirements
 
 | Requirement          | Specification                                              |
@@ -419,8 +493,15 @@ tach-core/
 │   └── ...
 ├── docs/
 │   └── architecture/
-│       ├── phase2_loader.md      # Phase 2 technical spec
-│       └── phase3_toxicity.md    # Phase 3 technical spec
+│       ├── phase2_loader.md          # Phase 2 technical spec
+│       ├── phase3_toxicity.md        # Phase 3 technical spec
+│       ├── phase4_worker_loop.md     # Phase 4 technical spec
+│       └── remote_development.md     # Remote dev setup guide
+├── .cargo/
+│   └── config.toml           # Build configuration
+├── .github/
+│   └── workflows/
+│       └── ci.yml            # GitHub Actions CI
 └── .tach/                # Generated cache (gitignored)
     └── cache/            # Compiled .pyc files
 ```
@@ -429,17 +510,20 @@ tach-core/
 
 ```bash
 # Rust unit tests (includes analysis + graph tests)
-cargo test --lib                              # 191 tests
+cargo test --lib                              # 195+ tests
 
 # Specific module tests
 cargo test --lib analysis::                   # 49 toxicity scanner tests
 cargo test --lib graph::                      # 20 toxicity graph tests
 cargo test --lib zygote::tests::              # 4 worker loop prototype tests
+cargo test --lib protocol::tests::            # 8 protocol tests
+cargo test --lib scheduler::tests::           # 8 scheduler tests
 
 # Rust integration tests
 cargo test --test toxicity_integration        # 10 tests
 cargo test --test tagging_integrity           # 5 tests (is_toxic propagation)
 cargo test --test loader_integration          # 19 tests
+cargo test --test resolver_integration        # 8 tests
 cargo test --test snapshot_integration        # 7 tests
 cargo test --test physics_check -- --ignored  # Requires sudo
 
@@ -448,6 +532,29 @@ cargo test --test physics_check -- --ignored  # Requires sudo
 
 # Python benchmark
 ./target/release/tach-core --no-isolation tests/benchmark/  # 2 tests
+```
+
+### Remote Development
+
+For distributed development across multiple machines:
+
+1. **Setup WSL2 on Windows** with 16GB+ RAM for heavy workloads
+2. **Install Tailscale** on both machines for cross-network connectivity
+3. **SSH tunnel** for LLM proxy access (if using local proxy server)
+
+See [docs/architecture/remote_development.md](docs/architecture/remote_development.md) for detailed setup instructions.
+
+**Quick Start:**
+
+```bash
+# SSH into remote (after Tailscale setup)
+ssh user@<tailscale-ip>
+
+# Start LLM proxy tunnel (if using local proxy)
+ssh -L 3456:127.0.0.1:3456 user@<local-tailscale-ip> -N &
+
+# Run tests on remote
+cd ~/dev/tach-core && cargo test --lib
 ```
 
 ---
@@ -523,26 +630,49 @@ Identify and isolate unsafe modules:
 | `zygote.rs::tests` (loop)    | 4     | ✅ Passing |
 | **Total Phase 3 Tests**      | **88**| ✅ Passing |
 
-### Phase 4: Dual-Path Scheduler 🚧 IN PROGRESS
+### Phase 4: Worker Loop & Dual-Path Scheduler ✅ COMPLETE
 
-Connect Physics Engine to test queue with dual execution paths:
+Transform Tach from fork-server to true Hypervisor with worker reuse:
 
-- [ ] **Phase 4.1: Queue Split**
-  - [ ] Separate `safe_tests` and `toxic_tests` queues in Scheduler
-  - [ ] Priority: Execute safe tests first (high throughput)
-  - [ ] Execute toxic tests last (containment)
+- [x] **Phase 4.1: Scheduler Queue Split**
+  - [x] Separate `ready_queue` and `blocked_queue` in Scheduler
+  - [x] Fixture-aware scheduling (tests wait for dependencies)
+  - [x] Dynamic queue migration when fixtures complete
 
-- [ ] **Phase 4.2: Isolation Protocol**
-  - [ ] Worker loop modification in `tach_harness.py`
-  - [ ] `is_toxic` flag check after test execution
-  - [ ] Safe path: `madvise` reset, continue loop
-  - [ ] Toxic path: `sys.exit(0)`, process terminates
+- [x] **Phase 4.2: Worker Loop Implementation**
+  - [x] Continuous worker loop in `tach_harness.py`
+  - [x] `is_toxic` flag check after test execution
+  - [x] Safe path: `madvise(MADV_DONTNEED)` reset, continue loop
+  - [x] Toxic path: `sys.exit(0)`, process terminates
+  - [x] Result-before-exit invariant (no lost results)
 
-- [ ] **Phase 4.3: Scheduler Wiring**
-  - [ ] Hypervisor mode for safe tests (reset + reuse)
-  - [ ] Isolation mode for toxic tests (fork + kill)
-  - [ ] Worker pool management
-  - [ ] Replacement spawning for toxic workers
+- [x] **Phase 4.3: Memory Safety Fixes**
+  - [x] Eliminated `static mut` undefined behavior in `zygote.rs`
+  - [x] Replaced with `Mutex<Vec<(usize, usize)>>` for RESET_REGIONS
+  - [x] Replaced with `AtomicBool` for SNAPSHOT_ENABLED
+  - [x] Dead Man's Switch (`PR_SET_PDEATHSIG`) for orphan prevention
+
+- [x] **Phase 4.4: Infrastructure**
+  - [x] GitHub Actions CI workflow
+  - [x] Remote development setup (WSL2 + Tailscale)
+
+**Phase 4 Performance Characteristics:**
+
+| Metric | Fork-Server | Hypervisor (Phase 4) |
+|:-------|:------------|:---------------------|
+| Test isolation | ~1-2ms (fork) | **< 50μs** (madvise) |
+| Worker reuse | Never | Until toxic test |
+| Memory overhead | Full CoW copy | Page-level tracking |
+
+**Phase 4 Test Summary:**
+
+| Test Category | Count | Status |
+|:--------------|:------|:-------|
+| `scheduler.rs` queue tests | 8 | ✅ Passing |
+| `zygote.rs` worker loop tests | 4 | ✅ Passing |
+| `protocol.rs` serialization tests | 8 | ✅ Passing |
+| `resolver_integration.rs` | 8 | ✅ Passing |
+| **Total Phase 4 Tests** | **28** | ✅ Passing |
 
 ---
 
@@ -554,16 +684,19 @@ Connect Physics Engine to test queue with dual execution paths:
 | Rust Unit Tests (`graph.rs`)                 | 20      | ✅ Passing     |
 | Rust Unit Tests (`loader.rs`)                | 17      | ✅ Passing     |
 | Rust Unit Tests (`zygote.rs::tests`)         | 4       | ✅ Passing     |
+| Rust Unit Tests (`protocol.rs::tests`)       | 8       | ✅ Passing     |
+| Rust Unit Tests (`scheduler.rs::tests`)      | 8       | ✅ Passing     |
 | Rust Integration (`toxicity_integration.rs`) | 10      | ✅ Passing     |
 | Rust Integration (`tagging_integrity.rs`)    | 5       | ✅ Passing     |
 | Rust Integration (`loader_integration.rs`)   | 19      | ✅ Passing     |
+| Rust Integration (`resolver_integration.rs`) | 8       | ✅ Passing     |
 | Rust Integration (`snapshot_integration.rs`) | 7       | ✅ Passing     |
 | Python Gauntlet Phase 1                      | 28      | ✅ Passing     |
 | Python Gauntlet Phase 2                      | 36      | ✅ Passing     |
 | Python Benchmark                             | 2       | ✅ Passing     |
 | Python Gauntlet (crash signals)              | 8       | ✅ Passing     |
 | Python Gauntlet (fs protection)              | 5       | ✅ Passing     |
-| **Total**                                    | **210** | ✅ All Passing |
+| **Total**                                    | **234** | ✅ All Passing |
 
 ---
 
@@ -758,14 +891,17 @@ flowchart TB
 
 ### Worker State Machine
 
-```
-SAFE WORKER LIFECYCLE:
-  Idle → Running → Reporting → Resetting → Idle (loop)
-
-TOXIC WORKER LIFECYCLE:
-  Idle → Running → Reporting → Exiting → [DEAD]
-                                    ↓
-                          [Supervisor spawns replacement]
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Idle
+    Idle --> Running: Receive Test
+    Running --> Reporting: Test Complete
+    Reporting --> Resetting: Safe Test
+    Reporting --> Exiting: Toxic Test
+    Resetting --> Idle: Loop
+    Exiting --> [*]: DEAD
+    note right of Exiting: Supervisor spawns replacement
 ```
 
 ### Key Invariants
@@ -785,6 +921,6 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with Rust for performance and reliability**
+**Built with Rust for performance and reliability.**
 
 </div>
