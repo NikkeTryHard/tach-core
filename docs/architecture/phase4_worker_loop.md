@@ -1,6 +1,6 @@
 # Phase 4: Worker Loop and Dual-Path Scheduler
 
-> **Status:** Implementation Complete
+> **Status:** Implementation Complete and Verified
 > **Target:** Worker reuse with memory reset for safe tests, process exit for toxic tests
 > **Prerequisite:** Phase 3 (Toxicity Analysis) Complete
 
@@ -12,8 +12,9 @@ Phase 4 transforms Tach from a simple fork-server into a true **Runtime Hypervis
 
 1. **Loop** - Execute multiple tests in sequence
 2. **Decide** - After each test, choose between memory reset or process exit
-3. **Reset** - For safe tests, invalidate dirty pages and continue
-4. **Exit** - For toxic tests, terminate and let Supervisor spawn replacement
+3. **Reset** - For safe tests, invalidate dirty pages and signal readiness
+4. **Pool** - Return to idle worker pool for reuse
+5. **Exit** - For toxic tests, terminate and let Supervisor spawn replacement
 
 This architecture achieves **sub-50 microsecond** test isolation while maintaining correctness for tests that cannot be safely reset.
 
@@ -297,21 +298,51 @@ The Scheduler distinguishes:
 
 ## 5. IPC Protocol
 
-### 5.1 Command Channel (Supervisor → Worker)
+### 5.1 Command Channel (Supervisor → Zygote → Worker)
 
-| Command | Payload | Description |
-|:--------|:--------|:------------|
-| `CMD_FORK` (0x01) | `TestPayload` | Execute this test |
-| `CMD_EXIT` (0x02) | None | Graceful shutdown |
+| Command | Value | Payload | Description |
+|:--------|:------|:--------|:------------|
+| `CMD_EXIT` | 0x00 | None | Graceful shutdown |
+| `CMD_FORK` | 0x01 | `TestPayload` | Fork new worker and execute test |
+| `CMD_RUN_TEST` | 0x02 | `TestPayload` | Execute test on existing worker (reuse) |
 
-### 5.2 Result Channel (Worker → Supervisor)
+### 5.2 Result/Status Channel (Worker → Zygote → Supervisor)
 
-| Message | Payload | Description |
-|:--------|:--------|:------------|
-| `MSG_READY` (0x00) | None | Worker ready for commands |
-| `TestResult` | Serialized result | Test execution result |
+| Message | Value | Payload | Description |
+|:--------|:------|:--------|:------------|
+| `MSG_READY` | 0x42 | None | Zygote ready for commands |
+| `MSG_WORKER_READY` | 0x43 | None | Worker ready for reuse (after reset) |
+| `TestResult` | - | Serialized result | Test execution result |
 
-### 5.3 TestPayload Structure
+### 5.3 Worker Pool Protocol
+
+The Zygote maintains an `IDLE_WORKERS` pool for worker reuse:
+
+```rust
+/// Handle to a persistent worker for reuse
+struct WorkerHandle {
+    pid: i32,
+    socket: UnixStream,
+}
+
+/// Pool of idle workers ready for dispatch
+static IDLE_WORKERS: Mutex<Vec<WorkerHandle>> = Mutex::new(Vec::new());
+```
+
+**Dispatch Flow:**
+
+1. Zygote receives `CMD_FORK` + `TestPayload`
+2. If `!is_toxic` and `IDLE_WORKERS` has worker:
+   - Pop worker from pool
+   - Send `CMD_RUN_TEST` + payload to worker
+   - Spawn `spawn_result_collector` thread
+3. Else:
+   - Fork new worker
+   - Worker executes test, sends result
+   - If safe: reset, send `MSG_WORKER_READY`, enter `worker_loop()`
+   - `spawn_result_collector` adds worker to pool
+
+### 5.4 TestPayload Structure
 
 ```rust
 #[derive(Serialize, Deserialize)]
@@ -400,22 +431,31 @@ if ret != 0 {
 
 ## 8. Testing Strategy
 
-### 8.1 Unit Tests
+### 8.1 Unit Tests (zygote.rs)
 
-| Test | File | Description |
-|:-----|:-----|:------------|
-| `test_worker_loop_safe_reset` | `zygote.rs` | Safe test triggers reset, loop continues |
-| `test_worker_loop_toxic_exit` | `zygote.rs` | Toxic test triggers exit |
-| `test_scheduler_queue_split` | `scheduler.rs` | Ready/blocked queue management |
-| `test_fixture_dependency_resolution` | `resolver.rs` | Fixture ordering |
+| Test | Description |
+|:-----|:------------|
+| `test_worker_loop_structure` | Verifies loop processes [Safe, Safe, Toxic] sequence correctly |
+| `test_worker_loop_all_safe` | All safe tests trigger Reset action |
+| `test_worker_loop_first_toxic` | First toxic test exits immediately |
+| `test_worker_state_machine` | Verifies state transitions (Idle→Running→Reporting→Reset/Exit) |
+| `test_zygote_lifecycle_manager` | Safe worker sends result + READY, gets pooled |
+| `test_toxic_worker_not_pooled` | Toxic worker sends result, exits, NOT pooled |
 
-### 8.2 Integration Tests
+### 8.2 Integration Tests (phase4_integration.rs)
 
-| Test | File | Description |
-|:-----|:-----|:------------|
-| `test_dual_path_execution` | `phase4_integration.rs` | End-to-end safe/toxic handling |
-| `test_worker_replacement` | `phase4_integration.rs` | Supervisor spawns replacement after toxic |
-| `test_memory_reset_isolation` | `phase4_integration.rs` | State doesn't leak between tests |
+| Test | Description |
+|:-----|:------------|
+| `test_queue_split_separates_safe_and_toxic` | Queue separation logic |
+| `test_priority_dispatch_safe_first` | Safe tests execute before toxic |
+| `test_dual_path_decision_logic` | Safe=Reset, Toxic=Exit |
+| `test_payload_is_toxic_propagation` | is_toxic flag propagates through TestPayload |
+| `test_mixed_queue_execution_simulation` | Realistic mixed run simulation |
+| `test_all_safe_tests_no_exits` | Edge case: all safe |
+| `test_all_toxic_tests_all_exits` | Edge case: all toxic |
+| `test_empty_queues` | Edge case: empty queues |
+| `test_scheduler_stats_tracking` | Statistics collection |
+| `test_result_before_exit_invariant` | Result sent BEFORE exit decision |
 
 ### 8.3 Stress Tests
 

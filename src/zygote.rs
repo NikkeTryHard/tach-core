@@ -2,7 +2,7 @@
 
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
-use crate::protocol::{encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, MSG_READY};
+use crate::protocol::{encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY, MSG_WORKER_READY};
 use crate::snapshot::send_fd;
 use anyhow::Result;
 use nix::sys::signal::{signal, SigHandler, Signal};
@@ -37,6 +37,26 @@ const TACH_HARNESS_PY: &str = include_str!("tach_harness.py");
 /// The Zygote is single-threaded after fork, so contention is not a concern.
 static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
+
+// =============================================================================
+// Phase 4.3: Worker Pool for Persistent Workers
+// =============================================================================
+
+/// Handle to a persistent worker for reuse in Hypervisor Mode.
+/// Contains the PID and socket for dispatching subsequent tests.
+///
+/// SAFETY: UnixStream is Send, so WorkerHandle can be safely moved between threads.
+struct WorkerHandle {
+    pid: i32,
+    socket: UnixStream,
+}
+
+/// Pool of idle workers ready for dispatch.
+/// Workers are added here after reset, popped for dispatch.
+///
+/// SAFETY: Using Mutex for thread-safe access from result collection threads.
+/// The Zygote command loop is single-threaded, but result collectors run in threads.
+static IDLE_WORKERS: Mutex<Vec<WorkerHandle>> = Mutex::new(Vec::new());
 
 /// Initialize snapshot mode by creating UFFD and sending to Supervisor
 ///
@@ -157,6 +177,9 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
     tach_mod.add_function(wrap_pyfunction!(init_snapshot_mode, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(reset_memory, &tach_mod)?)?;
 
+    // Phase 5.3: Hot Reloading - Module cleanup
+    tach_mod.add_function(wrap_pyfunction!(cleanup_modules, &tach_mod)?)?;
+
     // Phase 2: Zero-Copy Loader functions (Request Model)
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module_path, &tach_mod)?)?;
@@ -171,6 +194,211 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
     sys.getattr("modules")?.set_item("tach_rust", tach_mod)?;
 
     Ok(())
+}
+
+// =============================================================================
+// Phase 4.3: Worker Loop Helper Functions
+// =============================================================================
+
+/// Phase 5.3: Clean up test-imported modules from sys.modules
+///
+/// Delegates to tach_harness.cleanup_test_modules() which:
+/// 1. Identifies modules imported AFTER Zygote initialization
+/// 2. Removes them from sys.modules (forcing re-import on next test)
+/// 3. Protects critical modules from removal
+#[pyfunction]
+fn cleanup_modules() -> PyResult<()> {
+    Python::with_gil(|py| -> std::result::Result<(), PyErr> {
+        let harness = py.import("tach_harness")?;
+        harness.getattr("cleanup_test_modules")?.call0()?;
+        Ok(())
+    })
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("cleanup_modules failed: {}", e)))
+}
+
+/// Reset memory and signal readiness to Zygote.
+///
+/// Called by worker after completing a safe test. Performs:
+/// 1. Phase 5.3: Clean sys.modules (remove test-imported modules)
+/// 2. Memory reset via madvise(MADV_DONTNEED)
+/// 3. Signals MSG_WORKER_READY to Zygote
+///
+/// Returns Err if reset fails - worker MUST exit in this case.
+fn reset_and_signal_ready(socket: &UnixStream) -> Result<()> {
+    // 1. Phase 5.3: Clean sys.modules BEFORE memory reset
+    // This removes test-imported modules so next test gets fresh imports
+    Python::with_gil(|py| -> std::result::Result<(), PyErr> {
+        let tach_rust = py.import("tach_rust")?;
+
+        // Clean up test-imported modules first
+        tach_rust.getattr("cleanup_modules")?.call0()?;
+
+        // Then reset memory
+        tach_rust.getattr("reset_memory")?.call0()?;
+
+        Ok(())
+    })
+    .map_err(|e| anyhow::anyhow!("Python reset failed: {}", e))?;
+
+    // 2. Signal ready to Zygote
+    let mut socket = socket.try_clone()?;
+    socket.write_all(&[MSG_WORKER_READY])?;
+
+    eprintln!("[worker] Reset complete, signaled READY");
+    Ok(())
+}
+
+/// Main worker loop - receives and executes tests until exit.
+///
+/// The worker enters this loop after completing its first safe test.
+/// It waits for commands from Zygote:
+/// - CMD_RUN_TEST: Execute test, send result, decide exit/reset
+/// - CMD_EXIT: Clean shutdown
+///
+/// The loop breaks on:
+/// - Toxic test (worker must exit for OS cleanup)
+/// - Reset failure (dirty state, must exit)
+/// - Socket error (Zygote died or protocol error)
+/// - CMD_EXIT command
+fn worker_loop(socket: UnixStream) {
+    let mut socket = socket;
+
+    loop {
+        // Wait for next command from Zygote
+        let mut cmd_buf = [0u8; 1];
+        if socket.read_exact(&mut cmd_buf).is_err() {
+            eprintln!("[worker] Socket closed, exiting loop");
+            break;
+        }
+
+        match cmd_buf[0] {
+            CMD_RUN_TEST => {
+                // Read payload length
+                let mut len_buf = [0u8; 4];
+                if socket.read_exact(&mut len_buf).is_err() {
+                    eprintln!("[worker] Failed to read payload length");
+                    break;
+                }
+                let len = u32::from_le_bytes(len_buf) as usize;
+
+                // Read payload
+                let mut payload_buf = vec![0u8; len];
+                if socket.read_exact(&mut payload_buf).is_err() {
+                    eprintln!("[worker] Failed to read payload");
+                    break;
+                }
+
+                let payload: TestPayload = match bincode::deserialize(&payload_buf) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("[worker] Deserialize error: {}", e);
+                        break;
+                    }
+                };
+
+                // Execute test
+                let result = run_worker(&payload);
+
+                // CRITICAL: Send result BEFORE exit decision
+                let _ = std::io::stdout().flush();
+                if let Ok(result_bytes) = encode_with_length(&result) {
+                    if socket.write_all(&result_bytes).is_err() {
+                        eprintln!("[worker] Failed to send result");
+                        break;
+                    }
+                }
+
+                // Dual-path decision
+                if payload.is_toxic {
+                    // TOXIC PATH: Exit loop, process will terminate
+                    eprintln!("[worker] Toxic test completed, exiting");
+                    break;
+                } else {
+                    // SAFE PATH: Reset memory and continue loop
+                    if let Err(e) = reset_and_signal_ready(&socket) {
+                        eprintln!("[worker] Reset failed: {}, exiting", e);
+                        break;
+                    }
+                    // Loop continues - wait for next command
+                }
+            }
+            CMD_EXIT => {
+                eprintln!("[worker] Received EXIT command");
+                break;
+            }
+            _ => {
+                eprintln!("[worker] Unknown command: {:#x}", cmd_buf[0]);
+            }
+        }
+    }
+}
+
+/// Spawn a thread to collect result from worker and manage worker lifecycle.
+///
+/// This is the Worker Lifecycle Manager thread. It:
+/// 1. Reads TestResult from worker socket
+/// 2. Forwards result to Supervisor via result_tx
+/// 3. For safe tests: waits for MSG_WORKER_READY, then returns worker to pool
+/// 4. For toxic tests: worker will EOF (exit), thread terminates
+///
+/// The thread owns the socket and WorkerHandle lifecycle.
+fn spawn_result_collector(
+    socket: UnixStream,
+    pid: i32,
+    result_tx: mpsc::Sender<Vec<u8>>,
+    is_toxic: bool,
+) {
+    thread::spawn(move || {
+        let mut socket = socket;
+
+        // 1. Read result length prefix
+        let mut result_len_buf = [0u8; 4];
+        if socket.read_exact(&mut result_len_buf).is_err() {
+            eprintln!("[zygote] Worker {} crashed before sending result", pid);
+            return;
+        }
+
+        // 2. Read result payload
+        let result_len = u32::from_le_bytes(result_len_buf) as usize;
+        let mut result_buf = vec![0u8; result_len];
+        if socket.read_exact(&mut result_buf).is_err() {
+            eprintln!("[zygote] Worker {} crashed during result send", pid);
+            return;
+        }
+
+        // 3. Forward result to Supervisor
+        let mut full = result_len_buf.to_vec();
+        full.extend(result_buf);
+        if result_tx.send(full).is_err() {
+            eprintln!("[zygote] Result channel closed");
+            return;
+        }
+
+        // 4. Toxic workers exit here - don't wait for READY signal
+        if is_toxic {
+            eprintln!("[zygote] Toxic worker {} completed, not pooling", pid);
+            return;
+        }
+
+        // 5. Safe workers: wait for MSG_WORKER_READY signal
+        let mut ready_buf = [0u8; 1];
+        match socket.read_exact(&mut ready_buf) {
+            Ok(_) if ready_buf[0] == MSG_WORKER_READY => {
+                // Worker is ready for reuse - add to pool
+                eprintln!("[zygote] Worker {} ready, adding to pool", pid);
+                IDLE_WORKERS.lock().unwrap().push(WorkerHandle { pid, socket });
+            }
+            Ok(_) => {
+                eprintln!(
+                    "[zygote] Worker {} sent unexpected byte: {:#x}",
+                    pid, ready_buf[0]
+                );
+            }
+            Err(_) => {
+                eprintln!("[zygote] Worker {} died after result (no READY)", pid);
+            }
+        }
+    });
 }
 
 /// Zygote with separate command and result channels
@@ -318,32 +546,55 @@ except Exception as e:
                     }
                 };
 
-                // Create dedicated socket for worker result
+                let is_toxic = payload.is_toxic;
+
+                // Phase 4.3: Check for idle worker (only for safe tests)
+                let idle_worker = if !is_toxic {
+                    IDLE_WORKERS.lock().unwrap().pop()
+                } else {
+                    None // Always fork fresh for toxic tests
+                };
+
+                if let Some(mut worker) = idle_worker {
+                    // =========================================================
+                    // REUSE PATH: Dispatch to existing worker
+                    // =========================================================
+                    eprintln!("[zygote] Reusing worker {} for test", worker.pid);
+
+                    // Send CMD_RUN_TEST + payload to worker
+                    let dispatch_ok = (|| -> std::io::Result<()> {
+                        worker.socket.write_all(&[CMD_RUN_TEST])?;
+                        worker.socket.write_all(&len_buf)?;
+                        worker.socket.write_all(&payload_buf)?;
+                        Ok(())
+                    })();
+
+                    if let Err(e) = dispatch_ok {
+                        eprintln!("[zygote] Failed to dispatch to worker {}: {}", worker.pid, e);
+                        // Worker died, fall through to fork path
+                        // Don't continue - we need to fork a new worker
+                    } else {
+                        // Successfully dispatched - send PID back and spawn collector
+                        cmd_socket.write_all(&worker.pid.to_le_bytes())?;
+                        spawn_result_collector(worker.socket, worker.pid, result_tx.clone(), is_toxic);
+                        continue;
+                    }
+                }
+
+                // =========================================================
+                // FORK PATH: Create new worker
+                // =========================================================
                 let (parent_sock, child_sock) = UnixStream::pair()?;
-                let result_tx = result_tx.clone();
 
                 match unsafe { fork() } {
                     Ok(ForkResult::Parent { child }) => {
                         drop(child_sock);
                         // Send PID back on command socket
-                        cmd_socket.write_all(&child.as_raw().to_le_bytes())?;
+                        let child_pid = child.as_raw();
+                        cmd_socket.write_all(&child_pid.to_le_bytes())?;
 
-                        // Spawn thread to collect this worker's result
-                        thread::spawn(move || {
-                            let mut socket = parent_sock;
-                            let mut result_len_buf = [0u8; 4];
-
-                            if socket.read_exact(&mut result_len_buf).is_ok() {
-                                let result_len = u32::from_le_bytes(result_len_buf) as usize;
-                                let mut result_buf = vec![0u8; result_len];
-
-                                if socket.read_exact(&mut result_buf).is_ok() {
-                                    let mut full = result_len_buf.to_vec();
-                                    full.extend(result_buf);
-                                    let _ = result_tx.send(full);
-                                }
-                            }
-                        });
+                        // Use spawn_result_collector instead of inline thread
+                        spawn_result_collector(parent_sock, child_pid, result_tx.clone(), is_toxic);
                     }
                     Ok(ForkResult::Child) => {
                         drop(parent_sock);
@@ -412,25 +663,23 @@ except Exception as e:
                             let _ = child_sock.try_clone().unwrap().write_all(&result_bytes);
                         }
 
-                        // 9. Phase 4: Dual-path decision based on toxicity
+                        // 9. Phase 4.3: Dual-path decision based on toxicity
                         // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
-                        // SAFE PATH: Reset memory for future Hypervisor Mode
+                        // SAFE PATH: Reset memory and enter worker loop for reuse
                         if payload.is_toxic {
                             // Toxic test: exit without reset
                             // This is the Isolation Mode path
                             process::exit(0);
                         } else {
-                            // Safe test: reset memory before exit
-                            // This validates the reset path works and prepares for
-                            // Sub-Stage 4.3 where safe workers will loop instead of exit
-                            Python::with_gil(|py| -> Result<(), PyErr> {
-                                let tach_rust = py.import("tach_rust")?;
-                                tach_rust.getattr("reset_memory")?.call0()?;
-                                Ok(())
-                            })
-                            .ok(); // Non-fatal if reset fails
+                            // Safe test: reset memory and enter worker loop
+                            // This is the Hypervisor Mode path - worker will be reused
+                            if let Err(e) = reset_and_signal_ready(&child_sock) {
+                                eprintln!("[worker] Reset failed after first test: {}, exiting", e);
+                                process::exit(1);
+                            }
 
-                            // For now, still exit (Sub-Stage 4.3 will add loop)
+                            // Enter worker loop - wait for subsequent tests
+                            worker_loop(child_sock);
                             process::exit(0);
                         }
                     }
@@ -439,6 +688,19 @@ except Exception as e:
             }
             CMD_EXIT => {
                 eprintln!("[zygote] Received EXIT.");
+
+                // Phase 4.3: Drain idle workers and send them EXIT commands
+                let idle_workers = std::mem::take(&mut *IDLE_WORKERS.lock().unwrap());
+                let worker_count = idle_workers.len();
+                for mut worker in idle_workers {
+                    eprintln!("[zygote] Sending EXIT to idle worker {}", worker.pid);
+                    let _ = worker.socket.write_all(&[CMD_EXIT]);
+                    // Socket drops here, worker will see EOF if write fails
+                }
+                if worker_count > 0 {
+                    eprintln!("[zygote] Drained {} idle workers", worker_count);
+                }
+
                 // Give threads time to forward final results
                 thread::sleep(std::time::Duration::from_millis(200));
                 break;
@@ -666,5 +928,120 @@ mod tests {
             ],
             "Toxic worker should: Idle -> Running -> Reporting -> Exiting"
         );
+    }
+
+    // =========================================================================
+    // Phase 4.3: Lifecycle Manager Integration Test
+    // =========================================================================
+
+    /// Test that spawn_result_collector correctly manages worker lifecycle.
+    /// This test simulates the full Zygote <-> Worker protocol without forking.
+    #[test]
+    fn test_zygote_lifecycle_manager() {
+        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+        use std::time::Duration;
+
+        // Clear the pool before test (in case previous tests left state)
+        IDLE_WORKERS.lock().unwrap().clear();
+
+        // Create socket pair (simulating Zygote <-> Worker)
+        let (zygote_sock, worker_sock) = UnixStream::pair().expect("Failed to create socket pair");
+
+        // Create a channel to receive results
+        let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
+
+        // Simulated worker PID
+        let fake_pid = 12345;
+        let is_toxic = false; // Safe test - should be pooled
+
+        // Spawn the result collector (Zygote side)
+        spawn_result_collector(zygote_sock, fake_pid, result_tx, is_toxic);
+
+        // Simulate worker sending result
+        let test_result = TestResult {
+            test_id: 42,
+            status: STATUS_PASS,
+            duration_ns: 1_000_000,
+            message: String::new(),
+        };
+        let result_bytes = encode_with_length(&test_result).expect("Failed to encode result");
+
+        let mut worker_sock = worker_sock;
+        worker_sock
+            .write_all(&result_bytes)
+            .expect("Failed to write result");
+
+        // Simulate worker sending MSG_WORKER_READY
+        worker_sock
+            .write_all(&[MSG_WORKER_READY])
+            .expect("Failed to write READY");
+
+        // Wait for result to be forwarded
+        let received = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Should receive result");
+        assert_eq!(received, result_bytes, "Result should match");
+
+        // Give the collector thread time to process MSG_WORKER_READY and add to pool
+        thread::sleep(Duration::from_millis(50));
+
+        // Verify worker was added to pool
+        let pool_size = IDLE_WORKERS.lock().unwrap().len();
+        assert_eq!(pool_size, 1, "Pool should have 1 idle worker");
+
+        // Pop and verify it's the same PID
+        let worker = IDLE_WORKERS.lock().unwrap().pop().expect("Should have worker");
+        assert_eq!(worker.pid, fake_pid, "PID should match");
+
+        // Pool should now be empty
+        assert_eq!(IDLE_WORKERS.lock().unwrap().len(), 0, "Pool should be empty after pop");
+    }
+
+    /// Test that toxic workers are NOT added to the pool.
+    #[test]
+    fn test_toxic_worker_not_pooled() {
+        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+        use std::time::Duration;
+
+        // Clear the pool before test
+        IDLE_WORKERS.lock().unwrap().clear();
+
+        let (zygote_sock, worker_sock) = UnixStream::pair().expect("Failed to create socket pair");
+        let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
+
+        let fake_pid = 99999;
+        let is_toxic = true; // Toxic test - should NOT be pooled
+
+        spawn_result_collector(zygote_sock, fake_pid, result_tx, is_toxic);
+
+        // Simulate worker sending result
+        let test_result = TestResult {
+            test_id: 1,
+            status: STATUS_PASS,
+            duration_ns: 500_000,
+            message: String::new(),
+        };
+        let result_bytes = encode_with_length(&test_result).expect("Failed to encode result");
+
+        let mut worker_sock = worker_sock;
+        worker_sock
+            .write_all(&result_bytes)
+            .expect("Failed to write result");
+
+        // Toxic worker exits - close socket (simulates process exit)
+        drop(worker_sock);
+
+        // Wait for result
+        let received = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Should receive result");
+        assert_eq!(received, result_bytes, "Result should match");
+
+        // Give collector time to finish
+        thread::sleep(Duration::from_millis(50));
+
+        // Verify worker was NOT added to pool
+        let pool_size = IDLE_WORKERS.lock().unwrap().len();
+        assert_eq!(pool_size, 0, "Toxic worker should NOT be in pool");
     }
 }

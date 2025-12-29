@@ -4,4 +4,8 @@ Cargo.lock
 __pycache__/
 .tach/
 *.pyc
+
+# Local configuration
+.claude/settings.local.json
 CLAUDE.md
+.ignore

@@ -16,6 +16,7 @@ import pdb
 import _pytest.runner
 import _pytest.main
 import _pytest.config
+from typing import Optional, Set, Tuple
 
 # Status codes (must match protocol.rs)
 STATUS_PASS = 0
@@ -280,6 +281,29 @@ def uninstall_tach_import_hook():
 # Global flag tracking whether this worker can be recycled via userfaultfd
 _CAN_RECYCLE = False
 
+# =============================================================================
+# PHASE 5.3: HOT RELOADING - Module Cleanup Infrastructure
+# =============================================================================
+
+# Baseline snapshot of sys.modules captured after Zygote initialization
+# This is the "golden state" - modules loaded BEFORE any test imports
+_INITIAL_MODULES: Optional[Set[str]] = None
+
+# Modules to NEVER remove (critical for runtime stability)
+# Uses tuple for efficient startswith() prefix matching
+_PROTECTED_PREFIXES = (
+    "sys", "builtins", "__main__", "_thread", "threading",
+    "importlib", "_frozen_importlib", "_imp",
+    "tach_rust", "tach_harness",
+    "_pytest", "pytest", "pluggy", "py",
+    "django",
+    "encodings", "codecs", "io", "_io",
+    "os", "posix", "errno", "stat", "_stat",
+    "abc", "typing", "types", "functools", "collections",
+    "warnings", "weakref", "contextlib",
+    "logging", "_logging",
+)
+
 
 def post_fork_init() -> bool:
     """Initialize worker after fork - called ONCE at start of worker lifecycle.
@@ -287,12 +311,13 @@ def post_fork_init() -> bool:
     This function:
     1. Performs post-fork hygiene (RNG reseed, logging reset)
     2. Installs the Tach import hook for zero-copy module loading
-    3. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
-    4. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
+    3. Captures baseline sys.modules for Phase 5.3 Hot Reloading
+    4. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
+    5. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
 
     Returns True if snapshot mode is enabled, False otherwise.
     """
-    global _CAN_RECYCLE
+    global _CAN_RECYCLE, _INITIAL_MODULES
 
     # 1. Post-fork hygiene
     inject_entropy()
@@ -301,7 +326,12 @@ def post_fork_init() -> bool:
     # This must be done BEFORE snapshot to be part of the golden state
     install_tach_import_hook()
 
-    # 3. Check if snapshot mode is enabled
+    # 3. Phase 5.3: Capture baseline sys.modules for hot reloading
+    # This snapshot defines what modules are "framework" vs "test-imported"
+    _INITIAL_MODULES = set(sys.modules.keys())
+    print(f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
+
+    # 4. Check if snapshot mode is enabled
     import os
 
     supervisor_sock = os.environ.get("TACH_SUPERVISOR_SOCK")
@@ -309,7 +339,7 @@ def post_fork_init() -> bool:
         # No snapshot mode - standard fork-server behavior
         return False
 
-    # 4. Initialize snapshot mode via Rust FFI
+    # 5. Initialize snapshot mode via Rust FFI
     try:
         import tach_rust
 
@@ -539,6 +569,64 @@ def reset_worker_state() -> bool:
     except Exception as e:
         print(f"[harness] WARN: reset_memory failed: {e}", file=sys.stderr)
         return False
+
+
+def cleanup_test_modules() -> int:
+    """Remove test-imported modules from sys.modules.
+
+    Phase 5.3: Hot Reloading Support
+
+    This function:
+    1. Identifies modules imported AFTER Zygote initialization
+    2. Removes them from sys.modules (forcing re-import on next test)
+    3. Protects critical modules from removal
+
+    Called by Rust reset_and_signal_ready() BEFORE memory reset.
+
+    Returns: Number of modules removed
+    """
+    global _INITIAL_MODULES
+
+    if _INITIAL_MODULES is None:
+        # Baseline not captured - skip cleanup
+        return 0
+
+    # Calculate delta: modules loaded AFTER baseline
+    current_modules = set(sys.modules.keys())
+    test_modules = current_modules - _INITIAL_MODULES
+
+    # Filter out protected modules using efficient prefix matching
+    to_remove = []
+    for mod_name in test_modules:
+        # Skip modules with protected prefixes
+        if mod_name.startswith(_PROTECTED_PREFIXES):
+            continue
+        # Also skip submodules of protected prefixes
+        for prefix in _PROTECTED_PREFIXES:
+            if mod_name.startswith(prefix + "."):
+                break
+        else:
+            to_remove.append(mod_name)
+
+    # Remove in reverse order (children before parents)
+    # This prevents import errors when parent modules reference children
+    to_remove.sort(key=lambda x: x.count('.'), reverse=True)
+
+    removed_count = 0
+    for mod_name in to_remove:
+        try:
+            del sys.modules[mod_name]
+            removed_count += 1
+        except KeyError:
+            pass  # Already removed
+        except Exception as e:
+            # Log but don't crash - dirty worker is better than dead worker
+            print(f"[harness] WARN: Failed to remove {mod_name}: {e}", file=sys.stderr)
+
+    if removed_count > 0:
+        print(f"[harness] Cleaned up {removed_count} test modules", file=sys.stderr)
+
+    return removed_count
 
 
 def should_worker_exit(is_toxic: bool) -> bool:

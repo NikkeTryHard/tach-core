@@ -36,6 +36,7 @@ _Replace pytest's execution model with microsecond-scale memory snapshots._
 - [Test Coverage](#test-coverage)
 - [Technical Specifications](#technical-specifications)
 - [Phase 4: Worker Loop & Dual-Path Scheduler](#phase-4-worker-loop--dual-path-scheduler)
+- [Phase 5: Observability & Hardening](#phase-5-observability--hardening)
 
 ---
 
@@ -489,6 +490,7 @@ tach-core/
 │   ├── gauntlet/         # Stress/security tests
 │   ├── gauntlet_phase1/  # Memory reset verification
 │   ├── gauntlet_phase2/  # Loader tests (36 tests)
+│   ├── gauntlet_phase5/  # Hot reload tests (4 tests)
 │   ├── benchmark/        # Performance tests (50 modules)
 │   └── ...
 ├── docs/
@@ -515,7 +517,7 @@ cargo test --lib                              # 195+ tests
 # Specific module tests
 cargo test --lib analysis::                   # 49 toxicity scanner tests
 cargo test --lib graph::                      # 20 toxicity graph tests
-cargo test --lib zygote::tests::              # 4 worker loop prototype tests
+cargo test --lib zygote::tests::              # 6 worker loop tests
 cargo test --lib protocol::tests::            # 8 protocol tests
 cargo test --lib scheduler::tests::           # 8 scheduler tests
 
@@ -529,6 +531,9 @@ cargo test --test physics_check -- --ignored  # Requires sudo
 
 # Python gauntlet (Phase 2)
 ./target/release/tach-core --no-isolation tests/gauntlet_phase2/  # 36 tests
+
+# Python gauntlet (Phase 5 - Hot Reload)
+./target/release/tach-core --no-isolation tests/gauntlet_phase5/  # 4 tests
 
 # Python benchmark
 ./target/release/tach-core --no-isolation tests/benchmark/  # 2 tests
@@ -646,10 +651,14 @@ Transform Tach from fork-server to true Hypervisor with worker reuse:
   - [x] Toxic path: `sys.exit(0)`, process terminates
   - [x] Result-before-exit invariant (no lost results)
 
-- [x] **Phase 4.3: Memory Safety Fixes**
-  - [x] Eliminated `static mut` undefined behavior in `zygote.rs`
-  - [x] Replaced with `Mutex<Vec<(usize, usize)>>` for RESET_REGIONS
-  - [x] Replaced with `AtomicBool` for SNAPSHOT_ENABLED
+- [x] **Phase 4.3: Persistent Worker Loop**
+  - [x] `WorkerHandle` struct and `IDLE_WORKERS` pool for worker reuse
+  - [x] `worker_loop()` state machine handling CMD_RUN_TEST and CMD_EXIT
+  - [x] `spawn_result_collector()` Worker Lifecycle Manager thread
+  - [x] `reset_and_signal_ready()` helper for memory reset + signaling
+  - [x] CMD_FORK refactored to check pool before forking
+  - [x] CMD_EXIT refactored to drain idle workers
+  - [x] Eliminated `static mut` UB (Mutex + AtomicBool)
   - [x] Dead Man's Switch (`PR_SET_PDEATHSIG`) for orphan prevention
 
 - [x] **Phase 4.4: Infrastructure**
@@ -669,10 +678,37 @@ Transform Tach from fork-server to true Hypervisor with worker reuse:
 | Test Category | Count | Status |
 |:--------------|:------|:-------|
 | `scheduler.rs` queue tests | 8 | ✅ Passing |
-| `zygote.rs` worker loop tests | 4 | ✅ Passing |
+| `zygote.rs` worker loop tests | 6 | ✅ Passing |
+| `phase4_integration.rs` tests | 10 | ✅ Passing |
 | `protocol.rs` serialization tests | 8 | ✅ Passing |
-| `resolver_integration.rs` | 8 | ✅ Passing |
-| **Total Phase 4 Tests** | **28** | ✅ Passing |
+| `resolver_integration.rs` | 9 | ✅ Passing |
+| **Total Phase 4 Tests** | **41** | ✅ Passing |
+
+### Phase 5: Observability & Hardening 🚧 IN PROGRESS
+
+Make the Hypervisor usable and bulletproof:
+
+- [ ] **Phase 5.1: Zero-Overhead Coverage (PEP 669)** - PLANNED
+  - [ ] Replace `sys.settrace` with `sys.monitoring` (Python 3.12+)
+  - [ ] C-callback for `PY_MONITORING_EVENT_LINE`
+  - [ ] Shared memory ring buffer for coverage data
+  - [ ] Zero-overhead when coverage disabled
+
+- [ ] **Phase 5.2: The Iron Dome (Seccomp/Landlock)** - PLANNED
+  - [ ] Seccomp-BPF sandbox for workers
+  - [ ] Block `fork`, `exec`, `socket` in Hypervisor Mode
+  - [ ] Landlock filesystem restrictions
+  - [ ] Dynamic policy based on test toxicity
+
+- [x] **Phase 5.3: Hot Reloading (sys.modules cleanup)** ✅ COMPLETE
+  - [x] Capture `_INITIAL_MODULES` baseline in `post_fork_init()`
+  - [x] `cleanup_test_modules()` function to remove test imports
+  - [x] Protected modules list (`tach_rust`, `pytest`, `django`, etc.)
+  - [x] `cleanup_modules()` pyfunction exposed via `tach_rust` module
+  - [x] Integration with `reset_and_signal_ready()` cycle
+  - [x] Gauntlet tests for hot reload verification (4 tests)
+
+**Phase 5 Goal:** Enable safe worker reuse without import pollution, add coverage support, and sandbox untrusted test code.
 
 ---
 
@@ -683,7 +719,7 @@ Transform Tach from fork-server to true Hypervisor with worker reuse:
 | Rust Unit Tests (`analysis.rs`)              | 49      | ✅ Passing     |
 | Rust Unit Tests (`graph.rs`)                 | 20      | ✅ Passing     |
 | Rust Unit Tests (`loader.rs`)                | 17      | ✅ Passing     |
-| Rust Unit Tests (`zygote.rs::tests`)         | 4       | ✅ Passing     |
+| Rust Unit Tests (`zygote.rs::tests`)         | 6       | ✅ Passing     |
 | Rust Unit Tests (`protocol.rs::tests`)       | 8       | ✅ Passing     |
 | Rust Unit Tests (`scheduler.rs::tests`)      | 8       | ✅ Passing     |
 | Rust Integration (`toxicity_integration.rs`) | 10      | ✅ Passing     |
@@ -693,10 +729,11 @@ Transform Tach from fork-server to true Hypervisor with worker reuse:
 | Rust Integration (`snapshot_integration.rs`) | 7       | ✅ Passing     |
 | Python Gauntlet Phase 1                      | 28      | ✅ Passing     |
 | Python Gauntlet Phase 2                      | 36      | ✅ Passing     |
+| Python Gauntlet Phase 5 (hot reload)         | 4       | ✅ Passing     |
 | Python Benchmark                             | 2       | ✅ Passing     |
 | Python Gauntlet (crash signals)              | 8       | ✅ Passing     |
 | Python Gauntlet (fs protection)              | 5       | ✅ Passing     |
-| **Total**                                    | **234** | ✅ All Passing |
+| **Total**                                    | **240** | ✅ All Passing |
 
 ---
 
@@ -825,6 +862,7 @@ pub struct BytecodeCompiler {
 | `load_module`       | `fn(py, name, path, bytecode) -> PyResult<bool>` | Inject bytecode via C-API      |
 | `init_snapshot_mode`| `fn(supervisor_sock: &str) -> bool`              | Initialize UFFD handshake      |
 | `reset_memory`      | `fn() -> PyResult<()>`                           | Self-reset via madvise         |
+| `cleanup_modules`   | `fn() -> PyResult<()>`                           | Remove test-imported modules   |
 
 ### Import Hook (`tach_harness.py`)
 
