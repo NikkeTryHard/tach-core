@@ -1,7 +1,7 @@
 //! Dependency Resolution & Graph Construction
 //! Resolves fixture dependencies and builds execution order.
 
-use crate::discovery::{DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule};
+use crate::discovery::{DiscoveryResult, FixtureDefinition, FixtureScope, TestCase};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -89,10 +89,7 @@ impl FixtureRegistry {
             HashMap::new();
 
         for module in &result.modules {
-            let is_conftest = module
-                .path
-                .file_name()
-                .map_or(false, |n| n == "conftest.py");
+            let is_conftest = module.path.file_name().is_some_and(|n| n == "conftest.py");
 
             let mut module_fixtures = HashMap::new();
             for fixture in &module.fixtures {
@@ -294,6 +291,7 @@ impl<'a> Resolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::TestModule;
 
     /// Helper to create a fixture definition
     fn make_fixture(name: &str, deps: Vec<&str>) -> FixtureDefinition {

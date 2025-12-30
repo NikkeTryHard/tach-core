@@ -3,6 +3,12 @@
 //! This library exposes the core modules for integration testing.
 //! The binary entry point is in main.rs.
 
+// Lint configuration for code quality
+#![warn(unused_imports)]
+#![warn(unused_variables)]
+#![warn(dead_code)]
+#![warn(unused_mut)]
+
 // =============================================================================
 // Phase 5.4: Jemalloc Global Allocator
 // =============================================================================
@@ -95,10 +101,10 @@ fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
         .filter(|e| {
             let path = e.path();
             // Include only .py files
-            path.extension().map_or(false, |ext| ext == "py")
+            path.extension().is_some_and(|ext| ext == "py")
                 // Exclude hidden directories, __pycache__, .git, etc.
                 && !path.ancestors().any(|p| {
-                    p.file_name().map_or(false, |name| {
+                    p.file_name().is_some_and(|name| {
                         let n = name.to_string_lossy();
                         n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
                     })

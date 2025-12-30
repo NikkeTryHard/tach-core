@@ -3,7 +3,7 @@
 //! Phase 8: Venv auto-detection and path injection
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Find the site-packages directory for the project's virtual environment.
 ///
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// 1. $VIRTUAL_ENV environment variable (set by activated venvs)
 /// 2. .venv directory in the project root
 /// 3. venv directory in the project root
-pub fn find_site_packages(project_root: &PathBuf) -> Option<PathBuf> {
+pub fn find_site_packages(project_root: &Path) -> Option<PathBuf> {
     // 1. Check explicit VIRTUAL_ENV (highest priority - user explicitly activated)
     if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
         let venv_path = PathBuf::from(venv);
@@ -41,7 +41,7 @@ pub fn find_site_packages(project_root: &PathBuf) -> Option<PathBuf> {
 
 /// Find site-packages within a virtual environment directory.
 /// Linux/macOS: lib/pythonX.Y/site-packages
-fn find_site_packages_in_venv(venv: &PathBuf) -> Option<PathBuf> {
+fn find_site_packages_in_venv(venv: &Path) -> Option<PathBuf> {
     let lib = venv.join("lib");
     if !lib.exists() {
         return None;
@@ -70,9 +70,9 @@ fn find_site_packages_in_venv(venv: &PathBuf) -> Option<PathBuf> {
 
 /// Get all Python paths that should be prepended to sys.path.
 /// Returns (project_root, site_packages) where site_packages may be None.
-pub fn get_python_paths(project_root: &PathBuf) -> (PathBuf, Option<PathBuf>) {
+pub fn get_python_paths(project_root: &Path) -> (PathBuf, Option<PathBuf>) {
     let site_packages = find_site_packages(project_root);
-    (project_root.clone(), site_packages)
+    (project_root.to_path_buf(), site_packages)
 }
 
 #[cfg(test)]

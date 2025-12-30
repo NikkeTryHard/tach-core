@@ -574,7 +574,7 @@ except Exception as e:
 
     // Signal ready on both sockets
     let mut cmd_socket = cmd_socket;
-    let mut result_socket = result_socket;
+    let result_socket = result_socket;
     cmd_socket.write_all(&[MSG_READY])?;
 
     // Channel for collecting results from worker threads

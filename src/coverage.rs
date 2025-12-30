@@ -271,7 +271,12 @@ impl CoverageRingBuffer {
     }
 
     /// Get mutable pointer to the header.
+    ///
+    /// # Safety
+    /// This uses interior mutability through shared memory. The caller must ensure
+    /// proper synchronization (atomic operations are used in the header fields).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // Intentional: shared memory with atomic synchronization
     pub fn header_mut(&self) -> &mut RingBufferHeader {
         unsafe { &mut *(self.ptr as *mut RingBufferHeader) }
     }

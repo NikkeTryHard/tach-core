@@ -2,7 +2,6 @@ use tach_core::config::{self, Cli, Commands, OutputFormat};
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity;
 use tach_core::discovery;
-use tach_core::graph::ToxicityGraph;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -20,7 +19,7 @@ use nix::sys::wait::waitpid;
 use nix::unistd::{fork, ForkResult};
 use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 // =============================================================================
@@ -245,10 +244,10 @@ fn execute_session(
         .filter(|e| {
             let path = e.path();
             // Include only .py files
-            path.extension().map_or(false, |ext| ext == "py")
+            path.extension().is_some_and(|ext| ext == "py")
                 // Exclude hidden directories, __pycache__, .git, etc.
                 && !path.ancestors().any(|p| {
-                    p.file_name().map_or(false, |name| {
+                    p.file_name().is_some_and(|name| {
                         let n = name.to_string_lossy();
                         n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
                     })
@@ -363,7 +362,7 @@ fn execute_session(
 }
 
 /// Handle the `list` subcommand
-fn handle_list_command(cwd: &PathBuf, is_json: bool) -> Result<()> {
+fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
     let discovery_result = discovery::discover(cwd)?;
 
     if is_json {

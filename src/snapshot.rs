@@ -298,6 +298,11 @@ impl AlignedSegment {
         self.end - self.start
     }
 
+    /// Returns true if this segment has zero length
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Number of pages in this segment
     pub fn page_count(&self) -> usize {
         self.len() / PAGE_SIZE

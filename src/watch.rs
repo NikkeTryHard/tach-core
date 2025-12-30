@@ -9,7 +9,7 @@
 //! This module respawns the entire test session on each change.
 
 use anyhow::Result;
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::unbounded;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -59,39 +59,30 @@ where
     }
 
     // Event loop
-    loop {
-        // Wait for first event
-        match rx.recv() {
-            Ok(first_event) => {
-                // Collect affected paths
-                let mut changed_paths = collect_python_paths(&first_event);
+    while let Ok(first_event) = rx.recv() {
+        // Collect affected paths
+        let mut changed_paths = collect_python_paths(&first_event);
 
-                // Debounce: accumulate events until 100ms of silence
-                while let Ok(event) = rx.recv_timeout(Duration::from_millis(100)) {
-                    changed_paths.extend(collect_python_paths(&event));
-                }
+        // Debounce: accumulate events until 100ms of silence
+        while let Ok(event) = rx.recv_timeout(Duration::from_millis(100)) {
+            changed_paths.extend(collect_python_paths(&event));
+        }
 
-                // Filter: only .py file changes trigger re-run
-                if changed_paths.is_empty() {
-                    continue;
-                }
+        // Filter: only .py file changes trigger re-run
+        if changed_paths.is_empty() {
+            continue;
+        }
 
-                // === CRITICAL: Full Session Recycle ===
-                // This respawns the Zygote to pick up new source code
-                clear_screen();
-                eprintln!(
-                    "[tach] 🔄 Change detected in {} file(s). Reloading...\n",
-                    changed_paths.len()
-                );
+        // === CRITICAL: Full Session Recycle ===
+        // This respawns the Zygote to pick up new source code
+        clear_screen();
+        eprintln!(
+            "[tach] 🔄 Change detected in {} file(s). Reloading...\n",
+            changed_paths.len()
+        );
 
-                if let Err(e) = run_session() {
-                    eprintln!("[tach] Run failed: {}", e);
-                }
-            }
-            Err(_) => {
-                // Channel closed - watcher dropped
-                break;
-            }
+        if let Err(e) = run_session() {
+            eprintln!("[tach] Run failed: {}", e);
         }
     }
 
@@ -182,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_collect_python_paths_filters_non_py() {
-        use notify::event::{CreateKind, ModifyKind};
+        use notify::event::ModifyKind;
 
         let event = Event {
             kind: notify::EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),

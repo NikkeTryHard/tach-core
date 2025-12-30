@@ -11,7 +11,7 @@
 //! - Any toxic token ANYWHERE in the file triggers Isolation Mode
 
 use rustpython_ast as ast;
-use rustpython_parser::parse_program;
+use rustpython_parser::Parse;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -74,7 +74,7 @@ pub struct ToxicityReport {
 pub fn analyze_file(source: &str, path: &Path) -> ToxicityReport {
     let path_str = path.to_string_lossy();
 
-    let suite = match parse_program(source, &path_str) {
+    let suite = match ast::Suite::parse(source, &path_str) {
         Ok(s) => s,
         Err(_) => {
             // Parse errors are treated as toxic (conservative approach)
@@ -422,10 +422,8 @@ fn check_expr_toxicity(
 
         // Recurse into dict literals
         ast::Expr::Dict(dict) => {
-            for key in &dict.keys {
-                if let Some(k) = key {
-                    check_expr_toxicity(k, report, import_aliases, from_imports);
-                }
+            for k in dict.keys.iter().flatten() {
+                check_expr_toxicity(k, report, import_aliases, from_imports);
             }
             for value in &dict.values {
                 check_expr_toxicity(value, report, import_aliases, from_imports);

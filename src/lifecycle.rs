@@ -12,7 +12,7 @@
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 /// Global flag to track if we're in debugging mode
@@ -146,6 +146,7 @@ impl Default for CleanupGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn test_cleanup_guard_creation() {

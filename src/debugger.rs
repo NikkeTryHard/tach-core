@@ -70,6 +70,7 @@ pub enum TerminalMode {
 
 /// Manages terminal state and safe restoration
 pub struct TerminalManager {
+    #[allow(dead_code)] // Kept for potential future use (e.g., direct fd operations)
     stdin_fd: RawFd,
     original_termios: Option<Termios>,
     current_mode: TerminalMode,

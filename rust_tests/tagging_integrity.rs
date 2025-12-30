@@ -5,8 +5,6 @@
 //!
 //! If this flag drops at any point, Phase 4 (Hypervisor Mode) will fail.
 
-use std::path::PathBuf;
-use tach_core::discover_with_toxicity;
 use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::graph::ToxicityGraph;
 use tach_core::protocol::{FixtureInfo, TestPayload};

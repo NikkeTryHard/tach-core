@@ -5,24 +5,19 @@ use anyhow::Result;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use rustpython_ast as ast;
-use rustpython_parser::parse_program;
+use rustpython_parser::Parse;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Scope of a pytest fixture
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum FixtureScope {
+    #[default]
     Function,
     Class,
     Module,
     Session,
-}
-
-impl Default for FixtureScope {
-    fn default() -> Self {
-        Self::Function
-    }
 }
 
 /// A pytest fixture definition
@@ -176,7 +171,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
     let source = fs::read_to_string(path)?;
     let path_str = path.to_string_lossy();
 
-    let suite = match parse_program(&source, &path_str) {
+    let suite = match ast::Suite::parse(&source, &path_str) {
         Ok(s) => s,
         Err(_) => {
             return Ok(TestModule {
@@ -345,7 +340,7 @@ fn extract_args_from_arguments(args: &ast::Arguments) -> Vec<String> {
 }
 
 fn has_fixture_decorator(decorators: &[ast::Expr]) -> bool {
-    decorators.iter().any(|d| is_fixture_decorator(d))
+    decorators.iter().any(is_fixture_decorator)
 }
 
 fn is_fixture_decorator(expr: &ast::Expr) -> bool {
@@ -382,9 +377,11 @@ fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
 }
 
 /// Extract params from @pytest.fixture(params=[...]) decorator
+///
 /// Returns None if:
 /// - No params keyword
 /// - Dynamic params (e.g., params=load_from_db())
+///
 /// Returns Some(vec) if static literal list
 fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String>> {
     for decorator in decorators {

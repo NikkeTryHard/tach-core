@@ -376,14 +376,14 @@ impl BytecodeCompiler {
 
         for file in files {
             // Skip non-.py files
-            if file.extension().map_or(true, |e| e != "py") {
+            if file.extension().is_none_or(|e| e != "py") {
                 continue;
             }
 
             match self.compile(file) {
                 Ok(bytecode) => {
                     let name = self.path_to_module_name(file);
-                    let is_package = file.file_name().map_or(false, |n| n == "__init__.py");
+                    let is_package = file.file_name().is_some_and(|n| n == "__init__.py");
 
                     registry.insert(BytecodeEntry {
                         name: name.clone(),

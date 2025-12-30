@@ -200,46 +200,40 @@ impl Scheduler {
         let mut socket = self.result_socket.lock().unwrap();
 
         let mut len_buf = [0u8; 4];
-        match socket.read_exact(&mut len_buf) {
-            Ok(_) => {
-                let len = u32::from_le_bytes(len_buf) as usize;
-                let mut result_buf = vec![0u8; len];
+        if socket.read_exact(&mut len_buf).is_ok() {
+            let len = u32::from_le_bytes(len_buf) as usize;
+            let mut result_buf = vec![0u8; len];
 
-                match socket.read_exact(&mut result_buf) {
-                    Ok(_) => {
-                        if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
-                            // Get and remove worker
-                            let (test_name, slot) = {
-                                let mut workers = self.active_workers.lock().unwrap();
-                                match workers.remove(&result.test_id) {
-                                    Some(w) => (w.test_name, w.slot),
-                                    None => (format!("test_{}", result.test_id), 0),
-                                }
-                            };
-
-                            // Read and discard logs (they went to memfd)
-                            let _ = self.log_capture.lock().unwrap().read_and_clear(slot);
-
-                            // Format for reporter
-                            let status = if result.status == STATUS_PASS {
-                                "pass"
-                            } else {
-                                "fail"
-                            };
-                            let duration_ms = result.duration_ns / 1_000_000;
-                            let msg = if result.message.is_empty() {
-                                None
-                            } else {
-                                Some(result.message)
-                            };
-
-                            return Some((test_name, status, duration_ms, msg));
+            if socket.read_exact(&mut result_buf).is_ok() {
+                if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+                    // Get and remove worker
+                    let (test_name, slot) = {
+                        let mut workers = self.active_workers.lock().unwrap();
+                        match workers.remove(&result.test_id) {
+                            Some(w) => (w.test_name, w.slot),
+                            None => (format!("test_{}", result.test_id), 0),
                         }
-                    }
-                    Err(_) => {}
+                    };
+
+                    // Read and discard logs (they went to memfd)
+                    let _ = self.log_capture.lock().unwrap().read_and_clear(slot);
+
+                    // Format for reporter
+                    let status = if result.status == STATUS_PASS {
+                        "pass"
+                    } else {
+                        "fail"
+                    };
+                    let duration_ms = result.duration_ns / 1_000_000;
+                    let msg = if result.message.is_empty() {
+                        None
+                    } else {
+                        Some(result.message)
+                    };
+
+                    return Some((test_name, status, duration_ms, msg));
                 }
             }
-            Err(_) => {}
         }
         None
     }
@@ -284,62 +278,57 @@ impl Scheduler {
         Ok(())
     }
 
+    #[allow(dead_code)] // Utility method kept for potential future use
     fn try_collect_result(&self) -> Option<TestResult> {
         let mut socket = self.result_socket.lock().unwrap();
 
         let mut len_buf = [0u8; 4];
-        match socket.read_exact(&mut len_buf) {
-            Ok(_) => {
-                let len = u32::from_le_bytes(len_buf) as usize;
-                let mut result_buf = vec![0u8; len];
+        if socket.read_exact(&mut len_buf).is_ok() {
+            let len = u32::from_le_bytes(len_buf) as usize;
+            let mut result_buf = vec![0u8; len];
 
-                match socket.read_exact(&mut result_buf) {
-                    Ok(_) => {
-                        if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
-                            // Get and remove worker
-                            let (test_name, slot) = {
-                                let mut workers = self.active_workers.lock().unwrap();
-                                match workers.remove(&result.test_id) {
-                                    Some(w) => (w.test_name, w.slot),
-                                    None => (format!("test_{}", result.test_id), 0),
-                                }
-                            };
+            if socket.read_exact(&mut result_buf).is_ok() {
+                if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+                    // Get and remove worker
+                    let (test_name, slot) = {
+                        let mut workers = self.active_workers.lock().unwrap();
+                        match workers.remove(&result.test_id) {
+                            Some(w) => (w.test_name, w.slot),
+                            None => (format!("test_{}", result.test_id), 0),
+                        }
+                    };
 
-                            // Read logs
-                            let logs = self
-                                .log_capture
-                                .lock()
-                                .unwrap()
-                                .read_and_clear(slot)
-                                .unwrap_or_default();
+                    // Read logs
+                    let logs = self
+                        .log_capture
+                        .lock()
+                        .unwrap()
+                        .read_and_clear(slot)
+                        .unwrap_or_default();
 
-                            // Print result
-                            let duration_ms = result.duration_ns as f64 / 1_000_000.0;
-                            println!(
-                                "  {} {} ({:.2}ms)",
-                                result.status_icon(),
-                                test_name,
-                                duration_ms
-                            );
+                    // Print result
+                    let duration_ms = result.duration_ns as f64 / 1_000_000.0;
+                    println!(
+                        "  {} {} ({:.2}ms)",
+                        result.status_icon(),
+                        test_name,
+                        duration_ms
+                    );
 
-                            // Print logs
-                            if !logs.is_empty() {
-                                for line in logs.lines().take(3) {
-                                    println!("    │ {}", &line[..line.len().min(80)]);
-                                }
-                            }
-
-                            if !result.message.is_empty() {
-                                println!("    └─ {}", result.message);
-                            }
-
-                            return Some(result);
+                    // Print logs
+                    if !logs.is_empty() {
+                        for line in logs.lines().take(3) {
+                            println!("    │ {}", &line[..line.len().min(80)]);
                         }
                     }
-                    Err(_) => {}
+
+                    if !result.message.is_empty() {
+                        println!("    └─ {}", result.message);
+                    }
+
+                    return Some(result);
                 }
             }
-            Err(_) => {}
         }
         None
     }

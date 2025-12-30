@@ -8,9 +8,8 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use tach_core::discovery::{FixtureScope, TestCase, TestModule};
-use tach_core::protocol::{FixtureInfo, TestPayload};
-use tach_core::resolver::{FixtureRegistry, Resolver, RunnableTest};
+use tach_core::protocol::TestPayload;
+use tach_core::resolver::RunnableTest;
 
 // =============================================================================
 // Test 1: Queue Split Logic

@@ -69,7 +69,7 @@ pub fn verify_jemalloc_active() -> Result<String> {
         let mut version_len = std::mem::size_of::<*const i8>();
 
         let ret = jemalloc_sys::mallctl(
-            b"version\0".as_ptr() as *const i8,
+            c"version".as_ptr(),
             &mut version_ptr as *mut *const i8 as *mut _,
             &mut version_len,
             std::ptr::null_mut(),
@@ -154,7 +154,7 @@ pub fn quiesce_allocator() -> Result<()> {
         // mallctl signature: mallctl(name, oldp, oldlenp, newp, newlen)
         // For thread.tcache.flush: no input/output, just execute the action
         let ret = jemalloc_sys::mallctl(
-            b"thread.tcache.flush\0".as_ptr() as *const i8,
+            c"thread.tcache.flush".as_ptr(),
             std::ptr::null_mut(), // oldp: not reading any value
             std::ptr::null_mut(), // oldlenp: not reading any value
             std::ptr::null_mut(), // newp: not writing any value
@@ -189,7 +189,7 @@ pub fn quiesce_allocator() -> Result<()> {
         let mut epoch_len = std::mem::size_of::<u64>();
 
         let ret = jemalloc_sys::mallctl(
-            b"epoch\0".as_ptr() as *const i8,
+            c"epoch".as_ptr(),
             &mut epoch as *mut u64 as *mut _, // oldp: read current epoch
             &mut epoch_len,                   // oldlenp: size of epoch
             &mut epoch as *mut u64 as *mut _, // newp: write to advance

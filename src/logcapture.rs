@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
 
 /// Size of each log buffer (1MB per worker slot)
@@ -92,7 +92,7 @@ impl LogCapture {
 
 impl Drop for LogCapture {
     fn drop(&mut self) {
-        for (_, fd) in &self.fds {
+        for fd in self.fds.values() {
             unsafe {
                 libc::close(*fd);
             }
@@ -142,7 +142,7 @@ pub fn redirect_output(fd: RawFd) -> Result<()> {
         }
 
         // Make stdout line-buffered using setvbuf
-        let stdout_file = libc::fdopen(libc::STDOUT_FILENO, b"w\0".as_ptr() as *const i8);
+        let stdout_file = libc::fdopen(libc::STDOUT_FILENO, c"w".as_ptr());
         if !stdout_file.is_null() {
             libc::setvbuf(stdout_file, std::ptr::null_mut(), libc::_IOLBF, 0);
         }

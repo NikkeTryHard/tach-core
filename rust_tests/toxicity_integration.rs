@@ -5,9 +5,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 use tach_core::discover_with_toxicity;
-use tach_core::discovery::{
-    DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule,
-};
+use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::graph::ToxicityGraph;
 use tach_core::resolver::{FixtureRegistry, Resolver};
 
