@@ -6,8 +6,20 @@
 //! - Handle page faults via userfaultfd to lazily restore pages
 //!
 //! This eliminates fork() overhead in the hot loop (target: <50μs reset vs ~1ms fork)
+//!
+//! # Phase 5.4: ELF Segment Registration
+//!
+//! For correct snapshot/restore of Python's global state (small_ints, singletons),
+//! we must precisely identify and register libpython's writable segments:
+//!
+//! 1. Parse ELF headers using `goblin` to find PT_LOAD segments with PF_W flag
+//! 2. Calculate absolute virtual addresses: base_addr + (p_vaddr - first_p_vaddr)
+//! 3. Page-align all segments (UFFDIO_REGISTER requires page-aligned addresses)
+//! 4. Merge overlapping/adjacent segments to avoid EINVAL from kernel
+//! 5. Register merged segments with UFFDIO_REGISTER_MODE_MISSING
 
 use anyhow::{anyhow, Context, Result};
+use goblin::elf::{program_header::PF_W, Elf};
 use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
 use nix::sys::uio::{process_vm_readv, RemoteIoVec};
 use nix::unistd::Pid;
@@ -16,6 +28,7 @@ use std::fs;
 use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use userfaultfd::{Uffd, UffdBuilder};
 
 /// Page size (4KB on x86_64/aarch64)
@@ -119,7 +132,8 @@ impl MemoryRegion {
     /// Check if this region should be included in the snapshot
     ///
     /// We snapshot: heap, anonymous mappings, libpython data/bss, stack
-    /// We exclude: vDSO, vsyscall, read-only mappings, shared mappings
+    /// We exclude: vDSO, vsyscall, read-only mappings, shared mappings,
+    ///             coverage ring buffer (memfd:tach_coverage)
     pub fn should_snapshot(&self) -> bool {
         // Must be writable
         if !self.perms.contains('w') {
@@ -128,6 +142,23 @@ impl MemoryRegion {
 
         // Skip vDSO and vsyscall
         if self.name.contains("[vdso]") || self.name.contains("[vsyscall]") {
+            return false;
+        }
+
+        // =================================================================
+        // Phase 5.1: EXCLUDE coverage ring buffer from snapshot
+        // =================================================================
+        // The coverage ring buffer is created via memfd_create("tach_coverage")
+        // and appears in /proc/pid/maps as "memfd:tach_coverage" or similar.
+        //
+        // CRITICAL: This region MUST be excluded from userfaultfd registration.
+        // If we reset this region during MADV_DONTNEED, we lose all coverage
+        // data collected during test execution.
+        //
+        // The ring buffer is MAP_SHARED between Supervisor and Worker, so
+        // resetting it would corrupt the Supervisor's view of the data.
+        // =================================================================
+        if self.name.contains("tach_coverage") || self.name.contains("memfd:tach") {
             return false;
         }
 
@@ -209,6 +240,390 @@ pub fn parse_memory_maps(pid: Pid) -> Result<Vec<MemoryRegion>> {
 /// Align address down to page boundary
 fn align_to_page(addr: usize) -> usize {
     addr & !(PAGE_SIZE - 1)
+}
+
+/// Align address up to page boundary
+fn align_to_page_up(addr: usize) -> usize {
+    (addr + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+}
+
+// =============================================================================
+// Phase 5.4: ELF Segment Parsing and Page-Aligned Merging
+// =============================================================================
+//
+// This section implements the "Iron Dome" for Python's global state:
+//
+// 1. Find libpython.so in /proc/pid/maps (or /proc/self/exe if statically linked)
+// 2. Parse ELF headers to find PT_LOAD segments with PF_W (writable) flag
+// 3. Calculate absolute virtual addresses using the base address from maps
+// 4. Page-align all segments (kernel requires page-aligned UFFDIO_REGISTER)
+// 5. Merge overlapping/adjacent segments to avoid EINVAL
+//
+// Why this matters:
+// -----------------
+// Python caches small integers (-5 to 256) and singletons (None, True, False)
+// in libpython's .data segment. If we don't snapshot and restore these,
+// reference counts will corrupt after the first memory reset.
+// =============================================================================
+
+/// A page-aligned memory segment for UFFDIO registration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignedSegment {
+    /// Page-aligned start address
+    pub start: usize,
+    /// Page-aligned end address
+    pub end: usize,
+    /// Human-readable description for logging
+    pub description: String,
+}
+
+impl AlignedSegment {
+    /// Create a new aligned segment from raw addresses
+    ///
+    /// Addresses are automatically page-aligned:
+    /// - start is rounded DOWN to page boundary
+    /// - end is rounded UP to page boundary
+    pub fn new(start: usize, end: usize, description: impl Into<String>) -> Self {
+        let aligned_start = align_to_page(start);
+        let aligned_end = align_to_page_up(end);
+        Self {
+            start: aligned_start,
+            end: aligned_end,
+            description: description.into(),
+        }
+    }
+
+    /// Length in bytes (always page-aligned)
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    /// Number of pages in this segment
+    pub fn page_count(&self) -> usize {
+        self.len() / PAGE_SIZE
+    }
+
+    /// Check if this segment overlaps or is adjacent to another
+    ///
+    /// Two segments are considered overlapping if:
+    /// - They share any pages, OR
+    /// - They are adjacent (one ends where the other begins)
+    ///
+    /// This is critical for merging: adjacent segments MUST be merged
+    /// because UFFDIO_REGISTER will fail with EINVAL if we try to
+    /// register overlapping ranges.
+    pub fn overlaps_or_adjacent(&self, other: &Self) -> bool {
+        // Segments overlap if neither is entirely before the other
+        // Adjacent means one ends exactly where the other begins
+        self.start <= other.end && other.start <= self.end
+    }
+
+    /// Merge this segment with another, returning the combined segment
+    ///
+    /// # Panics
+    /// Panics if segments don't overlap or aren't adjacent (use overlaps_or_adjacent first)
+    pub fn merge(&self, other: &Self) -> Self {
+        debug_assert!(
+            self.overlaps_or_adjacent(other),
+            "Cannot merge non-overlapping segments"
+        );
+
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+            description: format!("{}+{}", self.description, other.description),
+        }
+    }
+}
+
+/// Merge a list of segments, combining any that overlap or are adjacent
+///
+/// # Algorithm: Page-Align and Merge
+///
+/// This implements the mandatory merge algorithm to avoid EINVAL from UFFDIO_REGISTER:
+///
+/// 1. **Sort** all segments by start address
+/// 2. **Iterate** through sorted segments:
+///    - If current segment overlaps/adjacent to previous, merge them
+///    - Otherwise, emit previous and start new accumulator
+/// 3. **Emit** final segment
+///
+/// # Example
+///
+/// Input segments (after page alignment):
+/// ```text
+/// A: [0x1000, 0x3000)  "heap"
+/// B: [0x2000, 0x4000)  "libpython.data"  <- overlaps A
+/// C: [0x5000, 0x6000)  "stack"           <- separate
+/// ```
+///
+/// Output:
+/// ```text
+/// [0x1000, 0x4000)  "heap+libpython.data"  <- merged A+B
+/// [0x5000, 0x6000)  "stack"                <- unchanged
+/// ```
+///
+/// # Why This Matters
+///
+/// The kernel's UFFDIO_REGISTER syscall will return EINVAL if:
+/// - Addresses are not page-aligned (handled by AlignedSegment::new)
+/// - Ranges overlap with previously registered ranges (handled by this merge)
+///
+/// By merging overlapping segments, we ensure each page is registered exactly once.
+pub fn merge_segments(mut segments: Vec<AlignedSegment>) -> Vec<AlignedSegment> {
+    if segments.is_empty() {
+        return segments;
+    }
+
+    // Step 1: Sort by start address
+    segments.sort_by_key(|s| s.start);
+
+    // Step 2: Merge overlapping/adjacent segments
+    let mut merged: Vec<AlignedSegment> = Vec::with_capacity(segments.len());
+    let mut current = segments.remove(0);
+
+    for segment in segments {
+        if current.overlaps_or_adjacent(&segment) {
+            // Merge: extend current to include segment
+            // Key boundary condition: use max(current.end, segment.end)
+            current = current.merge(&segment);
+        } else {
+            // No overlap: emit current, start new accumulator
+            merged.push(current);
+            current = segment;
+        }
+    }
+
+    // Step 3: Emit final segment
+    merged.push(current);
+
+    merged
+}
+
+/// Information about libpython's location in memory
+#[derive(Debug)]
+pub struct LibpythonInfo {
+    /// Path to the libpython shared object (or executable if statically linked)
+    pub path: PathBuf,
+    /// Base address where libpython is mapped
+    pub base_addr: usize,
+    /// Whether libpython is statically linked into the executable
+    pub is_static: bool,
+}
+
+/// Find libpython in /proc/pid/maps
+///
+/// Returns the path and base address of libpython.so, or the executable
+/// if Python is statically linked.
+///
+/// # Algorithm
+///
+/// 1. Parse /proc/pid/maps looking for "libpython" in the pathname
+/// 2. Find the first (lowest address) mapping - this is the base address
+/// 3. If not found, check if /proc/self/exe contains Python symbols (static linking)
+pub fn find_libpython(pid: Pid) -> Result<LibpythonInfo> {
+    let regions = parse_memory_maps(pid)?;
+
+    // Look for libpython.so mappings
+    // The first (lowest address) r-xp mapping is typically the base
+    let mut libpython_regions: Vec<&MemoryRegion> = regions
+        .iter()
+        .filter(|r| r.name.contains("libpython"))
+        .collect();
+
+    if !libpython_regions.is_empty() {
+        // Sort by start address to find base
+        libpython_regions.sort_by_key(|r| r.start);
+        let base_region = libpython_regions[0];
+
+        // Extract path from the region name
+        let path = PathBuf::from(&base_region.name);
+
+        return Ok(LibpythonInfo {
+            path,
+            base_addr: base_region.start,
+            is_static: false,
+        });
+    }
+
+    // Fallback: Check if Python is statically linked into the executable
+    // This is common in some Rust-Python distributions
+    let exe_path = format!("/proc/{}/exe", pid);
+    let exe_real =
+        fs::read_link(&exe_path).with_context(|| format!("Failed to read {}", exe_path))?;
+
+    // Find the executable's base address in maps
+    let exe_name = exe_real.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    for region in &regions {
+        if region.name.contains(exe_name) && region.perms.contains('r') {
+            return Ok(LibpythonInfo {
+                path: exe_real,
+                base_addr: region.start,
+                is_static: true,
+            });
+        }
+    }
+
+    Err(anyhow!(
+        "Could not find libpython.so or statically linked Python in PID {}",
+        pid
+    ))
+}
+
+/// Parse ELF and extract writable PT_LOAD segments
+///
+/// # Algorithm
+///
+/// 1. Read the ELF file from disk
+/// 2. Parse program headers to find PT_LOAD segments
+/// 3. Filter for segments with PF_W (writable) flag
+/// 4. Calculate absolute virtual addresses:
+///    `target_va = base_addr + (segment.p_vaddr - first_segment.p_vaddr)`
+///
+/// # Why PT_LOAD segments?
+///
+/// While .data and .bss sections are useful for debugging, the kernel
+/// operates on segments (PT_LOAD), not sections. A PT_LOAD segment with
+/// PF_W contains all writable data including:
+/// - .data (initialized global variables)
+/// - .bss (zero-initialized global variables)
+/// - .got (global offset table)
+/// - .got.plt (PLT entries)
+///
+/// By registering the entire writable segment, we ensure complete coverage
+/// of Python's global state.
+pub fn parse_elf_writable_segments(
+    elf_path: &PathBuf,
+    base_addr: usize,
+) -> Result<Vec<AlignedSegment>> {
+    let elf_bytes = fs::read(elf_path)
+        .with_context(|| format!("Failed to read ELF file: {}", elf_path.display()))?;
+
+    let elf = Elf::parse(&elf_bytes)
+        .with_context(|| format!("Failed to parse ELF: {}", elf_path.display()))?;
+
+    // Find the first PT_LOAD segment's p_vaddr (used for address calculation)
+    let first_load_vaddr = elf
+        .program_headers
+        .iter()
+        .find(|ph| ph.p_type == goblin::elf::program_header::PT_LOAD)
+        .map(|ph| ph.p_vaddr as usize)
+        .unwrap_or(0);
+
+    let mut segments = Vec::new();
+
+    for (idx, ph) in elf.program_headers.iter().enumerate() {
+        // Only process PT_LOAD segments
+        if ph.p_type != goblin::elf::program_header::PT_LOAD {
+            continue;
+        }
+
+        // Only process writable segments (PF_W flag)
+        if ph.p_flags & PF_W == 0 {
+            continue;
+        }
+
+        // Calculate absolute virtual address
+        // Formula: target_va = base_addr + (p_vaddr - first_load_vaddr)
+        //
+        // Why this formula?
+        // - base_addr is where the ELF is actually loaded (from /proc/maps)
+        // - p_vaddr is the virtual address in the ELF file
+        // - first_load_vaddr is the base of the ELF's virtual address space
+        // - The difference (p_vaddr - first_load_vaddr) is the offset from base
+        let segment_offset = ph.p_vaddr as usize - first_load_vaddr;
+        let target_va = base_addr + segment_offset;
+        let target_end = target_va + ph.p_memsz as usize;
+
+        let description = format!(
+            "libpython:PT_LOAD[{}]:0x{:x}-0x{:x}",
+            idx, target_va, target_end
+        );
+
+        eprintln!(
+            "[snapshot] Found writable segment: {} ({} pages)",
+            description,
+            (align_to_page_up(target_end) - align_to_page(target_va)) / PAGE_SIZE
+        );
+
+        segments.push(AlignedSegment::new(target_va, target_end, description));
+    }
+
+    if segments.is_empty() {
+        eprintln!(
+            "[snapshot] WARNING: No writable PT_LOAD segments found in {}",
+            elf_path.display()
+        );
+    }
+
+    Ok(segments)
+}
+
+/// Get all segments that should be registered with userfaultfd
+///
+/// This combines:
+/// 1. Standard regions from /proc/maps (heap, stack, anonymous)
+/// 2. ELF-parsed libpython writable segments
+///
+/// All segments are page-aligned and merged to avoid UFFDIO_REGISTER errors.
+pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
+    let mut all_segments = Vec::new();
+
+    // 1. Get standard regions from /proc/maps
+    let regions = parse_memory_maps(pid)?;
+    for region in regions.iter().filter(|r| r.should_snapshot()) {
+        all_segments.push(AlignedSegment::new(
+            region.start,
+            region.end,
+            region.name.clone(),
+        ));
+    }
+
+    // 2. Parse libpython ELF for precise writable segment identification
+    match find_libpython(pid) {
+        Ok(libpython) => {
+            eprintln!(
+                "[snapshot] Found libpython at 0x{:x}: {} (static={})",
+                libpython.base_addr,
+                libpython.path.display(),
+                libpython.is_static
+            );
+
+            match parse_elf_writable_segments(&libpython.path, libpython.base_addr) {
+                Ok(elf_segments) => {
+                    for seg in elf_segments {
+                        all_segments.push(seg);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[snapshot] WARNING: Failed to parse libpython ELF: {}. \
+                         Falling back to /proc/maps detection.",
+                        e
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[snapshot] WARNING: Could not find libpython: {}. \
+                 Relying on /proc/maps detection only.",
+                e
+            );
+        }
+    }
+
+    // 3. Merge overlapping/adjacent segments
+    let merged = merge_segments(all_segments);
+
+    eprintln!(
+        "[snapshot] Total segments after merge: {} ({} pages)",
+        merged.len(),
+        merged.iter().map(|s| s.page_count()).sum::<usize>()
+    );
+
+    Ok(merged)
 }
 
 // =============================================================================
@@ -699,6 +1114,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_region_filtering_coverage_buffer_excluded() {
+        // Phase 5.1: Coverage ring buffer must be EXCLUDED from snapshot
+        // It's created via memfd_create("tach_coverage") and appears in /proc/maps
+        let coverage_memfd = MemoryRegion {
+            start: 0xf000,
+            end: 0x10000,
+            len: 0x1000,
+            perms: "rw-s".to_string(), // Shared mapping
+            name: "/memfd:tach_coverage (deleted)".to_string(),
+        };
+        assert!(
+            !coverage_memfd.should_snapshot(),
+            "coverage ring buffer must be excluded"
+        );
+
+        // Also test the shorter name variant
+        let coverage_short = MemoryRegion {
+            start: 0xf000,
+            end: 0x10000,
+            len: 0x1000,
+            perms: "rw-s".to_string(),
+            name: "memfd:tach_coverage".to_string(),
+        };
+        assert!(
+            !coverage_short.should_snapshot(),
+            "coverage ring buffer (short name) must be excluded"
+        );
+    }
+
     // =========================================================================
     // Page Alignment Tests
     // =========================================================================
@@ -778,5 +1223,222 @@ mod tests {
         let bytes = pid.to_le_bytes();
         let recovered = i32::from_le_bytes(bytes);
         assert_eq!(pid, recovered);
+    }
+
+    // =========================================================================
+    // Phase 5.4: AlignedSegment Tests
+    // =========================================================================
+
+    #[test]
+    fn test_aligned_segment_page_alignment() {
+        // Unaligned addresses should be page-aligned
+        let seg = AlignedSegment::new(0x1234, 0x5678, "test");
+
+        // Start should be rounded DOWN to page boundary
+        assert_eq!(seg.start, 0x1000);
+        // End should be rounded UP to page boundary
+        assert_eq!(seg.end, 0x6000);
+    }
+
+    #[test]
+    fn test_aligned_segment_already_aligned() {
+        let seg = AlignedSegment::new(0x1000, 0x3000, "test");
+        assert_eq!(seg.start, 0x1000);
+        assert_eq!(seg.end, 0x3000);
+        assert_eq!(seg.len(), 0x2000);
+        assert_eq!(seg.page_count(), 2);
+    }
+
+    #[test]
+    fn test_aligned_segment_overlap_detection() {
+        let a = AlignedSegment::new(0x1000, 0x3000, "a");
+        let b = AlignedSegment::new(0x2000, 0x4000, "b");
+        let c = AlignedSegment::new(0x5000, 0x6000, "c");
+
+        // A and B overlap
+        assert!(a.overlaps_or_adjacent(&b));
+        assert!(b.overlaps_or_adjacent(&a));
+
+        // A and C don't overlap
+        assert!(!a.overlaps_or_adjacent(&c));
+        assert!(!c.overlaps_or_adjacent(&a));
+    }
+
+    #[test]
+    fn test_aligned_segment_adjacent_detection() {
+        let a = AlignedSegment::new(0x1000, 0x2000, "a");
+        let b = AlignedSegment::new(0x2000, 0x3000, "b");
+
+        // Adjacent segments should be detected as overlapping
+        // (they share the boundary page)
+        assert!(a.overlaps_or_adjacent(&b));
+        assert!(b.overlaps_or_adjacent(&a));
+    }
+
+    #[test]
+    fn test_aligned_segment_merge() {
+        let a = AlignedSegment::new(0x1000, 0x3000, "a");
+        let b = AlignedSegment::new(0x2000, 0x4000, "b");
+
+        let merged = a.merge(&b);
+
+        // Merged should span both segments
+        assert_eq!(merged.start, 0x1000);
+        assert_eq!(merged.end, 0x4000);
+        assert!(merged.description.contains("a"));
+        assert!(merged.description.contains("b"));
+    }
+
+    #[test]
+    fn test_aligned_segment_merge_max_end() {
+        // Test the critical boundary condition: max(prev.end, current.end)
+        let a = AlignedSegment::new(0x1000, 0x5000, "a"); // Larger
+        let b = AlignedSegment::new(0x2000, 0x3000, "b"); // Smaller, contained
+
+        let merged = a.merge(&b);
+
+        // End should be max(0x5000, 0x3000) = 0x5000
+        assert_eq!(merged.start, 0x1000);
+        assert_eq!(merged.end, 0x5000);
+    }
+
+    // =========================================================================
+    // Phase 5.4: Segment Merge Algorithm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_merge_segments_empty() {
+        let segments: Vec<AlignedSegment> = vec![];
+        let merged = merge_segments(segments);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_merge_segments_single() {
+        let segments = vec![AlignedSegment::new(0x1000, 0x2000, "single")];
+        let merged = merge_segments(segments);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x2000);
+    }
+
+    #[test]
+    fn test_merge_segments_no_overlap() {
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x5000, 0x6000, "b"),
+            AlignedSegment::new(0x9000, 0xa000, "c"),
+        ];
+        let merged = merge_segments(segments);
+
+        // No overlap, should remain 3 segments
+        assert_eq!(merged.len(), 3);
+    }
+
+    #[test]
+    fn test_merge_segments_overlapping() {
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x3000, "a"),
+            AlignedSegment::new(0x2000, 0x4000, "b"),
+        ];
+        let merged = merge_segments(segments);
+
+        // Should merge into one segment
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x4000);
+    }
+
+    #[test]
+    fn test_merge_segments_adjacent() {
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x2000, 0x3000, "b"),
+        ];
+        let merged = merge_segments(segments);
+
+        // Adjacent segments should merge
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x3000);
+    }
+
+    #[test]
+    fn test_merge_segments_complex() {
+        // Complex scenario from the docstring:
+        // A: [0x1000, 0x3000)  "heap"
+        // B: [0x2000, 0x4000)  "libpython.data"  <- overlaps A
+        // C: [0x5000, 0x6000)  "stack"           <- separate
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x3000, "heap"),
+            AlignedSegment::new(0x2000, 0x4000, "libpython.data"),
+            AlignedSegment::new(0x5000, 0x6000, "stack"),
+        ];
+        let merged = merge_segments(segments);
+
+        // Should produce 2 segments: merged A+B and separate C
+        assert_eq!(merged.len(), 2);
+
+        // First segment: merged heap + libpython
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x4000);
+
+        // Second segment: stack
+        assert_eq!(merged[1].start, 0x5000);
+        assert_eq!(merged[1].end, 0x6000);
+    }
+
+    #[test]
+    fn test_merge_segments_unsorted_input() {
+        // Input is not sorted - merge should handle this
+        let segments = vec![
+            AlignedSegment::new(0x5000, 0x6000, "c"),
+            AlignedSegment::new(0x1000, 0x3000, "a"),
+            AlignedSegment::new(0x2000, 0x4000, "b"),
+        ];
+        let merged = merge_segments(segments);
+
+        // Should still produce correct result
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x4000);
+        assert_eq!(merged[1].start, 0x5000);
+        assert_eq!(merged[1].end, 0x6000);
+    }
+
+    #[test]
+    fn test_merge_segments_chain() {
+        // Chain of overlapping segments
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x1800, 0x2800, "b"),
+            AlignedSegment::new(0x2400, 0x3400, "c"),
+            AlignedSegment::new(0x3000, 0x4000, "d"),
+        ];
+        let merged = merge_segments(segments);
+
+        // All should merge into one
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x4000);
+    }
+
+    // =========================================================================
+    // Phase 5.4: Page Alignment Up Tests
+    // =========================================================================
+
+    #[test]
+    fn test_align_to_page_up_already_aligned() {
+        assert_eq!(align_to_page_up(0x1000), 0x1000);
+        assert_eq!(align_to_page_up(0x2000), 0x2000);
+        assert_eq!(align_to_page_up(0x0), 0x0);
+    }
+
+    #[test]
+    fn test_align_to_page_up_unaligned() {
+        assert_eq!(align_to_page_up(0x1001), 0x2000);
+        assert_eq!(align_to_page_up(0x1fff), 0x2000);
+        assert_eq!(align_to_page_up(0x2001), 0x3000);
     }
 }

@@ -3,8 +3,60 @@
 //! This library exposes the core modules for integration testing.
 //! The binary entry point is in main.rs.
 
+// =============================================================================
+// Phase 5.4: Jemalloc Global Allocator
+// =============================================================================
+//
+// CRITICAL: This MUST be at the top of lib.rs before any allocations occur.
+//
+// Why Jemalloc?
+// -------------
+// The "Split-Brain" problem: glibc's malloc uses thread-local caches (tcache)
+// and pointer mangling that create non-deterministic heap state. When we
+// snapshot memory with userfaultfd and restore it later, the allocator's
+// internal metadata can become desynchronized, causing:
+//   - Use-after-free when tcache points to freed memory
+//   - Double-free when arena metadata is stale
+//   - Reference count corruption for Python's small_ints cache
+//
+// Jemalloc solves this by providing:
+//   1. mallctl("thread.tcache.flush") - Explicit tcache flush before snapshot
+//   2. mallctl("epoch") - Force metadata synchronization
+//   3. Deterministic arena layout without pointer mangling
+//
+// Configuration: background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0
+//   - background_thread:false - We control memory explicitly via quiesce
+//   - dirty_decay_ms:0 - Immediate purge for deterministic state
+//   - muzzy_decay_ms:0 - Immediate purge for deterministic state
+//
+// The quiesce_allocator() function in src/allocator.rs MUST be called before
+// SIGSTOP to ensure the heap is in a consistent, snapshot-able state.
+//
+// WSL2 Compatibility Note:
+// ------------------------
+// Jemalloc causes WSL2 kernel instability when running the full test suite.
+// To work around this, jemalloc is DISABLED during `cargo test` and only
+// enabled for the production binary (`cargo build`/`cargo run`).
+//
+// The allocator tests will gracefully skip when jemalloc isn't active.
+// To run allocator tests with jemalloc on a stable Linux system, use:
+//   cargo test --lib allocator -- --ignored
+//
+// For production, set MALLOC_CONF before running the binary:
+//   MALLOC_CONF="background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0" \
+//   ./target/release/tach-core
+// =============================================================================
+
+// Jemalloc is only enabled for non-test builds to avoid WSL2 instability.
+// During tests, the system allocator is used instead.
+#[cfg(all(not(target_env = "msvc"), not(test)))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+pub mod allocator;
 pub mod analysis;
 pub mod config;
+pub mod coverage;
 pub mod debugger;
 pub mod discovery;
 pub mod environment;
@@ -17,6 +69,7 @@ pub mod logcapture;
 pub mod protocol;
 pub mod reporter;
 pub mod resolver;
+pub mod sandbox;
 pub mod scheduler;
 pub mod signals;
 pub mod snapshot;

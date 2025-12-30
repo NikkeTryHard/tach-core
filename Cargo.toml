@@ -56,6 +56,28 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 notify = "6.1"
 crossbeam-channel = "0.5"
 
+# Phase 5.4: Deterministic Allocator (Jemalloc)
+# Solves the "Split-Brain" allocator desynchronization problem by providing:
+# - Explicit tcache flush via mallctl("thread.tcache.flush")
+# - Epoch synchronization via mallctl("epoch")
+# - Deterministic heap layout without pointer mangling
+tikv-jemallocator = "0.6"
+tikv-jemalloc-sys = { version = "0.6", features = ["stats"] }
+
+# Phase 5.4: ELF Parsing for libpython .data/.bss segment identification
+# Required to precisely locate and register global state segments with userfaultfd
+goblin = "0.8"
+
+# Phase 5.1: Coverage Ring Buffer (shared memory)
+# Used for zero-copy coverage data transfer between worker and supervisor
+memmap2 = "0.9"
+
+# Phase 5.2: The Iron Dome - Sandbox Hardening
+# Landlock: Filesystem access control (kernel 5.13+)
+# Seccompiler: Syscall filtering via BPF (kernel 3.17+)
+landlock = "0.4"
+seccompiler = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 bincode = "1.3"

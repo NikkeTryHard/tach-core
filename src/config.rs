@@ -42,6 +42,11 @@ pub struct Cli {
     #[arg(long)]
     pub no_isolation: bool,
 
+    /// Enable coverage collection (PEP 669 sys.monitoring)
+    /// Requires Python 3.12+. Coverage data is written to .coverage file.
+    #[arg(long, env = "TACH_COVERAGE")]
+    pub coverage: bool,
+
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,

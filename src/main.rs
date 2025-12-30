@@ -1,7 +1,7 @@
 use tach_core::config::{self, Cli, Commands, OutputFormat};
 use tach_core::debugger::{self, DebugServer};
-use tach_core::discovery;
 use tach_core::discover_with_toxicity;
+use tach_core::discovery;
 use tach_core::graph::ToxicityGraph;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
@@ -87,14 +87,54 @@ impl Drop for RunContext {
 
 fn main() -> Result<()> {
     // ==========================================================================
-    // PHASE 1.1: FORCE SYSTEM ALLOCATOR (Snapshot-Hypervisor "Physics" Fix)
+    // PHASE 5.4: JEMALLOC VERIFICATION (Replaces Phase 1.1 glibc workarounds)
     // ==========================================================================
-    // Python's obmalloc desynchronizes during snapshot/fork operations.
-    // glibc's malloc is robust if we disable the thread cache (tcache).
-    // These MUST be set before ANY Python operations or fork() calls.
-    // See: implementation_plan.md Phase 1 for details.
-    std::env::set_var("PYTHONMALLOC", "malloc");
-    std::env::set_var("GLIBC_TUNABLES", "glibc.malloc.tcache_count=0");
+    //
+    // CRITICAL: Verify jemalloc is the active allocator BEFORE any allocations.
+    //
+    // Why this matters:
+    // -----------------
+    // The Hypervisor uses userfaultfd to snapshot and restore memory. For this
+    // to work correctly, the allocator must be deterministic:
+    //
+    // 1. glibc's malloc has thread-local caches (tcache) that desync after restore
+    // 2. glibc uses pointer mangling that doesn't survive snapshot/restore
+    // 3. Python's obmalloc has similar issues
+    //
+    // Jemalloc solves this by providing:
+    // - mallctl("thread.tcache.flush") to flush thread caches before snapshot
+    // - mallctl("epoch") to synchronize metadata
+    // - Deterministic arena layout without pointer mangling
+    //
+    // The #[global_allocator] in lib.rs sets jemalloc as the allocator.
+    // This verification ensures it's actually active (not overridden by LD_PRELOAD).
+    //
+    // If jemalloc is not active, we MUST abort immediately. Running the Hypervisor
+    // with glibc malloc will cause memory corruption after the first reset.
+    // ==========================================================================
+
+    // Verify jemalloc is active - FATAL if not
+    match tach_core::allocator::verify_jemalloc_active() {
+        Ok(version) => {
+            eprintln!(
+                "[supervisor] Jemalloc {} verified - Hypervisor allocator ready",
+                version
+            );
+        }
+        Err(e) => {
+            eprintln!("[supervisor] FATAL: {}", e);
+            eprintln!("[supervisor] The Hypervisor cannot run without jemalloc.");
+            eprintln!(
+                "[supervisor] Ensure tikv-jemallocator is set as #[global_allocator] in lib.rs"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // NOTE: MALLOC_CONF is now set at compile-time via the _rjem_malloc_conf
+    // symbol in lib.rs. This ensures jemalloc reads the configuration at
+    // process startup, before any allocations occur. Setting it here via
+    // std::env::set_var() would be too late.
 
     // Parse CLI arguments FIRST
     let cli = Cli::parse();
@@ -105,7 +145,7 @@ fn main() -> Result<()> {
     if cli.no_isolation {
         std::env::set_var("TACH_NO_ISOLATION", "1");
     }
-    
+
     // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
     std::env::set_var("TACH_TARGET_PATH", &cli.path);
 
@@ -197,7 +237,7 @@ fn execute_session(
     // Compile ALL .py files in project and populate global registry BEFORE fork.
     // Workers will inherit this registry via CoW (copy-on-write).
     let start_compile = std::time::Instant::now();
-    
+
     // Collect ALL .py files in project (not just test modules)
     let py_files: Vec<std::path::PathBuf> = walkdir::WalkDir::new(cwd)
         .into_iter()
@@ -216,7 +256,7 @@ fn execute_session(
         })
         .map(|e| e.path().to_path_buf())
         .collect();
-    
+
     // Initialize registry and compile
     let registry = loader::init_registry(cwd.clone());
     if let Ok(compiler) = loader::BytecodeCompiler::new(cwd) {
@@ -230,7 +270,9 @@ fn execute_session(
             );
         }
     } else if !is_json {
-        eprintln!("[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib");
+        eprintln!(
+            "[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib"
+        );
     }
 
     // --- RESOLUTION PHASE ---
@@ -280,14 +322,18 @@ fn execute_session(
     // --- PHASE 8.3: PATH FILTERING ---
     // Filter tests to only include those matching the target path
     let target = std::path::Path::new(target_path);
-    let target_canonical = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
-    
+    let target_canonical = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
+
     let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
         .into_iter()
         .filter(|test| {
             let test_path = std::path::Path::new(&test.file_path);
-            let test_canonical = test_path.canonicalize().unwrap_or_else(|_| test_path.to_path_buf());
-            
+            let test_canonical = test_path
+                .canonicalize()
+                .unwrap_or_else(|_| test_path.to_path_buf());
+
             // Match if test is under target directory OR matches exactly
             test_canonical.starts_with(&target_canonical) || 
             test_canonical == target_canonical ||
@@ -297,8 +343,11 @@ fn execute_session(
         .collect();
 
     if !is_json {
-        eprintln!("[supervisor] Selected {} tests to run (filtered by path: {})", 
-            filtered_tests.len(), target_path);
+        eprintln!(
+            "[supervisor] Selected {} tests to run (filtered by path: {})",
+            filtered_tests.len(),
+            target_path
+        );
     }
 
     if filtered_tests.is_empty() {
@@ -367,7 +416,10 @@ fn run_tests(
     // Must be before fork so the env var is inherited by Zygote
     let run_context = RunContext::new()?;
     if run_context.snapshot_enabled() && !is_json {
-        eprintln!("[supervisor] Snapshot mode enabled: {}", run_context.uffd_sock_path.display());
+        eprintln!(
+            "[supervisor] Snapshot mode enabled: {}",
+            run_context.uffd_sock_path.display()
+        );
     }
 
     if !is_json {

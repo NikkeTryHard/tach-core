@@ -16,7 +16,7 @@ import pdb
 import _pytest.runner
 import _pytest.main
 import _pytest.config
-from typing import Optional, Set, Tuple
+from typing import Optional, Set
 
 # Status codes (must match protocol.rs)
 STATUS_PASS = 0
@@ -292,16 +292,40 @@ _INITIAL_MODULES: Optional[Set[str]] = None
 # Modules to NEVER remove (critical for runtime stability)
 # Uses tuple for efficient startswith() prefix matching
 _PROTECTED_PREFIXES = (
-    "sys", "builtins", "__main__", "_thread", "threading",
-    "importlib", "_frozen_importlib", "_imp",
-    "tach_rust", "tach_harness",
-    "_pytest", "pytest", "pluggy", "py",
+    "sys",
+    "builtins",
+    "__main__",
+    "_thread",
+    "threading",
+    "importlib",
+    "_frozen_importlib",
+    "_imp",
+    "tach_rust",
+    "tach_harness",
+    "_pytest",
+    "pytest",
+    "pluggy",
+    "py",
     "django",
-    "encodings", "codecs", "io", "_io",
-    "os", "posix", "errno", "stat", "_stat",
-    "abc", "typing", "types", "functools", "collections",
-    "warnings", "weakref", "contextlib",
-    "logging", "_logging",
+    "encodings",
+    "codecs",
+    "io",
+    "_io",
+    "os",
+    "posix",
+    "errno",
+    "stat",
+    "_stat",
+    "abc",
+    "typing",
+    "types",
+    "functools",
+    "collections",
+    "warnings",
+    "weakref",
+    "contextlib",
+    "logging",
+    "_logging",
 )
 
 
@@ -329,7 +353,9 @@ def post_fork_init() -> bool:
     # 3. Phase 5.3: Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
-    print(f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
+    print(
+        f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr
+    )
 
     # 4. Check if snapshot mode is enabled
     import os
@@ -610,7 +636,7 @@ def cleanup_test_modules() -> int:
 
     # Remove in reverse order (children before parents)
     # This prevents import errors when parent modules reference children
-    to_remove.sort(key=lambda x: x.count('.'), reverse=True)
+    to_remove.sort(key=lambda x: x.count("."), reverse=True)
 
     removed_count = 0
     for mod_name in to_remove:
@@ -690,3 +716,171 @@ def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple
             print("[harness] Reset failed, forcing exit", file=sys.stderr)
 
     return (status, duration, message, exit_after)
+
+
+# =============================================================================
+# PHASE 5.1: ZERO-OVERHEAD COVERAGE (PEP 669)
+# =============================================================================
+#
+# This section implements coverage collection using Python 3.12+'s sys.monitoring
+# API (PEP 669). This is dramatically faster than sys.settrace because:
+#
+# 1. Callbacks are per-code-object, not per-frame
+# 2. Events can be selectively enabled/disabled
+# 3. The VM can optimize out disabled events
+#
+# Architecture:
+# - Python LINE events call tach_rust.record_line(code_id, lineno)
+# - Rust writes to a shared memory ring buffer (memfd_create)
+# - Supervisor's aggregator thread drains the buffer and maps code_id to files
+# =============================================================================
+
+# Coverage state
+_coverage_enabled = False
+_coverage_tool_id = None
+
+# Check if PEP 669 is available (Python 3.12+)
+_HAS_MONITORING = hasattr(sys, "monitoring")
+
+
+def _coverage_line_callback(code, instruction_offset):
+    """PEP 669 LINE event callback.
+
+    Called for every line executed when coverage is enabled.
+    This is the HOT PATH - must be as fast as possible.
+
+    Args:
+        code: The code object being executed
+        instruction_offset: Bytecode offset within the code object
+
+    Returns:
+        None to continue monitoring, or sys.monitoring.DISABLE to stop
+        monitoring this code object.
+    """
+    try:
+        import tach_rust
+
+        # Get code object ID (memory address) and line number
+        # id(code) is the memory address of the code object
+        code_id = id(code)
+
+        # Map instruction offset to line number
+        # This is fast because co_lines() is a generator that caches results
+        lineno = code.co_firstlineno  # Default to first line
+        for start, end, line in code.co_lines():
+            if start <= instruction_offset < end:
+                if line is not None:
+                    lineno = line
+                break
+
+        # Record to ring buffer (releases GIL internally)
+        tach_rust.record_line(code_id, lineno)
+
+    except Exception:
+        # Never let coverage errors crash the test
+        pass
+
+    return None  # Continue monitoring
+
+
+def enable_coverage():
+    """Enable PEP 669 coverage collection.
+
+    Must be called BEFORE tests run to capture coverage data.
+    Safe to call multiple times (idempotent).
+
+    Returns:
+        True if coverage was enabled, False if not available
+    """
+    global _coverage_enabled, _coverage_tool_id
+
+    if _coverage_enabled:
+        return True
+
+    if not _HAS_MONITORING:
+        print(
+            "[coverage] WARNING: sys.monitoring not available (requires Python 3.12+)",
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        import tach_rust
+
+        if not tach_rust.is_coverage_enabled():
+            print(
+                "[coverage] WARNING: Coverage ring buffer not initialized by Supervisor",
+                file=sys.stderr,
+            )
+            return False
+
+        # Use COVERAGE_ID (1) as our tool ID
+        _coverage_tool_id = sys.monitoring.COVERAGE_ID
+
+        # Register our tool
+        sys.monitoring.use_tool_id(_coverage_tool_id, "tach_coverage")
+
+        # Register LINE callback
+        sys.monitoring.register_callback(
+            _coverage_tool_id, sys.monitoring.events.LINE, _coverage_line_callback
+        )
+
+        # Enable LINE events globally
+        sys.monitoring.set_events(_coverage_tool_id, sys.monitoring.events.LINE)
+
+        _coverage_enabled = True
+        print("[coverage] PEP 669 coverage enabled", file=sys.stderr)
+        return True
+
+    except Exception as e:
+        print(f"[coverage] Failed to enable coverage: {e}", file=sys.stderr)
+        return False
+
+
+def disable_coverage():
+    """Disable PEP 669 coverage collection.
+
+    Safe to call even if coverage was never enabled.
+    """
+    global _coverage_enabled, _coverage_tool_id
+
+    if not _coverage_enabled or not _HAS_MONITORING:
+        return
+
+    try:
+        # Disable events
+        sys.monitoring.set_events(_coverage_tool_id, 0)
+
+        # Unregister callback
+        sys.monitoring.register_callback(
+            _coverage_tool_id, sys.monitoring.events.LINE, None
+        )
+
+        # Free tool ID
+        sys.monitoring.free_tool_id(_coverage_tool_id)
+
+        _coverage_enabled = False
+        _coverage_tool_id = None
+        print("[coverage] PEP 669 coverage disabled", file=sys.stderr)
+
+    except Exception as e:
+        print(f"[coverage] Error disabling coverage: {e}", file=sys.stderr)
+
+
+def get_coverage_stats() -> dict:
+    """Get coverage collection statistics.
+
+    Returns:
+        Dict with 'enabled', 'overflow_count' keys
+    """
+    try:
+        import tach_rust
+
+        return {
+            "enabled": _coverage_enabled,
+            "overflow_count": tach_rust.get_coverage_overflow()
+            if _coverage_enabled
+            else 0,
+        }
+    except Exception:
+        return {"enabled": False, "overflow_count": 0}

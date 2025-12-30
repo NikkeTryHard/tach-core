@@ -120,6 +120,37 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
         eprintln!("[tach_rust] Cached {} regions for self-reset", count);
     }
 
+    // =========================================================================
+    // Phase 5.4: QUIESCE SEQUENCE - Critical for Hypervisor Stability
+    // =========================================================================
+    //
+    // Before SIGSTOP, we must quiesce the jemalloc allocator to ensure the
+    // heap is in a deterministic, snapshot-safe state.
+    //
+    // The Quiesce Sequence:
+    // 1. gc.collect() - Called from Python before this function
+    // 2. mallctl("thread.tcache.flush") - Flush thread-local caches
+    // 3. mallctl("epoch") - Synchronize allocator metadata
+    // 4. SIGSTOP - Freeze for snapshot capture
+    //
+    // Why this matters:
+    // - jemalloc's tcache holds recently freed objects for fast reallocation
+    // - After snapshot restore, these cached pointers may be stale
+    // - By flushing before snapshot, we ensure all allocations are in global arenas
+    // - This transforms a non-deterministic heap into a "quiescent" state
+    //
+    // If quiesce fails, we continue anyway (dirty worker > dead worker)
+    // but log a warning since memory corruption may occur after reset.
+    // =========================================================================
+    eprintln!("[tach_rust] Quiescing jemalloc allocator before snapshot...");
+    if let Err(e) = crate::allocator::quiesce_allocator() {
+        eprintln!(
+            "[tach_rust] WARNING: Failed to quiesce allocator: {}. \
+             Memory corruption may occur after reset.",
+            e
+        );
+    }
+
     // 5. Freeze self - Supervisor will capture snapshot and SIGCONT us
     eprintln!("[tach_rust] Freezing for snapshot (PID {})...", pid);
     if let Err(e) = nix::sys::signal::raise(Signal::SIGSTOP) {
@@ -179,6 +210,37 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
 
     // Phase 5.3: Hot Reloading - Module cleanup
     tach_mod.add_function(wrap_pyfunction!(cleanup_modules, &tach_mod)?)?;
+
+    // Phase 5.4: Jemalloc Allocator Control
+    // These functions allow Python to interact with the jemalloc allocator:
+    // - quiesce_allocator: Flush tcache and sync epoch before snapshot
+    // - verify_jemalloc: Check that jemalloc is the active allocator
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::allocator::py_quiesce_allocator,
+        &tach_mod
+    )?)?;
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::allocator::py_verify_jemalloc,
+        &tach_mod
+    )?)?;
+
+    // Phase 5.1: Zero-Overhead Coverage (PEP 669)
+    // These functions allow Python's sys.monitoring callbacks to record coverage:
+    // - record_line: Record a LINE event (code_id, lineno) to the ring buffer
+    // - is_coverage_enabled: Check if coverage collection is active
+    // - get_coverage_overflow: Get count of dropped entries due to buffer full
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::coverage::py_record_line,
+        &tach_mod
+    )?)?;
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::coverage::py_is_coverage_enabled,
+        &tach_mod
+    )?)?;
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::coverage::py_get_coverage_overflow,
+        &tach_mod
+    )?)?;
 
     // Phase 2: Zero-Copy Loader functions (Request Model)
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module, &tach_mod)?)?;
@@ -624,12 +686,28 @@ except Exception as e:
                         // Without this, the CWD handle points to the old mount
                         let _ = std::env::set_current_dir(&project_root);
 
-                        // 4. Redirect stdout/stderr to memfd
+                        // 4. Phase 5.2: Apply Iron Dome sandbox (Landlock + Seccomp)
+                        // SECURITY SEQUENCE:
+                        //   - Landlock: Restrict filesystem view (ALWAYS applied)
+                        //   - Seccomp: Block dangerous syscalls (ONLY for safe workers)
+                        //
+                        // This must happen AFTER isolation::setup_filesystem() creates the
+                        // overlay mounts, but BEFORE any Python code runs.
+                        //
+                        // Graceful degradation: Log warnings but don't crash on older kernels.
+                        let _sandbox_status = crate::sandbox::apply_iron_dome(
+                            &project_root,
+                            payload.test_id,
+                            payload.is_toxic,
+                        );
+                        // Note: apply_iron_dome logs its own warnings, no need to check result
+
+                        // 5. Redirect stdout/stderr to memfd
                         if payload.log_fd >= 0 {
                             let _ = redirect_output(payload.log_fd);
                         }
 
-                        // 5. Set debug socket path for breakpoint() support
+                        // 6. Set debug socket path for breakpoint() support
                         // This enables interactive debugging via TTY proxy
                         if !payload.debug_socket_path.is_empty() {
                             Python::with_gil(|py| -> Result<(), PyErr> {
@@ -642,7 +720,7 @@ except Exception as e:
                             .ok(); // Non-fatal if this fails
                         }
 
-                        // 6. POST-FORK INIT: Snapshot mode handshake
+                        // 7. POST-FORK INIT: Snapshot mode handshake
                         // This performs hygiene (RNG reseed, logging reset) and
                         // initiates snapshot if TACH_SUPERVISOR_SOCK is set.
                         // Worker will SIGSTOP here; Supervisor captures snapshot and SIGCONTs.
@@ -653,17 +731,17 @@ except Exception as e:
                         })
                         .ok(); // Continue even if snapshot fails (graceful degradation)
 
-                        // 7. Run test
+                        // 8. Run test
                         let result = run_worker(&payload);
 
-                        // 8. Flush and send result (CRITICAL: BEFORE exit decision)
+                        // 9. Flush and send result (CRITICAL: BEFORE exit decision)
                         // Invariant: Scheduler receives result even if worker exits
                         let _ = std::io::stdout().flush();
                         if let Ok(result_bytes) = encode_with_length(&result) {
                             let _ = child_sock.try_clone().unwrap().write_all(&result_bytes);
                         }
 
-                        // 9. Phase 4.3: Dual-path decision based on toxicity
+                        // 10. Phase 4.3: Dual-path decision based on toxicity
                         // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
                         // SAFE PATH: Reset memory and enter worker loop for reuse
                         if payload.is_toxic {
