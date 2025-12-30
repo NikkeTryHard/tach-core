@@ -2,7 +2,10 @@
 
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
-use crate::protocol::{encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY, MSG_WORKER_READY};
+use crate::protocol::{
+    encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY,
+    MSG_WORKER_READY,
+};
 use crate::snapshot::send_fd;
 use anyhow::Result;
 use nix::sys::signal::{signal, SigHandler, Signal};
@@ -275,7 +278,9 @@ fn cleanup_modules() -> PyResult<()> {
         harness.getattr("cleanup_test_modules")?.call0()?;
         Ok(())
     })
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("cleanup_modules failed: {}", e)))
+    .map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("cleanup_modules failed: {}", e))
+    })
 }
 
 /// Reset memory and signal readiness to Zygote.
@@ -448,7 +453,10 @@ fn spawn_result_collector(
             Ok(_) if ready_buf[0] == MSG_WORKER_READY => {
                 // Worker is ready for reuse - add to pool
                 eprintln!("[zygote] Worker {} ready, adding to pool", pid);
-                IDLE_WORKERS.lock().unwrap().push(WorkerHandle { pid, socket });
+                IDLE_WORKERS
+                    .lock()
+                    .unwrap()
+                    .push(WorkerHandle { pid, socket });
             }
             Ok(_) => {
                 eprintln!(
@@ -632,13 +640,21 @@ except Exception as e:
                     })();
 
                     if let Err(e) = dispatch_ok {
-                        eprintln!("[zygote] Failed to dispatch to worker {}: {}", worker.pid, e);
+                        eprintln!(
+                            "[zygote] Failed to dispatch to worker {}: {}",
+                            worker.pid, e
+                        );
                         // Worker died, fall through to fork path
                         // Don't continue - we need to fork a new worker
                     } else {
                         // Successfully dispatched - send PID back and spawn collector
                         cmd_socket.write_all(&worker.pid.to_le_bytes())?;
-                        spawn_result_collector(worker.socket, worker.pid, result_tx.clone(), is_toxic);
+                        spawn_result_collector(
+                            worker.socket,
+                            worker.pid,
+                            result_tx.clone(),
+                            is_toxic,
+                        );
                         continue;
                     }
                 }
@@ -846,8 +862,8 @@ mod tests {
     /// This is a pure logic test - no actual processes spawned.
     #[derive(Debug, Clone, PartialEq)]
     enum WorkerAction {
-        Reset,  // Safe test: reset memory and continue loop
-        Exit,   // Toxic test: exit process
+        Reset, // Safe test: reset memory and continue loop
+        Exit,  // Toxic test: exit process
     }
 
     /// Simulates the worker loop decision based on is_toxic flag
@@ -863,9 +879,9 @@ mod tests {
     fn test_worker_loop_structure() {
         // Mock a sequence of 3 payloads: [Safe, Safe, Toxic]
         let payloads = vec![
-            (1, "test_safe_1", false),  // Safe
-            (2, "test_safe_2", false),  // Safe
-            (3, "test_toxic", true),    // Toxic
+            (1, "test_safe_1", false), // Safe
+            (2, "test_safe_2", false), // Safe
+            (3, "test_toxic", true),   // Toxic
         ];
 
         let mut actions = Vec::new();
@@ -893,23 +909,34 @@ mod tests {
         }
 
         // Verify behavior
-        assert_eq!(loop_iterations, 3, "Should have processed 3 tests before exit");
+        assert_eq!(
+            loop_iterations, 3,
+            "Should have processed 3 tests before exit"
+        );
         assert_eq!(actions.len(), 3, "Should have 3 action decisions");
 
         // Verify action sequence
-        assert_eq!(actions[0], (1, WorkerAction::Reset), "First test should Reset");
-        assert_eq!(actions[1], (2, WorkerAction::Reset), "Second test should Reset");
-        assert_eq!(actions[2], (3, WorkerAction::Exit), "Third test should Exit");
+        assert_eq!(
+            actions[0],
+            (1, WorkerAction::Reset),
+            "First test should Reset"
+        );
+        assert_eq!(
+            actions[1],
+            (2, WorkerAction::Reset),
+            "Second test should Reset"
+        );
+        assert_eq!(
+            actions[2],
+            (3, WorkerAction::Exit),
+            "Third test should Exit"
+        );
     }
 
     #[test]
     fn test_worker_loop_all_safe() {
         // All safe tests - worker should reset after each
-        let payloads = vec![
-            (1, false),
-            (2, false),
-            (3, false),
-        ];
+        let payloads = vec![(1, false), (2, false), (3, false)];
 
         let mut reset_count = 0;
 
@@ -928,9 +955,9 @@ mod tests {
     fn test_worker_loop_first_toxic() {
         // First test is toxic - worker should exit immediately
         let payloads = vec![
-            (1, true),   // Toxic - should exit
-            (2, false),  // Never reached
-            (3, false),  // Never reached
+            (1, true),  // Toxic - should exit
+            (2, false), // Never reached
+            (3, false), // Never reached
         ];
 
         let mut processed = 0;
@@ -1068,11 +1095,19 @@ mod tests {
         assert_eq!(pool_size, 1, "Pool should have 1 idle worker");
 
         // Pop and verify it's the same PID
-        let worker = IDLE_WORKERS.lock().unwrap().pop().expect("Should have worker");
+        let worker = IDLE_WORKERS
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("Should have worker");
         assert_eq!(worker.pid, fake_pid, "PID should match");
 
         // Pool should now be empty
-        assert_eq!(IDLE_WORKERS.lock().unwrap().len(), 0, "Pool should be empty after pop");
+        assert_eq!(
+            IDLE_WORKERS.lock().unwrap().len(),
+            0,
+            "Pool should be empty after pop"
+        );
     }
 
     /// Test that toxic workers are NOT added to the pool.

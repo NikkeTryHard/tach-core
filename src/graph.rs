@@ -269,9 +269,7 @@ impl Default for ToxicityGraph {
 /// - "test_foo.py" -> "test_foo"
 pub fn path_to_module_name(path: &Path, project_root: &Path) -> String {
     // Strip project root if path is absolute or starts with root
-    let relative = path
-        .strip_prefix(project_root)
-        .unwrap_or(path);
+    let relative = path.strip_prefix(project_root).unwrap_or(path);
 
     let mut parts: Vec<&str> = relative
         .components()
@@ -407,8 +405,14 @@ mod tests {
 
         let graph = ToxicityGraph::build(&[a_path.clone(), b_path.clone()], tmp.path());
 
-        assert!(graph.is_toxic(&b_path), "B should be toxic (imports threading)");
-        assert!(graph.is_toxic(&a_path), "A should be toxic (imports toxic B)");
+        assert!(
+            graph.is_toxic(&b_path),
+            "B should be toxic (imports threading)"
+        );
+        assert!(
+            graph.is_toxic(&a_path),
+            "A should be toxic (imports toxic B)"
+        );
 
         // Check reason
         let (_, reasons) = graph.get_report(&a_path).unwrap();
@@ -429,9 +433,18 @@ mod tests {
             tmp.path(),
         );
 
-        assert!(graph.is_toxic(&c_path), "C should be toxic (imports pandas)");
-        assert!(graph.is_toxic(&b_path), "B should be toxic (imports toxic C)");
-        assert!(graph.is_toxic(&a_path), "A should be toxic (imports toxic B)");
+        assert!(
+            graph.is_toxic(&c_path),
+            "C should be toxic (imports pandas)"
+        );
+        assert!(
+            graph.is_toxic(&b_path),
+            "B should be toxic (imports toxic C)"
+        );
+        assert!(
+            graph.is_toxic(&a_path),
+            "A should be toxic (imports toxic B)"
+        );
     }
 
     #[test]
@@ -446,8 +459,14 @@ mod tests {
 
         let graph = ToxicityGraph::build(&[a_path.clone(), b_path.clone()], tmp.path());
 
-        assert!(graph.is_toxic(&b_path), "B should be toxic (imports threading)");
-        assert!(graph.is_toxic(&a_path), "A should be toxic (imports toxic B)");
+        assert!(
+            graph.is_toxic(&b_path),
+            "B should be toxic (imports threading)"
+        );
+        assert!(
+            graph.is_toxic(&a_path),
+            "A should be toxic (imports toxic B)"
+        );
     }
 
     #[test]
@@ -464,9 +483,18 @@ mod tests {
             tmp.path(),
         );
 
-        assert!(graph.is_toxic(&c_path), "C should be toxic (imports socket)");
-        assert!(graph.is_toxic(&b_path), "B should be toxic (imports toxic C)");
-        assert!(graph.is_toxic(&a_path), "A should be toxic (imports toxic B)");
+        assert!(
+            graph.is_toxic(&c_path),
+            "C should be toxic (imports socket)"
+        );
+        assert!(
+            graph.is_toxic(&b_path),
+            "B should be toxic (imports toxic C)"
+        );
+        assert!(
+            graph.is_toxic(&a_path),
+            "A should be toxic (imports toxic B)"
+        );
     }
 
     // =========================================================================
@@ -555,10 +583,7 @@ mod tests {
         create_file(tmp.path(), "toxic.py", "import threading");
         create_file(tmp.path(), "safe.py", "import os");
 
-        let paths: Vec<PathBuf> = vec![
-            tmp.path().join("toxic.py"),
-            tmp.path().join("safe.py"),
-        ];
+        let paths: Vec<PathBuf> = vec![tmp.path().join("toxic.py"), tmp.path().join("safe.py")];
         let graph = ToxicityGraph::build(&paths, tmp.path());
 
         assert!(graph.is_toxic_by_name("toxic"));

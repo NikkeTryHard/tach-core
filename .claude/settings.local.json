@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(cargo test:*)",
+      "Bash(source:*)",
+      "Bash(export PYO3_PYTHON=/home/louiskaneko/dev/tach-core/.venv/bin/python)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)"
     ]
   }
 }

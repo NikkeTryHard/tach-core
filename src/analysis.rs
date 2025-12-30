@@ -503,7 +503,10 @@ fn is_dynamic_import(
             if let ast::Expr::Name(name) = &*attr.value {
                 let local = name.id.as_str();
                 let attr_name = attr.attr.as_str();
-                let module = import_aliases.get(local).map(|s| s.as_str()).unwrap_or(local);
+                let module = import_aliases
+                    .get(local)
+                    .map(|s| s.as_str())
+                    .unwrap_or(local);
                 return module == "importlib" && attr_name == "import_module";
             }
             false
@@ -535,7 +538,10 @@ fn check_call_toxicity(
             if let ast::Expr::Name(name) = &*attr.value {
                 let local = name.id.as_str();
                 let attr_name = attr.attr.as_str();
-                let module = import_aliases.get(local).map(|s| s.as_str()).unwrap_or(local);
+                let module = import_aliases
+                    .get(local)
+                    .map(|s| s.as_str())
+                    .unwrap_or(local);
                 if is_toxic_module(module) {
                     return Some(format!("Called {}.{}", module, attr_name));
                 }
@@ -676,10 +682,7 @@ p = mp.Process(target=foo)
 "#;
         let report = analyze(source);
         assert!(report.is_toxic);
-        assert!(report
-            .reasons
-            .iter()
-            .any(|r| r.contains("multiprocessing")));
+        assert!(report.reasons.iter().any(|r| r.contains("multiprocessing")));
     }
 
     // =========================================================================
@@ -1085,7 +1088,10 @@ if typing.TYPE_CHECKING:
     import ctypes  # Should NOT be detected as toxic
 "#;
         let report = analyze(source);
-        assert!(!report.is_toxic, "typing.TYPE_CHECKING imports should be skipped");
+        assert!(
+            !report.is_toxic,
+            "typing.TYPE_CHECKING imports should be skipped"
+        );
     }
 
     #[test]

@@ -335,8 +335,9 @@ fn execute_session(
                 .unwrap_or_else(|_| test_path.to_path_buf());
 
             // Match if test is under target directory OR matches exactly
-            test_canonical.starts_with(&target_canonical) || 
-            test_canonical == target_canonical ||
+            test_canonical.starts_with(&target_canonical)
+                || test_canonical == target_canonical
+                ||
             // Handle relative path matching
             test_path.starts_with(target)
         })

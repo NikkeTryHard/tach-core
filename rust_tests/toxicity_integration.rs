@@ -3,11 +3,13 @@
 //! Tests the full pipeline: discover_with_toxicity() -> RunnableTest.is_toxic
 
 use std::path::Path;
+use std::path::PathBuf;
 use tach_core::discover_with_toxicity;
-use tach_core::discovery::{DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule};
+use tach_core::discovery::{
+    DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule,
+};
 use tach_core::graph::ToxicityGraph;
 use tach_core::resolver::{FixtureRegistry, Resolver};
-use std::path::PathBuf;
 
 // =============================================================================
 // ToxicityGraph Unit Tests (using mock data)
@@ -30,12 +32,16 @@ import json
 def helper():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![root.join("safe.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert!(!graph.is_toxic(&root.join("safe.py")), "safe.py should NOT be toxic");
+    assert!(
+        !graph.is_toxic(&root.join("safe.py")),
+        "safe.py should NOT be toxic"
+    );
     assert_eq!(graph.safe_modules().len(), 1);
     assert_eq!(graph.toxic_modules().len(), 0);
 }
@@ -56,12 +62,16 @@ import threading
 def worker():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![root.join("toxic.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert!(graph.is_toxic(&root.join("toxic.py")), "toxic.py SHOULD be toxic");
+    assert!(
+        graph.is_toxic(&root.join("toxic.py")),
+        "toxic.py SHOULD be toxic"
+    );
     assert_eq!(graph.toxic_modules().len(), 1);
     assert_eq!(graph.safe_modules().len(), 0);
 }
@@ -82,7 +92,8 @@ import socket
 def create_connection():
     return socket.socket()
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create a module that imports the toxic helper
     std::fs::write(
@@ -93,13 +104,20 @@ import toxic_helper
 def do_something():
     toxic_helper.create_connection()
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![root.join("toxic_helper.py"), root.join("uses_toxic.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert!(graph.is_toxic(&root.join("toxic_helper.py")), "toxic_helper.py SHOULD be toxic");
-    assert!(graph.is_toxic(&root.join("uses_toxic.py")), "uses_toxic.py SHOULD be toxic (transitive)");
+    assert!(
+        graph.is_toxic(&root.join("toxic_helper.py")),
+        "toxic_helper.py SHOULD be toxic"
+    );
+    assert!(
+        graph.is_toxic(&root.join("uses_toxic.py")),
+        "uses_toxic.py SHOULD be toxic (transitive)"
+    );
     assert_eq!(graph.toxic_modules().len(), 2);
 }
 
@@ -122,12 +140,16 @@ if TYPE_CHECKING:
 def safe_function():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![root.join("type_hints.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert!(!graph.is_toxic(&root.join("type_hints.py")), "TYPE_CHECKING imports should NOT make module toxic");
+    assert!(
+        !graph.is_toxic(&root.join("type_hints.py")),
+        "TYPE_CHECKING imports should NOT make module toxic"
+    );
     assert_eq!(graph.safe_modules().len(), 1);
     assert_eq!(graph.toxic_modules().len(), 0);
 }
@@ -152,12 +174,16 @@ if TYPE_CHECKING:
 def mixed_function():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![root.join("mixed.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert!(graph.is_toxic(&root.join("mixed.py")), "Runtime socket import should make module toxic");
+    assert!(
+        graph.is_toxic(&root.join("mixed.py")),
+        "Runtime socket import should make module toxic"
+    );
 }
 
 // =============================================================================
@@ -180,7 +206,8 @@ import os
 def test_safe():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create toxic test file
     std::fs::write(
@@ -191,7 +218,8 @@ import multiprocessing
 def test_toxic():
     pass
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Build toxicity graph
     let paths = vec![root.join("test_safe.py"), root.join("test_toxic.py")];
@@ -263,8 +291,8 @@ fn test_discover_with_toxicity_real_project() {
     // Use the actual tach-core project directory
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let (discovery, graph) = discover_with_toxicity(project_root)
-        .expect("Discovery should succeed on real project");
+    let (discovery, graph) =
+        discover_with_toxicity(project_root).expect("Discovery should succeed on real project");
 
     // Should find tests in the real project
     assert!(
@@ -336,6 +364,10 @@ fn test_all_toxic_modules() {
     let paths = vec![root.join("a.py"), root.join("b.py")];
     let graph = ToxicityGraph::build(&paths, root);
 
-    assert_eq!(graph.toxic_modules().len(), 2, "All modules should be toxic");
+    assert_eq!(
+        graph.toxic_modules().len(),
+        2,
+        "All modules should be toxic"
+    );
     assert_eq!(graph.safe_modules().len(), 0, "No modules should be safe");
 }

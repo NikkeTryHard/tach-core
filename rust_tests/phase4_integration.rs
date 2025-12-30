@@ -164,8 +164,14 @@ fn test_payload_is_toxic_propagation() {
     };
 
     // Verify is_toxic is correctly set
-    assert!(!safe_payload.is_toxic, "Safe payload should have is_toxic=false");
-    assert!(toxic_payload.is_toxic, "Toxic payload should have is_toxic=true");
+    assert!(
+        !safe_payload.is_toxic,
+        "Safe payload should have is_toxic=false"
+    );
+    assert!(
+        toxic_payload.is_toxic,
+        "Toxic payload should have is_toxic=true"
+    );
 
     // Verify decision based on payload
     assert_eq!(
@@ -189,9 +195,9 @@ fn test_mixed_queue_execution_simulation() {
         ("test_unit_1", false),
         ("test_unit_2", false),
         ("test_unit_3", false),
-        ("test_integration_db", true),  // Uses database
+        ("test_integration_db", true), // Uses database
         ("test_unit_4", false),
-        ("test_network_call", true),    // Uses network
+        ("test_network_call", true), // Uses network
         ("test_unit_5", false),
     ];
 
@@ -324,7 +330,10 @@ fn test_empty_queues() {
 
     // next_test() should return None
     let next = safe_queue.pop_front().or_else(|| toxic_queue.pop_front());
-    assert!(next.is_none(), "next_test() should return None for empty queues");
+    assert!(
+        next.is_none(),
+        "next_test() should return None for empty queues"
+    );
 }
 
 // =============================================================================
