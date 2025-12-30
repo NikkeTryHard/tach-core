@@ -25,18 +25,18 @@ _Replace pytest's execution model with microsecond-scale memory snapshots._
   - [Zero-Copy Loader](#zero-copy-loader)
   - [Toxicity Analysis](#toxicity-analysis)
   - [Worker Loop](#worker-loop)
+  - [The Iron Dome (Sandbox)](#the-iron-dome-sandbox)
+  - [Zero-Overhead Coverage](#zero-overhead-coverage)
+  - [Deterministic Allocator](#deterministic-allocator)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Development](#development)
   - [Project Structure](#project-structure)
   - [Running Tests](#running-tests)
-  - [Remote Development](#remote-development)
-- [Implementation Roadmap](#implementation-roadmap)
+- [Implementation Status](#implementation-status)
 - [Test Coverage](#test-coverage)
 - [Technical Specifications](#technical-specifications)
-- [Phase 4: Worker Loop & Dual-Path Scheduler](#phase-4-worker-loop--dual-path-scheduler)
-- [Phase 5: Observability & Hardening](#phase-5-observability--hardening)
 
 ---
 
@@ -58,13 +58,17 @@ Traditional test runners suffer from three fundamental performance bottlenecks:
 
 ### The Tach Solution
 
-Tach implements a three-pronged approach to eliminate these bottlenecks:
+Tach implements a multi-layered approach to eliminate these bottlenecks:
 
 1. **Zero-Copy Loading:** Bypasses Python's `importlib` entirely. Rust compiles `.py` source files to `.pyc` bytecode, memory-maps them, and injects them directly into the Python interpreter via C-API.
 
 2. **Snapshot Isolation:** Uses `userfaultfd` to track memory writes and capture "golden" snapshots of worker memory state.
 
 3. **Instant Reset:** After test execution, dirty pages are dropped via `madvise(MADV_DONTNEED)`. Subsequent memory access triggers page faults, which are serviced from the golden snapshot.
+
+4. **The Iron Dome:** Landlock filesystem isolation + Seccomp syscall filtering provide defense-in-depth security for worker processes.
+
+5. **Deterministic Allocator:** Jemalloc with explicit tcache flush ensures consistent memory layout across snapshot/restore cycles.
 
 ---
 
@@ -77,14 +81,23 @@ Tach implements a three-pronged approach to eliminate these bottlenecks:
 | **Throughput**         | 1x                   | 50x                | **100x+**            |
 | **Fork Safety**        | Safe (Slow)          | Unsafe (Deadlocks) | Safe (Lock Reset)    |
 | **Memory Overhead**    | Full copy per worker | CoW sharing        | Minimal (page-level) |
+| **Security**           | None                 | None               | Landlock + Seccomp   |
 
-### Zero-Copy Loader Performance (Phase 2)
+### Zero-Copy Loader Performance
 
 | Metric                            | Cold Cache                | Warm Cache        |
 | :-------------------------------- | :------------------------ | :---------------- |
 | **Compilation Time (91 modules)** | 9.7 seconds               | 345 milliseconds  |
 | **Speedup Factor**                | 1x                        | **28x**           |
 | **Cache Persistence**             | Disk-based `.tach/cache/` | mtime-invalidated |
+
+### Sandbox Overhead
+
+| Component          | Overhead | Notes                 |
+| :----------------- | :------- | :-------------------- |
+| Landlock setup     | ~100μs   | One-time per worker   |
+| Seccomp setup      | ~50μs    | One-time per worker   |
+| Coverage (PEP 669) | < 1%     | Lock-free ring buffer |
 
 ---
 
@@ -101,11 +114,13 @@ flowchart LR
         Uffd["Userfaultfd Manager"]
         Scheduler["Test Scheduler"]
         ToxicityGraph["Toxicity Analyzer"]
+        Sandbox["Sandbox Manager"]
     end
 
     subgraph Worker["PYTHON WORKER"]
         direction TB
         Init["Initialize & Handshake"]
+        IronDome["Apply Iron Dome"]
         Snapshot["SIGSTOP (Snapshot Point)"]
         Run["Execute Test"]
         Decision{is_toxic?}
@@ -115,7 +130,8 @@ flowchart LR
 
     Compiler -->|"Inject .pyc (Zero-Copy)"| Init
     ToxicityGraph -->|"Tag Tests"| Scheduler
-    Init --> Snapshot
+    Sandbox -->|"Landlock + Seccomp"| IronDome
+    Init --> IronDome --> Snapshot
     Snapshot --> Run
     Run -->|"Report Result"| Scheduler
     Run --> Decision
@@ -129,9 +145,10 @@ flowchart LR
 **Protocol Phases:**
 
 1. **Initialization:** Worker process starts, performs UFFD handshake with Supervisor via SCM_RIGHTS
-2. **Snapshot Capture:** Worker issues SIGSTOP; Supervisor captures golden memory state
-3. **Test Execution:** Worker resumes, executes assigned test, reports results
-4. **Dual-Path Decision:** Based on `is_toxic` flag:
+2. **Iron Dome:** Apply Landlock filesystem restrictions and Seccomp syscall filters
+3. **Snapshot Capture:** Worker issues SIGSTOP; Supervisor captures golden memory state
+4. **Test Execution:** Worker resumes, executes assigned test, reports results
+5. **Dual-Path Decision:** Based on `is_toxic` flag:
    - **Safe:** Memory reset via `madvise(MADV_DONTNEED)`, loop back to snapshot point
    - **Toxic:** Exit process immediately, Supervisor spawns replacement
 
@@ -146,6 +163,7 @@ flowchart TB
     subgraph Capture["GOLDEN SNAPSHOT CAPTURE"]
         Maps["Parse /proc/pid/maps"]
         Filter["Filter Regions\n(heap, stack, BSS, anon)"]
+        Exclude["Exclude Coverage Buffer\n(memfd:tach_coverage)"]
         Copy["process_vm_readv\n(Direct Memory Copy)"]
         Store["Store in HashMap\n(page_addr → page_data)"]
     end
@@ -156,7 +174,7 @@ flowchart TB
         Restore["Uffd::copy()\n(Restore from Golden)"]
     end
 
-    Maps --> Filter --> Copy --> Store
+    Maps --> Filter --> Exclude --> Copy --> Store
     Store --> Invalidate
     Invalidate --> Fault --> Restore
     Restore --> Invalidate
@@ -164,12 +182,13 @@ flowchart TB
 
 **Technical Implementation:**
 
-| Component         | System Call              | Purpose                                                |
-| :---------------- | :----------------------- | :----------------------------------------------------- |
-| Memory Capture    | `process_vm_readv`       | Copy worker memory to Supervisor without ptrace attach |
-| Page Tracking     | `userfaultfd`            | Register memory regions for fault notification         |
-| Page Invalidation | `madvise(MADV_DONTNEED)` | Drop pages, forcing re-fault on next access            |
-| Page Restoration  | `ioctl(UFFDIO_COPY)`     | Copy golden page back to worker address space          |
+| Component          | System Call              | Purpose                                                |
+| :----------------- | :----------------------- | :----------------------------------------------------- |
+| Memory Capture     | `process_vm_readv`       | Copy worker memory to Supervisor without ptrace attach |
+| Page Tracking      | `userfaultfd`            | Register memory regions for fault notification         |
+| Page Invalidation  | `madvise(MADV_DONTNEED)` | Drop pages, forcing re-fault on next access            |
+| Page Restoration   | `ioctl(UFFDIO_COPY)`     | Copy golden page back to worker address space          |
+| Coverage Exclusion | Region name filtering    | Exclude `memfd:tach_coverage` from uffd registration   |
 
 ---
 
@@ -200,16 +219,6 @@ flowchart LR
     Loader --> Marshal --> Exec --> Module
 ```
 
-**Phase 2 Implementation Details:**
-
-| Component            | File              | Description                                          |
-| :------------------- | :---------------- | :--------------------------------------------------- |
-| `BytecodeCompiler`   | `loader.rs`       | Compiles `.py` → `.pyc` with persistent cache        |
-| `ModuleRegistry`     | `loader.rs`       | Thread-safe `DashMap<String, BytecodeEntry>`         |
-| `TachMetaPathFinder` | `tach_harness.py` | `sys.meta_path` hook at priority 0                   |
-| `TachLoader`         | `tach_harness.py` | `importlib.abc.Loader` implementation                |
-| `load_module`        | `loader.rs` (FFI) | C-API injection via `PyMarshal_ReadObjectFromString` |
-
 **Advantages over `importlib`:**
 
 - No filesystem traversal (`sys.path` scanning)
@@ -226,7 +235,7 @@ The Toxicity Analyzer (`analysis.rs`, `graph.rs`) identifies modules that cannot
 
 ```mermaid
 flowchart TB
-    subgraph Discovery["PHASE 3: TOXICITY PIPELINE"]
+    subgraph Discovery["TOXICITY PIPELINE"]
         direction TB
         Scan["Scan All .py Files\n(walkdir)"]
         Parse["Parse AST\n(rustpython-parser)"]
@@ -257,33 +266,6 @@ flowchart TB
     Propagate --> TestModule --> RunnableTest --> TestPayload --> Worker
 ```
 
-**Phase 3 Implementation Details:**
-
-| Component                   | File          | Description                                           |
-| :-------------------------- | :------------ | :---------------------------------------------------- |
-| `ToxicityReport`            | `analysis.rs` | Per-file toxicity analysis result                     |
-| `analyze_file()`            | `analysis.rs` | AST traversal detecting toxic imports/calls           |
-| `ToxicityGraph`             | `graph.rs`    | `petgraph::DiGraph` with fixed-point propagation      |
-| `discover_with_toxicity()`  | `lib.rs`      | Combined discovery + toxicity analysis entry point    |
-| `is_toxic` field            | `resolver.rs` | Added to `RunnableTest` struct                        |
-| `is_toxic` field            | `discovery.rs`| Added to `TestModule` struct                          |
-| `is_toxic` field            | `protocol.rs` | Added to `TestPayload` for IPC serialization          |
-
-**Toxicity Detection Rules:**
-
-| Import/Pattern             | Toxicity Reason                                      | Detection Method           |
-| :------------------------- | :--------------------------------------------------- | :------------------------- |
-| `import threading`         | Creates OS threads persisting across snapshot        | Import statement           |
-| `import multiprocessing`   | Spawns subprocesses with shared state                | Import statement           |
-| `import socket`            | File descriptors inherit incorrectly after reset     | Import statement           |
-| `import ctypes`            | Native code may hold locks, corrupt memory           | Import statement           |
-| `import cffi`              | Same as ctypes                                       | Import statement           |
-| `import signal`            | Signal handlers persist across reset                 | Import statement           |
-| `import subprocess`        | Child processes not tracked by snapshot              | Import statement           |
-| `import _thread`           | Low-level threading primitive                        | Import statement           |
-| `from X import Y`          | Tracks aliased imports                               | ImportFrom statement       |
-| `if TYPE_CHECKING:`        | **SKIPPED** - type hints never executed at runtime   | If statement detection     |
-
 **Transitive Propagation Algorithm:**
 
 ```
@@ -297,21 +279,6 @@ flowchart TB
    UNTIL no changes
 4. Result: Complete transitive closure of toxicity
 ```
-
-**TYPE_CHECKING Handling:**
-
-The analyzer correctly skips imports inside `TYPE_CHECKING` blocks:
-
-```python
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import threading  # NOT toxic - never executed at runtime
-
-import os  # Safe - analyzed normally
-```
-
-This prevents false positives from type hint imports that are never executed.
 
 ---
 
@@ -349,39 +316,154 @@ flowchart TB
 
 **Dual-Path Decision Logic:**
 
-| Test Type | After Execution | Worker Fate |
-|:----------|:----------------|:------------|
-| Safe (non-toxic) | `madvise(MADV_DONTNEED)` | Continues loop |
-| Toxic | `sys.exit(0)` | Terminates, replaced |
+| Test Type        | After Execution          | Worker Fate          |
+| :--------------- | :----------------------- | :------------------- |
+| Safe (non-toxic) | `madvise(MADV_DONTNEED)` | Continues loop       |
+| Toxic            | `sys.exit(0)`            | Terminates, replaced |
 
-**Memory Reset Mechanism:**
+---
 
-```rust
-// The "Seppuku Pattern" - worker invalidates its own memory
-#[pyfunction]
-fn reset_memory() -> PyResult<()> {
-    let regions = RESET_REGIONS.lock().unwrap();
-    for &(start, len) in regions.iter() {
-        unsafe {
-            libc::madvise(start as *mut _, len, libc::MADV_DONTNEED);
-        }
-    }
-    Ok(())
-}
+### The Iron Dome (Sandbox)
+
+The Iron Dome (`sandbox.rs`) implements defense-in-depth security for worker processes:
+
+```mermaid
+flowchart TB
+    subgraph Fork["WORKER FORK PATH"]
+        direction TB
+        F1["1. fork()"]
+        F2["2. PR_SET_PDEATHSIG\n(Dead Man's Switch)"]
+        F3["3. isolation::setup_filesystem()\n(Namespaces + OverlayFS)"]
+        F4["4. sandbox::apply_landlock()\n(Filesystem Restrictions)"]
+        F5["5. sandbox::apply_seccomp()\n(Syscall Filtering)"]
+        F6["6. post_fork_init()\n(Python Initialization)"]
+        F7["7. run_worker()\n(Test Execution)"]
+    end
+
+    subgraph Landlock["LANDLOCK POLICY"]
+        RO["READ-ONLY:\n/usr, /lib, /lib64, /bin\n/etc, /dev, /proc, /sys\nproject_root"]
+        RW["READ-WRITE:\n/tmp (overlay)\n/run/tach/worker_N"]
+        DENY["DENY:\nEverything else"]
+    end
+
+    subgraph Seccomp["SECCOMP POLICY"]
+        BlockNet["BLOCK (EPERM):\nsocket, bind, connect\nlisten, accept, accept4"]
+        BlockProc["BLOCK (EPERM):\nfork, vfork\nexecve, execveat"]
+        Allow["ALLOW:\nclone (threading)\nEverything else"]
+    end
+
+    F1 --> F2 --> F3 --> F4 --> F5 --> F6 --> F7
+    F4 --> Landlock
+    F5 --> Seccomp
 ```
 
-After `MADV_DONTNEED`:
-1. Kernel marks pages as discardable
-2. Next access triggers page fault
-3. userfaultfd notifies Supervisor
-4. Supervisor restores golden page via `UFFDIO_COPY`
-5. Worker continues with pristine memory state
+**Safe vs Toxic Worker Security Matrix:**
 
-**Key Invariants:**
+```mermaid
+flowchart LR
+    subgraph Safe["SAFE WORKER"]
+        S1["Landlock: ENFORCED"]
+        S2["Seccomp: ENFORCED"]
+        S3["Network: BLOCKED"]
+        S4["Fork/Exec: BLOCKED"]
+        S5["Reuse: YES (pool)"]
+    end
 
-1. **Result Before Exit:** Toxic workers MUST send result before `sys.exit(0)`
-2. **No Reset for Toxic:** Toxic workers never call `reset_memory()`
-3. **Dead Man's Switch:** Workers die if Supervisor dies (`PR_SET_PDEATHSIG`)
+    subgraph Toxic["TOXIC WORKER"]
+        T1["Landlock: ENFORCED"]
+        T2["Seccomp: SKIPPED"]
+        T3["Network: ALLOWED"]
+        T4["Fork/Exec: ALLOWED"]
+        T5["Reuse: NO (exit)"]
+    end
+```
+
+**Graceful Degradation:**
+
+| Kernel Version | Landlock | Seccomp | Behavior                     |
+| :------------- | :------- | :------ | :--------------------------- |
+| 5.13+          | Full     | Full    | Complete sandbox             |
+| 5.0-5.12       | None     | Full    | Seccomp only, warning logged |
+| 3.17-4.x       | None     | Full    | Seccomp only, warning logged |
+| < 3.17         | None     | None    | No sandbox, warning logged   |
+
+---
+
+### Zero-Overhead Coverage
+
+The Coverage system (`coverage.rs`) implements PEP 669 `sys.monitoring` with a lock-free ring buffer:
+
+```mermaid
+flowchart TB
+    subgraph Python["PYTHON TEST EXECUTION"]
+        Test["Test Code"]
+        PEP669["sys.monitoring\nLINE event"]
+        Callback["_coverage_line_callback()"]
+    end
+
+    subgraph RingBuffer["RING BUFFER (memfd)"]
+        Header["RingBufferHeader (64-byte aligned)\nwrite_idx: AtomicU64\nread_idx: AtomicU64\ncapacity: u64\noverflow_count: AtomicU64"]
+        Entries["CoverageEntry[] (16-byte aligned)\ncode_id: u64\nlineno: u32\nflags: u32"]
+    end
+
+    subgraph Aggregator["AGGREGATOR THREAD"]
+        Drain["Drain ring buffer"]
+        Map["Map code_id → (file, line)"]
+        Report["Generate coverage report"]
+    end
+
+    Test --> PEP669 --> Callback
+    Callback -->|"py.allow_threads()\n(GIL released)"| RingBuffer
+    Header --> Entries
+    Entries --> Drain --> Map --> Report
+```
+
+**Key Design Decisions:**
+
+| Decision                        | Rationale                                  |
+| :------------------------------ | :----------------------------------------- |
+| `memfd_create("tach_coverage")` | Anonymous shared memory, no filesystem     |
+| 64-byte header alignment        | Cache-line aligned, prevents false sharing |
+| 16-byte entry alignment         | Optimal for atomic operations              |
+| `AtomicU64` for indices         | Lock-free concurrent access                |
+| GIL released before write       | Prevents GIL contention in hot path        |
+| Excluded from userfaultfd       | Survives `MADV_DONTNEED` during reset      |
+
+---
+
+### Deterministic Allocator
+
+The Allocator (`allocator.rs`) uses Jemalloc to solve the Split-Brain problem:
+
+```mermaid
+flowchart TB
+    subgraph Problem["SPLIT-BRAIN PROBLEM"]
+        Snapshot["Snapshot captured"]
+        Alloc1["Worker allocates memory"]
+        Reset["Memory reset (MADV_DONTNEED)"]
+        Alloc2["Worker allocates again"]
+        Desync["Allocator metadata desync!\n(tcache holds stale pointers)"]
+    end
+
+    subgraph Solution["JEMALLOC SOLUTION"]
+        JemallocInit["#[global_allocator]\nstatic ALLOC: Jemalloc"]
+        TcacheFlush["mallctl('thread.tcache.flush')"]
+        EpochSync["mallctl('epoch')"]
+        Deterministic["Deterministic heap layout"]
+    end
+
+    Snapshot --> Alloc1 --> Reset --> Alloc2 --> Desync
+    JemallocInit --> TcacheFlush --> EpochSync --> Deterministic
+```
+
+**Why Jemalloc?**
+
+| Feature       | glibc malloc  | Jemalloc                         |
+| :------------ | :------------ | :------------------------------- |
+| tcache flush  | Not exposed   | `mallctl("thread.tcache.flush")` |
+| Epoch sync    | Not available | `mallctl("epoch")`               |
+| Determinism   | Poor          | Excellent                        |
+| Fragmentation | High          | Low                              |
 
 ---
 
@@ -389,11 +471,20 @@ After `MADV_DONTNEED`:
 
 | Requirement          | Specification                                              |
 | :------------------- | :--------------------------------------------------------- |
-| **Operating System** | Linux Kernel 5.11+ (Ubuntu 22.04+, Fedora 34+, AWS AL2023) |
+| **Operating System** | Linux Kernel 5.13+ (Ubuntu 22.04+, Fedora 34+, AWS AL2023) |
 | **Privileges**       | `CAP_SYS_PTRACE` (standard in most CI environments)        |
-| **Python Version**   | Python 3.10+                                               |
+| **Python Version**   | Python 3.10+ (3.12+ for PEP 669 coverage)                  |
 | **Rust Version**     | Rust 1.75+                                                 |
-| **Allocator**        | Forced `PYTHONMALLOC=malloc`, glibc tcache disabled        |
+| **Allocator**        | Jemalloc (bundled)                                         |
+
+**Kernel Feature Matrix:**
+
+| Feature      | Minimum Kernel | Recommended |
+| :----------- | :------------- | :---------- |
+| userfaultfd  | 4.11           | 5.11+       |
+| Landlock     | 5.13           | 5.19+       |
+| Seccomp-BPF  | 3.17           | 4.14+       |
+| memfd_create | 3.17           | 5.0+        |
 
 **Docker Configuration:**
 
@@ -442,6 +533,9 @@ sudo ./target/release/tach-core tests/test_example.py
 
 # Run without namespace isolation (development mode)
 ./target/release/tach-core --no-isolation .
+
+# Enable coverage collection (Python 3.12+)
+./target/release/tach-core --coverage .
 ```
 
 ### CLI Options
@@ -452,6 +546,7 @@ sudo ./target/release/tach-core tests/test_example.py
 | `--junit-xml <path>` | Generate JUnit XML report                     |
 | `--watch`            | Watch mode: re-run on file changes            |
 | `--no-isolation`     | Disable namespace isolation (for development) |
+| `--coverage`         | Enable PEP 669 coverage collection            |
 | `--list`             | List discovered tests without running         |
 | `-v, --verbose`      | Increase output verbosity                     |
 
@@ -466,249 +561,141 @@ tach-core/
 ├── src/
 │   ├── main.rs           # CLI entry point, toxicity wiring, eager compilation
 │   ├── lib.rs            # Module exports, discover_with_toxicity()
-│   ├── analysis.rs       # Phase 3: Local toxicity scanner (49 tests)
-│   ├── graph.rs          # Phase 3: ToxicityGraph with propagation (20 tests)
+│   ├── allocator.rs      # Phase 5.4: Jemalloc global allocator
+│   ├── analysis.rs       # Phase 3: Local toxicity scanner
+│   ├── coverage.rs       # Phase 5.1: PEP 669 ring buffer coverage
+│   ├── graph.rs          # Phase 3: ToxicityGraph with propagation
+│   ├── sandbox.rs        # Phase 5.2: Landlock + Seccomp sandbox
 │   ├── discovery.rs      # AST-based test discovery (rustpython-parser)
 │   ├── resolver.rs       # Fixture dependency resolution
 │   ├── scheduler.rs      # Async test scheduler (tokio)
 │   ├── zygote.rs         # Python process lifecycle, FFI registration
 │   ├── snapshot.rs       # Userfaultfd memory management
-│   ├── loader.rs         # Zero-Copy Module Loader (Phase 2)
+│   ├── loader.rs         # Zero-Copy Module Loader
 │   ├── protocol.rs       # Binary IPC protocol (bincode)
 │   ├── isolation.rs      # Linux namespace isolation
 │   ├── environment.rs    # Environment injection
-│   ├── tach_harness.py   # Python test harness, import hook
+│   ├── tach_harness.py   # Python test harness, import hook, PEP 669
 │   └── ...
 ├── rust_tests/           # Rust integration tests
 │   ├── physics_check.rs          # UFFD memory reset verification
 │   ├── snapshot_integration.rs   # Snapshot lifecycle tests
-│   ├── loader_integration.rs     # 19 loader tests
-│   ├── toxicity_integration.rs   # 10 toxicity pipeline tests
-│   ├── tagging_integrity.rs      # 5 is_toxic propagation tests
+│   ├── loader_integration.rs     # Loader tests
+│   ├── toxicity_integration.rs   # Toxicity pipeline tests
+│   ├── tagging_integrity.rs      # is_toxic propagation tests
+│   ├── phase4_integration.rs     # Worker loop tests
 │   └── ...
 ├── tests/                # Python test fixtures
 │   ├── gauntlet/         # Stress/security tests
 │   ├── gauntlet_phase1/  # Memory reset verification
-│   ├── gauntlet_phase2/  # Loader tests (36 tests)
-│   ├── gauntlet_phase5/  # Hot reload tests (4 tests)
-│   ├── benchmark/        # Performance tests (50 modules)
+│   ├── gauntlet_phase2/  # Loader tests
+│   ├── gauntlet_phase5/  # Hot reload tests
+│   ├── gauntlet_phase5_1/ # Coverage tests
+│   ├── gauntlet_phase5_2/ # Sandbox tests
+│   ├── gauntlet_phase5_4/ # Allocator tests
+│   ├── benchmark/        # Performance tests
 │   └── ...
 ├── docs/
 │   └── architecture/
-│       ├── phase2_loader.md          # Phase 2 technical spec
-│       ├── phase3_toxicity.md        # Phase 3 technical spec
-│       ├── phase4_worker_loop.md     # Phase 4 technical spec
-│       └── remote_development.md     # Remote dev setup guide
+│       ├── phase2_loader.md
+│       ├── phase3_toxicity.md
+│       ├── phase4_worker_loop.md
+│       └── remote_development.md
 ├── .cargo/
-│   └── config.toml           # Build configuration
+│   └── config.toml
 ├── .github/
 │   └── workflows/
-│       └── ci.yml            # GitHub Actions CI
+│       └── ci.yml
 └── .tach/                # Generated cache (gitignored)
-    └── cache/            # Compiled .pyc files
+    └── cache/
 ```
 
 ### Running Tests
 
 ```bash
-# Rust unit tests (includes analysis + graph tests)
-cargo test --lib                              # 195+ tests
+# Rust unit tests
+cargo test --lib                              # All unit tests
 
 # Specific module tests
+cargo test --lib sandbox::                    # 7 sandbox tests
+cargo test --lib coverage::                   # 9 coverage tests
 cargo test --lib analysis::                   # 49 toxicity scanner tests
 cargo test --lib graph::                      # 20 toxicity graph tests
-cargo test --lib zygote::tests::              # 6 worker loop tests
-cargo test --lib protocol::tests::            # 8 protocol tests
-cargo test --lib scheduler::tests::           # 8 scheduler tests
 
 # Rust integration tests
-cargo test --test toxicity_integration        # 10 tests
-cargo test --test tagging_integrity           # 5 tests (is_toxic propagation)
-cargo test --test loader_integration          # 19 tests
-cargo test --test resolver_integration        # 8 tests
-cargo test --test snapshot_integration        # 7 tests
+cargo test --test phase4_integration          # Worker loop tests
+cargo test --test toxicity_integration        # Toxicity pipeline tests
 cargo test --test physics_check -- --ignored  # Requires sudo
 
-# Python gauntlet (Phase 2)
-./target/release/tach-core --no-isolation tests/gauntlet_phase2/  # 36 tests
-
-# Python gauntlet (Phase 5 - Hot Reload)
-./target/release/tach-core --no-isolation tests/gauntlet_phase5/  # 4 tests
-
-# Python benchmark
-./target/release/tach-core --no-isolation tests/benchmark/  # 2 tests
-```
-
-### Remote Development
-
-For distributed development across multiple machines:
-
-1. **Setup WSL2 on Windows** with 16GB+ RAM for heavy workloads
-2. **Install Tailscale** on both machines for cross-network connectivity
-3. **SSH tunnel** for LLM proxy access (if using local proxy server)
-
-See [docs/architecture/remote_development.md](docs/architecture/remote_development.md) for detailed setup instructions.
-
-**Quick Start:**
-
-```bash
-# SSH into remote (after Tailscale setup)
-ssh user@<tailscale-ip>
-
-# Start LLM proxy tunnel (if using local proxy)
-ssh -L 3456:127.0.0.1:3456 user@<local-tailscale-ip> -N &
-
-# Run tests on remote
-cd ~/dev/tach-core && cargo test --lib
+# Python gauntlet tests
+python -m pytest tests/gauntlet_phase5_1/ -v  # Coverage tests
+python -m pytest tests/gauntlet_phase5_2/ -v  # Sandbox tests
+python -m pytest tests/gauntlet_phase5_4/ -v  # Allocator tests
 ```
 
 ---
 
-## Implementation Roadmap
+## Implementation Status
 
-### Phase 1: Physics Check ✅ COMPLETE
+### Completed Phases
 
-Memory snapshot and reset mechanism verified:
+#### Phase 1: Physics Check ✅
 
-- [x] Force system allocator (`PYTHONMALLOC=malloc`)
-- [x] Userfaultfd-based page tracking
-- [x] Golden snapshot capture via `process_vm_readv`
-- [x] Memory reset via `madvise(MADV_DONTNEED)`
-- [x] Page restoration via `Uffd::copy()`
-- [x] Worker recycling (1000+ resets per worker)
-- [x] Root read-only protection (Iron Dome)
+Memory snapshot and reset mechanism verified. Userfaultfd-based page tracking, golden snapshot capture via `process_vm_readv`, memory reset via `madvise(MADV_DONTNEED)`, page restoration via `Uffd::copy()`.
 
-### Phase 2: Zero-Copy Loader ✅ COMPLETE
+#### Phase 2: Zero-Copy Loader ✅
 
-Bypass `importlib` for instant module loading:
+Bypass `importlib` for instant module loading. Rust-side `.py` to `.pyc` compilation, bytecode cache with mtime invalidation, `PyMarshal_ReadObjectFromString` injection, `TachMetaPathFinder` import hook.
 
-- [x] Rust-side `.py` to `.pyc` compilation (`BytecodeCompiler`)
-- [x] Bytecode cache with mtime invalidation (`.tach/cache/`)
-- [x] Global registry (`OnceLock<ModuleRegistry>`)
-- [x] `PyMarshal_ReadObjectFromString` injection (`load_module` FFI)
-- [x] Namespace patching (`__file__`, `__path__`, `__package__`)
-- [x] `TachMetaPathFinder` import hook at `sys.meta_path[0]`
-- [x] `TachLoader.exec_module` implementation
-- [x] Eager compilation in `main.rs` (walks ALL `.py` files via `walkdir`)
-- [x] Fallback to `importlib` on cache miss
-- [x] 72 tests passing (17 unit, 19 integration, 36 gauntlet)
+#### Phase 3: Toxicity Filter ✅
 
-### Phase 3: Toxicity Filter ✅ COMPLETE
+Identify and isolate unsafe modules. AST-based toxicity detection, `ToxicityGraph` with fixed-point propagation, `is_toxic` field propagation through `TestModule` → `RunnableTest` → `TestPayload`.
 
-Identify and isolate unsafe modules:
+#### Phase 4: Worker Loop & Dual-Path Scheduler ✅
 
-- [x] **Phase 3.1: Local Scanner** (`analysis.rs`)
-  - [x] AST-based toxicity detection using `rustpython-parser`
-  - [x] Pattern matching for 8 toxic module categories
-  - [x] Import alias tracking (`from X import Y as Z`)
-  - [x] Star import detection (`from X import *`)
-  - [x] Submodule import detection (`import X.Y`)
-  - [x] TYPE_CHECKING block skipping (prevents false positives)
-  - [x] 49 unit tests covering all patterns
+Transform from fork-server to true Hypervisor. Persistent worker loop, dual-path execution (Safe: reset, Toxic: exit), `WorkerHandle` pool for worker reuse, Dead Man's Switch (`PR_SET_PDEATHSIG`).
 
-- [x] **Phase 3.2: Dependency Graph** (`graph.rs`)
-  - [x] `ToxicityGraph` using `petgraph::DiGraph`
-  - [x] Module name resolution (path → dotted name)
-  - [x] Import edge construction from AST
-  - [x] Fixed-point propagation algorithm
-  - [x] `is_toxic()`, `toxic_modules()`, `safe_modules()` API
-  - [x] 20 unit tests covering propagation scenarios
+#### Phase 5: Observability & Hardening ✅
 
-- [x] **Phase 3.3: Integration**
-  - [x] `discover_with_toxicity()` in `lib.rs`
-  - [x] `is_toxic` field added to `TestModule` struct
-  - [x] `is_toxic` field added to `RunnableTest` struct
-  - [x] `is_toxic` field added to `TestPayload` struct
-  - [x] Toxicity tagging in `main.rs::execute_session()`
-  - [x] 10 integration tests (`toxicity_integration.rs`)
-  - [x] 5 tagging integrity tests (`tagging_integrity.rs`)
-  - [x] 4 worker loop prototype tests (`zygote.rs::tests`)
+**Phase 5.1: Zero-Overhead Coverage (PEP 669)** ✅
 
-**Phase 3 Test Summary:**
+- PEP 669 `sys.monitoring` integration (Python 3.12+)
+- Lock-free ring buffer with `memfd_create`
+- 64-byte aligned header, 16-byte aligned entries
+- GIL discipline: `py.allow_threads()` before ring buffer access
+- Coverage buffer excluded from userfaultfd registration
+- `CoverageAggregator` thread drains buffer periodically
+- **9 Rust tests, 7 Python tests passing**
 
-| Test Category                | Count | Status     |
-| :--------------------------- | :---- | :--------- |
-| `analysis.rs` unit tests     | 49    | ✅ Passing |
-| `graph.rs` unit tests        | 20    | ✅ Passing |
-| `toxicity_integration.rs`    | 10    | ✅ Passing |
-| `tagging_integrity.rs`       | 5     | ✅ Passing |
-| `zygote.rs::tests` (loop)    | 4     | ✅ Passing |
-| **Total Phase 3 Tests**      | **88**| ✅ Passing |
+**Phase 5.2: The Iron Dome (Sandbox Hardening)** ✅
 
-### Phase 4: Worker Loop & Dual-Path Scheduler ✅ COMPLETE
+- Landlock ABI V1 filesystem isolation (kernel 5.13+)
+- RO: `/usr`, `/lib`, `/lib64`, `/bin`, `/etc`, `/dev`, `/proc`, `/sys`, project_root
+- RW: `/tmp`, `/run/tach/worker_N`
+- Seccomp-BPF syscall blacklist (safe workers only)
+- Blocked: `socket`, `bind`, `connect`, `listen`, `accept`, `accept4`
+- Blocked: `fork`, `vfork`, `execve`, `execveat`
+- Clone NOT blocked (Python threading needs it)
+- Toxic workers bypass Seccomp for integration test compatibility
+- Graceful degradation on older kernels
+- **7 Rust tests, 17 Python tests passing**
 
-Transform Tach from fork-server to true Hypervisor with worker reuse:
+**Phase 5.3: Hot Reloading (sys.modules cleanup)** ✅
 
-- [x] **Phase 4.1: Scheduler Queue Split**
-  - [x] Separate `ready_queue` and `blocked_queue` in Scheduler
-  - [x] Fixture-aware scheduling (tests wait for dependencies)
-  - [x] Dynamic queue migration when fixtures complete
+- Capture `_INITIAL_MODULES` baseline in `post_fork_init()`
+- `cleanup_test_modules()` removes test imports
+- Protected modules list (`tach_rust`, `pytest`, `django`, etc.)
+- Integration with `reset_and_signal_ready()` cycle
+- **4 Python tests passing**
 
-- [x] **Phase 4.2: Worker Loop Implementation**
-  - [x] Continuous worker loop in `tach_harness.py`
-  - [x] `is_toxic` flag check after test execution
-  - [x] Safe path: `madvise(MADV_DONTNEED)` reset, continue loop
-  - [x] Toxic path: `sys.exit(0)`, process terminates
-  - [x] Result-before-exit invariant (no lost results)
+**Phase 5.4: Deterministic Allocator (Jemalloc)** ✅
 
-- [x] **Phase 4.3: Persistent Worker Loop**
-  - [x] `WorkerHandle` struct and `IDLE_WORKERS` pool for worker reuse
-  - [x] `worker_loop()` state machine handling CMD_RUN_TEST and CMD_EXIT
-  - [x] `spawn_result_collector()` Worker Lifecycle Manager thread
-  - [x] `reset_and_signal_ready()` helper for memory reset + signaling
-  - [x] CMD_FORK refactored to check pool before forking
-  - [x] CMD_EXIT refactored to drain idle workers
-  - [x] Eliminated `static mut` UB (Mutex + AtomicBool)
-  - [x] Dead Man's Switch (`PR_SET_PDEATHSIG`) for orphan prevention
-
-- [x] **Phase 4.4: Infrastructure**
-  - [x] GitHub Actions CI workflow
-  - [x] Remote development setup (WSL2 + Tailscale)
-
-**Phase 4 Performance Characteristics:**
-
-| Metric | Fork-Server | Hypervisor (Phase 4) |
-|:-------|:------------|:---------------------|
-| Test isolation | ~1-2ms (fork) | **< 50μs** (madvise) |
-| Worker reuse | Never | Until toxic test |
-| Memory overhead | Full CoW copy | Page-level tracking |
-
-**Phase 4 Test Summary:**
-
-| Test Category | Count | Status |
-|:--------------|:------|:-------|
-| `scheduler.rs` queue tests | 8 | ✅ Passing |
-| `zygote.rs` worker loop tests | 6 | ✅ Passing |
-| `phase4_integration.rs` tests | 10 | ✅ Passing |
-| `protocol.rs` serialization tests | 8 | ✅ Passing |
-| `resolver_integration.rs` | 9 | ✅ Passing |
-| **Total Phase 4 Tests** | **41** | ✅ Passing |
-
-### Phase 5: Observability & Hardening 🚧 IN PROGRESS
-
-Make the Hypervisor usable and bulletproof:
-
-- [ ] **Phase 5.1: Zero-Overhead Coverage (PEP 669)** - PLANNED
-  - [ ] Replace `sys.settrace` with `sys.monitoring` (Python 3.12+)
-  - [ ] C-callback for `PY_MONITORING_EVENT_LINE`
-  - [ ] Shared memory ring buffer for coverage data
-  - [ ] Zero-overhead when coverage disabled
-
-- [ ] **Phase 5.2: The Iron Dome (Seccomp/Landlock)** - PLANNED
-  - [ ] Seccomp-BPF sandbox for workers
-  - [ ] Block `fork`, `exec`, `socket` in Hypervisor Mode
-  - [ ] Landlock filesystem restrictions
-  - [ ] Dynamic policy based on test toxicity
-
-- [x] **Phase 5.3: Hot Reloading (sys.modules cleanup)** ✅ COMPLETE
-  - [x] Capture `_INITIAL_MODULES` baseline in `post_fork_init()`
-  - [x] `cleanup_test_modules()` function to remove test imports
-  - [x] Protected modules list (`tach_rust`, `pytest`, `django`, etc.)
-  - [x] `cleanup_modules()` pyfunction exposed via `tach_rust` module
-  - [x] Integration with `reset_and_signal_ready()` cycle
-  - [x] Gauntlet tests for hot reload verification (4 tests)
-
-**Phase 5 Goal:** Enable safe worker reuse without import pollution, add coverage support, and sandbox untrusted test code.
+- `tikv-jemallocator` as global allocator
+- tcache flush via `mallctl("thread.tcache.flush")`
+- Epoch sync via `mallctl("epoch")`
+- ELF parsing with `goblin` for libpython segment identification
+- Solves Split-Brain allocator desynchronization problem
+- **4 Rust tests, 6 Python tests passing**
 
 ---
 
@@ -722,65 +709,130 @@ Make the Hypervisor usable and bulletproof:
 | Rust Unit Tests (`zygote.rs::tests`)         | 6       | ✅ Passing     |
 | Rust Unit Tests (`protocol.rs::tests`)       | 8       | ✅ Passing     |
 | Rust Unit Tests (`scheduler.rs::tests`)      | 8       | ✅ Passing     |
+| Rust Unit Tests (`sandbox.rs::tests`)        | 7       | ✅ Passing     |
+| Rust Unit Tests (`coverage.rs::tests`)       | 9       | ✅ Passing     |
+| Rust Unit Tests (`snapshot.rs::tests`)       | 1       | ✅ Passing     |
 | Rust Integration (`toxicity_integration.rs`) | 10      | ✅ Passing     |
 | Rust Integration (`tagging_integrity.rs`)    | 5       | ✅ Passing     |
 | Rust Integration (`loader_integration.rs`)   | 19      | ✅ Passing     |
 | Rust Integration (`resolver_integration.rs`) | 8       | ✅ Passing     |
 | Rust Integration (`snapshot_integration.rs`) | 7       | ✅ Passing     |
+| Rust Integration (`phase4_integration.rs`)   | 10      | ✅ Passing     |
 | Python Gauntlet Phase 1                      | 28      | ✅ Passing     |
 | Python Gauntlet Phase 2                      | 36      | ✅ Passing     |
 | Python Gauntlet Phase 5 (hot reload)         | 4       | ✅ Passing     |
+| Python Gauntlet Phase 5.1 (coverage)         | 7       | ✅ Passing     |
+| Python Gauntlet Phase 5.2 (sandbox)          | 17      | ✅ Passing     |
+| Python Gauntlet Phase 5.4 (allocator)        | 6       | ✅ Passing     |
 | Python Benchmark                             | 2       | ✅ Passing     |
 | Python Gauntlet (crash signals)              | 8       | ✅ Passing     |
 | Python Gauntlet (fs protection)              | 5       | ✅ Passing     |
-| **Total**                                    | **240** | ✅ All Passing |
+| **Total**                                    | **297** | ✅ All Passing |
 
 ---
 
 ## Technical Specifications
 
-### Toxicity Analysis Architecture (`analysis.rs`, `graph.rs`)
+### Sandbox Architecture (`sandbox.rs`)
 
 ```rust
-/// Result of analyzing a single Python file for toxicity
-#[derive(Debug, Clone)]
-pub struct ToxicityReport {
-    pub file_path: PathBuf,
-    pub is_toxic: bool,
-    pub reasons: Vec<ToxicityReason>,
-    pub imports: Vec<String>,  // Local imports for graph edges
+/// Status of Landlock enforcement
+pub enum SandboxStatus {
+    FullyEnforced,      // All restrictions active
+    PartiallyEnforced,  // Some features unavailable (older kernel)
+    NotEnforced,        // Kernel too old (< 5.13)
 }
 
-/// Why a module is considered toxic
-#[derive(Debug, Clone, PartialEq)]
-pub enum ToxicityReason {
-    ThreadingImport,       // import threading / _thread
-    MultiprocessingImport, // import multiprocessing
-    SocketImport,          // import socket
-    CtypesImport,          // import ctypes
-    CffiImport,            // import cffi
-    SignalImport,          // import signal
-    SubprocessImport,      // import subprocess
+/// Apply Landlock filesystem restrictions
+/// RO: project_root, /usr, /lib, /lib64, /bin, /etc, /dev, /proc, /sys
+/// RW: /tmp, /run/tach/worker_N
+pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStatus>;
+
+/// Apply Seccomp syscall blacklist (safe workers only)
+/// Blocks: socket, bind, connect, listen, accept, accept4
+/// Blocks: fork, vfork, execve, execveat
+/// Allows: clone (Python threading), everything else
+pub fn apply_seccomp() -> Result<()>;
+
+/// Combined sandbox application with graceful degradation
+pub fn apply_iron_dome(
+    project_root: &Path,
+    worker_id: u32,
+    is_toxic: bool,
+) -> Result<SandboxStatus>;
+```
+
+### Coverage Architecture (`coverage.rs`)
+
+```rust
+/// Ring buffer header (64-byte aligned for cache-line)
+#[repr(C, align(64))]
+pub struct RingBufferHeader {
+    pub write_idx: AtomicU64,      // Producer index
+    pub read_idx: AtomicU64,       // Consumer index
+    pub capacity: u64,             // Number of entries
+    pub overflow_count: AtomicU64, // Dropped entries counter
+    _padding: [u8; 32],            // Pad to 64 bytes
 }
 
-/// Dependency graph for transitive toxicity propagation
-pub struct ToxicityGraph {
-    graph: DiGraph<ModuleNode, ()>,
-    name_to_idx: HashMap<String, NodeIndex>,
+/// Coverage entry (16-byte aligned)
+#[repr(C, align(16))]
+pub struct CoverageEntry {
+    pub code_id: u64,   // id(code_object)
+    pub lineno: u32,    // Line number
+    pub flags: u32,     // Reserved for future use
 }
 
-impl ToxicityGraph {
-    /// Build graph from list of Python files
-    pub fn build(paths: &[PathBuf], project_root: &Path) -> Self;
+/// Lock-free ring buffer for coverage data
+pub struct CoverageRingBuffer {
+    header: *mut RingBufferHeader,
+    entries: *mut CoverageEntry,
+    mmap_ptr: *mut u8,
+    mmap_len: usize,
+}
 
-    /// Check if a module is toxic (direct or transitive)
-    pub fn is_toxic(&self, path: &Path) -> bool;
+/// Aggregator thread that drains the ring buffer
+pub struct CoverageAggregator {
+    buffer: Arc<CoverageRingBuffer>,
+    poll_interval: Duration,
+    running: Arc<AtomicBool>,
+}
+```
 
-    /// Get all toxic module names
-    pub fn toxic_modules(&self) -> Vec<String>;
+### Allocator Architecture (`allocator.rs`)
 
-    /// Get all safe module names
-    pub fn safe_modules(&self) -> Vec<String>;
+```rust
+use tikv_jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+/// Flush thread-local cache for snapshot consistency
+pub fn flush_tcache() {
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            b"thread.tcache.flush\0".as_ptr() as *const _,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+        );
+    }
+}
+
+/// Synchronize allocator epoch
+pub fn sync_epoch() {
+    let mut epoch: u64 = 0;
+    let mut len = std::mem::size_of::<u64>();
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            b"epoch\0".as_ptr() as *const _,
+            &mut epoch as *mut _ as *mut _,
+            &mut len,
+            &epoch as *const _ as *const _,
+            len,
+        );
+    }
 }
 ```
 
@@ -797,157 +849,26 @@ pub struct TestPayload {
     pub fixtures: Vec<FixtureInfo>,
     pub log_fd: i32,
     pub debug_socket_path: String,
-    /// Phase 3: Toxicity flag for dual-path execution
-    /// Phase 4: Worker checks this to decide Reset vs Exit
+    /// Toxicity flag for dual-path execution
+    /// Worker checks this to decide Reset vs Exit
+    /// Also determines Seccomp application (safe only)
     pub is_toxic: bool,
-}
-```
-
-### Integration Entry Point (`lib.rs`)
-
-```rust
-/// Discover tests with toxicity analysis.
-/// Combines test discovery with toxicity graph construction.
-pub fn discover_with_toxicity(root: &Path) -> Result<(DiscoveryResult, ToxicityGraph)> {
-    // 1. Run standard discovery (finds test files and fixtures)
-    let discovery = discovery::discover(root)?;
-
-    // 2. Collect ALL Python files (not just test modules)
-    // Critical for transitive toxicity propagation
-    let all_py_files = collect_all_py_files(root);
-
-    // 3. Build toxicity graph (analyzes all files and propagates)
-    let graph = ToxicityGraph::build(&all_py_files, root);
-
-    Ok((discovery, graph))
-}
-```
-
-### Loader Architecture (`loader.rs`)
-
-```rust
-// Global registry - initialized before fork, inherited via CoW
-static REGISTRY: OnceLock<ModuleRegistry> = OnceLock::new();
-
-/// Thread-safe registry of compiled Python modules
-pub struct ModuleRegistry {
-    modules: DashMap<String, BytecodeEntry>,
-    project_root: PathBuf,
-}
-
-/// A compiled Python module ready for injection
-pub struct BytecodeEntry {
-    pub name: String,           // e.g., "foo.bar"
-    pub source_path: PathBuf,   // e.g., "/project/foo/bar.py"
-    pub bytecode: Vec<u8>,      // Header-stripped marshalled code
-    pub is_package: bool,       // True if __init__.py
-}
-
-/// Compiles Python source files to bytecode
-pub struct BytecodeCompiler {
-    project_root: PathBuf,
-    cache_dir: PathBuf,         // .tach/cache/
-    python_exe: PathBuf,        // Cached Python interpreter path
-    expected_magic: [u8; 4],    // Cached magic number
 }
 ```
 
 ### FFI Functions Exposed to Python
 
-| Function            | Signature                                        | Purpose                        |
-| :------------------ | :----------------------------------------------- | :----------------------------- |
-| `get_module`        | `fn(name: &str) -> Option<Vec<u8>>`              | Get bytecode from registry     |
-| `get_module_path`   | `fn(name: &str) -> Option<String>`               | Get source path for `__file__` |
-| `is_module_package` | `fn(name: &str) -> Option<bool>`                 | Check if module is a package   |
-| `load_module`       | `fn(py, name, path, bytecode) -> PyResult<bool>` | Inject bytecode via C-API      |
-| `init_snapshot_mode`| `fn(supervisor_sock: &str) -> bool`              | Initialize UFFD handshake      |
-| `reset_memory`      | `fn() -> PyResult<()>`                           | Self-reset via madvise         |
-| `cleanup_modules`   | `fn() -> PyResult<()>`                           | Remove test-imported modules   |
-
-### Import Hook (`tach_harness.py`)
-
-```python
-class TachMetaPathFinder:
-    """Intercepts imports at sys.meta_path[0]"""
-    def find_spec(self, fullname, path, target=None):
-        bytecode = tach_rust.get_module(fullname)
-        if bytecode is not None:
-            return ModuleSpec(fullname, TachLoader(bytecode), ...)
-        return None  # Fallback to standard importlib
-
-class TachLoader:
-    """Loads modules from pre-compiled bytecode"""
-    def exec_module(self, module):
-        tach_rust.load_module(module.__name__, bytecode)
-```
-
-### Cache Invalidation Strategy
-
-1. **mtime-based:** Source file modified time compared to cache file
-2. **Magic number:** Python version mismatch triggers recompilation
-3. **Disk persistence:** Cache survives process restart (`.tach/cache/`)
-4. **Fallback:** On any cache failure, fallback to standard `importlib`
-
----
-
-## Phase 4: Dual-Path Scheduler
-
-### Design Overview
-
-Phase 4 transforms Tach from a Fork-Server into a true Hypervisor by implementing dual execution paths:
-
-```mermaid
-flowchart TB
-    subgraph Scheduler["SCHEDULER"]
-        Queue["Test Queue"]
-        Split{is_toxic?}
-        SafeQueue["Safe Queue\n(Priority)"]
-        ToxicQueue["Toxic Queue\n(Deferred)"]
-    end
-
-    subgraph Hypervisor["HYPERVISOR MODE"]
-        SafeWorker["Worker Pool"]
-        Execute1["Execute Test"]
-        Reset["madvise Reset"]
-        Reuse["Reuse Worker"]
-    end
-
-    subgraph Isolation["ISOLATION MODE"]
-        Fork["Fork Worker"]
-        Execute2["Execute Test"]
-        Exit["Exit Process"]
-        Respawn["Spawn Replacement"]
-    end
-
-    Queue --> Split
-    Split -->|"Safe"| SafeQueue
-    Split -->|"Toxic"| ToxicQueue
-    SafeQueue --> SafeWorker --> Execute1 --> Reset --> Reuse
-    Reuse --> SafeWorker
-    ToxicQueue --> Fork --> Execute2 --> Exit --> Respawn
-```
-
-### Worker State Machine
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> Idle
-    Idle --> Running: Receive Test
-    Running --> Reporting: Test Complete
-    Reporting --> Resetting: Safe Test
-    Reporting --> Exiting: Toxic Test
-    Resetting --> Idle: Loop
-    Exiting --> [*]: DEAD
-    note right of Exiting: Supervisor spawns replacement
-```
-
-### Key Invariants
-
-1. **Result Before Exit:** Toxic workers MUST send `TestResult` before calling `sys.exit(0)`
-2. **No Reset for Toxic:** Toxic workers NEVER call `madvise` reset
-3. **Safe First:** Safe tests execute before toxic tests (throughput optimization)
-4. **Crash Detection:** Scheduler distinguishes crash (no result) from expected exit (result received)
+| Function              | Signature                                        | Purpose                        |
+| :-------------------- | :----------------------------------------------- | :----------------------------- |
+| `get_module`          | `fn(name: &str) -> Option<Vec<u8>>`              | Get bytecode from registry     |
+| `get_module_path`     | `fn(name: &str) -> Option<String>`               | Get source path for `__file__` |
+| `is_module_package`   | `fn(name: &str) -> Option<bool>`                 | Check if module is a package   |
+| `load_module`         | `fn(py, name, path, bytecode) -> PyResult<bool>` | Inject bytecode via C-API      |
+| `init_snapshot_mode`  | `fn(supervisor_sock: &str) -> bool`              | Initialize UFFD handshake      |
+| `reset_memory`        | `fn() -> PyResult<()>`                           | Self-reset via madvise         |
+| `cleanup_modules`     | `fn() -> PyResult<()>`                           | Remove test-imported modules   |
+| `record_line`         | `fn(code_id: u64, lineno: u32)`                  | Record coverage hit            |
+| `is_coverage_enabled` | `fn() -> bool`                                   | Check if coverage is active    |
 
 ---
 
