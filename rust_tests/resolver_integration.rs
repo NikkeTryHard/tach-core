@@ -22,7 +22,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         class_scope: None,
                     },
                     FixtureDefinition {
-                        name: "cache".to_string(),
+                        name: "redis_cache".to_string(),
                         scope: FixtureScope::Function,
                         dependencies: vec!["db".to_string()],
                         params: None,
@@ -31,7 +31,7 @@ fn create_test_discovery() -> DiscoveryResult {
                     FixtureDefinition {
                         name: "client".to_string(),
                         scope: FixtureScope::Function,
-                        dependencies: vec!["db".to_string(), "cache".to_string()],
+                        dependencies: vec!["db".to_string(), "redis_cache".to_string()],
                         params: None,
                         class_scope: None,
                     },
@@ -242,24 +242,24 @@ fn test_fixture_order_is_topological() {
     let test_with_client = tests.iter().find(|t| t.test_name == "test_with_client");
     let resolved = test_with_client.unwrap();
 
-    // Fixtures should be in dependency order: db first, then cache, then client
+    // Fixtures should be in dependency order: db first, then redis_cache, then client
     let fixture_names: Vec<_> = resolved.fixtures.iter().map(|f| f.name.as_str()).collect();
 
-    // db should come before cache
+    // db should come before redis_cache
     let db_pos = fixture_names.iter().position(|n| *n == "db");
-    let cache_pos = fixture_names.iter().position(|n| *n == "cache");
+    let cache_pos = fixture_names.iter().position(|n| *n == "redis_cache");
     let client_pos = fixture_names.iter().position(|n| *n == "client");
 
     assert!(db_pos.is_some(), "Should have db fixture");
-    assert!(cache_pos.is_some(), "Should have cache fixture");
+    assert!(cache_pos.is_some(), "Should have redis_cache fixture");
     assert!(client_pos.is_some(), "Should have client fixture");
 
     assert!(
         db_pos.unwrap() < cache_pos.unwrap(),
-        "db should come before cache"
+        "db should come before redis_cache"
     );
     assert!(
         cache_pos.unwrap() < client_pos.unwrap(),
-        "cache should come before client"
+        "redis_cache should come before client"
     );
 }

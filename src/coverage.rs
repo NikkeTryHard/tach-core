@@ -75,6 +75,20 @@ pub const ENTRY_SIZE: usize = 16;
 pub const MEMFD_NAME: &str = "tach_coverage";
 
 // =============================================================================
+// Phase 6.1: Mapping Ring Buffer Constants
+// =============================================================================
+
+/// Mapping ring buffer capacity (number of entries)
+/// 8K entries should be sufficient for most test suites
+pub const MAPPING_CAPACITY: usize = 8_192;
+
+/// Size of each mapping entry in bytes
+pub const MAPPING_ENTRY_SIZE: usize = 256;
+
+/// Name used for mapping memfd_create
+pub const MAPPING_MEMFD_NAME: &str = "tach_mapping";
+
+// =============================================================================
 // Data Structures
 // =============================================================================
 
@@ -148,6 +162,84 @@ impl CoverageEntry {
             lineno,
             flags: 0x01, // LINE event
         }
+    }
+}
+
+// =============================================================================
+// Phase 6.1: Mapping Entry for code_id -> filename resolution
+// =============================================================================
+
+/// Mapping entry for registering code_id -> filename mappings.
+///
+/// Layout: 256 bytes total
+/// - code_id: Memory address of the Python code object (8 bytes)
+/// - filename_len: Length of filename in bytes (2 bytes)
+/// - _padding: Alignment padding (6 bytes)
+/// - filename: UTF-8 filename bytes, truncated from left if > 240 bytes (240 bytes)
+///
+/// The filename is truncated from the LEFT to preserve the actual filename
+/// while dropping long path prefixes.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub struct MappingEntry {
+    /// Memory address of the Python code object
+    pub code_id: u64,
+    /// Length of filename in bytes (max 240)
+    pub filename_len: u16,
+    /// Padding for alignment
+    pub _padding: [u8; 6],
+    /// Filename bytes (truncated from left if > 240 bytes)
+    pub filename: [u8; 240],
+}
+
+impl Default for MappingEntry {
+    fn default() -> Self {
+        Self {
+            code_id: 0,
+            filename_len: 0,
+            _padding: [0u8; 6],
+            filename: [0u8; 240],
+        }
+    }
+}
+
+impl MappingEntry {
+    /// Create a new mapping entry.
+    ///
+    /// If the filename is longer than 240 bytes, it is truncated from the LEFT
+    /// to preserve the actual filename while dropping long path prefixes.
+    ///
+    /// # Safety
+    /// This function handles UTF-8 boundary correctly by using char_indices.
+    pub fn new(code_id: u64, filename: &str) -> Self {
+        let mut entry = Self::default();
+        entry.code_id = code_id;
+
+        let bytes = filename.as_bytes();
+        if bytes.len() <= 240 {
+            // Fits entirely
+            entry.filename_len = bytes.len() as u16;
+            entry.filename[..bytes.len()].copy_from_slice(bytes);
+        } else {
+            // Truncate from LEFT - find a valid UTF-8 boundary
+            // Start from (len - 240) and find the next char boundary
+            let start = bytes.len() - 240;
+            // Find the next valid UTF-8 start byte
+            let mut safe_start = start;
+            while safe_start < bytes.len() && (bytes[safe_start] & 0b1100_0000) == 0b1000_0000 {
+                safe_start += 1;
+            }
+            let slice = &bytes[safe_start..];
+            entry.filename_len = slice.len() as u16;
+            entry.filename[..slice.len()].copy_from_slice(slice);
+        }
+
+        entry
+    }
+
+    /// Extract the filename as a String.
+    pub fn filename(&self) -> String {
+        String::from_utf8_lossy(&self.filename[..self.filename_len as usize]).to_string()
     }
 }
 
@@ -386,6 +478,188 @@ impl Drop for CoverageRingBuffer {
 }
 
 // =============================================================================
+// Phase 6.1: Mapping Ring Buffer Implementation
+// =============================================================================
+
+/// Shared memory ring buffer for code_id -> filename mappings.
+///
+/// Similar to CoverageRingBuffer but with larger entries (256 bytes each)
+/// to accommodate filenames. Used by PY_START callback to register
+/// code objects on first encounter.
+pub struct MappingRingBuffer {
+    /// Pointer to the mmap'd region
+    ptr: *mut u8,
+    /// Total size of the mmap'd region in bytes
+    size: usize,
+    /// File descriptor from memfd_create
+    fd: i32,
+    /// Capacity in number of entries
+    capacity: usize,
+}
+
+// Safety: Same as CoverageRingBuffer - uses atomic operations
+unsafe impl Send for MappingRingBuffer {}
+unsafe impl Sync for MappingRingBuffer {}
+
+impl MappingRingBuffer {
+    /// Create a new mapping ring buffer with the specified capacity.
+    pub fn new(capacity: usize) -> Result<Self> {
+        let total_size = HEADER_SIZE + (capacity * MAPPING_ENTRY_SIZE);
+
+        // Create anonymous file via memfd_create
+        let fd = unsafe {
+            let name = std::ffi::CString::new(MAPPING_MEMFD_NAME)
+                .context("Failed to create CString for mapping memfd name")?;
+            libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC)
+        };
+
+        if fd < 0 {
+            return Err(anyhow!(
+                "memfd_create failed for mapping buffer: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        // Set the size of the file
+        let ret = unsafe { libc::ftruncate(fd, total_size as libc::off_t) };
+        if ret < 0 {
+            unsafe { libc::close(fd) };
+            return Err(anyhow!(
+                "ftruncate failed for mapping buffer: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        // Map the file into memory
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                total_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+
+        if ptr == libc::MAP_FAILED {
+            unsafe { libc::close(fd) };
+            return Err(anyhow!(
+                "mmap failed for mapping buffer: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        // Initialize the header
+        let header = ptr as *mut RingBufferHeader;
+        unsafe {
+            (*header).write_idx = AtomicU64::new(0);
+            (*header).read_idx = AtomicU64::new(0);
+            (*header).capacity = capacity as u64;
+            (*header).overflow_count = AtomicU64::new(0);
+            (*header)._padding = [0u8; 32];
+        }
+
+        eprintln!(
+            "[coverage] Created mapping buffer: {} entries, {} bytes total",
+            capacity, total_size
+        );
+
+        Ok(Self {
+            ptr: ptr as *mut u8,
+            size: total_size,
+            fd,
+            capacity,
+        })
+    }
+
+    /// Get pointer to the header.
+    #[inline]
+    pub fn header(&self) -> &RingBufferHeader {
+        unsafe { &*(self.ptr as *const RingBufferHeader) }
+    }
+
+    /// Get pointer to the entry array.
+    #[inline]
+    fn entries_ptr(&self) -> *mut MappingEntry {
+        unsafe { self.ptr.add(HEADER_SIZE) as *mut MappingEntry }
+    }
+
+    /// Write a mapping entry to the ring buffer.
+    ///
+    /// Called from PY_START callback on first encounter of a code object.
+    #[inline]
+    pub fn write(&self, entry: MappingEntry) -> bool {
+        let header = self.header();
+
+        // Check if buffer is full
+        if header.is_full() {
+            header.overflow_count.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+
+        // Reserve a slot atomically
+        let idx = header.write_idx.fetch_add(1, Ordering::AcqRel);
+        let slot = (idx % self.capacity as u64) as usize;
+
+        // Write the entry
+        unsafe {
+            let entry_ptr = self.entries_ptr().add(slot);
+            std::ptr::write_volatile(entry_ptr, entry);
+        }
+
+        true
+    }
+
+    /// Drain mapping entries from the buffer.
+    ///
+    /// Called by CoverageAggregator to populate code_map.
+    pub fn drain(&self, out: &mut Vec<MappingEntry>, max_entries: usize) -> usize {
+        let header = self.header();
+        let available = header.available() as usize;
+        let to_read = available.min(max_entries);
+
+        if to_read == 0 {
+            return 0;
+        }
+
+        out.reserve(to_read);
+
+        for _ in 0..to_read {
+            let idx = header.read_idx.fetch_add(1, Ordering::AcqRel);
+            let slot = (idx % self.capacity as u64) as usize;
+
+            let entry = unsafe {
+                let entry_ptr = self.entries_ptr().add(slot);
+                std::ptr::read_volatile(entry_ptr)
+            };
+
+            out.push(entry);
+        }
+
+        to_read
+    }
+
+    /// Get the overflow count.
+    pub fn overflow_count(&self) -> u64 {
+        self.header().overflow_count.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for MappingRingBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.ptr.is_null() {
+                libc::munmap(self.ptr as *mut libc::c_void, self.size);
+            }
+            if self.fd >= 0 {
+                libc::close(self.fd);
+            }
+        }
+    }
+}
+
+// =============================================================================
 // Global Ring Buffer Instance
 // =============================================================================
 
@@ -417,6 +691,70 @@ pub fn get_coverage_buffer() -> Option<&'static CoverageRingBuffer> {
 /// Check if coverage is enabled (ring buffer initialized).
 pub fn is_coverage_enabled() -> bool {
     RING_BUFFER.get().is_some()
+}
+
+// =============================================================================
+// Phase 6.1: Global Mapping Buffer Instance
+// =============================================================================
+
+/// Global mapping buffer instance (initialized by Supervisor, shared with Workers)
+static MAPPING_BUFFER: OnceLock<MappingRingBuffer> = OnceLock::new();
+
+/// Initialize the global mapping ring buffer.
+///
+/// Called by the Supervisor before forking workers.
+pub fn init_mapping_buffer(capacity: usize) -> Result<&'static MappingRingBuffer> {
+    if MAPPING_BUFFER.get().is_some() {
+        return Err(anyhow!("Mapping ring buffer already initialized"));
+    }
+
+    let buffer = MappingRingBuffer::new(capacity)?;
+
+    MAPPING_BUFFER
+        .set(buffer)
+        .map_err(|_| anyhow!("Failed to set global mapping buffer"))?;
+
+    Ok(MAPPING_BUFFER.get().unwrap())
+}
+
+/// Get reference to the global mapping ring buffer.
+pub fn get_mapping_buffer() -> Option<&'static MappingRingBuffer> {
+    MAPPING_BUFFER.get()
+}
+
+// =============================================================================
+// Phase 6.1: Thread-Local Seen Codes Set
+// =============================================================================
+
+use std::cell::RefCell;
+use std::collections::HashSet;
+
+thread_local! {
+    /// Thread-local set of seen code object IDs.
+    ///
+    /// Used by PY_START callback to avoid duplicate registrations.
+    /// Each thread maintains its own set for lock-free operation.
+    static SEEN_CODES: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
+}
+
+/// Check if code_id has been seen, mark as seen if not.
+///
+/// Returns `true` if this is the FIRST time seeing this code_id.
+/// Returns `false` if already seen (no registration needed).
+///
+/// This is called from the PY_START callback for every function entry.
+/// The thread-local set ensures O(1) lookup without any locking.
+#[inline]
+fn mark_code_seen(code_id: u64) -> bool {
+    SEEN_CODES.with(|seen| {
+        let mut set = seen.borrow_mut();
+        if set.contains(&code_id) {
+            false
+        } else {
+            set.insert(code_id);
+            true
+        }
+    })
 }
 
 // =============================================================================
@@ -461,27 +799,42 @@ impl CoverageAggregator {
 
     /// Start the aggregator thread.
     ///
-    /// The thread polls the ring buffer every `poll_interval` and drains
-    /// entries into the accumulated coverage data.
+    /// The thread polls both ring buffers every `poll_interval`:
+    /// 1. Drain mapping buffer FIRST (populates code_map)
+    /// 2. Drain coverage buffer (uses code_map for resolution)
     pub fn start(&mut self, poll_interval: Duration) {
         let data = Arc::clone(&self.data);
         let code_map = Arc::clone(&self.code_map);
         let stop_flag = Arc::clone(&self.stop_flag);
 
         let handle = thread::spawn(move || {
-            let mut batch = Vec::with_capacity(1024);
+            let mut coverage_batch = Vec::with_capacity(4096);
+            let mut mapping_batch = Vec::with_capacity(256);
 
             while !stop_flag.load(Ordering::Relaxed) {
-                // Drain entries from ring buffer
+                // 1. Drain mapping buffer FIRST (populates code_map)
+                // This ensures code_id -> filename mappings are available
+                // before we try to resolve coverage entries
+                if let Some(mapping_buffer) = get_mapping_buffer() {
+                    let count = mapping_buffer.drain(&mut mapping_batch, 1024);
+                    if count > 0 {
+                        let mut code_map_guard = code_map.lock().unwrap();
+                        for entry in mapping_batch.drain(..) {
+                            code_map_guard.insert(entry.code_id, entry.filename());
+                        }
+                    }
+                }
+
+                // 2. Drain coverage buffer (uses code_map for resolution)
                 if let Some(buffer) = get_coverage_buffer() {
-                    let count = buffer.drain(&mut batch, 4096);
+                    let count = buffer.drain(&mut coverage_batch, 4096);
 
                     if count > 0 {
                         // Process batch
                         let mut data_guard = data.lock().unwrap();
                         let code_map_guard = code_map.lock().unwrap();
 
-                        for entry in batch.drain(..) {
+                        for entry in coverage_batch.drain(..) {
                             // Try to map code_id to filename
                             let filename = code_map_guard
                                 .get(&entry.code_id)
@@ -499,6 +852,18 @@ impl CoverageAggregator {
             }
 
             // Final drain after stop signal
+            // Drain mapping first, then coverage
+            if let Some(mapping_buffer) = get_mapping_buffer() {
+                let mut mapping_batch = Vec::new();
+                mapping_buffer.drain(&mut mapping_batch, usize::MAX);
+                if !mapping_batch.is_empty() {
+                    let mut code_map_guard = code_map.lock().unwrap();
+                    for entry in mapping_batch {
+                        code_map_guard.insert(entry.code_id, entry.filename());
+                    }
+                }
+            }
+
             if let Some(buffer) = get_coverage_buffer() {
                 let mut batch = Vec::new();
                 buffer.drain(&mut batch, usize::MAX);
@@ -623,6 +988,52 @@ pub fn py_get_coverage_overflow() -> u64 {
 }
 
 // =============================================================================
+// Phase 6.1: PY_START Registration Callback
+// =============================================================================
+
+/// Record a PY_START event (function entry) for code_id -> filename registration.
+///
+/// This is the REGISTRATION PATH - called for every function entry.
+/// Uses thread-local caching to ensure each code object is only registered once.
+///
+/// # Flow
+/// 1. Check thread-local SEEN_CODES set (O(1) lookup)
+/// 2. If new: write mapping to MappingRingBuffer, add to SEEN_CODES
+/// 3. If seen: return immediately (no work)
+///
+/// # GIL Discipline
+/// This function is called WITH the GIL held. We release the GIL before
+/// writing to the ring buffer to avoid serialization with the aggregator.
+///
+/// # Arguments
+/// * `code_id` - Memory address of the code object (id(code) in Python)
+/// * `filename` - The co_filename attribute of the code object
+#[pyfunction]
+#[pyo3(name = "record_py_start")]
+pub fn py_record_py_start(py: Python<'_>, code_id: u64, filename: String) {
+    // Release GIL before doing any work
+    py.allow_threads(|| {
+        // Check thread-local set (fast path for repeated calls)
+        if mark_code_seen(code_id) {
+            // First time seeing this code object - register mapping
+            if let Some(buffer) = get_mapping_buffer() {
+                let entry = MappingEntry::new(code_id, &filename);
+                buffer.write(entry);
+            }
+        }
+    });
+}
+
+/// Get the current mapping buffer overflow count.
+#[pyfunction]
+#[pyo3(name = "get_mapping_overflow")]
+pub fn py_get_mapping_overflow() -> u64 {
+    get_mapping_buffer()
+        .map(|b| b.overflow_count())
+        .unwrap_or(0)
+}
+
+// =============================================================================
 // Unit Tests
 // =============================================================================
 
@@ -717,6 +1128,204 @@ mod tests {
             for (i, entry) in entries.iter().enumerate() {
                 assert_eq!(entry.code_id, (round * 4 + i) as u64);
             }
+        }
+    }
+
+    // =========================================================================
+    // Phase 6.1: Mapping Entry Tests
+    // =========================================================================
+
+    #[test]
+    fn test_mapping_entry_size() {
+        assert_eq!(std::mem::size_of::<MappingEntry>(), MAPPING_ENTRY_SIZE);
+    }
+
+    #[test]
+    fn test_mapping_entry_alignment() {
+        assert_eq!(std::mem::align_of::<MappingEntry>(), 8);
+    }
+
+    #[test]
+    fn test_mapping_entry_short_filename() {
+        let entry = MappingEntry::new(0x12345678, "/home/user/project/test.py");
+        assert_eq!(entry.code_id, 0x12345678);
+        assert_eq!(entry.filename(), "/home/user/project/test.py");
+    }
+
+    #[test]
+    fn test_mapping_entry_exact_240_bytes() {
+        // Create a filename that is exactly 240 bytes
+        let filename = "a".repeat(240);
+        let entry = MappingEntry::new(0xABCD, &filename);
+        assert_eq!(entry.code_id, 0xABCD);
+        assert_eq!(entry.filename_len, 240);
+        assert_eq!(entry.filename(), filename);
+    }
+
+    #[test]
+    fn test_mapping_entry_truncation_from_left() {
+        // Create a filename longer than 240 bytes
+        let prefix = "/very/long/path/that/will/be/truncated/";
+        let suffix = "important_filename.py";
+        let middle = "x".repeat(300 - prefix.len() - suffix.len());
+        let long_filename = format!("{}{}{}", prefix, middle, suffix);
+
+        assert!(long_filename.len() > 240);
+
+        let entry = MappingEntry::new(0x9999, &long_filename);
+        assert_eq!(entry.code_id, 0x9999);
+
+        // The filename should be truncated from the LEFT
+        // So the suffix (important_filename.py) should be preserved
+        let result = entry.filename();
+        assert!(result.len() <= 240);
+        assert!(result.ends_with(suffix));
+    }
+
+    #[test]
+    fn test_mapping_entry_utf8_boundary_handling() {
+        // Create a filename with multi-byte UTF-8 characters
+        // Each emoji is 4 bytes, so we need to test boundary handling
+        let prefix = "🔥".repeat(60); // 240 bytes of emojis
+        let suffix = "/test.py";
+        let long_filename = format!("{}{}", prefix, suffix);
+
+        let entry = MappingEntry::new(0x1111, &long_filename);
+
+        // The result should be valid UTF-8
+        let result = entry.filename();
+        assert!(result.len() <= 240);
+        // Verify it's valid UTF-8 (filename() uses from_utf8_lossy)
+        assert!(!result.contains('\u{FFFD}')); // No replacement characters
+    }
+
+    #[test]
+    fn test_mapping_entry_empty_filename() {
+        let entry = MappingEntry::new(0x0, "");
+        assert_eq!(entry.code_id, 0);
+        assert_eq!(entry.filename_len, 0);
+        assert_eq!(entry.filename(), "");
+    }
+
+    // =========================================================================
+    // Phase 6.1: Mapping Ring Buffer Tests
+    // =========================================================================
+
+    #[test]
+    fn test_mapping_buffer_creation() {
+        let buffer = MappingRingBuffer::new(64).expect("Failed to create mapping buffer");
+        assert_eq!(buffer.capacity, 64);
+        assert!(buffer.fd >= 0);
+        assert!(!buffer.ptr.is_null());
+    }
+
+    #[test]
+    fn test_mapping_buffer_write_read() {
+        let buffer = MappingRingBuffer::new(16).expect("Failed to create mapping buffer");
+
+        // Write some entries
+        for i in 0..10 {
+            let filename = format!("/path/to/file_{}.py", i);
+            let entry = MappingEntry::new(0x1000 + i, &filename);
+            assert!(buffer.write(entry));
+        }
+
+        // Read them back
+        let mut entries = Vec::new();
+        let count = buffer.drain(&mut entries, 100);
+        assert_eq!(count, 10);
+        assert_eq!(entries.len(), 10);
+
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(entry.code_id, 0x1000 + i as u64);
+            let expected = format!("/path/to/file_{}.py", i);
+            assert_eq!(entry.filename(), expected);
+        }
+    }
+
+    #[test]
+    fn test_mapping_buffer_overflow() {
+        let buffer = MappingRingBuffer::new(4).expect("Failed to create mapping buffer");
+
+        // Fill the buffer
+        for i in 0..4 {
+            let entry = MappingEntry::new(i, &format!("file_{}.py", i));
+            assert!(buffer.write(entry));
+        }
+
+        // Next write should fail (overflow)
+        let overflow_entry = MappingEntry::new(100, "overflow.py");
+        assert!(!buffer.write(overflow_entry));
+        assert_eq!(buffer.overflow_count(), 1);
+
+        // Drain and try again
+        let mut entries = Vec::new();
+        buffer.drain(&mut entries, 4);
+        let new_entry = MappingEntry::new(200, "new.py");
+        assert!(buffer.write(new_entry));
+    }
+
+    #[test]
+    fn test_mapping_buffer_wrap_around() {
+        let buffer = MappingRingBuffer::new(4).expect("Failed to create mapping buffer");
+
+        // Write and drain multiple times to test wrap-around
+        for round in 0..3 {
+            for i in 0..4 {
+                let code_id = (round * 4 + i) as u64;
+                let entry = MappingEntry::new(code_id, &format!("file_{}.py", code_id));
+                assert!(buffer.write(entry));
+            }
+
+            let mut entries = Vec::new();
+            let count = buffer.drain(&mut entries, 4);
+            assert_eq!(count, 4);
+
+            for (i, entry) in entries.iter().enumerate() {
+                let expected_id = (round * 4 + i) as u64;
+                assert_eq!(entry.code_id, expected_id);
+            }
+        }
+    }
+
+    // =========================================================================
+    // Phase 6.1: Thread-Local SEEN_CODES Tests
+    // =========================================================================
+
+    #[test]
+    fn test_mark_code_seen_first_time() {
+        // First time seeing a code_id should return true
+        let code_id = 0xDEADBEEF_u64;
+        assert!(mark_code_seen(code_id));
+    }
+
+    #[test]
+    fn test_mark_code_seen_second_time() {
+        // Use a unique code_id for this test
+        let code_id = 0xCAFEBABE_u64;
+
+        // First time should return true
+        assert!(mark_code_seen(code_id));
+
+        // Second time should return false
+        assert!(!mark_code_seen(code_id));
+
+        // Third time should also return false
+        assert!(!mark_code_seen(code_id));
+    }
+
+    #[test]
+    fn test_mark_code_seen_multiple_codes() {
+        // Each unique code_id should return true on first encounter
+        let codes = [0x1111_u64, 0x2222_u64, 0x3333_u64, 0x4444_u64];
+
+        for &code_id in &codes {
+            assert!(mark_code_seen(code_id));
+        }
+
+        // Second encounter should return false for all
+        for &code_id in &codes {
+            assert!(!mark_code_seen(code_id));
         }
     }
 }

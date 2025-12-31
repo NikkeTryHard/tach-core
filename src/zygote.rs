@@ -245,6 +245,18 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
         &tach_mod
     )?)?;
 
+    // Phase 6.1: Coverage Resolution (code_id -> filename mapping)
+    // - record_py_start: Register code object on first function entry (PY_START event)
+    // - get_mapping_overflow: Get count of dropped mappings due to buffer full
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::coverage::py_record_py_start,
+        &tach_mod
+    )?)?;
+    tach_mod.add_function(wrap_pyfunction!(
+        crate::coverage::py_get_mapping_overflow,
+        &tach_mod
+    )?)?;
+
     // Phase 2: Zero-Copy Loader functions (Request Model)
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module_path, &tach_mod)?)?;

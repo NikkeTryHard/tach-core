@@ -78,6 +78,12 @@ memmap2 = "0.9"
 landlock = "0.4"
 seccompiler = "0.4"
 
+# Phase 6.3: Progress Bar
+# indicatif: Progress bar library with spinner support
+# atty: TTY detection for CI fallback
+indicatif = "0.17"
+atty = "0.2"
+
 [dev-dependencies]
 tempfile = "3"
 bincode = "1.3"

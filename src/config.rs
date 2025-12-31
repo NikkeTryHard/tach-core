@@ -76,6 +76,167 @@ struct PyProject {
 #[derive(Deserialize, Default)]
 struct ToolConfig {
     pytest_env: Option<HashMap<String, String>>,
+    tach: Option<TachConfig>,
+}
+
+// =============================================================================
+// Phase 6.2: Tach Configuration ([tool.tach] in pyproject.toml)
+// =============================================================================
+
+/// Configuration for Tach from pyproject.toml
+///
+/// Example pyproject.toml:
+/// ```toml
+/// [tool.tach]
+/// test_pattern = "test_*.py"
+/// timeout = 60
+/// workers = 4
+/// isolation_strategy = "auto"
+///
+/// [tool.tach.coverage]
+/// enabled = true
+/// source = ["src"]
+/// omit = ["**/migrations/*"]
+/// output = ".coverage"
+/// ```
+#[derive(Deserialize, Default, Clone, Debug)]
+pub struct TachConfig {
+    /// Test file pattern (default: "test_*.py")
+    pub test_pattern: Option<String>,
+
+    /// Test timeout in seconds (default: 60)
+    pub timeout: Option<u64>,
+
+    /// Number of worker processes (default: num_cpus)
+    pub workers: Option<usize>,
+
+    /// Isolation strategy: "auto", "fork", "snapshot"
+    pub isolation_strategy: Option<String>,
+
+    /// Coverage configuration
+    pub coverage: Option<CoverageConfig>,
+}
+
+/// Coverage configuration for Tach
+#[derive(Deserialize, Default, Clone, Debug)]
+pub struct CoverageConfig {
+    /// Enable coverage collection (default: false)
+    pub enabled: Option<bool>,
+
+    /// Source directories to measure coverage for
+    pub source: Option<Vec<String>>,
+
+    /// Patterns to omit from coverage
+    pub omit: Option<Vec<String>>,
+
+    /// Output file path (default: ".coverage")
+    pub output: Option<String>,
+
+    /// Output format: "lcov", "html", "json" (default: "lcov")
+    pub format: Option<String>,
+}
+
+impl TachConfig {
+    /// Get test pattern with default
+    pub fn test_pattern(&self) -> &str {
+        self.test_pattern.as_deref().unwrap_or("test_*.py")
+    }
+
+    /// Get timeout with default (60 seconds)
+    pub fn timeout(&self) -> u64 {
+        self.timeout.unwrap_or(60)
+    }
+
+    /// Get worker count with default (num_cpus)
+    pub fn workers(&self) -> usize {
+        self.workers.unwrap_or_else(num_cpus::get)
+    }
+
+    /// Get isolation strategy with default ("auto")
+    pub fn isolation_strategy(&self) -> &str {
+        self.isolation_strategy.as_deref().unwrap_or("auto")
+    }
+
+    /// Check if coverage is enabled
+    pub fn coverage_enabled(&self) -> bool {
+        self.coverage
+            .as_ref()
+            .and_then(|c| c.enabled)
+            .unwrap_or(false)
+    }
+}
+
+/// Load Tach configuration from pyproject.toml
+///
+/// Returns the configuration if found, or default configuration if not.
+pub fn load_tach_config(root: &Path) -> TachConfig {
+    let config_path = root.join("pyproject.toml");
+    if !config_path.exists() {
+        return TachConfig::default();
+    }
+
+    let contents = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return TachConfig::default(),
+    };
+
+    let pyproject: PyProject = match toml::from_str(&contents) {
+        Ok(p) => p,
+        Err(_) => return TachConfig::default(),
+    };
+
+    pyproject.tool.and_then(|t| t.tach).unwrap_or_default()
+}
+
+/// Merged configuration from CLI and file
+///
+/// CLI arguments take precedence over file configuration.
+#[derive(Debug, Clone)]
+pub struct MergedConfig {
+    pub format: OutputFormat,
+    pub junit_xml: Option<std::path::PathBuf>,
+    pub watch: bool,
+    pub no_isolation: bool,
+    pub coverage: bool,
+    pub path: String,
+    pub test_pattern: String,
+    pub timeout: u64,
+    pub workers: usize,
+    pub isolation_strategy: String,
+    pub coverage_source: Vec<String>,
+    pub coverage_omit: Vec<String>,
+    pub coverage_output: String,
+    pub coverage_format: String,
+}
+
+impl MergedConfig {
+    /// Merge CLI arguments with file configuration
+    ///
+    /// CLI arguments take precedence over file configuration.
+    pub fn from_cli_and_file(cli: &Cli, file_config: &TachConfig) -> Self {
+        // Coverage is enabled if CLI flag is set OR file config enables it
+        let coverage = cli.coverage || file_config.coverage_enabled();
+
+        // Get coverage config or default
+        let cov_config = file_config.coverage.clone().unwrap_or_default();
+
+        Self {
+            format: cli.format.clone(),
+            junit_xml: cli.junit_xml.clone(),
+            watch: cli.watch,
+            no_isolation: cli.no_isolation,
+            coverage,
+            path: cli.path.clone(),
+            test_pattern: file_config.test_pattern().to_string(),
+            timeout: file_config.timeout(),
+            workers: file_config.workers(),
+            isolation_strategy: file_config.isolation_strategy().to_string(),
+            coverage_source: cov_config.source.unwrap_or_default(),
+            coverage_omit: cov_config.omit.unwrap_or_default(),
+            coverage_output: cov_config.output.unwrap_or_else(|| ".coverage".to_string()),
+            coverage_format: cov_config.format.unwrap_or_else(|| "lcov".to_string()),
+        }
+    }
 }
 
 /// Load environment variables from pyproject.toml and apply to current process.
@@ -243,5 +404,119 @@ select = ["E", "F"]
         let pyproject: PyProject = toml::from_str(toml_content).unwrap();
         let env_vars = pyproject.tool.unwrap().pytest_env.unwrap();
         assert!(env_vars.is_empty());
+    }
+
+    // =========================================================================
+    // Phase 6.2: TachConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tach_config_defaults() {
+        let config = TachConfig::default();
+        assert_eq!(config.test_pattern(), "test_*.py");
+        assert_eq!(config.timeout(), 60);
+        assert_eq!(config.isolation_strategy(), "auto");
+        assert!(!config.coverage_enabled());
+    }
+
+    #[test]
+    fn test_parse_tach_config_basic() {
+        let toml_content = r#"
+[tool.tach]
+test_pattern = "tests/**/*.py"
+timeout = 120
+workers = 8
+isolation_strategy = "snapshot"
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        assert_eq!(config.test_pattern(), "tests/**/*.py");
+        assert_eq!(config.timeout(), 120);
+        assert_eq!(config.workers(), 8);
+        assert_eq!(config.isolation_strategy(), "snapshot");
+    }
+
+    #[test]
+    fn test_parse_tach_config_with_coverage() {
+        let toml_content = r#"
+[tool.tach]
+timeout = 30
+
+[tool.tach.coverage]
+enabled = true
+source = ["src", "lib"]
+omit = ["**/test_*", "**/migrations/*"]
+output = "coverage.lcov"
+format = "lcov"
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        assert!(config.coverage_enabled());
+        let cov = config.coverage.unwrap();
+        assert_eq!(cov.source.unwrap(), vec!["src", "lib"]);
+        assert_eq!(cov.omit.unwrap(), vec!["**/test_*", "**/migrations/*"]);
+        assert_eq!(cov.output.unwrap(), "coverage.lcov");
+        assert_eq!(cov.format.unwrap(), "lcov");
+    }
+
+    #[test]
+    fn test_load_tach_config_from_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.tach]
+timeout = 90
+workers = 4
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        let config = load_tach_config(temp_dir.path());
+        assert_eq!(config.timeout(), 90);
+        assert_eq!(config.workers(), 4);
+    }
+
+    #[test]
+    fn test_load_tach_config_nonexistent_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = load_tach_config(temp_dir.path());
+
+        // Should return defaults
+        assert_eq!(config.test_pattern(), "test_*.py");
+        assert_eq!(config.timeout(), 60);
+    }
+
+    #[test]
+    fn test_load_tach_config_no_tach_section() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.black]
+line-length = 100
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        let config = load_tach_config(temp_dir.path());
+        // Should return defaults
+        assert_eq!(config.test_pattern(), "test_*.py");
+    }
+
+    #[test]
+    fn test_tach_config_partial_coverage() {
+        let toml_content = r#"
+[tool.tach.coverage]
+enabled = true
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        assert!(config.coverage_enabled());
+        // Other coverage fields should be None
+        let cov = config.coverage.unwrap();
+        assert!(cov.source.is_none());
+        assert!(cov.omit.is_none());
     }
 }

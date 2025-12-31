@@ -1,4 +1,5 @@
 use tach_core::config::{self, Cli, Commands, OutputFormat};
+use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity;
 use tach_core::discovery;
@@ -6,7 +7,7 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
-use tach_core::reporter::{HumanReporter, JsonReporter, MultiReporter, Reporter};
+use tach_core::reporter::{DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter};
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
 use tach_core::signals;
@@ -180,12 +181,12 @@ fn main() -> Result<()> {
         let path_clone = cli.path.clone();
 
         return watch::start_watch_loop(&cwd, move || {
-            execute_session(&cwd_clone, &format, &junit_path, &path_clone)
+            execute_session(&cwd_clone, &format, &junit_path, &path_clone, false)
         });
     }
 
     // --- SINGLE RUN MODE ---
-    execute_session(&cwd, &cli.format, &cli.junit_xml, &cli.path)
+    execute_session(&cwd, &cli.format, &cli.junit_xml, &cli.path, cli.coverage)
 }
 
 /// Execute a complete test session (discovery → resolution → zygote → run)
@@ -195,14 +196,23 @@ fn execute_session(
     format: &OutputFormat,
     junit_path: &Option<PathBuf>,
     target_path: &str,
+    coverage_enabled: bool,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
     // Create reporters
+    // Phase 6.3: Use ProgressReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
-        OutputFormat::Human => reporters.push(Box::new(HumanReporter)),
+        OutputFormat::Human => {
+            // Use progress bar for interactive terminals, dots for CI
+            if ProgressReporter::should_use_progress_bar() {
+                reporters.push(Box::new(ProgressReporter::new()));
+            } else {
+                reporters.push(Box::new(DotsReporter::new()));
+            }
+        }
     }
     if let Some(path) = junit_path {
         reporters.push(Box::new(JunitReporter::new(path.clone())));
@@ -358,7 +368,13 @@ fn execute_session(
     }
 
     // --- RUN TESTS ---
-    run_tests(&cleanup, filtered_tests, &mut reporter, is_json)
+    run_tests(
+        &cleanup,
+        filtered_tests,
+        &mut reporter,
+        is_json,
+        coverage_enabled,
+    )
 }
 
 /// Handle the `list` subcommand
@@ -382,8 +398,64 @@ fn run_tests(
     runnable_tests: Vec<resolver::RunnableTest>,
     reporter: &mut dyn Reporter,
     is_json: bool,
+    coverage_enabled: bool,
 ) -> Result<()> {
     let cwd = std::env::current_dir()?;
+
+    // --- PHASE 6.1: COVERAGE INITIALIZATION ---
+    // Initialize coverage ring buffers BEFORE forking Zygote.
+    // These are shared memory regions (memfd) that workers will inherit via fork.
+    let mut coverage_aggregator: Option<coverage::CoverageAggregator> = None;
+
+    if coverage_enabled {
+        if !is_json {
+            eprintln!("[supervisor] Initializing coverage collection...");
+        }
+
+        // Initialize coverage ring buffer (LINE events)
+        match coverage::init_coverage_buffer(coverage::DEFAULT_CAPACITY) {
+            Ok(_) => {
+                if !is_json {
+                    eprintln!(
+                        "[supervisor] Coverage buffer: {} entries ({} bytes)",
+                        coverage::DEFAULT_CAPACITY,
+                        coverage::DEFAULT_CAPACITY * coverage::ENTRY_SIZE + coverage::HEADER_SIZE
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[supervisor] WARNING: Failed to init coverage buffer: {}",
+                    e
+                );
+            }
+        }
+
+        // Initialize mapping ring buffer (PY_START events for code_id -> filename)
+        match coverage::init_mapping_buffer(coverage::MAPPING_CAPACITY) {
+            Ok(_) => {
+                if !is_json {
+                    eprintln!(
+                        "[supervisor] Mapping buffer: {} entries ({} bytes)",
+                        coverage::MAPPING_CAPACITY,
+                        coverage::MAPPING_CAPACITY * coverage::MAPPING_ENTRY_SIZE
+                            + coverage::HEADER_SIZE
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("[supervisor] WARNING: Failed to init mapping buffer: {}", e);
+            }
+        }
+
+        // Start aggregator thread to drain buffers
+        let mut aggregator = coverage::CoverageAggregator::new();
+        aggregator.start(std::time::Duration::from_millis(100));
+        coverage_aggregator = Some(aggregator);
+
+        // Set env var so workers know to enable coverage
+        std::env::set_var("TACH_COVERAGE", "1");
+    }
 
     // --- CREATE DEBUG SERVER ---
     let debug_server = DebugServer::new()?;
@@ -473,6 +545,43 @@ fn run_tests(
             // Shutdown
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
+
+            // --- PHASE 6.1: COVERAGE FINALIZATION ---
+            // Stop aggregator and report coverage statistics
+            if let Some(mut aggregator) = coverage_aggregator {
+                aggregator.stop();
+                let coverage_data = aggregator.get_data();
+
+                if !is_json {
+                    eprintln!(
+                        "[supervisor] Coverage: {} unique lines covered, {} total hits",
+                        coverage_data.len(),
+                        aggregator.total_hits()
+                    );
+
+                    // Report overflow counts if any
+                    if let Some(buffer) = coverage::get_coverage_buffer() {
+                        let overflow = buffer.overflow_count();
+                        if overflow > 0 {
+                            eprintln!(
+                                "[supervisor] WARNING: {} coverage entries dropped (buffer overflow)",
+                                overflow
+                            );
+                        }
+                    }
+                    if let Some(buffer) = coverage::get_mapping_buffer() {
+                        let overflow = buffer.overflow_count();
+                        if overflow > 0 {
+                            eprintln!(
+                                "[supervisor] WARNING: {} mapping entries dropped (buffer overflow)",
+                                overflow
+                            );
+                        }
+                    }
+                }
+
+                // TODO: Write coverage data to .coverage file or generate report
+            }
 
             if !is_json {
                 eprintln!("[supervisor] Done.");

@@ -743,6 +743,43 @@ _coverage_tool_id = None
 _HAS_MONITORING = hasattr(sys, "monitoring")
 
 
+def _coverage_py_start_callback(code, instruction_offset):
+    """PEP 669 PY_START event callback.
+
+    Called on function entry. Registers code_id -> filename mapping.
+    This is the REGISTRATION PATH - called once per function execution.
+
+    The Rust side uses a thread-local HashSet to ensure each code object
+    is only registered once, so repeated calls for the same code object
+    are O(1) no-ops.
+
+    Args:
+        code: The code object being entered
+        instruction_offset: Always 0 for PY_START
+
+    Returns:
+        sys.monitoring.DISABLE to disable PY_START for this code object
+        after first registration (optimization).
+    """
+    try:
+        import tach_rust
+
+        # Register code_id -> filename mapping
+        # Rust handles deduplication via thread-local SEEN_CODES set
+        code_id = id(code)
+        filename = code.co_filename
+
+        tach_rust.record_py_start(code_id, filename)
+
+    except Exception:
+        # Never let coverage errors crash the test
+        pass
+
+    # Disable PY_START for this code object after registration
+    # This is an optimization - we only need to register once
+    return sys.monitoring.DISABLE
+
+
 def _coverage_line_callback(code, instruction_offset):
     """PEP 669 LINE event callback.
 
@@ -820,13 +857,24 @@ def enable_coverage():
         # Register our tool
         sys.monitoring.use_tool_id(_coverage_tool_id, "tach_coverage")
 
-        # Register LINE callback
+        # Register PY_START callback (code_id -> filename registration)
+        # This is called on function entry to register code objects
+        sys.monitoring.register_callback(
+            _coverage_tool_id,
+            sys.monitoring.events.PY_START,
+            _coverage_py_start_callback,
+        )
+
+        # Register LINE callback (coverage recording)
         sys.monitoring.register_callback(
             _coverage_tool_id, sys.monitoring.events.LINE, _coverage_line_callback
         )
 
-        # Enable LINE events globally
-        sys.monitoring.set_events(_coverage_tool_id, sys.monitoring.events.LINE)
+        # Enable both PY_START and LINE events globally
+        sys.monitoring.set_events(
+            _coverage_tool_id,
+            sys.monitoring.events.PY_START | sys.monitoring.events.LINE,
+        )
 
         _coverage_enabled = True
         print("[coverage] PEP 669 coverage enabled", file=sys.stderr)
@@ -851,7 +899,10 @@ def disable_coverage():
         # Disable events
         sys.monitoring.set_events(_coverage_tool_id, 0)
 
-        # Unregister callback
+        # Unregister callbacks
+        sys.monitoring.register_callback(
+            _coverage_tool_id, sys.monitoring.events.PY_START, None
+        )
         sys.monitoring.register_callback(
             _coverage_tool_id, sys.monitoring.events.LINE, None
         )
@@ -871,16 +922,19 @@ def get_coverage_stats() -> dict:
     """Get coverage collection statistics.
 
     Returns:
-        Dict with 'enabled', 'overflow_count' keys
+        Dict with 'enabled', 'coverage_overflow', 'mapping_overflow' keys
     """
     try:
         import tach_rust
 
         return {
             "enabled": _coverage_enabled,
-            "overflow_count": tach_rust.get_coverage_overflow()
+            "coverage_overflow": tach_rust.get_coverage_overflow()
+            if _coverage_enabled
+            else 0,
+            "mapping_overflow": tach_rust.get_mapping_overflow()
             if _coverage_enabled
             else 0,
         }
     except Exception:
-        return {"enabled": False, "overflow_count": 0}
+        return {"enabled": False, "coverage_overflow": 0, "mapping_overflow": 0}

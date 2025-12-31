@@ -209,6 +209,274 @@ impl Reporter for MultiReporter {
 }
 
 // =============================================================================
+// Phase 6.3: Progress Bar Reporter
+// =============================================================================
+
+use indicatif::{ProgressBar, ProgressStyle};
+
+/// Record of a test failure for summary display
+struct FailureRecord {
+    id: String,
+    message: String,
+}
+
+/// Progress bar reporter with failure buffering
+///
+/// Displays an interactive progress bar during test execution.
+/// Failures are buffered and displayed in a summary at the end.
+pub struct ProgressReporter {
+    bar: ProgressBar,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    failures: Vec<FailureRecord>,
+    total: usize,
+}
+
+impl ProgressReporter {
+    /// Create a new progress reporter
+    pub fn new() -> Self {
+        let bar = ProgressBar::new(0);
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("=>-"),
+        );
+
+        Self {
+            bar,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            failures: Vec::new(),
+            total: 0,
+        }
+    }
+
+    /// Check if we should use progress bar (interactive terminal)
+    pub fn should_use_progress_bar() -> bool {
+        atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
+    }
+}
+
+impl Default for ProgressReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Reporter for ProgressReporter {
+    fn on_run_start(&mut self, count: usize) {
+        self.total = count;
+        self.bar.set_length(count as u64);
+        self.bar.set_message("Starting...");
+    }
+
+    fn on_test_start(&mut self, id: &str, _file: &str) {
+        // Truncate long test IDs for display
+        let display_id = if id.len() > 50 {
+            format!("...{}", &id[id.len() - 47..])
+        } else {
+            id.to_string()
+        };
+        self.bar.set_message(display_id);
+    }
+
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        _duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        match status {
+            "pass" => self.passed += 1,
+            "fail" => {
+                self.failed += 1;
+                // Buffer failure for summary
+                self.failures.push(FailureRecord {
+                    id: id.to_string(),
+                    message: message.unwrap_or("").to_string(),
+                });
+            }
+            "skip" => self.skipped += 1,
+            _ => {}
+        }
+
+        self.bar.inc(1);
+        self.bar.set_message(format!(
+            "P:{} F:{} S:{}",
+            self.passed, self.failed, self.skipped
+        ));
+    }
+
+    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+        self.bar.finish_and_clear();
+
+        // Print failure details
+        if !self.failures.is_empty() {
+            eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
+            for failure in &self.failures {
+                eprintln!("\n{}", failure.id);
+                eprintln!("{}", "-".repeat(failure.id.len().min(70)));
+                // Limit failure message to 20 lines
+                for line in failure.message.lines().take(20) {
+                    eprintln!("{}", line);
+                }
+            }
+            eprintln!("{}", "=".repeat(70));
+        }
+
+        // Print summary with colors
+        let duration_secs = duration_ms as f64 / 1000.0;
+        if failed > 0 {
+            eprintln!(
+                "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+                passed, failed, skipped, duration_secs
+            );
+        } else {
+            eprintln!(
+                "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+                passed, failed, skipped, duration_secs
+            );
+        }
+    }
+
+    fn on_error(&mut self, message: &str) {
+        self.bar.abandon_with_message(format!("ERROR: {}", message));
+    }
+}
+
+// =============================================================================
+// Phase 6.3: Dots Reporter (CI Fallback)
+// =============================================================================
+
+/// Simple dots reporter for CI environments
+///
+/// Outputs a single character per test:
+/// - `.` for pass
+/// - `F` for fail
+/// - `s` for skip
+///
+/// Failures are buffered and displayed in a summary at the end.
+pub struct DotsReporter {
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    failures: Vec<FailureRecord>,
+    column: usize,
+}
+
+impl DotsReporter {
+    /// Create a new dots reporter
+    pub fn new() -> Self {
+        Self {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            failures: Vec::new(),
+            column: 0,
+        }
+    }
+
+    /// Print a character and wrap at 80 columns
+    fn print_char(&mut self, c: char) {
+        eprint!("{}", c);
+        self.column += 1;
+        if self.column >= 80 {
+            eprintln!();
+            self.column = 0;
+        }
+    }
+}
+
+impl Default for DotsReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Reporter for DotsReporter {
+    fn on_run_start(&mut self, count: usize) {
+        eprintln!("[tach] Running {} tests...\n", count);
+    }
+
+    fn on_test_start(&mut self, _id: &str, _file: &str) {
+        // No output on test start
+    }
+
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        _duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        match status {
+            "pass" => {
+                self.passed += 1;
+                self.print_char('.');
+            }
+            "fail" => {
+                self.failed += 1;
+                self.print_char('F');
+                // Buffer failure for summary
+                self.failures.push(FailureRecord {
+                    id: id.to_string(),
+                    message: message.unwrap_or("").to_string(),
+                });
+            }
+            "skip" => {
+                self.skipped += 1;
+                self.print_char('s');
+            }
+            _ => {
+                self.print_char('?');
+            }
+        }
+    }
+
+    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+        // Finish the line if we have any output
+        if self.column > 0 {
+            eprintln!();
+        }
+
+        // Print failure details
+        if !self.failures.is_empty() {
+            eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
+            for failure in &self.failures {
+                eprintln!("\n{}", failure.id);
+                eprintln!("{}", "-".repeat(failure.id.len().min(70)));
+                // Limit failure message to 20 lines
+                for line in failure.message.lines().take(20) {
+                    eprintln!("{}", line);
+                }
+            }
+            eprintln!("{}", "=".repeat(70));
+        }
+
+        // Print summary
+        let duration_secs = duration_ms as f64 / 1000.0;
+        eprintln!(
+            "\n[tach] {} passed, {} failed, {} skipped in {:.2}s",
+            passed, failed, skipped, duration_secs
+        );
+    }
+
+    fn on_error(&mut self, message: &str) {
+        if self.column > 0 {
+            eprintln!();
+            self.column = 0;
+        }
+        eprintln!("[tach] FATAL ERROR: {}", message);
+    }
+}
+
+// =============================================================================
 // Unit Tests
 // =============================================================================
 
@@ -319,5 +587,66 @@ mod tests {
             let json = serde_json::to_string(&event).unwrap();
             assert!(json.contains(status));
         }
+    }
+
+    // =========================================================================
+    // Phase 6.3: Progress Reporter Tests
+    // =========================================================================
+
+    #[test]
+    fn test_progress_reporter_creation() {
+        let reporter = ProgressReporter::new();
+        assert_eq!(reporter.passed, 0);
+        assert_eq!(reporter.failed, 0);
+        assert_eq!(reporter.skipped, 0);
+        assert!(reporter.failures.is_empty());
+    }
+
+    #[test]
+    fn test_progress_reporter_default() {
+        let reporter = ProgressReporter::default();
+        assert_eq!(reporter.passed, 0);
+    }
+
+    #[test]
+    fn test_progress_reporter_should_use_progress_bar() {
+        // This test just ensures the function doesn't panic
+        // The actual result depends on the environment
+        let _ = ProgressReporter::should_use_progress_bar();
+    }
+
+    // =========================================================================
+    // Phase 6.3: Dots Reporter Tests
+    // =========================================================================
+
+    #[test]
+    fn test_dots_reporter_creation() {
+        let reporter = DotsReporter::new();
+        assert_eq!(reporter.passed, 0);
+        assert_eq!(reporter.failed, 0);
+        assert_eq!(reporter.skipped, 0);
+        assert!(reporter.failures.is_empty());
+        assert_eq!(reporter.column, 0);
+    }
+
+    #[test]
+    fn test_dots_reporter_default() {
+        let reporter = DotsReporter::default();
+        assert_eq!(reporter.passed, 0);
+    }
+
+    #[test]
+    fn test_dots_reporter_tracks_failures() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_run_start(3);
+        reporter.on_test_finished("test1", "pass", 100, None);
+        reporter.on_test_finished("test2", "fail", 100, Some("assertion failed"));
+        reporter.on_test_finished("test3", "skip", 100, None);
+
+        assert_eq!(reporter.passed, 1);
+        assert_eq!(reporter.failed, 1);
+        assert_eq!(reporter.skipped, 1);
+        assert_eq!(reporter.failures.len(), 1);
+        assert_eq!(reporter.failures[0].id, "test2");
     }
 }
