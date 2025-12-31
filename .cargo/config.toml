@@ -9,6 +9,10 @@ jobs = 1
 [env]
 # Reduce codegen units for lower memory usage during linking
 CARGO_PROFILE_DEV_CODEGEN_UNITS = "1"
+# Limit test parallelism to prevent resource exhaustion on WSL2
+# Tests create kernel resources (userfaultfd, memfd, mmap, sockets, threads)
+# that can overwhelm WSL2 when run concurrently
+RUST_TEST_THREADS = "1"
 
 # Optimize test profile for lower memory usage
 [profile.test]

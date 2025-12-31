@@ -123,8 +123,14 @@ impl Drop for CleanupGuard {
         // Order matters: kill processes first, then cleanup files
         // Note: Mount cleanup is NOT needed per boss - worker namespaces auto-destroy
 
-        // 1. Kill all workers (they hold resources)
-        self.kill_workers();
+        // SAFETY: During tests, we track fake PIDs (1234, 5678, etc.) for testing
+        // the tracking logic. We must NOT actually send signals to these PIDs
+        // as they could be real system processes, causing crashes on WSL2.
+        #[cfg(not(test))]
+        {
+            // 1. Kill all workers (they hold resources)
+            self.kill_workers();
+        }
 
         // 2. Remove socket files
         self.cleanup_sockets();
