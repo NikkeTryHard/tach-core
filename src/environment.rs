@@ -99,11 +99,20 @@ mod tests {
 
     #[test]
     fn test_find_site_packages_no_venv() {
+        // Save and unset VIRTUAL_ENV to test the no-venv case
+        let saved_venv = std::env::var("VIRTUAL_ENV").ok();
+        std::env::remove_var("VIRTUAL_ENV");
+
         let temp = tempdir().unwrap();
         let project_root = temp.path().to_path_buf();
 
         let result = find_site_packages(&project_root);
         assert!(result.is_none());
+
+        // Restore VIRTUAL_ENV
+        if let Some(v) = saved_venv {
+            std::env::set_var("VIRTUAL_ENV", v);
+        }
     }
 
     #[test]
@@ -132,5 +141,100 @@ mod tests {
 
         // Cleanup
         std::env::remove_var("VIRTUAL_ENV");
+    }
+
+    #[test]
+    fn test_find_site_packages_with_alt_venv() {
+        let temp = tempdir().unwrap();
+
+        // Create venv (not .venv) structure
+        let venv = temp.path().join("venv");
+        let site_packages = venv.join("lib/python3.10/site-packages");
+        fs::create_dir_all(&site_packages).unwrap();
+
+        let project_root = temp.path().to_path_buf();
+        let result = find_site_packages(&project_root);
+
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("site-packages"));
+    }
+
+    #[test]
+    fn test_find_site_packages_prefers_dot_venv() {
+        let temp = tempdir().unwrap();
+
+        // Create both .venv and venv
+        let dot_venv = temp.path().join(".venv/lib/python3.12/site-packages");
+        let alt_venv = temp.path().join("venv/lib/python3.11/site-packages");
+        fs::create_dir_all(&dot_venv).unwrap();
+        fs::create_dir_all(&alt_venv).unwrap();
+
+        let project_root = temp.path().to_path_buf();
+        let result = find_site_packages(&project_root);
+
+        // Should prefer .venv over venv
+        assert!(result.is_some());
+        let result_path = result.unwrap();
+        assert!(result_path.to_string_lossy().contains(".venv"));
+    }
+
+    #[test]
+    fn test_find_site_packages_in_venv_no_lib() {
+        let temp = tempdir().unwrap();
+        let venv = temp.path().join(".venv");
+
+        // Create venv without lib directory
+        fs::create_dir_all(&venv).unwrap();
+
+        let result = find_site_packages_in_venv(&venv);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_site_packages_in_venv_no_python_dir() {
+        let temp = tempdir().unwrap();
+        let venv = temp.path().join(".venv");
+
+        // Create lib but no pythonX.Y directory
+        let lib = venv.join("lib");
+        fs::create_dir_all(&lib).unwrap();
+
+        let result = find_site_packages_in_venv(&venv);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_python_paths() {
+        let temp = tempdir().unwrap();
+        let venv = temp.path().join(".venv");
+        let site_packages = venv.join("lib/python3.12/site-packages");
+        fs::create_dir_all(&site_packages).unwrap();
+
+        let project_root = temp.path().to_path_buf();
+        let (root, sp) = get_python_paths(&project_root);
+
+        assert_eq!(root, project_root);
+        assert!(sp.is_some());
+        assert!(sp.unwrap().ends_with("site-packages"));
+    }
+
+    #[test]
+    fn test_get_python_paths_no_venv() {
+        // Save and unset VIRTUAL_ENV to test the no-venv case
+        let saved_venv = std::env::var("VIRTUAL_ENV").ok();
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let temp = tempdir().unwrap();
+        let project_root = temp.path().to_path_buf();
+
+        let (root, sp) = get_python_paths(&project_root);
+
+        assert_eq!(root, project_root);
+        assert!(sp.is_none());
+
+        // Restore VIRTUAL_ENV
+        if let Some(v) = saved_venv {
+            std::env::set_var("VIRTUAL_ENV", v);
+        }
     }
 }

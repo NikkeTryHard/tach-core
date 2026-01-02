@@ -345,4 +345,84 @@ mod tests {
             assert!(result.is_ok(), "quiesce_allocator should be idempotent");
         }
     }
+
+    #[test]
+    fn test_verify_jemalloc_returns_version_string() {
+        // Test that when jemalloc IS active, version string is non-empty
+        match verify_jemalloc_active() {
+            Ok(version) => {
+                assert!(!version.is_empty(), "Version string should not be empty");
+                // Version should contain a number
+                assert!(
+                    version.chars().any(|c| c.is_numeric()),
+                    "Version should contain numeric characters"
+                );
+            }
+            Err(_) => {
+                eprintln!("[test] SKIPPED: jemalloc not active");
+            }
+        }
+    }
+
+    #[test]
+    fn test_quiesce_with_many_allocations() {
+        if !is_jemalloc_active() {
+            eprintln!("[test] SKIPPED: jemalloc not active");
+            return;
+        }
+
+        // Stress test with many small allocations
+        let mut allocations: Vec<Box<[u8; 64]>> = Vec::new();
+        for _ in 0..1000 {
+            allocations.push(Box::new([0u8; 64]));
+        }
+
+        // Quiesce should handle many allocations
+        let result = quiesce_allocator();
+        assert!(
+            result.is_ok(),
+            "quiesce_allocator failed with many allocations: {:?}",
+            result
+        );
+
+        // Verify allocations are still valid
+        assert_eq!(allocations.len(), 1000);
+    }
+
+    #[test]
+    fn test_quiesce_after_free() {
+        if !is_jemalloc_active() {
+            eprintln!("[test] SKIPPED: jemalloc not active");
+            return;
+        }
+
+        // Allocate and then free before quiesce
+        let mut data: Vec<Vec<u8>> = Vec::new();
+        for i in 0..50 {
+            data.push(vec![i as u8; 1024]);
+        }
+        // Free half of them
+        data.truncate(25);
+
+        // Quiesce should work after frees (tcache should be flushed)
+        let result = quiesce_allocator();
+        assert!(
+            result.is_ok(),
+            "quiesce_allocator failed after frees: {:?}",
+            result
+        );
+
+        // Remaining allocations should be valid
+        assert_eq!(data.len(), 25);
+        assert_eq!(data[24][0], 24);
+    }
+
+    #[test]
+    fn test_is_jemalloc_active_helper() {
+        // Test the helper function itself
+        let is_active = is_jemalloc_active();
+        // This should match the direct call
+        let direct_result = verify_jemalloc_active();
+        assert_eq!(is_active, direct_result.is_ok());
+    }
 }

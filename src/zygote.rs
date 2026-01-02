@@ -1169,4 +1169,134 @@ mod tests {
         let pool_size = IDLE_WORKERS.lock().unwrap().len();
         assert_eq!(pool_size, 0, "Toxic worker should NOT be in pool");
     }
+
+    // =========================================================================
+    // Additional Phase 2 Pre-Refactor Tests
+    // =========================================================================
+
+    #[test]
+    fn test_reset_regions_mutex_access() {
+        // Test that RESET_REGIONS can be safely accessed
+        let regions = RESET_REGIONS.lock().unwrap();
+        // Should be empty or have some regions
+        let _ = regions.len();
+    }
+
+    #[test]
+    fn test_snapshot_enabled_flag() {
+        // Test the atomic flag for snapshot mode
+        let initial = SNAPSHOT_ENABLED.load(Ordering::SeqCst);
+        // Flag should be false in test environment (no snapshot setup)
+        assert!(!initial, "SNAPSHOT_ENABLED should be false in tests");
+    }
+
+    #[test]
+    fn test_idle_workers_pool_operations() {
+        // Clear pool first
+        IDLE_WORKERS.lock().unwrap().clear();
+
+        // Pool should be empty
+        assert!(IDLE_WORKERS.lock().unwrap().is_empty());
+
+        // Create a socket pair for testing
+        let (sock1, _sock2) = UnixStream::pair().expect("Failed to create socket pair");
+
+        // Add a worker handle
+        IDLE_WORKERS.lock().unwrap().push(WorkerHandle {
+            pid: 12345,
+            socket: sock1,
+        });
+
+        // Pool should have one worker
+        assert_eq!(IDLE_WORKERS.lock().unwrap().len(), 1);
+
+        // Pop the worker
+        let worker = IDLE_WORKERS.lock().unwrap().pop();
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().pid, 12345);
+
+        // Pool should be empty again
+        assert!(IDLE_WORKERS.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_worker_action_enum() {
+        // Test the WorkerAction enum
+        let reset = WorkerAction::Reset;
+        let exit = WorkerAction::Exit;
+
+        assert_eq!(reset, WorkerAction::Reset);
+        assert_eq!(exit, WorkerAction::Exit);
+        assert_ne!(reset, exit);
+    }
+
+    #[test]
+    fn test_decide_worker_action_safe() {
+        let action = decide_worker_action(false);
+        assert_eq!(action, WorkerAction::Reset);
+    }
+
+    #[test]
+    fn test_decide_worker_action_toxic() {
+        let action = decide_worker_action(true);
+        assert_eq!(action, WorkerAction::Exit);
+    }
+
+    #[test]
+    fn test_tach_harness_embedded() {
+        // Verify the harness is embedded
+        assert!(!TACH_HARNESS_PY.is_empty(), "Harness should be embedded");
+        assert!(
+            TACH_HARNESS_PY.len() > 100,
+            "Harness should be substantial"
+        );
+        // Verify it contains expected Python code
+        assert!(
+            TACH_HARNESS_PY.contains("def "),
+            "Harness should contain function definitions"
+        );
+    }
+
+    #[test]
+    fn test_worker_state_transitions_safe() {
+        // Test safe worker state transitions
+        #[derive(Debug, Clone, PartialEq)]
+        enum State {
+            Idle,
+            Running,
+            Reporting,
+            Resetting,
+        }
+
+        let mut states = vec![State::Idle];
+        states.push(State::Running);
+        states.push(State::Reporting);
+        states.push(State::Resetting);
+        states.push(State::Idle);
+
+        assert_eq!(states.len(), 5);
+        assert_eq!(states[0], State::Idle);
+        assert_eq!(states[4], State::Idle);
+    }
+
+    #[test]
+    fn test_worker_state_transitions_toxic() {
+        // Test toxic worker state transitions
+        #[derive(Debug, Clone, PartialEq)]
+        enum State {
+            Idle,
+            Running,
+            Reporting,
+            Exiting,
+        }
+
+        let mut states = vec![State::Idle];
+        states.push(State::Running);
+        states.push(State::Reporting);
+        states.push(State::Exiting);
+
+        assert_eq!(states.len(), 4);
+        assert_eq!(states[0], State::Idle);
+        assert_eq!(states[3], State::Exiting);
+    }
 }

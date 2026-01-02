@@ -125,9 +125,7 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // ========================================================================
     // Landlock requires absolute paths. Relative paths are a source of bugs.
     // We canonicalize project_root to ensure it's absolute and resolved.
-    let project_root = project_root
-        .canonicalize()
-        .context("Failed to canonicalize project_root for Landlock")?;
+    let project_root = project_root.canonicalize().context("Failed to canonicalize project_root for Landlock")?;
 
     // Worker scratch space (created by isolation.rs)
     let worker_scratch = format!("/run/tach/worker_{}", worker_id);
@@ -147,11 +145,7 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // By calling handle_access(all_access), we're saying "we want to control
     // all filesystem operations". Any operation not explicitly allowed will
     // be denied after restrict_self().
-    let ruleset = Ruleset::default()
-        .handle_access(all_access)
-        .context("Failed to create Landlock ruleset")?
-        .create()
-        .context("Failed to create Landlock ruleset")?;
+    let ruleset = Ruleset::default().handle_access(all_access).context("Failed to create Landlock ruleset")?.create().context("Failed to create Landlock ruleset")?;
 
     // ========================================================================
     // ADD READ-ONLY RULES
@@ -201,9 +195,7 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // restrict_self() applies the ruleset to the current thread and all
     // future threads. After this call, any filesystem operation not
     // explicitly allowed above will fail with EACCES.
-    let status = ruleset
-        .restrict_self()
-        .context("Failed to apply Landlock restrictions")?;
+    let status = ruleset.restrict_self().context("Failed to apply Landlock restrictions")?;
 
     // ========================================================================
     // RETURN STATUS
@@ -225,12 +217,9 @@ where
     use landlock::{PathBeneath, PathFd};
 
     let path = path.as_ref();
-    let fd = PathFd::new(path)
-        .with_context(|| format!("Failed to open path for Landlock: {}", path.display()))?;
+    let fd = PathFd::new(path).with_context(|| format!("Failed to open path for Landlock: {}", path.display()))?;
 
-    ruleset
-        .add_rule(PathBeneath::new(fd, access))
-        .with_context(|| format!("Failed to add Landlock rule for: {}", path.display()))
+    ruleset.add_rule(PathBeneath::new(fd, access)).with_context(|| format!("Failed to add Landlock rule for: {}", path.display()))
 }
 
 /// Helper: Add a Landlock rule for a path (silently skips if path doesn't exist).
@@ -252,9 +241,7 @@ where
     }
 
     match PathFd::new(path) {
-        Ok(fd) => ruleset
-            .add_rule(PathBeneath::new(fd, access))
-            .with_context(|| format!("Failed to add Landlock rule for: {}", path.display())),
+        Ok(fd) => ruleset.add_rule(PathBeneath::new(fd, access)).with_context(|| format!("Failed to add Landlock rule for: {}", path.display())),
         Err(_) => {
             // Path exists but we can't open it (permissions, etc.)
             // This is fine - just skip this rule
@@ -381,7 +368,7 @@ pub fn apply_seccomp() -> Result<()> {
 
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow, // Allow syscalls not in blacklist
+        SeccompAction::Allow,                     // Allow syscalls not in blacklist
         SeccompAction::Errno(libc::EPERM as u32), // Block with EPERM (not SIGSYS)
         target_arch,
     )
@@ -391,9 +378,7 @@ pub fn apply_seccomp() -> Result<()> {
     // COMPILE TO BPF
     // ========================================================================
     // Convert the high-level filter to a BPF program that the kernel can execute.
-    let bpf_prog: seccompiler::BpfProgram = filter
-        .try_into()
-        .context("Failed to compile Seccomp filter to BPF")?;
+    let bpf_prog: seccompiler::BpfProgram = filter.try_into().context("Failed to compile Seccomp filter to BPF")?;
 
     // ========================================================================
     // APPLY FILTER
@@ -436,11 +421,7 @@ pub fn apply_seccomp() -> Result<()> {
 /// This function never fails fatally. If Landlock or Seccomp setup fails,
 /// it logs a warning and continues. The test runner must remain functional
 /// on older kernels.
-pub fn apply_iron_dome(
-    project_root: &Path,
-    worker_id: u32,
-    is_toxic: bool,
-) -> Result<SandboxStatus> {
+pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> Result<SandboxStatus> {
     // ========================================================================
     // STEP 1: APPLY LANDLOCK (ALWAYS)
     // ========================================================================
@@ -453,25 +434,16 @@ pub fn apply_iron_dome(
                     // Ideal case - full protection
                 }
                 SandboxStatus::PartiallyEnforced => {
-                    eprintln!(
-                        "[worker:{}] Landlock partially enforced (some features unavailable)",
-                        worker_id
-                    );
+                    eprintln!("[worker:{}] Landlock partially enforced (some features unavailable)", worker_id);
                 }
                 SandboxStatus::NotEnforced => {
-                    eprintln!(
-                        "[worker:{}] WARNING: Landlock not enforced - kernel too old (< 5.13)",
-                        worker_id
-                    );
+                    eprintln!("[worker:{}] WARNING: Landlock not enforced - kernel too old (< 5.13)", worker_id);
                 }
             }
             status
         }
         Err(e) => {
-            eprintln!(
-                "[worker:{}] WARNING: Landlock setup failed: {}",
-                worker_id, e
-            );
+            eprintln!("[worker:{}] WARNING: Landlock setup failed: {}", worker_id, e);
             SandboxStatus::NotEnforced
         }
     };
@@ -483,10 +455,7 @@ pub fn apply_iron_dome(
     // they may legitimately need network access or fork for integration tests.
     if !is_toxic {
         if let Err(e) = apply_seccomp() {
-            eprintln!(
-                "[worker:{}] WARNING: Seccomp setup failed: {}",
-                worker_id, e
-            );
+            eprintln!("[worker:{}] WARNING: Seccomp setup failed: {}", worker_id, e);
             // Continue execution - Seccomp is defense-in-depth, not critical
         }
     }
@@ -515,6 +484,25 @@ mod tests {
         assert_eq!(status, SandboxStatus::NotEnforced);
     }
 
+    /// Test that SandboxStatus can be cloned and copied
+    #[test]
+    fn test_sandbox_status_clone_copy() {
+        let status = SandboxStatus::FullyEnforced;
+        let cloned = status.clone();
+        let copied = status;
+
+        assert_eq!(status, cloned);
+        assert_eq!(status, copied);
+    }
+
+    /// Test that SandboxStatus implements Debug
+    #[test]
+    fn test_sandbox_status_debug() {
+        let status = SandboxStatus::FullyEnforced;
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("FullyEnforced"));
+    }
+
     /// Test that Landlock ABI V1 is available on supported kernels
     #[test]
     fn test_landlock_abi_detection() {
@@ -529,17 +517,29 @@ mod tests {
         assert!(!access.is_empty());
     }
 
+    /// Test that read access is a subset of all access
+    #[test]
+    fn test_landlock_access_subset() {
+        use landlock::{Access, AccessFs, ABI};
+
+        let abi = ABI::V1;
+        let all_access = AccessFs::from_all(abi);
+        let read_access = AccessFs::from_read(abi);
+
+        // Read access should be non-empty
+        assert!(!read_access.is_empty());
+
+        // All access should contain read access
+        assert!(all_access.contains(read_access));
+    }
+
     /// Test that Seccomp architecture detection works
     #[test]
     fn test_seccomp_arch_detection() {
         let arch = std::env::consts::ARCH;
 
         // Verify we're on a supported architecture
-        assert!(
-            arch == "x86_64" || arch == "aarch64",
-            "Unsupported architecture: {}",
-            arch
-        );
+        assert!(arch == "x86_64" || arch == "aarch64", "Unsupported architecture: {}", arch);
     }
 
     /// Test that syscall numbers are valid
@@ -551,6 +551,26 @@ mod tests {
         assert!(libc::SYS_connect > 0);
         assert!(libc::SYS_fork > 0);
         assert!(libc::SYS_execve > 0);
+    }
+
+    /// Test all network syscall numbers
+    #[test]
+    fn test_network_syscall_numbers() {
+        assert!(libc::SYS_socket > 0);
+        assert!(libc::SYS_bind > 0);
+        assert!(libc::SYS_connect > 0);
+        assert!(libc::SYS_listen > 0);
+        assert!(libc::SYS_accept > 0);
+        assert!(libc::SYS_accept4 > 0);
+    }
+
+    /// Test all process syscall numbers
+    #[test]
+    fn test_process_syscall_numbers() {
+        assert!(libc::SYS_fork > 0);
+        assert!(libc::SYS_vfork > 0);
+        assert!(libc::SYS_execve > 0);
+        assert!(libc::SYS_execveat > 0);
     }
 
     /// Test path canonicalization
@@ -573,5 +593,68 @@ mod tests {
     #[test]
     fn test_usr_exists() {
         assert!(Path::new("/usr").exists());
+    }
+
+    /// Test that /proc exists (required for Python)
+    #[test]
+    fn test_proc_exists() {
+        assert!(Path::new("/proc").exists());
+    }
+
+    /// Test that /dev exists (required for /dev/null, /dev/urandom)
+    #[test]
+    fn test_dev_exists() {
+        assert!(Path::new("/dev").exists());
+    }
+
+    /// Test Seccomp filter creation for x86_64
+    #[test]
+    fn test_seccomp_filter_creation() {
+        use seccompiler::{SeccompAction, SeccompFilter, SeccompRule, TargetArch};
+        use std::collections::BTreeMap;
+
+        let arch = std::env::consts::ARCH;
+        if arch != "x86_64" && arch != "aarch64" {
+            return; // Skip on unsupported architectures
+        }
+
+        let target_arch = match arch {
+            "x86_64" => TargetArch::x86_64,
+            "aarch64" => TargetArch::aarch64,
+            _ => return,
+        };
+
+        let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+        rules.insert(libc::SYS_socket, vec![]);
+
+        let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(libc::EPERM as u32), target_arch);
+
+        assert!(filter.is_ok(), "Failed to create Seccomp filter");
+    }
+
+    /// Test BPF program compilation
+    #[test]
+    fn test_seccomp_bpf_compilation() {
+        use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch};
+        use std::collections::BTreeMap;
+
+        let arch = std::env::consts::ARCH;
+        if arch != "x86_64" && arch != "aarch64" {
+            return;
+        }
+
+        let target_arch = match arch {
+            "x86_64" => TargetArch::x86_64,
+            "aarch64" => TargetArch::aarch64,
+            _ => return,
+        };
+
+        let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+        rules.insert(libc::SYS_fork, vec![]);
+
+        let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(libc::EPERM as u32), target_arch).unwrap();
+
+        let bpf_result: Result<BpfProgram, _> = filter.try_into();
+        assert!(bpf_result.is_ok(), "Failed to compile BPF program");
     }
 }

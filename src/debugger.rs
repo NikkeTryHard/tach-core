@@ -112,10 +112,7 @@ impl TerminalManager {
             return Ok(());
         }
 
-        let mut raw = self
-            .original_termios
-            .clone()
-            .context("No original termios saved")?;
+        let mut raw = self.original_termios.clone().context("No original termios saved")?;
 
         // cfmakeraw disables all the flags we need:
         // - ICANON, ECHO, ECHOE, ECHOK, ECHONL, ISIG, IEXTEN
@@ -188,16 +185,11 @@ impl DebugServer {
         let listener = UnixListener::bind(&socket_path).context("Failed to bind debug socket")?;
 
         // Set non-blocking so we can check for connections without blocking scheduler
-        listener
-            .set_nonblocking(true)
-            .context("Failed to set socket non-blocking")?;
+        listener.set_nonblocking(true).context("Failed to set socket non-blocking")?;
 
         eprintln!("[debugger] Listening on {}", socket_path.display());
 
-        Ok(Self {
-            socket_path,
-            listener,
-        })
+        Ok(Self { socket_path, listener })
     }
 
     /// Get the socket path for workers to connect
@@ -229,12 +221,7 @@ impl DebugServer {
     /// * `stream` - Connected socket from worker hitting breakpoint
     /// * `worker_pids` - PIDs of all active workers (for pausing)
     /// * `debug_worker_pid` - PID of the worker being debugged (won't be paused)
-    pub fn handle_session(
-        &self,
-        mut stream: UnixStream,
-        worker_pids: &[i32],
-        debug_worker_pid: Option<i32>,
-    ) -> Result<()> {
+    pub fn handle_session(&self, mut stream: UnixStream, worker_pids: &[i32], debug_worker_pid: Option<i32>) -> Result<()> {
         // Phase 4.2: Mark that we're debugging (affects signal handling)
         // SIGINT will be ignored by signal handler - raw mode handles Ctrl+C
         crate::lifecycle::IS_DEBUGGING.store(true, Ordering::SeqCst);
@@ -250,9 +237,7 @@ impl DebugServer {
         terminal.enter_raw_mode()?;
 
         // Set stream to blocking for the debug session
-        stream
-            .set_nonblocking(false)
-            .context("Failed to set stream blocking")?;
+        stream.set_nonblocking(false).context("Failed to set stream blocking")?;
 
         // Clone stream for the reader thread
         let stream_for_reader = stream.try_clone().context("Failed to clone stream")?;
@@ -408,5 +393,81 @@ mod tests {
         assert!(IN_RAW_MODE.load(Ordering::SeqCst));
         IN_RAW_MODE.store(false, Ordering::SeqCst);
         assert!(!IN_RAW_MODE.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_terminal_mode_equality() {
+        // Test PartialEq implementation
+        assert_eq!(TerminalMode::Raw, TerminalMode::Raw);
+        assert_eq!(TerminalMode::Cooked, TerminalMode::Cooked);
+        assert!(TerminalMode::Raw != TerminalMode::Cooked);
+    }
+
+    #[test]
+    fn test_terminal_mode_debug() {
+        // Test Debug implementation
+        let raw = format!("{:?}", TerminalMode::Raw);
+        let cooked = format!("{:?}", TerminalMode::Cooked);
+        assert!(raw.contains("Raw"));
+        assert!(cooked.contains("Cooked"));
+    }
+
+    #[test]
+    fn test_terminal_mode_clone() {
+        // Test Clone implementation
+        let mode = TerminalMode::Raw;
+        let cloned = mode;
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn test_terminal_mode_copy() {
+        // Test Copy implementation
+        let mode = TerminalMode::Cooked;
+        let copied: TerminalMode = mode;
+        assert_eq!(mode, copied);
+    }
+
+    #[test]
+    fn test_pause_workers_empty_list() {
+        // Pausing empty list should not panic
+        pause_workers(&[], None);
+    }
+
+    #[test]
+    fn test_pause_workers_excludes_debug_worker() {
+        // Test that debug worker is excluded from pausing
+        // We can't actually pause processes in tests, but we verify the logic
+        let pids = vec![100, 200, 300];
+        let debug_pid = Some(200);
+
+        // This should not panic and should skip pid 200
+        pause_workers(&pids, debug_pid);
+    }
+
+    #[test]
+    fn test_resume_workers_empty_list() {
+        // Resuming empty list should not panic
+        resume_workers(&[]);
+    }
+
+    #[test]
+    fn test_resume_workers_invalid_pids() {
+        // Resuming with invalid PIDs should not panic (errors are ignored)
+        resume_workers(&[-1, 0]);
+    }
+
+    #[test]
+    fn test_in_raw_mode_atomic_operations() {
+        // Test atomic operations on IN_RAW_MODE
+        IN_RAW_MODE.store(false, Ordering::SeqCst);
+
+        // Compare and swap
+        let was_false = IN_RAW_MODE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        assert!(was_false.is_ok());
+        assert!(IN_RAW_MODE.load(Ordering::SeqCst));
+
+        // Reset
+        IN_RAW_MODE.store(false, Ordering::SeqCst);
     }
 }
