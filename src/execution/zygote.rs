@@ -26,7 +26,7 @@ use std::time::Instant;
 use userfaultfd::UffdBuilder;
 
 /// Embedded Python harness for pytest execution
-const TACH_HARNESS_PY: &str = include_str!("tach_harness.py");
+const TACH_HARNESS_PY: &str = include_str!("../tach_harness.py");
 
 // =============================================================================
 // tach_rust Module: Native FFI for Python Harness

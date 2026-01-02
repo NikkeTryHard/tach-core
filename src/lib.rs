@@ -61,11 +61,9 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 pub mod core;
 pub mod discovery;
+pub mod execution;
 pub mod isolation;
 pub mod reporting;
-pub mod scheduler;
-pub mod watch;
-pub mod zygote;
 
 // Re-export core modules at top level for backward compatibility
 pub use core::allocator;
@@ -93,6 +91,11 @@ pub use reporting::debugger;
 pub use reporting::junit;
 pub use reporting::logcapture;
 pub use reporting::reporter;
+
+// Re-export execution modules at top level for backward compatibility
+pub use execution::scheduler;
+pub use execution::watch;
+pub use execution::zygote;
 
 // =============================================================================
 // Phase 3.3: Toxicity Integration
