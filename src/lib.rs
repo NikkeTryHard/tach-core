@@ -60,17 +60,13 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 pub mod core;
-pub mod analysis;
+pub mod discovery;
 pub mod coverage;
 pub mod debugger;
-pub mod discovery;
-pub mod graph;
 pub mod isolation;
 pub mod junit;
-pub mod loader;
 pub mod logcapture;
 pub mod reporter;
-pub mod resolver;
 pub mod sandbox;
 pub mod scheduler;
 pub mod snapshot;
@@ -84,6 +80,13 @@ pub use core::environment;
 pub use core::lifecycle;
 pub use core::protocol;
 pub use core::signals;
+
+// Re-export discovery modules at top level for backward compatibility
+pub use discovery::analysis;
+pub use discovery::graph;
+pub use discovery::loader;
+pub use discovery::resolver;
+pub use discovery::scanner;
 
 // =============================================================================
 // Phase 3.3: Toxicity Integration

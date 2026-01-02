@@ -20,15 +20,7 @@ use std::path::Path;
 // =============================================================================
 
 /// Toxic standard library modules that spawn threads, processes, or use native code
-const TOXIC_STD_LIB: &[&str] = &[
-    "threading",
-    "_thread",
-    "multiprocessing",
-    "socket",
-    "ctypes",
-    "signal",
-    "concurrent.futures",
-];
+const TOXIC_STD_LIB: &[&str] = &["threading", "_thread", "multiprocessing", "socket", "ctypes", "signal", "concurrent.futures"];
 
 /// Toxic external packages with native dependencies or thread pools
 const TOXIC_EXTERNAL_MODULES: &[&str] = &[
@@ -103,12 +95,7 @@ pub fn analyze_file(source: &str, path: &Path) -> ToxicityReport {
 // =============================================================================
 
 /// Recursively analyze a statement for toxic patterns
-fn analyze_stmt(
-    stmt: &ast::Stmt,
-    report: &mut ToxicityReport,
-    import_aliases: &mut HashMap<String, String>,
-    from_imports: &mut HashMap<String, String>,
-) {
+fn analyze_stmt(stmt: &ast::Stmt, report: &mut ToxicityReport, import_aliases: &mut HashMap<String, String>, from_imports: &mut HashMap<String, String>) {
     match stmt {
         // Handle: import threading, import multiprocessing as mp
         ast::Stmt::Import(import) => {
@@ -139,9 +126,7 @@ fn analyze_stmt(
                     // Star import from toxic module = Toxic (aggressive stance)
                     if name == "*" && is_toxic_module(module_name) {
                         report.is_toxic = true;
-                        report
-                            .reasons
-                            .push(format!("Star import from toxic module '{}'", module_name));
+                        report.reasons.push(format!("Star import from toxic module '{}'", module_name));
                         continue;
                     }
 
@@ -153,9 +138,7 @@ fn analyze_stmt(
                 // Any import from a toxic module = Toxic
                 if is_toxic_module(module_name) {
                     report.is_toxic = true;
-                    report
-                        .reasons
-                        .push(format!("Imported from '{}'", module_name));
+                    report.reasons.push(format!("Imported from '{}'", module_name));
                 }
             }
         }
@@ -293,12 +276,7 @@ fn analyze_stmt(
 // =============================================================================
 
 /// Check an expression for toxic patterns (dynamic imports, toxic calls)
-fn check_expr_toxicity(
-    expr: &ast::Expr,
-    report: &mut ToxicityReport,
-    import_aliases: &HashMap<String, String>,
-    from_imports: &HashMap<String, String>,
-) {
+fn check_expr_toxicity(expr: &ast::Expr, report: &mut ToxicityReport, import_aliases: &HashMap<String, String>, from_imports: &HashMap<String, String>) {
     match expr {
         ast::Expr::Call(call) => {
             // Check for dynamic imports
@@ -478,11 +456,7 @@ fn is_type_checking_block(test: &ast::Expr) -> bool {
 }
 
 /// Check if a call expression is a dynamic import
-fn is_dynamic_import(
-    func: &ast::Expr,
-    import_aliases: &HashMap<String, String>,
-    from_imports: &HashMap<String, String>,
-) -> bool {
+fn is_dynamic_import(func: &ast::Expr, import_aliases: &HashMap<String, String>, from_imports: &HashMap<String, String>) -> bool {
     match func {
         ast::Expr::Name(name) => {
             let local = name.id.as_str();
@@ -501,10 +475,7 @@ fn is_dynamic_import(
             if let ast::Expr::Name(name) = &*attr.value {
                 let local = name.id.as_str();
                 let attr_name = attr.attr.as_str();
-                let module = import_aliases
-                    .get(local)
-                    .map(|s| s.as_str())
-                    .unwrap_or(local);
+                let module = import_aliases.get(local).map(|s| s.as_str()).unwrap_or(local);
                 return module == "importlib" && attr_name == "import_module";
             }
             false
@@ -514,11 +485,7 @@ fn is_dynamic_import(
 }
 
 /// Check if a call is to a toxic function and return the reason
-fn check_call_toxicity(
-    func: &ast::Expr,
-    import_aliases: &HashMap<String, String>,
-    from_imports: &HashMap<String, String>,
-) -> Option<String> {
+fn check_call_toxicity(func: &ast::Expr, import_aliases: &HashMap<String, String>, from_imports: &HashMap<String, String>) -> Option<String> {
     match func {
         ast::Expr::Name(name) => {
             let local = name.id.as_str();
@@ -536,10 +503,7 @@ fn check_call_toxicity(
             if let ast::Expr::Name(name) = &*attr.value {
                 let local = name.id.as_str();
                 let attr_name = attr.attr.as_str();
-                let module = import_aliases
-                    .get(local)
-                    .map(|s| s.as_str())
-                    .unwrap_or(local);
+                let module = import_aliases.get(local).map(|s| s.as_str()).unwrap_or(local);
                 if is_toxic_module(module) {
                     return Some(format!("Called {}.{}", module, attr_name));
                 }
@@ -612,10 +576,7 @@ mod tests {
         let source = "import concurrent.futures";
         let report = analyze(source);
         assert!(report.is_toxic);
-        assert!(report
-            .reasons
-            .iter()
-            .any(|r| r.contains("concurrent.futures")));
+        assert!(report.reasons.iter().any(|r| r.contains("concurrent.futures")));
     }
 
     // =========================================================================
@@ -1086,10 +1047,7 @@ if typing.TYPE_CHECKING:
     import ctypes  # Should NOT be detected as toxic
 "#;
         let report = analyze(source);
-        assert!(
-            !report.is_toxic,
-            "typing.TYPE_CHECKING imports should be skipped"
-        );
+        assert!(!report.is_toxic, "typing.TYPE_CHECKING imports should be skipped");
     }
 
     #[test]
