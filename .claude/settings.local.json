@@ -9,13 +9,14 @@
       "Bash(cargo build:*)",
       "Bash(git commit:*)",
       "Bash(cargo clippy:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(git:*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(git commit:*)",
+        "matcher": "Bash(git:*)",
         "hooks": [
           {
             "type": "command",
