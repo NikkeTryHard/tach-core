@@ -126,35 +126,39 @@ tach-core/
   src/
     main.rs           # CLI entry point
     lib.rs            # Module exports
-
-    # Discovery & Analysis
-    discovery.rs      # AST-based test discovery
-    analysis.rs       # Local toxicity detection
-    graph.rs          # ToxicityGraph, propagation
-    resolver.rs       # Fixture resolution
-
-    # Execution
-    zygote.rs         # Process lifecycle, FFI
-    scheduler.rs      # Test dispatch
-    protocol.rs       # IPC messages
-
-    # Isolation & Security
-    sandbox.rs        # Landlock + Seccomp
-    isolation.rs      # Namespaces + OverlayFS
-
-    # Memory Management
-    snapshot.rs       # userfaultfd, golden pages
-    allocator.rs      # Jemalloc integration
-
-    # Observability
-    coverage.rs       # Ring buffers, aggregator
-    reporter.rs       # Output formatting
-
-    # Support
-    config.rs         # Configuration loading
-    loader.rs         # Bytecode compilation
-    environment.rs    # Environment injection
     tach_harness.py   # Python test harness
+
+    core/             # Core infrastructure
+      allocator.rs    # Jemalloc integration
+      config.rs       # Configuration loading
+      environment.rs  # Environment injection
+      lifecycle.rs    # Process lifecycle management
+      protocol.rs     # IPC messages
+      signals.rs      # Signal handling
+
+    discovery/        # Test discovery & analysis
+      scanner.rs      # AST-based test discovery
+      resolver.rs     # Fixture resolution
+      loader.rs       # Bytecode compilation
+      graph.rs        # ToxicityGraph, propagation
+      analysis.rs     # Local toxicity detection
+
+    execution/        # Test execution
+      scheduler.rs    # Test dispatch
+      watch.rs        # File watching
+      zygote.rs       # Process lifecycle, FFI
+
+    isolation/        # Isolation & Security
+      namespace.rs    # Namespaces + OverlayFS
+      sandbox.rs      # Landlock + Seccomp
+      snapshot.rs     # userfaultfd, golden pages
+
+    reporting/        # Observability
+      reporter.rs     # Output formatting
+      junit.rs        # JUnit XML output
+      logcapture.rs   # Log capture
+      debugger.rs     # Debugger support
+      coverage.rs     # Ring buffers, aggregator
 
   rust_tests/         # Rust integration tests
     physics_check.rs
@@ -188,15 +192,15 @@ tach-core/
 
 ## Key Files
 
-| File                  | Purpose                            |
-| :-------------------- | :--------------------------------- |
-| `src/zygote.rs`       | Process lifecycle, worker spawning |
-| `src/sandbox.rs`      | Landlock + Seccomp implementation  |
-| `src/coverage.rs`     | Zero-overhead coverage collection  |
-| `src/allocator.rs`    | Jemalloc configuration             |
-| `src/snapshot.rs`     | userfaultfd memory snapshots       |
-| `src/config.rs`       | Configuration and CLI              |
-| `src/tach_harness.py` | Python test harness                |
+| File                        | Purpose                            |
+| :-------------------------- | :--------------------------------- |
+| `src/execution/zygote.rs`   | Process lifecycle, worker spawning |
+| `src/isolation/sandbox.rs`  | Landlock + Seccomp implementation  |
+| `src/reporting/coverage.rs` | Zero-overhead coverage collection  |
+| `src/core/allocator.rs`     | Jemalloc configuration             |
+| `src/isolation/snapshot.rs` | userfaultfd memory snapshots       |
+| `src/core/config.rs`        | Configuration and CLI              |
+| `src/tach_harness.py`       | Python test harness                |
 
 ---
 
@@ -305,7 +309,7 @@ perf lock report
 
 ### Adding a New FFI Function
 
-1. Add function in `src/zygote.rs`:
+1. Add function in `src/execution/zygote.rs`:
 
    ```rust
    #[pyfunction]
@@ -333,7 +337,7 @@ perf lock report
 
 ### Modifying the Protocol
 
-1. Update structs in `src/protocol.rs`
+1. Update structs in `src/core/protocol.rs`
 2. Update serialization if needed
 3. Update Python harness if needed
 4. Add integration tests

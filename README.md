@@ -85,39 +85,97 @@ export PYO3_PYTHON=$(which python) && cargo build --release
 
 ---
 
+## Project Structure
+
+Tach uses a modular architecture organized into 5 domain-based subdirectories:
+
+```
+src/
+├── core/           # Infrastructure
+│   ├── allocator.rs    # Jemalloc integration
+│   ├── config.rs       # Configuration engine
+│   ├── environment.rs  # Environment variable handling
+│   ├── lifecycle.rs    # Process lifecycle management
+│   ├── protocol.rs     # Binary IPC protocol
+│   └── signals.rs      # Signal handling
+│
+├── discovery/      # Test discovery
+│   ├── scanner.rs      # AST-based test scanning
+│   ├── resolver.rs     # Fixture resolution
+│   ├── loader.rs       # Zero-copy bytecode loading
+│   ├── graph.rs        # Dependency graph (petgraph)
+│   └── analysis.rs     # Toxicity analysis
+│
+├── execution/      # Test execution
+│   ├── scheduler.rs    # Dual-queue test scheduler
+│   ├── watch.rs        # File watch mode
+│   └── zygote.rs       # Process spawning and worker pool
+│
+├── isolation/      # Process isolation
+│   ├── namespace.rs    # Linux namespaces
+│   ├── sandbox.rs      # Landlock + Seccomp (Iron Dome)
+│   └── snapshot.rs     # userfaultfd memory snapshots
+│
+├── reporting/      # Result reporting
+│   ├── reporter.rs     # Progress and output formatting
+│   ├── junit.rs        # JUnit XML generation
+│   ├── logcapture.rs   # stdout/stderr capture
+│   ├── debugger.rs     # Debug output
+│   └── coverage.rs     # PEP 669 coverage collection
+│
+├── lib.rs          # Library entry point (re-exports all modules)
+├── main.rs         # CLI entry point
+└── tach_harness.py # Python test harness
+```
+
+All modules are re-exported at the top level via `lib.rs` for backward compatibility.
+
+---
+
 ## Architecture
 
-Tach consists of 14 interconnected subsystems:
+Tach consists of 5 domain modules with interconnected subsystems:
 
 ```mermaid
 flowchart TB
     subgraph Supervisor["RUST SUPERVISOR"]
-        Discovery["Discovery Engine<br/>(rustpython-parser)"]
-        Toxicity["Toxicity Analyzer<br/>(petgraph)"]
-        Loader["Zero-Copy Loader<br/>(PyMarshal)"]
-        Scheduler["Test Scheduler<br/>(Dual-Queue)"]
-        Snapshot["Physics Engine<br/>(userfaultfd)"]
-        Coverage["Coverage Aggregator<br/>(Ring Buffers)"]
-        Reporter["Reporter System<br/>(indicatif)"]
-    end
+        subgraph Core["core/"]
+            Config["Config Engine"]
+            Protocol["IPC Protocol"]
+            Allocator["Allocator<br/>(Jemalloc)"]
+        end
 
-    subgraph Zygote["ZYGOTE PROCESS"]
-        Init["Python Init"]
-        Fork["Fork Workers"]
-        Pool["Worker Pool"]
+        subgraph DiscoveryMod["discovery/"]
+            Scanner["Scanner<br/>(rustpython-parser)"]
+            Analysis["Toxicity Analyzer<br/>(petgraph)"]
+            Loader["Zero-Copy Loader<br/>(PyMarshal)"]
+        end
+
+        subgraph Execution["execution/"]
+            Scheduler["Test Scheduler<br/>(Dual-Queue)"]
+            Zygote["Zygote<br/>(Worker Pool)"]
+        end
+
+        subgraph IsolationMod["isolation/"]
+            Sandbox["Iron Dome<br/>(Landlock+Seccomp)"]
+            Namespace["Namespaces<br/>(OverlayFS)"]
+            Snapshot["Physics Engine<br/>(userfaultfd)"]
+        end
+
+        subgraph Reporting["reporting/"]
+            Reporter["Reporter<br/>(indicatif)"]
+            Coverage["Coverage<br/>(PEP 669)"]
+        end
     end
 
     subgraph Worker["PYTHON WORKER"]
-        Sandbox["Iron Dome<br/>(Landlock+Seccomp)"]
-        Isolation["Isolation<br/>(Namespaces+OverlayFS)"]
         Harness["Test Harness<br/>(tach_harness.py)"]
-        Allocator["Allocator<br/>(Jemalloc)"]
     end
 
-    Discovery --> Toxicity --> Scheduler
-    Loader --> Init
-    Scheduler --> Fork
-    Fork --> Sandbox --> Isolation --> Harness
+    Scanner --> Analysis --> Scheduler
+    Loader --> Zygote
+    Scheduler --> Zygote
+    Zygote --> Sandbox --> Namespace --> Harness
     Harness --> Coverage
     Snapshot <--> Worker
     Allocator --> Snapshot
@@ -127,9 +185,9 @@ flowchart TB
 
 Detailed technical documentation for each subsystem:
 
-| Document                                              | Description                                     |
-| :---------------------------------------------------- | :---------------------------------------------- |
-| **Architecture**                                      |                                                 |
+| Document                                           | Description                                     |
+| :------------------------------------------------- | :---------------------------------------------- |
+| **Architecture**                                   |                                                 |
 | [Overview](docs/architecture/overview.md)          | System architecture and component interactions  |
 | [Discovery Engine](docs/architecture/discovery.md) | AST-based test discovery with rustpython-parser |
 | [Zero-Copy Loader](docs/architecture/loader.md)    | Bytecode compilation and injection              |
@@ -144,11 +202,11 @@ Detailed technical documentation for each subsystem:
 | [IPC Protocol](docs/architecture/protocol.md)      | Binary protocol and message format              |
 | [Scheduler](docs/architecture/scheduler.md)        | Test scheduling and dispatch                    |
 | [Reporter](docs/architecture/reporter.md)          | Output formatting and progress                  |
-| **Reference**                                         |                                                 |
-| [Configuration](docs/configuration.md)                | CLI, pyproject.toml, environment variables      |
-| [Development](docs/development.md)                    | Build, test, project structure                  |
-| [Troubleshooting](docs/troubleshooting.md)            | Common issues and debug commands                |
-| [API Reference](docs/api-reference.md)                | FFI functions and data structures               |
+| **Reference**                                      |                                                 |
+| [Configuration](docs/configuration.md)             | CLI, pyproject.toml, environment variables      |
+| [Development](docs/development.md)                 | Build, test, project structure                  |
+| [Troubleshooting](docs/troubleshooting.md)         | Common issues and debug commands                |
+| [API Reference](docs/api-reference.md)             | FFI functions and data structures               |
 
 ---
 
@@ -222,7 +280,7 @@ See [Configuration Reference](docs/configuration.md) for full details.
 | 6.2   | Configuration Engine        | Complete |
 | 6.3   | Progress Reporter           | Complete |
 
-**Total Tests: ~334** (All Passing)
+**Total Tests: 301** (All Passing)
 
 ---
 

@@ -529,7 +529,7 @@ engine = create_engine(url, pool_size=5, max_overflow=0)
 RUST_LOG=debug tach-core .
 
 # Specific module
-RUST_LOG=tach_core::sandbox=debug tach-core .
+RUST_LOG=tach_core::isolation::sandbox=debug tach-core .
 ```
 
 ### Interpreting Log Messages

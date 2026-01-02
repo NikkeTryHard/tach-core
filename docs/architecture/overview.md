@@ -60,18 +60,18 @@ flowchart TB
 
 ### Tier 1: Rust Supervisor
 
-| Component     | File                      | Responsibility                                        |
-| :------------ | :------------------------ | :---------------------------------------------------- |
-| **CLI**       | `main.rs`                 | Parse arguments, orchestrate execution                |
-| **Config**    | `config.rs`               | Load pyproject.toml, merge CLI/env/file settings      |
-| **Discovery** | `discovery.rs`            | AST-based test discovery using rustpython-parser      |
-| **Toxicity**  | `analysis.rs`, `graph.rs` | Detect unsafe modules, propagate via dependency graph |
-| **Loader**    | `loader.rs`               | Compile .py to .pyc, manage bytecode cache            |
-| **Resolver**  | `resolver.rs`             | Resolve fixture dependencies, topological sort        |
-| **Scheduler** | `scheduler.rs`            | Dispatch tests to workers, manage queues              |
-| **Snapshot**  | `snapshot.rs`             | userfaultfd registration, page fault handling         |
-| **Coverage**  | `coverage.rs`             | Ring buffer management, aggregation thread            |
-| **Reporter**  | `reporter.rs`             | Progress bar, dots, JSON output                       |
+| Component     | File                                          | Responsibility                                        |
+| :------------ | :-------------------------------------------- | :---------------------------------------------------- |
+| **CLI**       | `main.rs`                                     | Parse arguments, orchestrate execution                |
+| **Config**    | `core/config.rs`                              | Load pyproject.toml, merge CLI/env/file settings      |
+| **Discovery** | `discovery/scanner.rs`                        | AST-based test discovery using rustpython-parser      |
+| **Toxicity**  | `discovery/analysis.rs`, `discovery/graph.rs` | Detect unsafe modules, propagate via dependency graph |
+| **Loader**    | `discovery/loader.rs`                         | Compile .py to .pyc, manage bytecode cache            |
+| **Resolver**  | `discovery/resolver.rs`                       | Resolve fixture dependencies, topological sort        |
+| **Scheduler** | `execution/scheduler.rs`                      | Dispatch tests to workers, manage queues              |
+| **Snapshot**  | `isolation/snapshot.rs`                       | userfaultfd registration, page fault handling         |
+| **Coverage**  | `reporting/coverage.rs`                       | Ring buffer management, aggregation thread            |
+| **Reporter**  | `reporting/reporter.rs`                       | Progress bar, dots, JSON output                       |
 
 ### Tier 2: Zygote Process
 
@@ -236,33 +236,43 @@ src/
   main.rs           # CLI entry, orchestration
   lib.rs            # Module exports, discover_with_toxicity()
 
+  # Core Infrastructure
+  core/
+    allocator.rs    # Jemalloc integration
+    config.rs       # Configuration loading
+    environment.rs  # Environment injection
+    lifecycle.rs    # Process lifecycle management
+    protocol.rs     # IPC messages
+    signals.rs      # Signal handling
+
   # Discovery & Analysis
-  discovery.rs      # AST-based test discovery
-  analysis.rs       # Local toxicity detection
-  graph.rs          # ToxicityGraph, propagation
-  resolver.rs       # Fixture resolution
+  discovery/
+    scanner.rs      # AST-based test discovery (was discovery.rs)
+    resolver.rs     # Fixture resolution
+    loader.rs       # Bytecode compilation
+    graph.rs        # ToxicityGraph, propagation
+    analysis.rs     # Local toxicity detection
 
   # Execution
-  zygote.rs         # Process lifecycle, FFI
-  scheduler.rs      # Test dispatch
-  protocol.rs       # IPC messages
+  execution/
+    scheduler.rs    # Test dispatch
+    watch.rs        # File watching
+    zygote.rs       # Process lifecycle, FFI
 
   # Isolation & Security
-  sandbox.rs        # Landlock + Seccomp
-  isolation.rs      # Namespaces + OverlayFS
+  isolation/
+    namespace.rs    # Namespaces + OverlayFS (was isolation.rs)
+    sandbox.rs      # Landlock + Seccomp
+    snapshot.rs     # userfaultfd, golden pages
 
-  # Memory Management
-  snapshot.rs       # userfaultfd, golden pages
-  allocator.rs      # Jemalloc integration
+  # Reporting & Observability
+  reporting/
+    reporter.rs     # Output formatting
+    junit.rs        # JUnit XML output
+    logcapture.rs   # Log capture
+    debugger.rs     # Debugger integration
+    coverage.rs     # Ring buffers, aggregator
 
-  # Observability
-  coverage.rs       # Ring buffers, aggregator
-  reporter.rs       # Output formatting
-
-  # Support
-  config.rs         # Configuration loading
-  loader.rs         # Bytecode compilation
-  environment.rs    # Environment injection
   tach_harness.py   # Python test harness
 ```
 
