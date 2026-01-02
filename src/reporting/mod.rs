@@ -4,7 +4,7 @@
 //! - `reporter`: Base reporter trait and implementations
 //! - `junit`: JUnit XML output
 //! - `logcapture`: stdout/stderr capture
-//! - `debugger`: Interactive debugging support
+//! - `debugger`: Interactive debugging support (TTY proxy)
 //! - `coverage`: Code coverage collection
 
 pub mod coverage;
