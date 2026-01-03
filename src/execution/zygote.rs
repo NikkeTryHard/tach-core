@@ -285,7 +285,7 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
 /// 3. Protects critical modules from removal
 #[pyfunction]
 fn cleanup_modules() -> PyResult<()> {
-    Python::with_gil(|py| -> std::result::Result<(), PyErr> {
+    Python::attach(|py| -> std::result::Result<(), PyErr> {
         let harness = py.import("tach_harness")?;
         harness.getattr("cleanup_test_modules")?.call0()?;
         Ok(())
@@ -306,7 +306,7 @@ fn cleanup_modules() -> PyResult<()> {
 fn reset_and_signal_ready(socket: &UnixStream) -> Result<()> {
     // 1.  Clean sys.modules BEFORE memory reset
     // This removes test-imported modules so next test gets fresh imports
-    Python::with_gil(|py| -> std::result::Result<(), PyErr> {
+    Python::attach(|py| -> std::result::Result<(), PyErr> {
         let tach_rust = py.import("tach_rust")?;
 
         // Clean up test-imported modules first
@@ -465,10 +465,11 @@ fn spawn_result_collector(
             Ok(_) if ready_buf[0] == MSG_WORKER_READY => {
                 // Worker is ready for reuse - add to pool
                 eprintln!("[zygote] Worker {} ready, adding to pool", pid);
-                IDLE_WORKERS
-                    .lock()
-                    .unwrap()
-                    .push(WorkerHandle { pid, socket });
+                if let Ok(mut workers) = IDLE_WORKERS.lock() {
+                    workers.push(WorkerHandle { pid, socket });
+                } else {
+                    eprintln!("[zygote] WARNING: Failed to acquire lock for worker pool");
+                }
             }
             Ok(_) => {
                 eprintln!(
@@ -505,11 +506,11 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         eprintln!("[zygote] Found venv: {}", sp.display());
     }
 
-    Python::with_gil(|py| -> Result<()> {
+    Python::attach(|py| -> Result<()> {
         let sys = py.import("sys")?;
         let path_attr = sys.getattr("path")?;
         let path: &Bound<PyList> = path_attr
-            .downcast()
+            .cast()
             .map_err(|e| anyhow::anyhow!("sys.path not a list: {}", e))?;
 
         //  Inject venv site-packages FIRST (highest priority)
@@ -738,7 +739,7 @@ except Exception as e:
                         // 6. Set debug socket path for breakpoint() support
                         // This enables interactive debugging via TTY proxy
                         if !payload.debug_socket_path.is_empty() {
-                            Python::with_gil(|py| -> Result<(), PyErr> {
+                            Python::attach(|py| -> Result<(), PyErr> {
                                 let harness = py.import("tach_harness")?;
                                 harness
                                     .getattr("set_debug_socket_path")?
@@ -752,7 +753,7 @@ except Exception as e:
                         // This performs hygiene (RNG reseed, logging reset) and
                         // initiates snapshot if TACH_SUPERVISOR_SOCK is set.
                         // Worker will SIGSTOP here; Supervisor captures snapshot and SIGCONTs.
-                        Python::with_gil(|py| -> Result<(), PyErr> {
+                        Python::attach(|py| -> Result<(), PyErr> {
                             let harness = py.import("tach_harness")?;
                             harness.getattr("post_fork_init")?.call0()?;
                             Ok(())
@@ -766,7 +767,9 @@ except Exception as e:
                         // Invariant: Scheduler receives result even if worker exits
                         let _ = std::io::stdout().flush();
                         if let Ok(result_bytes) = encode_with_length(&result) {
-                            let _ = child_sock.try_clone().unwrap().write_all(&result_bytes);
+                            if let Ok(mut sock) = child_sock.try_clone() {
+                                let _ = sock.write_all(&result_bytes);
+                            }
                         }
 
                         // 10.  Dual-path decision based on toxicity
@@ -835,7 +838,7 @@ fn run_worker(payload: &TestPayload) -> TestResult {
     );
 
     // Call Python harness
-    let result = Python::with_gil(|py| -> Result<(u8, f64, String), PyErr> {
+    let result = Python::attach(|py| -> Result<(u8, f64, String), PyErr> {
         let harness = py.import("tach_harness")?;
         let run_test = harness.getattr("run_test")?;
 

@@ -31,10 +31,12 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
     }
 
     // 1. Create new mount AND network namespaces
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET).context("unshare(CLONE_NEWNS | CLONE_NEWNET) failed - requires CAP_SYS_ADMIN")?;
+    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET)
+        .context("unshare(CLONE_NEWNS | CLONE_NEWNET) failed - requires CAP_SYS_ADMIN")?;
 
     // 2. Make all mounts private (prevent leaking to host)
-    mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None).context("Failed to mark root as MS_PRIVATE")?;
+    mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None)
+        .context("Failed to mark root as MS_PRIVATE")?;
 
     // 3. Bring up loopback interface
     setup_loopback().context("Failed to configure loopback interface")?;
@@ -45,13 +47,34 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
 
     // 5. IRON DOME: Lock down root filesystem as READ-ONLY
     // Bind mount / to itself (allows changing mount flags)
-    mount::<str, str, str, str>(Some("/"), "/", None, MsFlags::MS_BIND | MsFlags::MS_REC, None).context("Failed to bind-mount root")?;
+    mount::<str, str, str, str>(
+        Some("/"),
+        "/",
+        None,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None,
+    )
+    .context("Failed to bind-mount root")?;
 
     // Remount / as Read-Only
-    mount::<str, str, str, str>(Some("/"), "/", None, MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC, None).context("Failed to remount root as RO")?;
+    mount::<str, str, str, str>(
+        Some("/"),
+        "/",
+        None,
+        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+        None,
+    )
+    .context("Failed to remount root as RO")?;
 
     // 6. Mount tmpfs on the base directory (allowed: mounting over RO dir)
-    mount::<str, PathBuf, str, str>(Some("tmpfs"), &base, Some("tmpfs"), MsFlags::empty(), Some("size=100M,mode=0755")).context("Failed to mount tmpfs")?;
+    mount::<str, PathBuf, str, str>(
+        Some("tmpfs"),
+        &base,
+        Some("tmpfs"),
+        MsFlags::empty(),
+        Some("size=100M,mode=0755"),
+    )
+    .context("Failed to mount tmpfs")?;
 
     // 7. Create subdirs INSIDE the writable tmpfs
     let tmp_upper = base.join("tmp_upper");
@@ -64,21 +87,47 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
     fs::create_dir_all(&proj_work)?;
 
     // 8. Overlay /tmp (writable zone #1)
-    let tmp_overlay_opts = format!("lowerdir=/tmp,upperdir={},workdir={}", tmp_upper.display(), tmp_work.display());
+    let tmp_overlay_opts = format!(
+        "lowerdir=/tmp,upperdir={},workdir={}",
+        tmp_upper.display(),
+        tmp_work.display()
+    );
 
-    mount::<str, str, str, str>(Some("overlay"), "/tmp", Some("overlay"), MsFlags::empty(), Some(&tmp_overlay_opts)).context("Failed to mount overlay on /tmp")?;
+    mount::<str, str, str, str>(
+        Some("overlay"),
+        "/tmp",
+        Some("overlay"),
+        MsFlags::empty(),
+        Some(&tmp_overlay_opts),
+    )
+    .context("Failed to mount overlay on /tmp")?;
 
     // 9. Overlay project root (writable zone #2)
-    let proj_overlay_opts = format!("lowerdir={},upperdir={},workdir={}", project_root.display(), proj_upper.display(), proj_work.display());
+    let proj_overlay_opts = format!(
+        "lowerdir={},upperdir={},workdir={}",
+        project_root.display(),
+        proj_upper.display(),
+        proj_work.display()
+    );
 
-    mount::<str, Path, str, str>(Some("overlay"), project_root, Some("overlay"), MsFlags::empty(), Some(&proj_overlay_opts)).context("Failed to mount overlay on project root")?;
+    mount::<str, Path, str, str>(
+        Some("overlay"),
+        project_root,
+        Some("overlay"),
+        MsFlags::empty(),
+        Some(&proj_overlay_opts),
+    )
+    .context("Failed to mount overlay on project root")?;
 
     Ok(())
 }
 
 /// Bring up the loopback interface in the current network namespace
 fn setup_loopback() -> Result<()> {
-    let output = Command::new("ip").args(["link", "set", "lo", "up"]).output().context("Failed to execute 'ip' command - is iproute2 installed?")?;
+    let output = Command::new("ip")
+        .args(["link", "set", "lo", "up"])
+        .output()
+        .context("Failed to execute 'ip' command - is iproute2 installed?")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -104,7 +153,11 @@ pub fn worker_base_dir(worker_id: u32) -> PathBuf {
 pub fn tmp_overlay_options(base: &Path) -> String {
     let tmp_upper = base.join("tmp_upper");
     let tmp_work = base.join("tmp_work");
-    format!("lowerdir=/tmp,upperdir={},workdir={}", tmp_upper.display(), tmp_work.display())
+    format!(
+        "lowerdir=/tmp,upperdir={},workdir={}",
+        tmp_upper.display(),
+        tmp_work.display()
+    )
 }
 
 /// Generate overlay mount options string for project root
@@ -112,7 +165,12 @@ pub fn tmp_overlay_options(base: &Path) -> String {
 pub fn project_overlay_options(base: &Path, project_root: &Path) -> String {
     let proj_upper = base.join("proj_upper");
     let proj_work = base.join("proj_work");
-    format!("lowerdir={},upperdir={},workdir={}", project_root.display(), proj_upper.display(), proj_work.display())
+    format!(
+        "lowerdir={},upperdir={},workdir={}",
+        project_root.display(),
+        proj_upper.display(),
+        proj_work.display()
+    )
 }
 
 /// Check if isolation is disabled via environment variable
@@ -143,14 +201,23 @@ mod tests {
     #[test]
     fn test_worker_base_dir_large_id() {
         // Verify no overflow or formatting issues with large worker IDs
-        assert_eq!(worker_base_dir(u32::MAX), PathBuf::from("/run/tach/worker_4294967295"));
+        assert_eq!(
+            worker_base_dir(u32::MAX),
+            PathBuf::from("/run/tach/worker_4294967295")
+        );
     }
 
     #[test]
     fn test_worker_base_dir_is_absolute() {
         let base = worker_base_dir(123);
-        assert!(base.is_absolute(), "Worker base dir should be absolute path");
-        assert!(base.starts_with("/run/tach"), "Worker base dir should be under /run/tach");
+        assert!(
+            base.is_absolute(),
+            "Worker base dir should be absolute path"
+        );
+        assert!(
+            base.starts_with("/run/tach"),
+            "Worker base dir should be under /run/tach"
+        );
     }
 
     // =========================================================================
@@ -163,9 +230,18 @@ mod tests {
         let opts = tmp_overlay_options(&base);
 
         // Verify format: lowerdir=/tmp,upperdir=<upper>,workdir=<work>
-        assert!(opts.starts_with("lowerdir=/tmp,"), "Should start with lowerdir=/tmp");
-        assert!(opts.contains("upperdir=/run/tach/worker_0/tmp_upper"), "Should contain upperdir");
-        assert!(opts.contains("workdir=/run/tach/worker_0/tmp_work"), "Should contain workdir");
+        assert!(
+            opts.starts_with("lowerdir=/tmp,"),
+            "Should start with lowerdir=/tmp"
+        );
+        assert!(
+            opts.contains("upperdir=/run/tach/worker_0/tmp_upper"),
+            "Should contain upperdir"
+        );
+        assert!(
+            opts.contains("workdir=/run/tach/worker_0/tmp_work"),
+            "Should contain workdir"
+        );
     }
 
     #[test]
@@ -174,7 +250,10 @@ mod tests {
         let opts = tmp_overlay_options(&base);
 
         // Overlay options should not contain spaces (mount parsing issue)
-        assert!(!opts.contains(' '), "Overlay options should not contain spaces");
+        assert!(
+            !opts.contains(' '),
+            "Overlay options should not contain spaces"
+        );
     }
 
     #[test]
@@ -184,9 +263,18 @@ mod tests {
         let opts = project_overlay_options(&base, &project);
 
         // Verify format: lowerdir=<project>,upperdir=<upper>,workdir=<work>
-        assert!(opts.starts_with("lowerdir=/home/user/myproject,"), "Should start with project as lowerdir");
-        assert!(opts.contains("upperdir=/run/tach/worker_0/proj_upper"), "Should contain upperdir");
-        assert!(opts.contains("workdir=/run/tach/worker_0/proj_work"), "Should contain workdir");
+        assert!(
+            opts.starts_with("lowerdir=/home/user/myproject,"),
+            "Should start with project as lowerdir"
+        );
+        assert!(
+            opts.contains("upperdir=/run/tach/worker_0/proj_upper"),
+            "Should contain upperdir"
+        );
+        assert!(
+            opts.contains("workdir=/run/tach/worker_0/proj_work"),
+            "Should contain workdir"
+        );
     }
 
     #[test]
@@ -195,7 +283,10 @@ mod tests {
         let project = PathBuf::from("/very/deep/nested/path/to/project");
         let opts = project_overlay_options(&base, &project);
 
-        assert!(opts.contains("/very/deep/nested/path/to/project"), "Should preserve full project path");
+        assert!(
+            opts.contains("/very/deep/nested/path/to/project"),
+            "Should preserve full project path"
+        );
     }
 
     #[test]
@@ -208,9 +299,18 @@ mod tests {
         let opts0 = project_overlay_options(&base0, &project);
         let opts1 = project_overlay_options(&base1, &project);
 
-        assert_ne!(opts0, opts1, "Different workers should have different overlay paths");
-        assert!(opts0.contains("worker_0"), "Worker 0 opts should reference worker_0");
-        assert!(opts1.contains("worker_1"), "Worker 1 opts should reference worker_1");
+        assert_ne!(
+            opts0, opts1,
+            "Different workers should have different overlay paths"
+        );
+        assert!(
+            opts0.contains("worker_0"),
+            "Worker 0 opts should reference worker_0"
+        );
+        assert!(
+            opts1.contains("worker_1"),
+            "Worker 1 opts should reference worker_1"
+        );
     }
 
     // =========================================================================
@@ -223,7 +323,10 @@ mod tests {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
         env::set_var("TACH_NO_ISOLATION", "1");
-        assert!(is_isolation_disabled(), "Isolation should be disabled when TACH_NO_ISOLATION=1");
+        assert!(
+            is_isolation_disabled(),
+            "Isolation should be disabled when TACH_NO_ISOLATION=1"
+        );
 
         // Restore
         match original {
@@ -237,7 +340,10 @@ mod tests {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
         env::set_var("TACH_NO_ISOLATION", "0");
-        assert!(!is_isolation_disabled(), "Isolation should be enabled when TACH_NO_ISOLATION=0");
+        assert!(
+            !is_isolation_disabled(),
+            "Isolation should be enabled when TACH_NO_ISOLATION=0"
+        );
 
         match original {
             Some(v) => env::set_var("TACH_NO_ISOLATION", v),
@@ -250,7 +356,10 @@ mod tests {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
         env::remove_var("TACH_NO_ISOLATION");
-        assert!(!is_isolation_disabled(), "Isolation should be enabled when TACH_NO_ISOLATION is unset");
+        assert!(
+            !is_isolation_disabled(),
+            "Isolation should be enabled when TACH_NO_ISOLATION is unset"
+        );
 
         if let Some(v) = original {
             env::set_var("TACH_NO_ISOLATION", v);
@@ -262,13 +371,22 @@ mod tests {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
         env::set_var("TACH_NO_ISOLATION", "yes");
-        assert!(!is_isolation_disabled(), "Isolation should be enabled for non-'1' values");
+        assert!(
+            !is_isolation_disabled(),
+            "Isolation should be enabled for non-'1' values"
+        );
 
         env::set_var("TACH_NO_ISOLATION", "true");
-        assert!(!is_isolation_disabled(), "Isolation should be enabled for non-'1' values");
+        assert!(
+            !is_isolation_disabled(),
+            "Isolation should be enabled for non-'1' values"
+        );
 
         env::set_var("TACH_NO_ISOLATION", "");
-        assert!(!is_isolation_disabled(), "Isolation should be enabled for empty string");
+        assert!(
+            !is_isolation_disabled(),
+            "Isolation should be enabled for empty string"
+        );
 
         match original {
             Some(v) => env::set_var("TACH_NO_ISOLATION", v),
@@ -288,7 +406,10 @@ mod tests {
 
         // This should return Ok(()) immediately without requiring root
         let result = setup_filesystem(999, Path::new("/tmp/test"));
-        assert!(result.is_ok(), "setup_filesystem should succeed (early return) when TACH_NO_ISOLATION=1");
+        assert!(
+            result.is_ok(),
+            "setup_filesystem should succeed (early return) when TACH_NO_ISOLATION=1"
+        );
 
         match original {
             Some(v) => env::set_var("TACH_NO_ISOLATION", v),

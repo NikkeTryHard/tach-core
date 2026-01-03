@@ -84,7 +84,8 @@ pub fn send_fd(sock: &UnixStream, pid: i32, fd: RawFd) -> Result<()> {
     let fds = [fd];
     let cmsg = [ControlMessage::ScmRights(&fds)];
 
-    sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsg, MsgFlags::empty(), None).context("Failed to send FD via SCM_RIGHTS")?;
+    sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsg, MsgFlags::empty(), None)
+        .context("Failed to send FD via SCM_RIGHTS")?;
 
     Ok(())
 }
@@ -104,7 +105,8 @@ pub fn recv_fd(sock: &UnixStream) -> Result<(i32, OwnedFd)> {
 
     // Control message buffer sized for one file descriptor
     // SAFETY: CMSG_SPACE is a const-like macro that computes buffer size
-    let mut cmsg_buf = [0u8; unsafe { libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) } as usize];
+    let mut cmsg_buf =
+        [0u8; unsafe { libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) } as usize];
 
     let mut msg: libc::msghdr = unsafe { MaybeUninit::zeroed().assume_init() };
     msg.msg_iov = &mut iov;
@@ -115,7 +117,10 @@ pub fn recv_fd(sock: &UnixStream) -> Result<(i32, OwnedFd)> {
     // SAFETY: recvmsg is a safe syscall with properly initialized buffers
     let bytes_received = unsafe { libc::recvmsg(sock.as_raw_fd(), &mut msg, 0) };
     if bytes_received < 0 {
-        return Err(anyhow!("recvmsg failed: {}", std::io::Error::last_os_error()));
+        return Err(anyhow!(
+            "recvmsg failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     // Extract PID from message body
@@ -274,7 +279,8 @@ pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
     ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;
 
     // Wait for the process to stop (ptrace-stop)
-    waitpid(pid, Some(WaitPidFlag::WSTOPPED)).with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
+    waitpid(pid, Some(WaitPidFlag::WSTOPPED))
+        .with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
 
     // Use PTRACE_ARCH_PRCTL to get fs_base
     // ptrace(PTRACE_ARCH_PRCTL, pid, ARCH_GET_FS, &output)
@@ -282,17 +288,29 @@ pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
 
     // SAFETY: We are attached to the process via ptrace, and it is stopped.
     // PTRACE_ARCH_PRCTL with ARCH_GET_FS reads the fs_base into the data pointer.
-    let ret = unsafe { libc::ptrace(PTRACE_ARCH_PRCTL as libc::c_uint, pid.as_raw(), ARCH_GET_FS, &mut fs_base as *mut u64) };
+    let ret = unsafe {
+        libc::ptrace(
+            PTRACE_ARCH_PRCTL as libc::c_uint,
+            pid.as_raw(),
+            ARCH_GET_FS,
+            &mut fs_base as *mut u64,
+        )
+    };
 
     if ret == -1 {
         let err = std::io::Error::last_os_error();
         // Detach before returning error
         let _ = ptrace::detach(pid, None);
-        return Err(anyhow!("PTRACE_ARCH_PRCTL(ARCH_GET_FS) failed for PID {}: {}", pid, err));
+        return Err(anyhow!(
+            "PTRACE_ARCH_PRCTL(ARCH_GET_FS) failed for PID {}: {}",
+            pid,
+            err
+        ));
     }
 
     // Detach from the process (it remains stopped, we'll SIGCONT later)
-    ptrace::detach(pid, None).with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
+    ptrace::detach(pid, None)
+        .with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
 
     eprintln!("[tls] Captured fs_base for PID {}: 0x{:016x}", pid, fs_base);
 
@@ -317,23 +335,36 @@ pub fn set_fs_base_ptrace(pid: Pid, fs_base: usize) -> Result<()> {
     ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;
 
     // Wait for the process to stop (ptrace-stop)
-    waitpid(pid, Some(WaitPidFlag::WSTOPPED)).with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
+    waitpid(pid, Some(WaitPidFlag::WSTOPPED))
+        .with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
 
     // Use PTRACE_ARCH_PRCTL to set fs_base
     // ptrace(PTRACE_ARCH_PRCTL, pid, ARCH_SET_FS, value)
     // SAFETY: We are attached to the process via ptrace, and it is stopped.
     // PTRACE_ARCH_PRCTL with ARCH_SET_FS sets fs_base to the data value.
-    let ret = unsafe { libc::ptrace(PTRACE_ARCH_PRCTL as libc::c_uint, pid.as_raw(), ARCH_SET_FS, fs_base) };
+    let ret = unsafe {
+        libc::ptrace(
+            PTRACE_ARCH_PRCTL as libc::c_uint,
+            pid.as_raw(),
+            ARCH_SET_FS,
+            fs_base,
+        )
+    };
 
     if ret == -1 {
         let err = std::io::Error::last_os_error();
         // Detach before returning error
         let _ = ptrace::detach(pid, None);
-        return Err(anyhow!("PTRACE_ARCH_PRCTL(ARCH_SET_FS) failed for PID {}: {}", pid, err));
+        return Err(anyhow!(
+            "PTRACE_ARCH_PRCTL(ARCH_SET_FS) failed for PID {}: {}",
+            pid,
+            err
+        ));
     }
 
     // Detach from the process
-    ptrace::detach(pid, None).with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
+    ptrace::detach(pid, None)
+        .with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
 
     eprintln!("[tls] Restored fs_base for PID {}: 0x{:016x}", pid, fs_base);
 
@@ -348,12 +379,19 @@ fn find_tls_region(pid: Pid, fs_base: usize) -> Result<(usize, usize)> {
 
     for region in regions {
         if region.start <= fs_base && fs_base < region.end {
-            eprintln!("[tls] Found TLS region for fs_base 0x{:x}: 0x{:x}-0x{:x} [{}]", fs_base, region.start, region.end, region.name);
+            eprintln!(
+                "[tls] Found TLS region for fs_base 0x{:x}: 0x{:x}-0x{:x} [{}]",
+                fs_base, region.start, region.end, region.name
+            );
             return Ok((region.start, region.end));
         }
     }
 
-    Err(anyhow!("Could not find memory region containing fs_base 0x{:x} for PID {}", fs_base, pid))
+    Err(anyhow!(
+        "Could not find memory region containing fs_base 0x{:x} for PID {}",
+        fs_base,
+        pid
+    ))
 }
 
 /// Capture TLS snapshot from a stopped worker
@@ -399,7 +437,12 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
 
     // Sanity check: TLS region should be at least 4KB (one page)
     if max_capture_from_fs < PAGE_SIZE {
-        return Err(anyhow!("TLS region too small: fs_base=0x{:x}, region_end=0x{:x}, size={}", fs_base, region_end, max_capture_from_fs));
+        return Err(anyhow!(
+            "TLS region too small: fs_base=0x{:x}, region_end=0x{:x}, size={}",
+            fs_base,
+            region_end,
+            max_capture_from_fs
+        ));
     }
 
     // Calculate actual capture size:
@@ -407,21 +450,37 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
     // - Maximum: entire region from fs_base to region_end
     let capture_len = max_capture_from_fs.max(TLS_SNAPSHOT_SIZE_HINT.min(max_capture_from_fs));
 
-    eprintln!("[tls] Dynamic TLS capture: fs_base=0x{:x}, region=[0x{:x}, 0x{:x}), capture={} bytes", fs_base, region_start, region_end, capture_len);
+    eprintln!(
+        "[tls] Dynamic TLS capture: fs_base=0x{:x}, region=[0x{:x}, 0x{:x}), capture={} bytes",
+        fs_base, region_start, region_end, capture_len
+    );
 
     // Step 3: Read TLS data via process_vm_readv
     let mut tls_data = vec![0u8; capture_len];
     let mut local_iov = [IoSliceMut::new(&mut tls_data)];
-    let remote_iov = [RemoteIoVec { base: fs_base, len: capture_len }];
+    let remote_iov = [RemoteIoVec {
+        base: fs_base,
+        len: capture_len,
+    }];
 
-    let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov).with_context(|| format!("process_vm_readv failed for TLS at 0x{:x}", fs_base))?;
+    let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov)
+        .with_context(|| format!("process_vm_readv failed for TLS at 0x{:x}", fs_base))?;
 
     //  Check for partial reads (Orchestrator's warning)
     if bytes_read != capture_len {
-        return Err(anyhow!("Partial TLS read: {}/{} bytes. Worker may have 'Fractured Brain' if we proceed.", bytes_read, capture_len));
+        return Err(anyhow!(
+            "Partial TLS read: {}/{} bytes. Worker may have 'Fractured Brain' if we proceed.",
+            bytes_read,
+            capture_len
+        ));
     }
 
-    eprintln!("[tls] TLS snapshot captured: {} bytes from fs_base=0x{:x} (region={} bytes total)", tls_data.len(), fs_base, region_end - region_start);
+    eprintln!(
+        "[tls] TLS snapshot captured: {} bytes from fs_base=0x{:x} (region={} bytes total)",
+        tls_data.len(),
+        fs_base,
+        region_end - region_start
+    );
 
     Ok(TlsSnapshot {
         fs_base,
@@ -445,18 +504,35 @@ pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()> {
     use nix::sys::uio::process_vm_writev;
     use std::io::IoSlice;
 
-    eprintln!("[tls] Restoring TLS for PID {}: {} bytes to 0x{:x}", pid, snapshot.tls_data.len(), snapshot.fs_base);
+    eprintln!(
+        "[tls] Restoring TLS for PID {}: {} bytes to 0x{:x}",
+        pid,
+        snapshot.tls_data.len(),
+        snapshot.fs_base
+    );
 
     // Step 1: Write TLS data back via process_vm_writev
     // This is necessary because userfaultfd may not cover the TLS region
     // if it wasn't registered, or we want explicit control.
     let local_iov = [IoSlice::new(&snapshot.tls_data)];
-    let remote_iov = [RemoteIoVec { base: snapshot.fs_base, len: snapshot.tls_data.len() }];
+    let remote_iov = [RemoteIoVec {
+        base: snapshot.fs_base,
+        len: snapshot.tls_data.len(),
+    }];
 
-    let bytes_written = process_vm_writev(pid, &local_iov, &remote_iov).with_context(|| format!("process_vm_writev failed for TLS at 0x{:x}", snapshot.fs_base))?;
+    let bytes_written = process_vm_writev(pid, &local_iov, &remote_iov).with_context(|| {
+        format!(
+            "process_vm_writev failed for TLS at 0x{:x}",
+            snapshot.fs_base
+        )
+    })?;
 
     if bytes_written != snapshot.tls_data.len() {
-        return Err(anyhow!("Partial TLS write: {}/{} bytes", bytes_written, snapshot.tls_data.len()));
+        return Err(anyhow!(
+            "Partial TLS write: {}/{} bytes",
+            bytes_written,
+            snapshot.tls_data.len()
+        ));
     }
 
     // Step 2: Restore fs_base register
@@ -464,7 +540,10 @@ pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()> {
     // (should be unchanged, but this is a safety measure)
     set_fs_base_ptrace(pid, snapshot.fs_base)?;
 
-    eprintln!("[tls] TLS restore complete for PID {}: fs_base=0x{:x}", pid, snapshot.fs_base);
+    eprintln!(
+        "[tls] TLS restore complete for PID {}: fs_base=0x{:x}",
+        pid, snapshot.fs_base
+    );
 
     Ok(())
 }
@@ -654,7 +733,8 @@ pub fn restore_full_vectorized(pid: Pid, snapshot: &WorkerSnapshot) -> Result<Ve
 /// Example: 7f1234560000-7f1234580000 rw-p 00000000 00:00 0 [heap]
 pub fn parse_memory_maps(pid: Pid) -> Result<Vec<MemoryRegion>> {
     let maps_path = format!("/proc/{}/maps", pid);
-    let content = fs::read_to_string(&maps_path).with_context(|| format!("Failed to read {}", maps_path))?;
+    let content =
+        fs::read_to_string(&maps_path).with_context(|| format!("Failed to read {}", maps_path))?;
 
     let mut regions = Vec::new();
 
@@ -675,9 +755,19 @@ pub fn parse_memory_maps(pid: Pid) -> Result<Vec<MemoryRegion>> {
         let perms = parts[1].to_string();
 
         // Get pathname (may be empty or at different position)
-        let name = if parts.len() > 5 { parts[5..].join(" ") } else { String::new() };
+        let name = if parts.len() > 5 {
+            parts[5..].join(" ")
+        } else {
+            String::new()
+        };
 
-        regions.push(MemoryRegion { start, end, len: end - start, perms, name });
+        regions.push(MemoryRegion {
+            start,
+            end,
+            len: end - start,
+            perms,
+            name,
+        });
     }
 
     Ok(regions)
@@ -774,7 +864,10 @@ impl AlignedSegment {
     /// # Panics
     /// Panics if segments don't overlap or aren't adjacent (use overlaps_or_adjacent first)
     pub fn merge(&self, other: &Self) -> Self {
-        debug_assert!(self.overlaps_or_adjacent(other), "Cannot merge non-overlapping segments");
+        debug_assert!(
+            self.overlaps_or_adjacent(other),
+            "Cannot merge non-overlapping segments"
+        );
 
         Self {
             start: self.start.min(other.start),
@@ -874,7 +967,10 @@ pub fn find_libpython(pid: Pid) -> Result<LibpythonInfo> {
 
     // Look for libpython.so mappings
     // The first (lowest address) r-xp mapping is typically the base
-    let mut libpython_regions: Vec<&MemoryRegion> = regions.iter().filter(|r| r.name.contains("libpython")).collect();
+    let mut libpython_regions: Vec<&MemoryRegion> = regions
+        .iter()
+        .filter(|r| r.name.contains("libpython"))
+        .collect();
 
     if !libpython_regions.is_empty() {
         // Sort by start address to find base
@@ -884,24 +980,36 @@ pub fn find_libpython(pid: Pid) -> Result<LibpythonInfo> {
         // Extract path from the region name
         let path = PathBuf::from(&base_region.name);
 
-        return Ok(LibpythonInfo { path, base_addr: base_region.start, is_static: false });
+        return Ok(LibpythonInfo {
+            path,
+            base_addr: base_region.start,
+            is_static: false,
+        });
     }
 
     // Fallback: Check if Python is statically linked into the executable
     // This is common in some Rust-Python distributions
     let exe_path = format!("/proc/{}/exe", pid);
-    let exe_real = fs::read_link(&exe_path).with_context(|| format!("Failed to read {}", exe_path))?;
+    let exe_real =
+        fs::read_link(&exe_path).with_context(|| format!("Failed to read {}", exe_path))?;
 
     // Find the executable's base address in maps
     let exe_name = exe_real.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     for region in &regions {
         if region.name.contains(exe_name) && region.perms.contains('r') {
-            return Ok(LibpythonInfo { path: exe_real, base_addr: region.start, is_static: true });
+            return Ok(LibpythonInfo {
+                path: exe_real,
+                base_addr: region.start,
+                is_static: true,
+            });
         }
     }
 
-    Err(anyhow!("Could not find libpython.so or statically linked Python in PID {}", pid))
+    Err(anyhow!(
+        "Could not find libpython.so or statically linked Python in PID {}",
+        pid
+    ))
 }
 
 /// Parse ELF and extract writable PT_LOAD segments
@@ -926,13 +1034,23 @@ pub fn find_libpython(pid: Pid) -> Result<LibpythonInfo> {
 ///
 /// By registering the entire writable segment, we ensure complete coverage
 /// of Python's global state.
-pub fn parse_elf_writable_segments(elf_path: &PathBuf, base_addr: usize) -> Result<Vec<AlignedSegment>> {
-    let elf_bytes = fs::read(elf_path).with_context(|| format!("Failed to read ELF file: {}", elf_path.display()))?;
+pub fn parse_elf_writable_segments(
+    elf_path: &PathBuf,
+    base_addr: usize,
+) -> Result<Vec<AlignedSegment>> {
+    let elf_bytes = fs::read(elf_path)
+        .with_context(|| format!("Failed to read ELF file: {}", elf_path.display()))?;
 
-    let elf = Elf::parse(&elf_bytes).with_context(|| format!("Failed to parse ELF: {}", elf_path.display()))?;
+    let elf = Elf::parse(&elf_bytes)
+        .with_context(|| format!("Failed to parse ELF: {}", elf_path.display()))?;
 
     // Find the first PT_LOAD segment's p_vaddr (used for address calculation)
-    let first_load_vaddr = elf.program_headers.iter().find(|ph| ph.p_type == goblin::elf::program_header::PT_LOAD).map(|ph| ph.p_vaddr as usize).unwrap_or(0);
+    let first_load_vaddr = elf
+        .program_headers
+        .iter()
+        .find(|ph| ph.p_type == goblin::elf::program_header::PT_LOAD)
+        .map(|ph| ph.p_vaddr as usize)
+        .unwrap_or(0);
 
     let mut segments = Vec::new();
 
@@ -959,15 +1077,25 @@ pub fn parse_elf_writable_segments(elf_path: &PathBuf, base_addr: usize) -> Resu
         let target_va = base_addr + segment_offset;
         let target_end = target_va + ph.p_memsz as usize;
 
-        let description = format!("libpython:PT_LOAD[{}]:0x{:x}-0x{:x}", idx, target_va, target_end);
+        let description = format!(
+            "libpython:PT_LOAD[{}]:0x{:x}-0x{:x}",
+            idx, target_va, target_end
+        );
 
-        eprintln!("[snapshot] Found writable segment: {} ({} pages)", description, (align_to_page_up(target_end) - align_to_page(target_va)) / PAGE_SIZE);
+        eprintln!(
+            "[snapshot] Found writable segment: {} ({} pages)",
+            description,
+            (align_to_page_up(target_end) - align_to_page(target_va)) / PAGE_SIZE
+        );
 
         segments.push(AlignedSegment::new(target_va, target_end, description));
     }
 
     if segments.is_empty() {
-        eprintln!("[snapshot] WARNING: No writable PT_LOAD segments found in {}", elf_path.display());
+        eprintln!(
+            "[snapshot] WARNING: No writable PT_LOAD segments found in {}",
+            elf_path.display()
+        );
     }
 
     Ok(segments)
@@ -986,13 +1114,22 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
     // 1. Get standard regions from /proc/maps
     let regions = parse_memory_maps(pid)?;
     for region in regions.iter().filter(|r| r.should_snapshot()) {
-        all_segments.push(AlignedSegment::new(region.start, region.end, region.name.clone()));
+        all_segments.push(AlignedSegment::new(
+            region.start,
+            region.end,
+            region.name.clone(),
+        ));
     }
 
     // 2. Parse libpython ELF for precise writable segment identification
     match find_libpython(pid) {
         Ok(libpython) => {
-            eprintln!("[snapshot] Found libpython at 0x{:x}: {} (static={})", libpython.base_addr, libpython.path.display(), libpython.is_static);
+            eprintln!(
+                "[snapshot] Found libpython at 0x{:x}: {} (static={})",
+                libpython.base_addr,
+                libpython.path.display(),
+                libpython.is_static
+            );
 
             match parse_elf_writable_segments(&libpython.path, libpython.base_addr) {
                 Ok(elf_segments) => {
@@ -1021,7 +1158,11 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
     // 3. Merge overlapping/adjacent segments
     let merged = merge_segments(all_segments);
 
-    eprintln!("[snapshot] Total segments after merge: {} ({} pages)", merged.len(), merged.iter().map(|s| s.page_count()).sum::<usize>());
+    eprintln!(
+        "[snapshot] Total segments after merge: {} ({} pages)",
+        merged.len(),
+        merged.iter().map(|s| s.page_count()).sum::<usize>()
+    );
 
     Ok(merged)
 }
@@ -1066,13 +1207,20 @@ impl SnapshotManager {
     /// Create a new SnapshotManager, testing for userfaultfd availability
     pub fn new() -> Result<Self> {
         // Test if userfaultfd is available
-        let available = match UffdBuilder::new().close_on_exec(true).non_blocking(false).create() {
+        let available = match UffdBuilder::new()
+            .close_on_exec(true)
+            .non_blocking(false)
+            .create()
+        {
             Ok(_) => {
                 eprintln!("[snapshot] userfaultfd available - Fast-Reset mode enabled");
                 true
             }
             Err(e) => {
-                eprintln!("[snapshot] userfaultfd unavailable ({}). Falling back to fork-server.", e);
+                eprintln!(
+                    "[snapshot] userfaultfd unavailable ({}). Falling back to fork-server.",
+                    e
+                );
                 false
             }
         };
@@ -1102,10 +1250,14 @@ impl SnapshotManager {
     pub fn calibrate(&mut self) -> Result<()> {
         eprintln!("[snapshot] Initiating TLS self-calibration...");
 
-        let calibration = TlsCalibration::calibrate().context("TLS self-calibration failed - ERR_CALIBRATION_FAILED")?;
+        let calibration = TlsCalibration::calibrate()
+            .context("TLS self-calibration failed - ERR_CALIBRATION_FAILED")?;
 
         if calibration.is_calibrated() {
-            eprintln!("[snapshot] TLS calibration complete: mi_heap_t at fs_base + 0x{:04X}", calibration.primary_offset().unwrap_or(0));
+            eprintln!(
+                "[snapshot] TLS calibration complete: mi_heap_t at fs_base + 0x{:04X}",
+                calibration.primary_offset().unwrap_or(0)
+            );
             self.calibration = Some(calibration);
             Ok(())
         } else {
@@ -1122,7 +1274,7 @@ impl SnapshotManager {
     /// Check if calibration has been performed
     #[cfg(target_arch = "x86_64")]
     pub fn is_calibrated(&self) -> bool {
-        self.calibration.as_ref().map_or(false, |c| c.is_calibrated())
+        self.calibration.as_ref().is_some_and(|c| c.is_calibrated())
     }
 
     /// Get the calibrated mi_heap_t offset (if available)
@@ -1153,9 +1305,16 @@ impl SnapshotManager {
 
         // Parse memory maps and filter for snapshotable regions
         let regions = parse_memory_maps(pid)?;
-        let snapshot_regions: Vec<MemoryRegion> = regions.into_iter().filter(|r| r.should_snapshot()).collect();
+        let snapshot_regions: Vec<MemoryRegion> = regions
+            .into_iter()
+            .filter(|r| r.should_snapshot())
+            .collect();
 
-        eprintln!("[snapshot] Registering worker PID {}: {} regions to capture", pid, snapshot_regions.len());
+        eprintln!(
+            "[snapshot] Registering worker PID {}: {} regions to capture",
+            pid,
+            snapshot_regions.len()
+        );
 
         // Capture golden copy for each region
         let mut golden_pages = HashMap::new();
@@ -1166,7 +1325,8 @@ impl SnapshotManager {
 
         // Register regions with the worker's UFFD
         for region in &snapshot_regions {
-            uffd.register(region.start as *mut libc::c_void, region.len).with_context(|| format!("Failed to register region {}", region.name))?;
+            uffd.register(region.start as *mut libc::c_void, region.len)
+                .with_context(|| format!("Failed to register region {}", region.name))?;
         }
 
         // =================================================================
@@ -1180,7 +1340,11 @@ impl SnapshotManager {
         #[cfg(target_arch = "x86_64")]
         let tls_snapshot = match capture_tls_snapshot(pid) {
             Ok(tls) => {
-                eprintln!("[snapshot] TLS captured: fs_base=0x{:x}, {} bytes", tls.fs_base, tls.tls_data.len());
+                eprintln!(
+                    "[snapshot] TLS captured: fs_base=0x{:x}, {} bytes",
+                    tls.fs_base,
+                    tls.tls_data.len()
+                );
                 Some(tls)
             }
             Err(e) => {
@@ -1212,18 +1376,31 @@ impl SnapshotManager {
 
     /// Capture a single memory region using process_vm_readv
     /// Returns a HashMap of page_addr -> page_data
-    fn capture_region_pages(&self, pid: Pid, region: &MemoryRegion) -> Result<HashMap<usize, Vec<u8>>> {
+    fn capture_region_pages(
+        &self,
+        pid: Pid,
+        region: &MemoryRegion,
+    ) -> Result<HashMap<usize, Vec<u8>>> {
         let mut buffer = vec![0u8; region.len];
 
         // Set up iovec for process_vm_readv
         let mut local_iov = [IoSliceMut::new(&mut buffer)];
-        let remote_iov = [RemoteIoVec { base: region.start, len: region.len }];
+        let remote_iov = [RemoteIoVec {
+            base: region.start,
+            len: region.len,
+        }];
 
         // Direct kernel memory copy - no ptrace attach required for child processes
-        let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov).with_context(|| format!("process_vm_readv failed for region {:?}", region.name))?;
+        let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov)
+            .with_context(|| format!("process_vm_readv failed for region {:?}", region.name))?;
 
         if bytes_read != region.len {
-            return Err(anyhow!("Partial snapshot read for {}: {}/{}", region.name, bytes_read, region.len));
+            return Err(anyhow!(
+                "Partial snapshot read for {}: {}/{}",
+                region.name,
+                bytes_read,
+                region.len
+            ));
         }
 
         // Split into pages
@@ -1238,7 +1415,13 @@ impl SnapshotManager {
             offset += PAGE_SIZE;
         }
 
-        eprintln!("[snapshot]   {} ({:x}-{:x}): {} pages captured", region.name, region.start, region.end, region.len / PAGE_SIZE);
+        eprintln!(
+            "[snapshot]   {} ({:x}-{:x}): {} pages captured",
+            region.name,
+            region.start,
+            region.end,
+            region.len / PAGE_SIZE
+        );
 
         Ok(pages)
     }
@@ -1253,28 +1436,59 @@ impl SnapshotManager {
             return Ok(()); // No-op in fallback mode
         }
 
-        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
+        let worker = self
+            .workers
+            .get(&pid.as_raw())
+            .ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
 
         // Get pidfd for the target process
         let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid.as_raw(), 0) } as i32;
         if pidfd < 0 {
-            return Err(anyhow!("pidfd_open failed for PID {}: {}", pid, std::io::Error::last_os_error()));
+            return Err(anyhow!(
+                "pidfd_open failed for PID {}: {}",
+                pid,
+                std::io::Error::last_os_error()
+            ));
         }
 
         // Construct iovec array for all regions
-        let iovecs: Vec<libc::iovec> = worker.regions.iter().map(|r| libc::iovec { iov_base: r.start as *mut libc::c_void, iov_len: r.len }).collect();
+        let iovecs: Vec<libc::iovec> = worker
+            .regions
+            .iter()
+            .map(|r| libc::iovec {
+                iov_base: r.start as *mut libc::c_void,
+                iov_len: r.len,
+            })
+            .collect();
 
         // Call process_madvise - REMOTE MADV_DONTNEED
         const SYS_PROCESS_MADVISE: libc::c_long = 440;
-        let ret = unsafe { libc::syscall(SYS_PROCESS_MADVISE, pidfd, iovecs.as_ptr(), iovecs.len(), libc::MADV_DONTNEED, 0u32) };
+        let ret = unsafe {
+            libc::syscall(
+                SYS_PROCESS_MADVISE,
+                pidfd,
+                iovecs.as_ptr(),
+                iovecs.len(),
+                libc::MADV_DONTNEED,
+                0u32,
+            )
+        };
 
         unsafe { libc::close(pidfd) };
 
         if ret < 0 {
-            return Err(anyhow!("process_madvise failed for PID {}: {}", pid, std::io::Error::last_os_error()));
+            return Err(anyhow!(
+                "process_madvise failed for PID {}: {}",
+                pid,
+                std::io::Error::last_os_error()
+            ));
         }
 
-        eprintln!("[snapshot] Reset worker {}: invalidated {} regions", pid, iovecs.len());
+        eprintln!(
+            "[snapshot] Reset worker {}: invalidated {} regions",
+            pid,
+            iovecs.len()
+        );
 
         Ok(())
     }
@@ -1302,14 +1516,25 @@ impl SnapshotManager {
             return Ok(()); // No-op in fallback mode
         }
 
-        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
+        let worker = self
+            .workers
+            .get(&pid.as_raw())
+            .ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
 
         if let Some(ref tls_snapshot) = worker.tls_snapshot {
-            eprintln!("[snapshot] Restoring TLS for worker {}: fs_base=0x{:x}, {} bytes", pid, tls_snapshot.fs_base, tls_snapshot.tls_data.len());
+            eprintln!(
+                "[snapshot] Restoring TLS for worker {}: fs_base=0x{:x}, {} bytes",
+                pid,
+                tls_snapshot.fs_base,
+                tls_snapshot.tls_data.len()
+            );
             restore_tls_snapshot(pid, tls_snapshot)?;
             eprintln!("[snapshot] TLS restoration complete for worker {}", pid);
         } else {
-            eprintln!("[snapshot] No TLS snapshot for worker {} (pre-3.13 Python or capture failed)", pid);
+            eprintln!(
+                "[snapshot] No TLS snapshot for worker {} (pre-3.13 Python or capture failed)",
+                pid
+            );
         }
 
         Ok(())
@@ -1365,13 +1590,21 @@ impl SnapshotManager {
     ///
     /// This is called from the fault handling loop when userfaultfd reports a fault.
     pub fn handle_fault(&self, pid: Pid, fault_addr: usize) -> Result<()> {
-        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
+        let worker = self
+            .workers
+            .get(&pid.as_raw())
+            .ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
 
         let page_start = align_to_page(fault_addr);
 
         if let Some(data) = worker.golden_pages.get(&page_start) {
             // Restore the page from golden snapshot
-            eprintln!("[snapshot] Restoring page at {:x} ({} bytes) for PID {}", page_start, data.len(), pid);
+            eprintln!(
+                "[snapshot] Restoring page at {:x} ({} bytes) for PID {}",
+                page_start,
+                data.len(),
+                pid
+            );
             // CRITICAL: Uffd::copy signature is (src, dst, len, wake)
             unsafe {
                 worker.uffd.copy(
@@ -1384,8 +1617,16 @@ impl SnapshotManager {
             .with_context(|| format!("Failed to copy page at {:x}", page_start))?;
         } else {
             // Page not in snapshot - zero it
-            eprintln!("[snapshot] Zero-filling page at {:x} for PID {} (not in snapshot)", page_start, pid);
-            unsafe { worker.uffd.zeropage(page_start as *mut libc::c_void, PAGE_SIZE, true) }.with_context(|| format!("Failed to zero page at {:x}", page_start))?;
+            eprintln!(
+                "[snapshot] Zero-filling page at {:x} for PID {} (not in snapshot)",
+                page_start, pid
+            );
+            unsafe {
+                worker
+                    .uffd
+                    .zeropage(page_start as *mut libc::c_void, PAGE_SIZE, true)
+            }
+            .with_context(|| format!("Failed to zero page at {:x}", page_start))?;
         }
 
         Ok(())
@@ -1398,7 +1639,10 @@ impl SnapshotManager {
     pub fn handle_pending_faults(&mut self, pid: Pid) -> Result<usize> {
         use userfaultfd::Event;
 
-        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
+        let worker = self
+            .workers
+            .get(&pid.as_raw())
+            .ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
 
         let mut handled = 0;
 
@@ -1407,12 +1651,19 @@ impl SnapshotManager {
             match worker.uffd.read_event() {
                 Ok(Some(Event::Pagefault { addr, .. })) => {
                     let fault_addr = addr.addr();
-                    eprintln!("[snapshot] UFFD_EVENT_PAGEFAULT at {:x} for PID {}", fault_addr, pid);
+                    eprintln!(
+                        "[snapshot] UFFD_EVENT_PAGEFAULT at {:x} for PID {}",
+                        fault_addr, pid
+                    );
 
                     // Get data and restore
                     let page_start = align_to_page(fault_addr);
                     if let Some(data) = worker.golden_pages.get(&page_start) {
-                        eprintln!("[snapshot] Restoring page {:x} ({} bytes)", page_start, data.len());
+                        eprintln!(
+                            "[snapshot] Restoring page {:x} ({} bytes)",
+                            page_start,
+                            data.len()
+                        );
                         // CRITICAL: Uffd::copy signature is (src, dst, len, wake)
                         unsafe {
                             worker.uffd.copy(
@@ -1423,9 +1674,16 @@ impl SnapshotManager {
                             )?;
                         }
                     } else {
-                        eprintln!("[snapshot] Zero-filling page {:x} (not in snapshot)", page_start);
+                        eprintln!(
+                            "[snapshot] Zero-filling page {:x} (not in snapshot)",
+                            page_start
+                        );
                         unsafe {
-                            worker.uffd.zeropage(page_start as *mut libc::c_void, PAGE_SIZE, true)?;
+                            worker.uffd.zeropage(
+                                page_start as *mut libc::c_void,
+                                PAGE_SIZE,
+                                true,
+                            )?;
                         }
                     }
                     handled += 1;
@@ -1569,7 +1827,10 @@ mod tests {
             perms: "rw-p".to_string(),
             name: "".to_string(),
         };
-        assert!(anon.should_snapshot(), "Anonymous writable regions included");
+        assert!(
+            anon.should_snapshot(),
+            "Anonymous writable regions included"
+        );
     }
 
     #[test]
@@ -1581,7 +1842,10 @@ mod tests {
             perms: "rw-p".to_string(),
             name: "/usr/lib/libpython3.12.so".to_string(),
         };
-        assert!(libpython.should_snapshot(), "libpython data segment included");
+        assert!(
+            libpython.should_snapshot(),
+            "libpython data segment included"
+        );
     }
 
     #[test]
@@ -1595,7 +1859,10 @@ mod tests {
             perms: "rw-s".to_string(), // Shared mapping
             name: "/memfd:tach_coverage (deleted)".to_string(),
         };
-        assert!(!coverage_memfd.should_snapshot(), "coverage ring buffer must be excluded");
+        assert!(
+            !coverage_memfd.should_snapshot(),
+            "coverage ring buffer must be excluded"
+        );
 
         // Also test the shorter name variant
         let coverage_short = MemoryRegion {
@@ -1605,7 +1872,10 @@ mod tests {
             perms: "rw-s".to_string(),
             name: "memfd:tach_coverage".to_string(),
         };
-        assert!(!coverage_short.should_snapshot(), "coverage ring buffer (short name) must be excluded");
+        assert!(
+            !coverage_short.should_snapshot(),
+            "coverage ring buffer (short name) must be excluded"
+        );
     }
 
     // =========================================================================
@@ -1652,14 +1922,20 @@ mod tests {
     #[test]
     fn test_snapshot_manager_no_workers_initially() {
         let mgr = SnapshotManager::new().unwrap();
-        assert!(mgr.worker_pids().is_empty(), "No workers registered initially");
+        assert!(
+            mgr.worker_pids().is_empty(),
+            "No workers registered initially"
+        );
     }
 
     #[test]
     fn test_snapshot_manager_get_nonexistent_worker() {
         let mgr = SnapshotManager::new().unwrap();
         let fake_pid = Pid::from_raw(99999);
-        assert!(mgr.get_worker_uffd(fake_pid).is_none(), "Nonexistent worker should return None");
+        assert!(
+            mgr.get_worker_uffd(fake_pid).is_none(),
+            "Nonexistent worker should return None"
+        );
     }
 
     // =========================================================================
@@ -1783,7 +2059,11 @@ mod tests {
 
     #[test]
     fn test_merge_segments_no_overlap() {
-        let segments = vec![AlignedSegment::new(0x1000, 0x2000, "a"), AlignedSegment::new(0x5000, 0x6000, "b"), AlignedSegment::new(0x9000, 0xa000, "c")];
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x5000, 0x6000, "b"),
+            AlignedSegment::new(0x9000, 0xa000, "c"),
+        ];
         let merged = merge_segments(segments);
 
         // No overlap, should remain 3 segments
@@ -1792,7 +2072,10 @@ mod tests {
 
     #[test]
     fn test_merge_segments_overlapping() {
-        let segments = vec![AlignedSegment::new(0x1000, 0x3000, "a"), AlignedSegment::new(0x2000, 0x4000, "b")];
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x3000, "a"),
+            AlignedSegment::new(0x2000, 0x4000, "b"),
+        ];
         let merged = merge_segments(segments);
 
         // Should merge into one segment
@@ -1803,7 +2086,10 @@ mod tests {
 
     #[test]
     fn test_merge_segments_adjacent() {
-        let segments = vec![AlignedSegment::new(0x1000, 0x2000, "a"), AlignedSegment::new(0x2000, 0x3000, "b")];
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x2000, 0x3000, "b"),
+        ];
         let merged = merge_segments(segments);
 
         // Adjacent segments should merge
@@ -1818,7 +2104,11 @@ mod tests {
         // A: [0x1000, 0x3000)  "heap"
         // B: [0x2000, 0x4000)  "libpython.data"  <- overlaps A
         // C: [0x5000, 0x6000)  "stack"           <- separate
-        let segments = vec![AlignedSegment::new(0x1000, 0x3000, "heap"), AlignedSegment::new(0x2000, 0x4000, "libpython.data"), AlignedSegment::new(0x5000, 0x6000, "stack")];
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x3000, "heap"),
+            AlignedSegment::new(0x2000, 0x4000, "libpython.data"),
+            AlignedSegment::new(0x5000, 0x6000, "stack"),
+        ];
         let merged = merge_segments(segments);
 
         // Should produce 2 segments: merged A+B and separate C
@@ -1836,7 +2126,11 @@ mod tests {
     #[test]
     fn test_merge_segments_unsorted_input() {
         // Input is not sorted - merge should handle this
-        let segments = vec![AlignedSegment::new(0x5000, 0x6000, "c"), AlignedSegment::new(0x1000, 0x3000, "a"), AlignedSegment::new(0x2000, 0x4000, "b")];
+        let segments = vec![
+            AlignedSegment::new(0x5000, 0x6000, "c"),
+            AlignedSegment::new(0x1000, 0x3000, "a"),
+            AlignedSegment::new(0x2000, 0x4000, "b"),
+        ];
         let merged = merge_segments(segments);
 
         // Should still produce correct result
@@ -1850,7 +2144,12 @@ mod tests {
     #[test]
     fn test_merge_segments_chain() {
         // Chain of overlapping segments
-        let segments = vec![AlignedSegment::new(0x1000, 0x2000, "a"), AlignedSegment::new(0x1800, 0x2800, "b"), AlignedSegment::new(0x2400, 0x3400, "c"), AlignedSegment::new(0x3000, 0x4000, "d")];
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x2000, "a"),
+            AlignedSegment::new(0x1800, 0x2800, "b"),
+            AlignedSegment::new(0x2400, 0x3400, "c"),
+            AlignedSegment::new(0x3000, 0x4000, "d"),
+        ];
         let merged = merge_segments(segments);
 
         // All should merge into one
@@ -1942,12 +2241,21 @@ mod tests {
         assert!(!regions.is_empty());
 
         // Look for any anonymous writable region that could be TLS
-        let tls_candidates: Vec<_> = regions.iter().filter(|r| r.perms.contains('w') && r.perms.contains('p') && r.name.is_empty()).collect();
+        let tls_candidates: Vec<_> = regions
+            .iter()
+            .filter(|r| r.perms.contains('w') && r.perms.contains('p') && r.name.is_empty())
+            .collect();
 
         // There should be at least one anonymous writable region
         // (TLS is typically in one of these)
-        eprintln!("[test] Found {} potential TLS candidate regions", tls_candidates.len());
-        assert!(!tls_candidates.is_empty(), "Should find anonymous writable regions");
+        eprintln!(
+            "[test] Found {} potential TLS candidate regions",
+            tls_candidates.len()
+        );
+        assert!(
+            !tls_candidates.is_empty(),
+            "Should find anonymous writable regions"
+        );
     }
 
     #[cfg(target_arch = "x86_64")]

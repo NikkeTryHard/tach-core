@@ -1,4 +1,5 @@
 /target
+fuzz/target/
 /.venv
 Cargo.lock
 __pycache__/

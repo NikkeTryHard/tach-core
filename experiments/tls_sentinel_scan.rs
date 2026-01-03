@@ -299,9 +299,9 @@ pub fn calibrate_tls_offsets() -> HashMap<String, usize> {
     eprintln!("{}", "=".repeat(70));
 
     // Initialize Python
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
-    let result = Python::with_gil(|py| {
+    let result = Python::attach(|py| {
         // Step 1: Populate mimalloc TLS structures
         eprintln!("\n[Step 1] Populating mimalloc TLS structures...");
         if let Err(e) = populate_mimalloc_tls(py) {

@@ -267,9 +267,9 @@ fn test_find_heap_region() {
 /// Test: Python float allocation works via PyO3
 #[test]
 fn test_python_float_allocation() {
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Simple float allocation test
         let code = c"
 floats = [float(i) * 1.1 for i in range(100)]
@@ -360,9 +360,9 @@ fn test_bss_heap_split_brain_validation() {
 
             // 4. Initialize Python and warm up PyFloat_FreeList
             eprintln!("\n[worker] Step 1: Initializing Python and warming up PyFloat_FreeList...");
-            pyo3::prepare_freethreaded_python();
+            Python::initialize();
 
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "warmup") {
                     eprintln!("[worker] Python warmup error: {}", e);
                     std::process::exit(2);
@@ -390,7 +390,7 @@ fn test_bss_heap_split_brain_validation() {
             eprintln!("\n[worker] Step 3: Resumed from snapshot. Now dirtying memory...");
 
             // 8. Dirty the memory (consume PyFloat_FreeList, allocate more)
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "dirty") {
                     eprintln!("[worker] Python dirty error: {}", e);
                     std::process::exit(3);
@@ -450,7 +450,7 @@ fn test_bss_heap_split_brain_validation() {
             // If BSS/Heap are out of sync, this will SIGSEGV
             eprintln!("[worker] Step 6: Running gc.collect() 100 times (Split-Brain test)...");
 
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "verify") {
                     eprintln!("[worker] Python verify error: {}", e);
                     std::process::exit(4);
@@ -579,9 +579,9 @@ fn test_bss_heap_split_brain_validation() {
 /// without the full snapshot/restore machinery.
 #[test]
 fn test_gc_collect_100_times() {
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Warmup
         if let Err(e) = run_float_stressor(py, "warmup") {
             panic!("Warmup failed: {}", e);
@@ -657,8 +657,8 @@ _tach_test_data = [bytearray(1024) for _ in range({})]
     );
 
     let code_with_nul = format!("{}\0", code);
-    let code_cstr =
-        std::ffi::CStr::from_bytes_with_nul(code_with_nul.as_bytes()).expect("CStr creation failed");
+    let code_cstr = std::ffi::CStr::from_bytes_with_nul(code_with_nul.as_bytes())
+        .expect("CStr creation failed");
 
     py.run(code_cstr, None, None)?;
     Ok(())
@@ -720,11 +720,11 @@ fn test_rss_stability_after_1000_restores() {
     eprintln!("Max RSS growth:   {}%", MAX_RSS_GROWTH_PERCENT);
     eprintln!("{}", "=".repeat(70));
 
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
     // Warmup: Initialize Python allocator structures
     eprintln!("\n[ghost_hunt] Warming up Python allocator...");
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         if let Err(e) = allocate_python_objects(py, ALLOCATION_MB) {
             panic!("Warmup allocation failed: {}", e);
         }
@@ -734,8 +734,12 @@ fn test_rss_stability_after_1000_restores() {
     });
 
     // Force GC and capture baseline RSS
-    Python::with_gil(|py| {
-        let _ = py.run(c"import gc; gc.collect(); gc.collect(); gc.collect()", None, None);
+    Python::attach(|py| {
+        let _ = py.run(
+            c"import gc; gc.collect(); gc.collect(); gc.collect()",
+            None,
+            None,
+        );
     });
     std::thread::sleep(Duration::from_millis(100)); // Let OS reclaim pages
 
@@ -758,7 +762,7 @@ fn test_rss_stability_after_1000_restores() {
     // The Ghost Hunt: 1000 restore cycles
     eprintln!("\n[ghost_hunt] Starting {} restore cycles...", ITERATIONS);
     for i in 0..ITERATIONS {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Step 1: Allocate 10MB of Python objects
             if let Err(e) = allocate_python_objects(py, ALLOCATION_MB) {
                 panic!("Iteration {} allocation failed: {}", i, e);
@@ -783,7 +787,8 @@ fn test_rss_stability_after_1000_restores() {
                     peak_rss = current_rss;
                 }
 
-                let growth_percent = ((current_rss as f64 - initial_rss as f64) / initial_rss as f64) * 100.0;
+                let growth_percent =
+                    ((current_rss as f64 - initial_rss as f64) / initial_rss as f64) * 100.0;
                 eprintln!(
                     "[ghost_hunt] Iteration {:4}: RSS = {} ({:+.2}%)",
                     i,
@@ -803,8 +808,12 @@ fn test_rss_stability_after_1000_restores() {
     eprintln!("\n");
 
     // Final GC pass
-    Python::with_gil(|py| {
-        let _ = py.run(c"import gc; gc.collect(); gc.collect(); gc.collect()", None, None);
+    Python::attach(|py| {
+        let _ = py.run(
+            c"import gc; gc.collect(); gc.collect(); gc.collect()",
+            None,
+            None,
+        );
     });
     std::thread::sleep(Duration::from_millis(100)); // Let OS reclaim pages
 
@@ -819,9 +828,16 @@ fn test_rss_stability_after_1000_restores() {
     eprintln!("Initial RSS:      {}", format_bytes(initial_rss));
     eprintln!("Final RSS:        {}", format_bytes(final_rss));
     eprintln!("Peak RSS:         {}", format_bytes(peak_rss));
-    eprintln!("RSS Growth:       {} ({:.2}%)", format_bytes(rss_growth), growth_percent);
+    eprintln!(
+        "RSS Growth:       {} ({:.2}%)",
+        format_bytes(rss_growth),
+        growth_percent
+    );
     eprintln!("Duration:         {:.2}s", elapsed.as_secs_f64());
-    eprintln!("Iterations/sec:   {:.1}", ITERATIONS as f64 / elapsed.as_secs_f64());
+    eprintln!(
+        "Iterations/sec:   {:.1}",
+        ITERATIONS as f64 / elapsed.as_secs_f64()
+    );
     eprintln!("{}", "=".repeat(70));
 
     // RSS Trend Analysis
@@ -856,7 +872,10 @@ fn test_rss_stability_after_1000_restores() {
             ITERATIONS
         );
     } else {
-        eprintln!("✓ NO GHOST OBJECTS: RSS growth {:.2}% is within {}% limit", growth_percent, MAX_RSS_GROWTH_PERCENT);
+        eprintln!(
+            "✓ NO GHOST OBJECTS: RSS growth {:.2}% is within {}% limit",
+            growth_percent, MAX_RSS_GROWTH_PERCENT
+        );
         eprintln!("  Restoration Quadrant is properly synchronized.");
         eprintln!("{}", "=".repeat(70));
     }
@@ -869,12 +888,15 @@ fn test_rss_stability_quick() {
     const ALLOCATION_MB: usize = 5;
     const MAX_RSS_GROWTH_PERCENT: f64 = 10.0; // More lenient for quick test
 
-    eprintln!("[rss_quick] Quick RSS stability test: {} iterations", ITERATIONS);
+    eprintln!(
+        "[rss_quick] Quick RSS stability test: {} iterations",
+        ITERATIONS
+    );
 
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
     // Warmup
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let _ = allocate_python_objects(py, ALLOCATION_MB);
         let _ = cleanup_python_objects(py);
     });
@@ -889,7 +911,7 @@ fn test_rss_stability_quick() {
 
     // Run iterations
     for i in 0..ITERATIONS {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let _ = allocate_python_objects(py, ALLOCATION_MB);
             let _ = cleanup_python_objects(py);
         });
@@ -902,7 +924,7 @@ fn test_rss_stability_quick() {
     }
 
     // Final check
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let _ = py.run(c"import gc; gc.collect()", None, None);
     });
 
@@ -917,7 +939,10 @@ fn test_rss_stability_quick() {
     );
 
     if growth_percent > MAX_RSS_GROWTH_PERCENT {
-        eprintln!("[rss_quick] WARNING: RSS grew by {:.2}% (limit: {}%)", growth_percent, MAX_RSS_GROWTH_PERCENT);
+        eprintln!(
+            "[rss_quick] WARNING: RSS grew by {:.2}% (limit: {}%)",
+            growth_percent, MAX_RSS_GROWTH_PERCENT
+        );
         // Don't panic in quick test, just warn
     } else {
         eprintln!("[rss_quick] ✓ RSS stability OK");

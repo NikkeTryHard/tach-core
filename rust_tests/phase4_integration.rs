@@ -385,6 +385,7 @@ fn test_result_before_exit_invariant() {
     // Result MUST be sent BEFORE the exit decision
 
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     struct WorkerEvent {
         event_type: &'static str,
         test_id: u32,

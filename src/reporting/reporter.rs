@@ -67,12 +67,16 @@ impl Reporter for JsonReporter {
     fn on_run_start(&mut self, count: usize) {
         let event = MachineEvent::RunStart { count };
         // ONLY JsonReporter touches stdout
-        println!("{}", serde_json::to_string(&event).unwrap());
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 
     fn on_test_start(&mut self, id: &str, file: &str) {
         let event = MachineEvent::TestStart { id, file };
-        println!("{}", serde_json::to_string(&event).unwrap());
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 
     fn on_test_finished(
@@ -88,7 +92,9 @@ impl Reporter for JsonReporter {
             duration_ms,
             message,
         };
-        println!("{}", serde_json::to_string(&event).unwrap());
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
@@ -98,12 +104,16 @@ impl Reporter for JsonReporter {
             skipped,
             duration_ms,
         };
-        println!("{}", serde_json::to_string(&event).unwrap());
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 
     fn on_error(&mut self, message: &str) {
         let event = MachineEvent::Error { message };
-        println!("{}", serde_json::to_string(&event).unwrap());
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 }
 

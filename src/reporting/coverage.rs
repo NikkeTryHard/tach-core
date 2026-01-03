@@ -724,7 +724,10 @@ pub fn init_coverage_buffer(capacity: usize) -> Result<&'static CoverageRingBuff
         .set(buffer)
         .map_err(|_| anyhow!("Failed to set global ring buffer"))?;
 
-    Ok(RING_BUFFER.get().unwrap())
+    // SAFETY: We just set the buffer above, so get() must succeed
+    RING_BUFFER
+        .get()
+        .ok_or_else(|| anyhow!("Ring buffer not available after initialization"))
 }
 
 /// Get reference to the global coverage ring buffer.
@@ -758,7 +761,10 @@ pub fn init_mapping_buffer(capacity: usize) -> Result<&'static MappingRingBuffer
         .set(buffer)
         .map_err(|_| anyhow!("Failed to set global mapping buffer"))?;
 
-    Ok(MAPPING_BUFFER.get().unwrap())
+    // SAFETY: We just set the buffer above, so get() must succeed
+    MAPPING_BUFFER
+        .get()
+        .ok_or_else(|| anyhow!("Mapping buffer not available after initialization"))
 }
 
 /// Get reference to the global mapping ring buffer.
@@ -1024,7 +1030,7 @@ impl Drop for CoverageAggregator {
 pub fn py_record_line(py: Python<'_>, code_id: u64, lineno: u32) -> bool {
     // Release GIL before writing to ring buffer
     // This prevents serialization with Supervisor's aggregator thread
-    py.allow_threads(|| {
+    py.detach(|| {
         if let Some(buffer) = get_coverage_buffer() {
             buffer.write(CoverageEntry::line(code_id, lineno))
         } else {
@@ -1074,7 +1080,7 @@ pub fn py_get_coverage_overflow() -> u64 {
 #[pyo3(name = "record_py_start")]
 pub fn py_record_py_start(py: Python<'_>, code_id: u64, filename: String) {
     // Release GIL before doing any work
-    py.allow_threads(|| {
+    py.detach(|| {
         // Check thread-local set (fast path for repeated calls)
         if mark_code_seen(code_id) {
             // First time seeing this code object - register mapping
@@ -1093,6 +1099,182 @@ pub fn py_get_mapping_overflow() -> u64 {
     get_mapping_buffer()
         .map(|b| b.overflow_count())
         .unwrap_or(0)
+}
+
+// =============================================================================
+// Coverage Output Writers
+// =============================================================================
+
+/// Write coverage data to LCOV format file.
+///
+/// LCOV format is widely supported by coverage visualization tools like
+/// Codecov, Coveralls, and IDE plugins.
+///
+/// # Format
+/// ```text
+/// SF:/path/to/file.py
+/// DA:10,5
+/// DA:11,3
+/// DA:15,0
+/// LF:3
+/// LH:2
+/// end_of_record
+/// ```
+///
+/// - SF: Source file path
+/// - DA:line,hits: Line data (line number, hit count)
+/// - LF: Lines found (total lines instrumented)
+/// - LH: Lines hit (lines with hits > 0)
+/// - end_of_record: End marker
+pub fn write_lcov(data: &CoverageData, path: &std::path::Path) -> Result<()> {
+    use std::collections::BTreeMap;
+    use std::io::Write;
+
+    // Group by filename, sorted for deterministic output
+    let mut by_file: BTreeMap<&str, Vec<(u32, u64)>> = BTreeMap::new();
+    for ((filename, lineno), hits) in data {
+        by_file
+            .entry(filename.as_str())
+            .or_default()
+            .push((*lineno, *hits));
+    }
+
+    let mut output = std::fs::File::create(path)
+        .with_context(|| format!("Failed to create LCOV file: {}", path.display()))?;
+
+    for (filename, mut lines) in by_file {
+        // Sort lines by line number
+        lines.sort_by_key(|(lineno, _)| *lineno);
+
+        // SF: Source file
+        writeln!(output, "SF:{}", filename)?;
+
+        // DA: Line data
+        for (lineno, hits) in &lines {
+            writeln!(output, "DA:{},{}", lineno, hits)?;
+        }
+
+        // LF: Lines found (total instrumented)
+        writeln!(output, "LF:{}", lines.len())?;
+
+        // LH: Lines hit (with hits > 0)
+        let lines_hit = lines.iter().filter(|(_, hits)| *hits > 0).count();
+        writeln!(output, "LH:{}", lines_hit)?;
+
+        writeln!(output, "end_of_record")?;
+    }
+
+    eprintln!("[coverage] Wrote LCOV report to {}", path.display());
+    Ok(())
+}
+
+/// Write coverage data to JSON format file.
+///
+/// JSON format is useful for programmatic processing and integration
+/// with custom tools.
+///
+/// # Format
+/// ```json
+/// {
+///   "files": {
+///     "/path/to/file.py": {
+///       "lines": { "10": 5, "11": 3 },
+///       "lines_found": 2,
+///       "lines_hit": 2
+///     }
+///   },
+///   "totals": {
+///     "lines_found": 100,
+///     "lines_hit": 80,
+///     "line_coverage": 0.8
+///   }
+/// }
+/// ```
+pub fn write_json(data: &CoverageData, path: &std::path::Path) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    // Group by filename
+    let mut by_file: BTreeMap<&str, BTreeMap<u32, u64>> = BTreeMap::new();
+    for ((filename, lineno), hits) in data {
+        by_file
+            .entry(filename.as_str())
+            .or_default()
+            .insert(*lineno, *hits);
+    }
+
+    // Build JSON structure
+    let mut files_json = serde_json::Map::new();
+    let mut total_found = 0usize;
+    let mut total_hit = 0usize;
+
+    for (filename, lines) in by_file {
+        let lines_found = lines.len();
+        let lines_hit = lines.values().filter(|&&h| h > 0).count();
+
+        total_found += lines_found;
+        total_hit += lines_hit;
+
+        let lines_obj: serde_json::Map<String, serde_json::Value> = lines
+            .into_iter()
+            .map(|(lineno, hits)| (lineno.to_string(), serde_json::Value::from(hits)))
+            .collect();
+
+        let file_obj = serde_json::json!({
+            "lines": lines_obj,
+            "lines_found": lines_found,
+            "lines_hit": lines_hit
+        });
+
+        files_json.insert(filename.to_string(), file_obj);
+    }
+
+    let coverage_pct = if total_found > 0 {
+        (total_hit as f64) / (total_found as f64)
+    } else {
+        0.0
+    };
+
+    let output = serde_json::json!({
+        "files": files_json,
+        "totals": {
+            "lines_found": total_found,
+            "lines_hit": total_hit,
+            "line_coverage": coverage_pct
+        }
+    });
+
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("Failed to create JSON coverage file: {}", path.display()))?;
+
+    serde_json::to_writer_pretty(file, &output)
+        .with_context(|| format!("Failed to write JSON coverage: {}", path.display()))?;
+
+    eprintln!("[coverage] Wrote JSON report to {}", path.display());
+    Ok(())
+}
+
+/// Write coverage data to the specified output file.
+///
+/// The format is determined by the file extension:
+/// - `.lcov` or `.info` -> LCOV format
+/// - `.json` -> JSON format
+/// - Other -> LCOV format (default)
+pub fn write_coverage_report(
+    data: &CoverageData,
+    path: &std::path::Path,
+    format: Option<&str>,
+) -> Result<()> {
+    let format = format.unwrap_or_else(|| {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("lcov")
+    });
+
+    match format.to_lowercase().as_str() {
+        "json" => write_json(data, path),
+        "lcov" | "info" => write_lcov(data, path),
+        _ => write_lcov(data, path),
+    }
 }
 
 // =============================================================================
