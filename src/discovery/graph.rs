@@ -1,4 +1,4 @@
-//! Toxicity Graph Module 
+//! Toxicity Graph Module
 //!
 //! The "Contagion Engine" - builds a dependency graph of Python modules and
 //! propagates toxicity transitively. If module B is toxic and module A imports B,

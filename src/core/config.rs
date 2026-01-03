@@ -74,7 +74,13 @@ pub struct Cli {
     ///
     /// Use 'auto' (or 0) to auto-detect based on CPU count.
     /// Default: auto
-    #[arg(short = 'n', long, value_name = "WORKERS", default_value = "auto", env = "TACH_WORKERS")]
+    #[arg(
+        short = 'n',
+        long,
+        value_name = "WORKERS",
+        default_value = "auto",
+        env = "TACH_WORKERS"
+    )]
     pub workers: String,
 
     // =========================================================================
@@ -332,7 +338,10 @@ impl TachConfig {
 
     /// Check if coverage is enabled
     pub fn coverage_enabled(&self) -> bool {
-        self.coverage.as_ref().and_then(|c| c.enabled).unwrap_or(false)
+        self.coverage
+            .as_ref()
+            .and_then(|c| c.enabled)
+            .unwrap_or(false)
     }
 }
 
@@ -471,8 +480,14 @@ pub fn load_env_from_pyproject(root: &Path) {
         if let Some(env_vars) = tool.pytest_env {
             for (key, value) in env_vars {
                 // SECURITY: Block dangerous environment variables
-                if ENV_DENYLIST.iter().any(|&blocked| key.eq_ignore_ascii_case(blocked)) {
-                    eprintln!("[config] WARNING: Blocked dangerous env var from pyproject.toml: {}", key);
+                if ENV_DENYLIST
+                    .iter()
+                    .any(|&blocked| key.eq_ignore_ascii_case(blocked))
+                {
+                    eprintln!(
+                        "[config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
+                        key
+                    );
                     continue;
                 }
                 std::env::set_var(&key, &value);
@@ -596,7 +611,10 @@ select = ["E", "F"]
 "#;
         let pyproject: PyProject = toml::from_str(toml_content).unwrap();
         let env_vars = pyproject.tool.unwrap().pytest_env.unwrap();
-        assert_eq!(env_vars.get("DB_URL"), Some(&"sqlite:///:memory:".to_string()));
+        assert_eq!(
+            env_vars.get("DB_URL"),
+            Some(&"sqlite:///:memory:".to_string())
+        );
     }
 
     #[test]
@@ -815,7 +833,19 @@ Ld_Library_Path = "/malicious/path"
     #[test]
     fn test_env_denylist_all_blocked_vars() {
         // Verify all blocked variables are in the denylist
-        let blocked_vars = ["LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONMALLOC", "PATH", "HOME", "USER"];
+        let blocked_vars = [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "LD_DEBUG",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "PYTHONMALLOC",
+            "PATH",
+            "HOME",
+            "USER",
+        ];
 
         // Just verify the count matches what we expect
         assert_eq!(blocked_vars.len(), 11);

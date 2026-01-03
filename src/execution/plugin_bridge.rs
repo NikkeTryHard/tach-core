@@ -112,12 +112,25 @@ impl FdTeleportRequest {
     /// Create a new teleport request for multiple FDs
     pub fn batch(fds: Vec<RawFd>, target_fds: Vec<i32>, names: Vec<String>) -> Result<Self> {
         if fds.len() != target_fds.len() || fds.len() != names.len() {
-            return Err(anyhow!("FD teleport request: mismatched lengths (fds={}, targets={}, names={})", fds.len(), target_fds.len(), names.len()));
+            return Err(anyhow!(
+                "FD teleport request: mismatched lengths (fds={}, targets={}, names={})",
+                fds.len(),
+                target_fds.len(),
+                names.len()
+            ));
         }
         if fds.len() > MAX_FDS_PER_MESSAGE {
-            return Err(anyhow!("FD teleport request: too many FDs ({} > {})", fds.len(), MAX_FDS_PER_MESSAGE));
+            return Err(anyhow!(
+                "FD teleport request: too many FDs ({} > {})",
+                fds.len(),
+                MAX_FDS_PER_MESSAGE
+            ));
         }
-        Ok(Self { fds, target_fds, names })
+        Ok(Self {
+            fds,
+            target_fds,
+            names,
+        })
     }
 
     /// Number of FDs in this request
@@ -171,7 +184,11 @@ pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
     }
 
     if request.len() > MAX_FDS_PER_MESSAGE {
-        return Err(anyhow!("Too many FDs to send: {} > {}", request.len(), MAX_FDS_PER_MESSAGE));
+        return Err(anyhow!(
+            "Too many FDs to send: {} > {}",
+            request.len(),
+            MAX_FDS_PER_MESSAGE
+        ));
     }
 
     // Build message body: count (u32) + target_fds (i32 array)
@@ -185,9 +202,15 @@ pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
     let iov = [IoSlice::new(&msg_body)];
     let cmsg = [ControlMessage::ScmRights(&request.fds)];
 
-    eprintln!("[fd_teleporter] Sending {} FDs: {:?} -> targets {:?}", request.len(), request.fds, request.target_fds);
+    eprintln!(
+        "[fd_teleporter] Sending {} FDs: {:?} -> targets {:?}",
+        request.len(),
+        request.fds,
+        request.target_fds
+    );
 
-    sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsg, MsgFlags::empty(), None).context("Failed to send FDs via SCM_RIGHTS")?;
+    sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsg, MsgFlags::empty(), None)
+        .context("Failed to send FDs via SCM_RIGHTS")?;
 
     eprintln!("[fd_teleporter] FDs sent successfully");
 
@@ -220,7 +243,10 @@ pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
 pub fn forget_sent_fd(fd: OwnedFd) {
     let raw_fd = fd.as_raw_fd();
     std::mem::forget(fd);
-    eprintln!("[fd_teleporter] Ghost Close Prevention: forgot ownership of FD {}", raw_fd);
+    eprintln!(
+        "[fd_teleporter] Ghost Close Prevention: forgot ownership of FD {}",
+        raw_fd
+    );
 }
 
 // =============================================================================
@@ -255,7 +281,9 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
 
     // Control message buffer for up to MAX_FDS_PER_MESSAGE file descriptors
     // SAFETY: CMSG_SPACE computes the required buffer size
-    let cmsg_size = unsafe { libc::CMSG_SPACE((MAX_FDS_PER_MESSAGE * std::mem::size_of::<RawFd>()) as u32) } as usize;
+    let cmsg_size =
+        unsafe { libc::CMSG_SPACE((MAX_FDS_PER_MESSAGE * std::mem::size_of::<RawFd>()) as u32) }
+            as usize;
     let mut cmsg_buf = vec![0u8; cmsg_size];
 
     let mut msg: libc::msghdr = unsafe { MaybeUninit::zeroed().assume_init() };
@@ -267,7 +295,10 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
     // SAFETY: recvmsg is a safe syscall with properly initialized buffers
     let bytes_received = unsafe { libc::recvmsg(sock.as_raw_fd(), &mut msg, 0) };
     if bytes_received < 0 {
-        return Err(anyhow!("recvmsg failed: {}", std::io::Error::last_os_error()));
+        return Err(anyhow!(
+            "recvmsg failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     if bytes_received < 4 {
@@ -278,11 +309,19 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
     let count = u32::from_le_bytes([msg_body[0], msg_body[1], msg_body[2], msg_body[3]]) as usize;
 
     if count == 0 {
-        return Ok(FdAdoptionResult { adopted_count: 0, final_fds: vec![], errors: vec![] });
+        return Ok(FdAdoptionResult {
+            adopted_count: 0,
+            final_fds: vec![],
+            errors: vec![],
+        });
     }
 
     if count > MAX_FDS_PER_MESSAGE {
-        return Err(anyhow!("Too many FDs in message: {} > {}", count, MAX_FDS_PER_MESSAGE));
+        return Err(anyhow!(
+            "Too many FDs in message: {} > {}",
+            count,
+            MAX_FDS_PER_MESSAGE
+        ));
     }
 
     // Extract target FDs from message body
@@ -292,7 +331,12 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
         if offset + 4 > bytes_received as usize {
             return Err(anyhow!("Message truncated: missing target_fd[{}]", i));
         }
-        let target = i32::from_le_bytes([msg_body[offset], msg_body[offset + 1], msg_body[offset + 2], msg_body[offset + 3]]);
+        let target = i32::from_le_bytes([
+            msg_body[offset],
+            msg_body[offset + 1],
+            msg_body[offset + 2],
+            msg_body[offset + 3],
+        ]);
         target_fds.push(target);
     }
 
@@ -318,10 +362,17 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
     }
 
     if received_fds.len() != count {
-        return Err(anyhow!("FD count mismatch: expected {} from message, received {} via SCM_RIGHTS", count, received_fds.len()));
+        return Err(anyhow!(
+            "FD count mismatch: expected {} from message, received {} via SCM_RIGHTS",
+            count,
+            received_fds.len()
+        ));
     }
 
-    eprintln!("[fd_teleporter] Received {} FDs: {:?} -> adopting to {:?}", count, received_fds, target_fds);
+    eprintln!(
+        "[fd_teleporter] Received {} FDs: {:?} -> adopting to {:?}",
+        count, received_fds, target_fds
+    );
 
     // =========================================================================
     //  The dup2 Strategy: Force FDs to Expected Indices
@@ -348,7 +399,10 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
 
         if received_fd == target_fd {
             // Already at correct position
-            eprintln!("[fd_teleporter] FD {} already at target position", received_fd);
+            eprintln!(
+                "[fd_teleporter] FD {} already at target position",
+                received_fd
+            );
             final_fds.push(received_fd);
             adopted_count += 1;
             continue;
@@ -362,12 +416,18 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
 
         if result == -1 {
             let err = std::io::Error::last_os_error();
-            errors.push(format!("dup2({} -> {}) failed: {}", received_fd, target_fd, err));
+            errors.push(format!(
+                "dup2({} -> {}) failed: {}",
+                received_fd, target_fd, err
+            ));
             // Keep the received_fd as fallback
             final_fds.push(received_fd);
             // Don't close received_fd since we're using it as fallback
         } else {
-            eprintln!("[fd_teleporter] dup2({} -> {}) succeeded", received_fd, target_fd);
+            eprintln!(
+                "[fd_teleporter] dup2({} -> {}) succeeded",
+                received_fd, target_fd
+            );
             final_fds.push(target_fd);
             adopted_count += 1;
 
@@ -379,9 +439,16 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
         }
     }
 
-    eprintln!("[fd_teleporter] Adoption complete: {}/{} FDs adopted, final_fds={:?}", adopted_count, count, final_fds);
+    eprintln!(
+        "[fd_teleporter] Adoption complete: {}/{} FDs adopted, final_fds={:?}",
+        adopted_count, count, final_fds
+    );
 
-    Ok(FdAdoptionResult { adopted_count, final_fds, errors })
+    Ok(FdAdoptionResult {
+        adopted_count,
+        final_fds,
+        errors,
+    })
 }
 
 /// Receive a single file descriptor and adopt it at a specific target FD
@@ -402,7 +469,10 @@ pub fn receive_and_adopt_single_fd(sock: &UnixStream) -> Result<RawFd> {
     }
 
     if !result.errors.is_empty() {
-        eprintln!("[fd_teleporter] WARNING: Adoption had errors: {:?}", result.errors);
+        eprintln!(
+            "[fd_teleporter] WARNING: Adoption had errors: {:?}",
+            result.errors
+        );
     }
 
     Ok(result.final_fds[0])
@@ -448,7 +518,6 @@ pub fn create_teleporter_socket_pair() -> Result<(UnixStream, UnixStream)> {
 ///     import os
 ///     return os.fdopen(file_fd, mode)
 /// ```
-#[cfg(feature = "pyo3")]
 pub mod python {
     use pyo3::prelude::*;
 
@@ -482,7 +551,12 @@ mod tests {
 
     #[test]
     fn test_fd_teleport_request_batch() {
-        let req = FdTeleportRequest::batch(vec![3, 4, 5], vec![10, 11, 12], vec!["fd_a".into(), "fd_b".into(), "fd_c".into()]).unwrap();
+        let req = FdTeleportRequest::batch(
+            vec![3, 4, 5],
+            vec![10, 11, 12],
+            vec!["fd_a".into(), "fd_b".into(), "fd_c".into()],
+        )
+        .unwrap();
 
         assert_eq!(req.len(), 3);
         assert!(!req.is_empty());
@@ -490,7 +564,8 @@ mod tests {
 
     #[test]
     fn test_fd_teleport_request_batch_mismatched_lengths() {
-        let result = FdTeleportRequest::batch(vec![3, 4], vec![10], vec!["fd_a".into(), "fd_b".into()]);
+        let result =
+            FdTeleportRequest::batch(vec![3, 4], vec![10], vec!["fd_a".into(), "fd_b".into()]);
         assert!(result.is_err());
     }
 
@@ -506,7 +581,8 @@ mod tests {
 
     #[test]
     fn test_create_teleporter_socket_pair() {
-        let (supervisor, worker) = create_teleporter_socket_pair().expect("Failed to create socket pair");
+        let (supervisor, worker) =
+            create_teleporter_socket_pair().expect("Failed to create socket pair");
 
         // Test that sockets are connected
         let mut supervisor = supervisor;

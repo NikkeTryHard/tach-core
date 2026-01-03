@@ -60,7 +60,11 @@ impl RunContext {
             }
         };
 
-        Ok(Self { run_dir, uffd_sock_path, uffd_listener })
+        Ok(Self {
+            run_dir,
+            uffd_sock_path,
+            uffd_listener,
+        })
     }
 
     /// Check if snapshot mode is available
@@ -109,12 +113,17 @@ fn main() -> Result<()> {
     // Verify jemalloc is active - FATAL if not
     match tach_core::allocator::verify_jemalloc_active() {
         Ok(version) => {
-            eprintln!("[supervisor] Jemalloc {} verified - Hypervisor allocator ready", version);
+            eprintln!(
+                "[supervisor] Jemalloc {} verified - Hypervisor allocator ready",
+                version
+            );
         }
         Err(e) => {
             eprintln!("[supervisor] FATAL: {}", e);
             eprintln!("[supervisor] The Hypervisor cannot run without jemalloc.");
-            eprintln!("[supervisor] Ensure tikv-jemallocator is set as #[global_allocator] in lib.rs");
+            eprintln!(
+                "[supervisor] Ensure tikv-jemallocator is set as #[global_allocator] in lib.rs"
+            );
             std::process::exit(1);
         }
     }
@@ -142,7 +151,10 @@ fn main() -> Result<()> {
 
     if let Err(e) = signals::install_signal_handlers() {
         if !is_json {
-            eprintln!("[supervisor] Warning: Failed to install signal handlers: {}", e);
+            eprintln!(
+                "[supervisor] Warning: Failed to install signal handlers: {}",
+                e
+            );
         }
     }
 
@@ -176,7 +188,9 @@ fn main() -> Result<()> {
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
 
-        return watch::start_watch_loop(&cwd, move || execute_session(&cwd_clone, &format, &junit_path, &path_clone, false));
+        return watch::start_watch_loop(&cwd, move || {
+            execute_session(&cwd_clone, &format, &junit_path, &path_clone, false)
+        });
     }
 
     // --- SINGLE RUN MODE ---
@@ -185,7 +199,13 @@ fn main() -> Result<()> {
 
 /// Execute a complete test session (discovery → resolution → zygote → run)
 /// This is the reusable function that watch mode calls repeatedly.
-fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<PathBuf>, target_path: &str, coverage_enabled: bool) -> Result<()> {
+fn execute_session(
+    cwd: &PathBuf,
+    format: &OutputFormat,
+    junit_path: &Option<PathBuf>,
+    target_path: &str,
+    coverage_enabled: bool,
+) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
     // Create reporters
@@ -220,7 +240,14 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
     if !is_json {
         let toxic_count = toxicity_graph.toxic_modules().len();
         let safe_count = toxicity_graph.safe_modules().len();
-        eprintln!("[supervisor] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})", discovery_result.test_count(), discovery_result.fixture_count(), start.elapsed(), toxic_count, safe_count);
+        eprintln!(
+            "[supervisor] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
+            discovery_result.test_count(),
+            discovery_result.fixture_count(),
+            start.elapsed(),
+            toxic_count,
+            safe_count
+        );
     }
 
     // --- PHASE 2: EAGER COMPILATION (Zero-Copy Loader) ---
@@ -252,10 +279,17 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
     if let Ok(compiler) = loader::BytecodeCompiler::new(cwd) {
         let compiled = compiler.compile_batch(&py_files, registry);
         if !is_json {
-            eprintln!("[supervisor] Compiled {} of {} modules for zero-copy loading in {:?}", compiled, py_files.len(), start_compile.elapsed());
+            eprintln!(
+                "[supervisor] Compiled {} of {} modules for zero-copy loading in {:?}",
+                compiled,
+                py_files.len(),
+                start_compile.elapsed()
+            );
         }
     } else if !is_json {
-        eprintln!("[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib");
+        eprintln!(
+            "[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib"
+        );
     }
 
     // --- RESOLUTION PHASE ---
@@ -264,7 +298,11 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
     let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
 
     if !is_json {
-        eprintln!("[supervisor] Resolved {} tests ({} errors)", runnable_tests.len(), errors.len());
+        eprintln!(
+            "[supervisor] Resolved {} tests ({} errors)",
+            runnable_tests.len(),
+            errors.len()
+        );
 
         for error in &errors {
             match error {
@@ -291,19 +329,27 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
     }
 
     if !is_json && toxic_test_count > 0 {
-        eprintln!("[supervisor] Toxicity: {} of {} tests marked toxic (will use fork/kill)", toxic_test_count, runnable_tests.len());
+        eprintln!(
+            "[supervisor] Toxicity: {} of {} tests marked toxic (will use fork/kill)",
+            toxic_test_count,
+            runnable_tests.len()
+        );
     }
 
     // --- PHASE 8.3: PATH FILTERING ---
     // Filter tests to only include those matching the target path
     let target = std::path::Path::new(target_path);
-    let target_canonical = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let target_canonical = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
 
     let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
         .into_iter()
         .filter(|test| {
             let test_path = std::path::Path::new(&test.file_path);
-            let test_canonical = test_path.canonicalize().unwrap_or_else(|_| test_path.to_path_buf());
+            let test_canonical = test_path
+                .canonicalize()
+                .unwrap_or_else(|_| test_path.to_path_buf());
 
             // Match if test is under target directory OR matches exactly
             test_canonical.starts_with(&target_canonical)
@@ -315,7 +361,11 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
         .collect();
 
     if !is_json {
-        eprintln!("[supervisor] Selected {} tests to run (filtered by path: {})", filtered_tests.len(), target_path);
+        eprintln!(
+            "[supervisor] Selected {} tests to run (filtered by path: {})",
+            filtered_tests.len(),
+            target_path
+        );
     }
 
     if filtered_tests.is_empty() {
@@ -326,7 +376,13 @@ fn execute_session(cwd: &PathBuf, format: &OutputFormat, junit_path: &Option<Pat
     }
 
     // --- RUN TESTS ---
-    run_tests(&cleanup, filtered_tests, &mut reporter, is_json, coverage_enabled)
+    run_tests(
+        &cleanup,
+        filtered_tests,
+        &mut reporter,
+        is_json,
+        coverage_enabled,
+    )
 }
 
 /// Handle the `self-test` subcommand
@@ -352,9 +408,14 @@ fn handle_version_command() -> Result<()> {
     }
 
     // Show Python version if available
-    let python_path = std::env::var("PYO3_PYTHON").or_else(|_| std::env::var("PYTHON")).unwrap_or_else(|_| "python3".to_string());
+    let python_path = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python3".to_string());
 
-    if let Ok(output) = std::process::Command::new(&python_path).args(["--version"]).output() {
+    if let Ok(output) = std::process::Command::new(&python_path)
+        .args(["--version"])
+        .output()
+    {
         let version = String::from_utf8_lossy(&output.stdout);
         eprintln!("Python: {}", version.trim());
     }
@@ -389,7 +450,13 @@ fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>, reporter: &mut dyn Reporter, is_json: bool, coverage_enabled: bool) -> Result<()> {
+fn run_tests(
+    cleanup: &CleanupGuard,
+    runnable_tests: Vec<resolver::RunnableTest>,
+    reporter: &mut dyn Reporter,
+    is_json: bool,
+    coverage_enabled: bool,
+) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // --- PHASE 6.1: COVERAGE INITIALIZATION ---
@@ -406,11 +473,18 @@ fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>
         match coverage::init_coverage_buffer(coverage::DEFAULT_CAPACITY) {
             Ok(_) => {
                 if !is_json {
-                    eprintln!("[supervisor] Coverage buffer: {} entries ({} bytes)", coverage::DEFAULT_CAPACITY, coverage::DEFAULT_CAPACITY * coverage::ENTRY_SIZE + coverage::HEADER_SIZE);
+                    eprintln!(
+                        "[supervisor] Coverage buffer: {} entries ({} bytes)",
+                        coverage::DEFAULT_CAPACITY,
+                        coverage::DEFAULT_CAPACITY * coverage::ENTRY_SIZE + coverage::HEADER_SIZE
+                    );
                 }
             }
             Err(e) => {
-                eprintln!("[supervisor] WARNING: Failed to init coverage buffer: {}", e);
+                eprintln!(
+                    "[supervisor] WARNING: Failed to init coverage buffer: {}",
+                    e
+                );
             }
         }
 
@@ -418,7 +492,12 @@ fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>
         match coverage::init_mapping_buffer(coverage::MAPPING_CAPACITY) {
             Ok(_) => {
                 if !is_json {
-                    eprintln!("[supervisor] Mapping buffer: {} entries ({} bytes)", coverage::MAPPING_CAPACITY, coverage::MAPPING_CAPACITY * coverage::MAPPING_ENTRY_SIZE + coverage::HEADER_SIZE);
+                    eprintln!(
+                        "[supervisor] Mapping buffer: {} entries ({} bytes)",
+                        coverage::MAPPING_CAPACITY,
+                        coverage::MAPPING_CAPACITY * coverage::MAPPING_ENTRY_SIZE
+                            + coverage::HEADER_SIZE
+                    );
                 }
             }
             Err(e) => {
@@ -466,7 +545,10 @@ fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>
     // Must be before fork so the env var is inherited by Zygote
     let run_context = RunContext::new()?;
     if run_context.snapshot_enabled() && !is_json {
-        eprintln!("[supervisor] Snapshot mode enabled: {}", run_context.uffd_sock_path.display());
+        eprintln!(
+            "[supervisor] Snapshot mode enabled: {}",
+            run_context.uffd_sock_path.display()
+        );
     }
 
     if !is_json {
@@ -508,7 +590,12 @@ fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>
             }
 
             // --- SCHEDULER PHASE ---
-            let mut scheduler = Scheduler::new(sup_cmd_sock, sup_result_sock, log_capture, debug_socket_path)?;
+            let mut scheduler = Scheduler::new(
+                sup_cmd_sock,
+                sup_result_sock,
+                log_capture,
+                debug_socket_path,
+            )?;
 
             scheduler.run(runnable_tests, reporter)?;
 
@@ -525,7 +612,11 @@ fn run_tests(cleanup: &CleanupGuard, runnable_tests: Vec<resolver::RunnableTest>
                 let total_hits: u64 = coverage_data.values().sum();
 
                 if !is_json {
-                    eprintln!("[supervisor] Coverage: {} unique lines covered, {} total hits", coverage_data.len(), total_hits);
+                    eprintln!(
+                        "[supervisor] Coverage: {} unique lines covered, {} total hits",
+                        coverage_data.len(),
+                        total_hits
+                    );
 
                     // Report overflow counts if any
                     if let Some(buffer) = coverage::get_coverage_buffer() {

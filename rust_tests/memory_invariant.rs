@@ -1025,7 +1025,10 @@ fn generate_histogram(sorted_data: &[u64], bucket_count: usize) -> String {
     let bar_max_width = 40;
 
     let mut output = String::new();
-    output.push_str(&format!("  {:>12} |{:^40}| {:>8}\n", "Range (us)", "", "Count"));
+    output.push_str(&format!(
+        "  {:>12} |{:^40}| {:>8}\n",
+        "Range (us)", "", "Count"
+    ));
     output.push_str(&format!("  {:-<12}-+{:-<40}+-{:-<8}\n", "", "", ""));
 
     for (i, &count) in buckets.iter().enumerate() {
@@ -1043,7 +1046,10 @@ fn generate_histogram(sorted_data: &[u64], bucket_count: usize) -> String {
         };
         let bar = "#".repeat(bar_width);
 
-        output.push_str(&format!("  {:>6}-{:<5} |{:<40}| {:>8}\n", bucket_start, bucket_end, bar, count));
+        output.push_str(&format!(
+            "  {:>6}-{:<5} |{:<40}| {:>8}\n",
+            bucket_start, bucket_end, bar, count
+        ));
     }
 
     output
@@ -1075,7 +1081,10 @@ fn generate_histogram_ns(sorted_data: &[u64], bucket_count: usize) -> String {
     let bar_max_width = 40;
 
     let mut output = String::new();
-    output.push_str(&format!("  {:>12} |{:^40}| {:>8}\n", "Range (ns)", "", "Count"));
+    output.push_str(&format!(
+        "  {:>12} |{:^40}| {:>8}\n",
+        "Range (ns)", "", "Count"
+    ));
     output.push_str(&format!("  {:-<12}-+{:-<40}+-{:-<8}\n", "", "", ""));
 
     for (i, &count) in buckets.iter().enumerate() {
@@ -1093,7 +1102,10 @@ fn generate_histogram_ns(sorted_data: &[u64], bucket_count: usize) -> String {
         };
         let bar = "#".repeat(bar_width);
 
-        output.push_str(&format!("  {:>6}-{:<5} |{:<40}| {:>8}\n", bucket_start, bucket_end, bar, count));
+        output.push_str(&format!(
+            "  {:>6}-{:<5} |{:<40}| {:>8}\n",
+            bucket_start, bucket_end, bar, count
+        ));
     }
 
     output
@@ -1223,7 +1235,8 @@ fn test_jitter_benchmark_p99_latency() {
     let total_time_us: u64 = latencies_us.iter().sum();
     let total_time_sec = total_time_us as f64 / 1_000_000.0;
     let ops_per_sec = ITERATIONS as f64 / total_time_sec;
-    let throughput_mb_sec = (DATA_SIZE as f64 * ITERATIONS as f64) / (1024.0 * 1024.0) / total_time_sec;
+    let throughput_mb_sec =
+        (DATA_SIZE as f64 * ITERATIONS as f64) / (1024.0 * 1024.0) / total_time_sec;
 
     eprintln!("Throughput:");
     eprintln!("  Operations:  {:.0} ops/sec", ops_per_sec);
@@ -1261,7 +1274,10 @@ fn test_jitter_quick() {
     const ITERATIONS: usize = 1_000;
     const DATA_SIZE: usize = 12 * 1024;
 
-    eprintln!("[jitter_quick] Quick jitter test: {} iterations", ITERATIONS);
+    eprintln!(
+        "[jitter_quick] Quick jitter test: {} iterations",
+        ITERATIONS
+    );
 
     let test_data: Vec<u8> = (0..DATA_SIZE).map(|i| (i % 256) as u8).collect();
     let mut target_buffer = vec![0u8; DATA_SIZE];
@@ -1287,10 +1303,7 @@ fn test_jitter_quick() {
     let p99 = percentile(&latencies_us, 99.0);
     let max = *latencies_us.last().unwrap();
 
-    eprintln!(
-        "[jitter_quick] P50={}us P99={}us Max={}us",
-        p50, p99, max
-    );
+    eprintln!("[jitter_quick] P50={}us P99={}us Max={}us", p50, p99, max);
     eprintln!("[jitter_quick] ✓ Jitter test complete");
 }
 
@@ -1348,7 +1361,10 @@ fn test_jitter_nanosecond_precision() {
     }
 
     // Collect latency samples in NANOSECONDS
-    eprintln!("[jitter_ns] Collecting {} samples at nanosecond precision...", ITERATIONS);
+    eprintln!(
+        "[jitter_ns] Collecting {} samples at nanosecond precision...",
+        ITERATIONS
+    );
     let mut latencies_ns: Vec<u64> = Vec::with_capacity(ITERATIONS);
 
     for i in 0..ITERATIONS {
@@ -1438,7 +1454,8 @@ fn test_jitter_nanosecond_precision() {
     let total_time_ns: u64 = latencies_ns.iter().sum();
     let total_time_sec = total_time_ns as f64 / 1_000_000_000.0;
     let ops_per_sec = ITERATIONS as f64 / total_time_sec;
-    let throughput_mb_sec = (DATA_SIZE as f64 * ITERATIONS as f64) / (1024.0 * 1024.0) / total_time_sec;
+    let throughput_mb_sec =
+        (DATA_SIZE as f64 * ITERATIONS as f64) / (1024.0 * 1024.0) / total_time_sec;
 
     eprintln!("Throughput:");
     eprintln!("  Operations:  {:.0} ops/sec", ops_per_sec);
@@ -1502,7 +1519,10 @@ fn test_jitter_nanosecond_quick() {
     const ITERATIONS: usize = 1_000;
     const DATA_SIZE: usize = 12 * 1024;
 
-    eprintln!("[jitter_ns_quick] Quick nanosecond jitter test: {} iterations", ITERATIONS);
+    eprintln!(
+        "[jitter_ns_quick] Quick nanosecond jitter test: {} iterations",
+        ITERATIONS
+    );
 
     let test_data: Vec<u8> = (0..DATA_SIZE).map(|i| (i % 256) as u8).collect();
     let mut target_buffer = vec![0u8; DATA_SIZE];
@@ -1536,7 +1556,10 @@ fn test_jitter_nanosecond_quick() {
         format_duration_ns(p999),
         format_duration_ns(max)
     );
-    eprintln!("[jitter_ns_quick] Raw: P99={}ns P99.9={}ns Max={}ns", p99, p999, max);
+    eprintln!(
+        "[jitter_ns_quick] Raw: P99={}ns P99.9={}ns Max={}ns",
+        p99, p999, max
+    );
     eprintln!("[jitter_ns_quick] ✓ Nanosecond jitter test complete");
 }
 
@@ -1678,7 +1701,10 @@ fn test_dtv_consistency_after_memory_ops() {
                     } else {
                         // TLS value changed - this could be normal if generation counter updated
                         // due to dlopen, but we should note it
-                        eprintln!("[dtv] NOTE: TLS value changed (0x{:016x} -> 0x{:016x})", initial, val);
+                        eprintln!(
+                            "[dtv] NOTE: TLS value changed (0x{:016x} -> 0x{:016x})",
+                            initial, val
+                        );
                         eprintln!("[dtv]       This may be normal if modules were loaded/unloaded");
                     }
                 }
@@ -1691,8 +1717,7 @@ fn test_dtv_consistency_after_memory_ops() {
 
         // Step 4: Verify Python TLS is still functional
         eprintln!("[dtv] Verifying Python interpreter TLS...");
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Access thread-local state via Python
             let result = py.run(
                 c"
@@ -1744,9 +1769,7 @@ gc_threshold = sys.getrecursionlimit()
 fn test_dtv_stress_with_python_imports() {
     eprintln!("[dtv_stress] DTV Stress Test: Python module imports");
 
-    pyo3::prepare_freethreaded_python();
-
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Import various Python modules that may load C-extensions
         // Each C-extension may request TLS slots via the DTV
         let modules = [
@@ -1767,7 +1790,9 @@ fn test_dtv_stress_with_python_imports() {
         for module_name in &modules {
             let import_code = format!("import {}", module_name);
             match py.run(
-                std::ffi::CString::new(import_code.clone()).unwrap().as_c_str(),
+                std::ffi::CString::new(import_code.clone())
+                    .unwrap()
+                    .as_c_str(),
                 None,
                 None,
             ) {

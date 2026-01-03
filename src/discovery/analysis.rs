@@ -1,4 +1,4 @@
-//! Toxicity Analysis Module 
+//! Toxicity Analysis Module
 //!
 //! Static analysis to detect "toxic" patterns that are unsafe for snapshot/reset.
 //! Toxic patterns include: threading, multiprocessing, sockets, native code (ctypes),

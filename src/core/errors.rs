@@ -160,7 +160,10 @@ impl TachError {
 pub enum RestorationError {
     /// Heap checksum mismatch after restore.
     #[error("Heap desync: expected {expected_checksum:#X}, got {actual_checksum:#X}")]
-    HeapDesync { expected_checksum: u64, actual_checksum: u64 },
+    HeapDesync {
+        expected_checksum: u64,
+        actual_checksum: u64,
+    },
 
     /// BSS region mismatch (Python allocator freelists).
     #[error("BSS desync: PyFloat_FreeList corruption detected")]
@@ -211,7 +214,13 @@ impl RestorationError {
 
     /// Check if this error requires worker termination.
     pub fn requires_kill(&self) -> bool {
-        matches!(self, RestorationError::HeapDesync { .. } | RestorationError::BssDesync | RestorationError::GhostObject { .. } | RestorationError::DtvMismatch { .. })
+        matches!(
+            self,
+            RestorationError::HeapDesync { .. }
+                | RestorationError::BssDesync
+                | RestorationError::GhostObject { .. }
+                | RestorationError::DtvMismatch { .. }
+        )
     }
 }
 
@@ -279,7 +288,12 @@ impl IsolationError {
     /// Missing kernel features (Landlock < 5.13, Seccomp disabled)
     /// allow running with reduced isolation.
     pub fn allows_degradation(&self) -> bool {
-        matches!(self, IsolationError::LandlockUnavailable { .. } | IsolationError::SeccompUnavailable { .. } | IsolationError::CapabilityMissing)
+        matches!(
+            self,
+            IsolationError::LandlockUnavailable { .. }
+                | IsolationError::SeccompUnavailable { .. }
+                | IsolationError::CapabilityMissing
+        )
     }
 }
 
@@ -338,7 +352,11 @@ pub enum TeleportationError {
 
     /// FD adoption (dup2) failed.
     #[error("FD adoption failed: dup2({source_fd}, {target_fd}) = {errno}")]
-    AdoptionFailed { source_fd: i32, target_fd: i32, errno: i32 },
+    AdoptionFailed {
+        source_fd: i32,
+        target_fd: i32,
+        errno: i32,
+    },
 
     /// Socket pair creation failed.
     #[error("Teleporter socket creation failed: {reason}")]
@@ -364,7 +382,10 @@ pub enum TeleportationError {
 impl TeleportationError {
     /// Check if this teleportation error is retryable.
     pub fn is_retryable(&self) -> bool {
-        matches!(self, TeleportationError::SendFailed { .. } | TeleportationError::ReceiveFailed { .. })
+        matches!(
+            self,
+            TeleportationError::SendFailed { .. } | TeleportationError::ReceiveFailed { .. }
+        )
     }
 }
 
@@ -435,7 +456,10 @@ pub enum SchedulerError {
 impl SchedulerError {
     /// Check if this scheduler error is retryable.
     pub fn is_retryable(&self) -> bool {
-        matches!(self, SchedulerError::WorkerTimeout { .. } | SchedulerError::PoolExhausted)
+        matches!(
+            self,
+            SchedulerError::WorkerTimeout { .. } | SchedulerError::PoolExhausted
+        )
     }
 }
 
@@ -510,28 +534,42 @@ mod tests {
 
     #[test]
     fn test_restoration_error_requires_kill() {
-        let heap_desync = RestorationError::HeapDesync { expected_checksum: 0xDEADBEEF, actual_checksum: 0xCAFEBABE };
+        let heap_desync = RestorationError::HeapDesync {
+            expected_checksum: 0xDEADBEEF,
+            actual_checksum: 0xCAFEBABE,
+        };
         assert!(heap_desync.requires_kill());
 
-        let uffd_fault = RestorationError::UffdFault { reason: "page not present".to_string() };
+        let uffd_fault = RestorationError::UffdFault {
+            reason: "page not present".to_string(),
+        };
         assert!(!uffd_fault.requires_kill());
     }
 
     #[test]
     fn test_isolation_error_allows_degradation() {
-        let landlock_unavail = IsolationError::LandlockUnavailable { kernel_version: "5.10".to_string() };
+        let landlock_unavail = IsolationError::LandlockUnavailable {
+            kernel_version: "5.10".to_string(),
+        };
         assert!(landlock_unavail.allows_degradation());
 
-        let landlock_failed = IsolationError::LandlockRulesetFailed { reason: "ENOMEM".to_string() };
+        let landlock_failed = IsolationError::LandlockRulesetFailed {
+            reason: "ENOMEM".to_string(),
+        };
         assert!(!landlock_failed.allows_degradation());
     }
 
     #[test]
     fn test_tach_error_is_retryable() {
-        let err = TachError::Scheduler(SchedulerError::WorkerTimeout { pid: 1234, timeout_ms: 5000 });
+        let err = TachError::Scheduler(SchedulerError::WorkerTimeout {
+            pid: 1234,
+            timeout_ms: 5000,
+        });
         assert!(err.is_retryable());
 
-        let err = TachError::Calibration(CalibrationError::SentinelNotFound { pattern: 0xDEADC0DE });
+        let err = TachError::Calibration(CalibrationError::SentinelNotFound {
+            pattern: 0xDEADC0DE,
+        });
         assert!(!err.is_retryable());
     }
 
@@ -546,7 +584,11 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = TachError::Teleportation(TeleportationError::AdoptionFailed { source_fd: 5, target_fd: 3, errno: 9 });
+        let err = TachError::Teleportation(TeleportationError::AdoptionFailed {
+            source_fd: 5,
+            target_fd: 3,
+            errno: 9,
+        });
         let msg = format!("{}", err);
         assert!(msg.contains("dup2(5, 3)"));
         assert!(msg.contains("9"));

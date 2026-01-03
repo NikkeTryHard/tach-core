@@ -571,7 +571,11 @@ pub struct RestoreRegion {
 
 impl RestoreRegion {
     pub fn new(remote_addr: usize, data: Vec<u8>, name: impl Into<String>) -> Self {
-        Self { remote_addr, data, name: name.into() }
+        Self {
+            remote_addr,
+            data,
+            name: name.into(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -636,25 +640,47 @@ pub fn restore_vectorized(pid: Pid, regions: &[RestoreRegion]) -> Result<Vectori
     let local_iovs: Vec<IoSlice> = regions.iter().map(|r| IoSlice::new(&r.data)).collect();
 
     // Remote iovecs: addresses in the worker's address space
-    let remote_iovs: Vec<RemoteIoVec> = regions.iter().map(|r| RemoteIoVec { base: r.remote_addr, len: r.len() }).collect();
+    let remote_iovs: Vec<RemoteIoVec> = regions
+        .iter()
+        .map(|r| RemoteIoVec {
+            base: r.remote_addr,
+            len: r.len(),
+        })
+        .collect();
 
     // Calculate expected total
     let expected_bytes: usize = regions.iter().map(|r| r.len()).sum();
 
     // Single syscall for all regions
-    let bytes_written = process_vm_writev(pid, &local_iovs, &remote_iovs).with_context(|| format!("Vectorized process_vm_writev failed for {} regions", regions.len()))?;
+    let bytes_written = process_vm_writev(pid, &local_iovs, &remote_iovs).with_context(|| {
+        format!(
+            "Vectorized process_vm_writev failed for {} regions",
+            regions.len()
+        )
+    })?;
 
     let duration = start.elapsed();
 
     // Verify complete write
     if bytes_written != expected_bytes {
-        return Err(anyhow!("Partial vectorized write: {}/{} bytes across {} regions", bytes_written, expected_bytes, regions.len()));
+        return Err(anyhow!(
+            "Partial vectorized write: {}/{} bytes across {} regions",
+            bytes_written,
+            expected_bytes,
+            regions.len()
+        ));
     }
 
     // Build region details for analysis
-    let region_details: Vec<(String, usize)> = regions.iter().map(|r| (r.name.clone(), r.len())).collect();
+    let region_details: Vec<(String, usize)> =
+        regions.iter().map(|r| (r.name.clone(), r.len())).collect();
 
-    eprintln!("[vectorized] Restored {} regions ({} bytes) in {}us", regions.len(), bytes_written, duration.as_micros());
+    eprintln!(
+        "[vectorized] Restored {} regions ({} bytes) in {}us",
+        regions.len(),
+        bytes_written,
+        duration.as_micros()
+    );
 
     Ok(VectorizedRestoreResult {
         bytes_written,
@@ -703,7 +729,10 @@ pub fn build_restore_regions(snapshot: &WorkerSnapshot) -> Vec<RestoreRegion> {
 ///
 /// Use this for complete state restoration with minimal syscalls.
 #[cfg(target_arch = "x86_64")]
-pub fn restore_full_vectorized(pid: Pid, snapshot: &WorkerSnapshot) -> Result<VectorizedRestoreResult> {
+pub fn restore_full_vectorized(
+    pid: Pid,
+    snapshot: &WorkerSnapshot,
+) -> Result<VectorizedRestoreResult> {
     // Build regions from snapshot
     let regions = build_restore_regions(snapshot);
 
@@ -1581,7 +1610,10 @@ impl SnapshotManager {
         self.reset_worker(pid)?;
 
         // Step 2: Vectorized restore of critical regions
-        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered", pid))?;
+        let worker = self
+            .workers
+            .get(&pid.as_raw())
+            .ok_or_else(|| anyhow!("Worker {} not registered", pid))?;
 
         restore_full_vectorized(pid, worker)
     }

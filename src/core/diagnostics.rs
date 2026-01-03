@@ -136,12 +136,18 @@ impl DiagnosticReport {
 
     /// Count failed checks
     pub fn failed_count(&self) -> usize {
-        self.results.iter().filter(|r| !r.passed && r.required).count()
+        self.results
+            .iter()
+            .filter(|r| !r.passed && r.required)
+            .count()
     }
 
     /// Count warnings
     pub fn warning_count(&self) -> usize {
-        self.results.iter().filter(|r| !r.passed && !r.required).count()
+        self.results
+            .iter()
+            .filter(|r| !r.passed && !r.required)
+            .count()
     }
 
     /// Print the report to stderr
@@ -162,7 +168,13 @@ impl DiagnosticReport {
 
         eprintln!();
         eprintln!("-----------------------------");
-        eprintln!("Passed: {}  Failed: {}  Warnings: {}  Duration: {:.2}ms", self.passed_count(), self.failed_count(), self.warning_count(), self.duration.as_secs_f64() * 1000.0);
+        eprintln!(
+            "Passed: {}  Failed: {}  Warnings: {}  Duration: {:.2}ms",
+            self.passed_count(),
+            self.failed_count(),
+            self.warning_count(),
+            self.duration.as_secs_f64() * 1000.0
+        );
         eprintln!();
 
         if self.all_passed() {
@@ -198,7 +210,12 @@ fn parse_kernel_version() -> Result<(u32, u32, u32)> {
     let minor: u32 = version_nums[1].parse().unwrap_or(0);
     // Patch might have extra suffix like "87.2-microsoft"
     let patch_str = version_nums.get(2).unwrap_or(&"0");
-    let patch: u32 = patch_str.split('-').next().unwrap_or("0").parse().unwrap_or(0);
+    let patch: u32 = patch_str
+        .split('-')
+        .next()
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
 
     Ok((major, minor, patch))
 }
@@ -211,9 +228,16 @@ pub fn check_kernel_version() -> DiagnosticResult {
             let meets_requirement = major > 5 || (major == 5 && minor >= 15);
 
             if meets_requirement {
-                DiagnosticResult::pass("Kernel Version", format!("{} (requires 5.15+)", version_str))
+                DiagnosticResult::pass(
+                    "Kernel Version",
+                    format!("{} (requires 5.15+)", version_str),
+                )
             } else {
-                DiagnosticResult::fail("Kernel Version", format!("{} (requires 5.15+, Landlock unavailable)", version_str)).with_details("Upgrade to Linux 5.15+ for full Landlock support")
+                DiagnosticResult::fail(
+                    "Kernel Version",
+                    format!("{} (requires 5.15+, Landlock unavailable)", version_str),
+                )
+                .with_details("Upgrade to Linux 5.15+ for full Landlock support")
             }
         }
         Err(e) => DiagnosticResult::fail("Kernel Version", format!("Cannot detect: {}", e)),
@@ -233,7 +257,11 @@ pub fn check_userfaultfd() -> DiagnosticResult {
                 // Check if we can still use it via CAP_SYS_PTRACE
                 match try_create_userfaultfd() {
                     Ok(_) => DiagnosticResult::pass("userfaultfd", "Enabled via CAP_SYS_PTRACE"),
-                    Err(_) => DiagnosticResult::fail("userfaultfd", "Disabled (sysctl=0, no CAP_SYS_PTRACE)").with_details(
+                    Err(_) => DiagnosticResult::fail(
+                        "userfaultfd",
+                        "Disabled (sysctl=0, no CAP_SYS_PTRACE)",
+                    )
+                    .with_details(
                         "Fix: sudo sysctl vm.unprivileged_userfaultfd=1\n\
                          Or: Run with CAP_SYS_PTRACE capability",
                     ),
@@ -254,7 +282,11 @@ pub fn check_userfaultfd() -> DiagnosticResult {
 fn try_create_userfaultfd() -> Result<()> {
     use userfaultfd::UffdBuilder;
 
-    let _uffd = UffdBuilder::new().close_on_exec(true).non_blocking(false).create().map_err(|e| anyhow!("userfaultfd creation failed: {}", e))?;
+    let _uffd = UffdBuilder::new()
+        .close_on_exec(true)
+        .non_blocking(false)
+        .create()
+        .map_err(|e| anyhow!("userfaultfd creation failed: {}", e))?;
 
     Ok(())
 }
@@ -275,9 +307,11 @@ pub fn check_landlock() -> DiagnosticResult {
             };
 
             if kernel_too_old {
-                DiagnosticResult::warn("Landlock", "Unavailable (kernel < 5.13)").with_details("Sandboxing will be degraded without Landlock")
+                DiagnosticResult::warn("Landlock", "Unavailable (kernel < 5.13)")
+                    .with_details("Sandboxing will be degraded without Landlock")
             } else {
-                DiagnosticResult::warn("Landlock", "Unavailable (disabled in kernel config?)").with_details("Check if CONFIG_SECURITY_LANDLOCK=y in kernel")
+                DiagnosticResult::warn("Landlock", "Unavailable (disabled in kernel config?)")
+                    .with_details("Check if CONFIG_SECURITY_LANDLOCK=y in kernel")
             }
         }
     }
@@ -316,7 +350,8 @@ pub fn check_seccomp() -> DiagnosticResult {
     } else {
         let errno = io::Error::last_os_error();
         if errno.raw_os_error() == Some(libc::EINVAL) {
-            DiagnosticResult::warn("Seccomp", "Not supported (kernel config)").with_details("Toxic worker isolation will be degraded")
+            DiagnosticResult::warn("Seccomp", "Not supported (kernel config)")
+                .with_details("Toxic worker isolation will be degraded")
         } else {
             DiagnosticResult::pass("Seccomp", "Available (not currently active)")
         }
@@ -362,9 +397,15 @@ pub fn check_ptrace_capability() -> DiagnosticResult {
                 }
                 Err(nix::errno::Errno::EPERM) => {
                     // Can't ptrace - check Yama
-                    let yama_scope = fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope").map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".to_string());
+                    let yama_scope = fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|_| "unknown".to_string());
 
-                    DiagnosticResult::warn("ptrace", format!("Restricted (Yama scope={})", yama_scope)).with_details(
+                    DiagnosticResult::warn(
+                        "ptrace",
+                        format!("Restricted (Yama scope={})", yama_scope),
+                    )
+                    .with_details(
                         "Stack restoration via ptrace may be limited.\n\
                          Fix: sudo sysctl kernel.yama.ptrace_scope=0",
                     )
@@ -394,29 +435,45 @@ pub fn check_physics_heartbeat() -> DiagnosticResult {
 
     // Verify data integrity
     if restore_buffer == test_data {
-        DiagnosticResult::pass("Physics Heartbeat", format!("100-cycle restore OK ({:.2}ms)", duration.as_secs_f64() * 1000.0))
+        DiagnosticResult::pass(
+            "Physics Heartbeat",
+            format!(
+                "100-cycle restore OK ({:.2}ms)",
+                duration.as_secs_f64() * 1000.0
+            ),
+        )
     } else {
-        DiagnosticResult::fail("Physics Heartbeat", "Data corruption detected in restore cycle")
+        DiagnosticResult::fail(
+            "Physics Heartbeat",
+            "Data corruption detected in restore cycle",
+        )
     }
 }
 
 /// Check Python version and features
 pub fn check_python() -> DiagnosticResult {
     // Try to get Python version from the environment
-    let python_path = std::env::var("PYO3_PYTHON").or_else(|_| std::env::var("PYTHON")).unwrap_or_else(|_| "python3".to_string());
+    let python_path = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python3".to_string());
 
-    match std::process::Command::new(&python_path).args(["--version"]).output() {
+    match std::process::Command::new(&python_path)
+        .args(["--version"])
+        .output()
+    {
         Ok(output) => {
             let version = String::from_utf8_lossy(&output.stdout);
             let version = version.trim();
 
             // Parse version to check for 3.12+ (sys.monitoring support)
-            let has_monitoring = version.contains("3.12") || version.contains("3.13") || version.contains("3.14");
+            let has_monitoring =
+                version.contains("3.12") || version.contains("3.13") || version.contains("3.14");
 
             if has_monitoring {
                 DiagnosticResult::pass("Python", format!("{} (sys.monitoring available)", version))
             } else {
-                DiagnosticResult::pass("Python", format!("{} (sys.settrace coverage)", version)).with_details("Upgrade to Python 3.12+ for zero-overhead coverage")
+                DiagnosticResult::pass("Python", format!("{} (sys.settrace coverage)", version))
+                    .with_details("Upgrade to Python 3.12+ for zero-overhead coverage")
             }
         }
         Err(_) => DiagnosticResult::warn("Python", format!("Cannot execute: {}", python_path)),
@@ -430,17 +487,16 @@ pub fn check_python() -> DiagnosticResult {
 /// Run all diagnostic checks and return a report
 pub fn run_diagnostics() -> DiagnosticReport {
     let start = Instant::now();
-    let mut results = Vec::new();
-
-    // Run all checks
-    results.push(check_kernel_version());
-    results.push(check_userfaultfd());
-    results.push(check_landlock());
-    results.push(check_seccomp());
-    results.push(check_jemalloc());
-    results.push(check_ptrace_capability());
-    results.push(check_python());
-    results.push(check_physics_heartbeat());
+    let results = vec![
+        check_kernel_version(),
+        check_userfaultfd(),
+        check_landlock(),
+        check_seccomp(),
+        check_jemalloc(),
+        check_ptrace_capability(),
+        check_python(),
+        check_physics_heartbeat(),
+    ];
 
     let duration = start.elapsed();
 
@@ -520,7 +576,11 @@ mod tests {
     #[test]
     fn test_diagnostic_report_counts() {
         let report = DiagnosticReport {
-            results: vec![DiagnosticResult::pass("A", "OK"), DiagnosticResult::fail("B", "FAIL"), DiagnosticResult::warn("C", "WARN")],
+            results: vec![
+                DiagnosticResult::pass("A", "OK"),
+                DiagnosticResult::fail("B", "FAIL"),
+                DiagnosticResult::warn("C", "WARN"),
+            ],
             duration: Duration::from_millis(10),
         };
 
