@@ -4,7 +4,7 @@
 //! - `namespace`: Linux namespace setup and OverlayFS
 //! - `sandbox`: Landlock and Seccomp sandboxing (Iron Dome)
 //! - `snapshot`: userfaultfd memory snapshots
-//! - `calibration`: TLS self-calibration for mimalloc offset discovery (Phase 2.3 P1)
+//! - `calibration`: TLS self-calibration for mimalloc offset discovery
 
 pub mod calibration;
 pub mod namespace;

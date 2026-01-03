@@ -1,6 +1,6 @@
 //! Reporter Module: Trait-based output for Human (CLI) and Machine (JSON) formats
 //!
-//! Phase 5.1: Machine Interface for IDE/CI integration.
+//!  Machine Interface for IDE/CI integration.
 //!
 //! ## Architecture
 //!
@@ -156,7 +156,7 @@ impl Reporter for HumanReporter {
 }
 
 // =============================================================================
-// MultiReporter (Phase 5.2)
+// MultiReporter 
 // =============================================================================
 
 /// MultiReporter - broadcasts events to multiple reporters
@@ -209,7 +209,7 @@ impl Reporter for MultiReporter {
 }
 
 // =============================================================================
-// Phase 6.3: Progress Bar Reporter
+//  Progress Bar Reporter
 // =============================================================================
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -351,7 +351,7 @@ impl Reporter for ProgressReporter {
 }
 
 // =============================================================================
-// Phase 6.3: Dots Reporter (CI Fallback)
+//  Dots Reporter (CI Fallback)
 // =============================================================================
 
 /// Simple dots reporter for CI environments
@@ -590,7 +590,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6.3: Progress Reporter Tests
+    //  Progress Reporter Tests
     // =========================================================================
 
     #[test]
@@ -616,7 +616,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6.3: Dots Reporter Tests
+    //  Dots Reporter Tests
     // =========================================================================
 
     #[test]

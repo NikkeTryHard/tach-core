@@ -1,4 +1,4 @@
-//! Phase 5.4: Jemalloc Allocator Control for Deterministic Snapshots
+//!  Jemalloc Allocator Control for Deterministic Snapshots
 //!
 //! This module provides the `quiesce_allocator()` function that MUST be called
 //! before SIGSTOP to ensure heap consistency during snapshot capture.

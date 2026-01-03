@@ -1,6 +1,6 @@
 //! Watch Mode: Automatic test re-execution on file changes
 //!
-//! Phase 5.3: The Feedback Loop
+//!  The Feedback Loop
 //!
 //! ## Critical: Stale Zygote Problem
 //!

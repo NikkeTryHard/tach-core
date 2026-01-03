@@ -1,4 +1,4 @@
-//! Phase 5.1: Zero-Overhead Coverage via PEP 669 (sys.monitoring)
+//!  Zero-Overhead Coverage via PEP 669 (sys.monitoring)
 //!
 //! This module implements a high-performance coverage collection system using:
 //! - Shared memory ring buffer (memfd_create + mmap)
@@ -75,7 +75,7 @@ pub const ENTRY_SIZE: usize = 16;
 pub const MEMFD_NAME: &str = "tach_coverage";
 
 // =============================================================================
-// Phase 6.1: Mapping Ring Buffer Constants
+//  Mapping Ring Buffer Constants
 // =============================================================================
 
 /// Mapping ring buffer capacity (number of entries)
@@ -166,7 +166,7 @@ impl CoverageEntry {
 }
 
 // =============================================================================
-// Phase 6.1: Mapping Entry for code_id -> filename resolution
+//  Mapping Entry for code_id -> filename resolution
 // =============================================================================
 
 /// Mapping entry for registering code_id -> filename mappings.
@@ -499,7 +499,7 @@ impl Drop for CoverageRingBuffer {
 }
 
 // =============================================================================
-// Phase 6.1: Mapping Ring Buffer Implementation
+//  Mapping Ring Buffer Implementation
 // =============================================================================
 
 /// Shared memory ring buffer for code_id -> filename mappings.
@@ -738,7 +738,7 @@ pub fn is_coverage_enabled() -> bool {
 }
 
 // =============================================================================
-// Phase 6.1: Global Mapping Buffer Instance
+//  Global Mapping Buffer Instance
 // =============================================================================
 
 /// Global mapping buffer instance (initialized by Supervisor, shared with Workers)
@@ -767,7 +767,7 @@ pub fn get_mapping_buffer() -> Option<&'static MappingRingBuffer> {
 }
 
 // =============================================================================
-// Phase 6.1: Thread-Local Seen Codes Set
+//  Thread-Local Seen Codes Set
 // =============================================================================
 
 use std::cell::RefCell;
@@ -1050,7 +1050,7 @@ pub fn py_get_coverage_overflow() -> u64 {
 }
 
 // =============================================================================
-// Phase 6.1: PY_START Registration Callback
+//  PY_START Registration Callback
 // =============================================================================
 
 /// Record a PY_START event (function entry) for code_id -> filename registration.
@@ -1194,7 +1194,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6.1: Mapping Entry Tests
+    //  Mapping Entry Tests
     // =========================================================================
 
     #[test]
@@ -1270,7 +1270,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6.1: Mapping Ring Buffer Tests
+    //  Mapping Ring Buffer Tests
     // =========================================================================
 
     #[test]
@@ -1351,7 +1351,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6.1: Thread-Local SEEN_CODES Tests
+    //  Thread-Local SEEN_CODES Tests
     // =========================================================================
 
     #[test]
@@ -1392,7 +1392,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 1.3: CAS Loop Regression Tests (TOCTOU Race Prevention)
+    //  CAS Loop Regression Tests (TOCTOU Race Prevention)
     // =========================================================================
 
     #[test]

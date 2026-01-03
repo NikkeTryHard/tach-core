@@ -1,6 +1,6 @@
 # Internal Architecture: The Physics of Restoration
 
-> **Status**: Phase 2.3 - The Final Sync (COMPLETE)
+> **Status**: Physics-Complete (v0.8.0-alpha)
 > **Author**: Project Tach Development Team
 > **Purpose**: Define restoration invariants and document allocator-specific state locations
 
@@ -461,13 +461,14 @@ sequenceDiagram
     Note over W: Page restored from golden
 ```
 
-### Phase 3: Performance Optimization (PENDING)
+### Performance Optimization (PLANNED for 0.9.0)
 
 1. **Lazy TLS capture**: Only snapshot TLS offsets that contain heap pointers
 2. **COW optimization**: Use `userfaultfd(UFFD_FEATURE_MINOR_HUGETLBFS)` for huge pages
 3. **Batched restoration**: Group page faults for reduced syscall overhead
+4. **Syscall batching**: Explore vectorized `process_vm_writev` for TLS + Stack
 
-### Phase 3.1: Multi-Version Support (PENDING)
+### Multi-Version Support (PLANNED for 0.9.0)
 
 1. **Detect Python version** at runtime
 2. **Load appropriate offset registry** for that version

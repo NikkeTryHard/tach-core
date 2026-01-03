@@ -1,6 +1,6 @@
 //! Configuration Loader
 //! - Reads pyproject.toml for environment variables (pytest-env replacement)
-//! - Provides CLI argument parsing with clap (Phase 5.1)
+//! - Provides CLI argument parsing with clap 
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 // =============================================================================
-// CLI Configuration (Phase 5.1)
+// CLI Configuration 
 // =============================================================================
 
 /// Output format for tach results
@@ -80,7 +80,7 @@ struct ToolConfig {
 }
 
 // =============================================================================
-// Phase 6.2: Tach Configuration ([tool.tach] in pyproject.toml)
+//  Tach Configuration ([tool.tach] in pyproject.toml)
 // =============================================================================
 
 /// Configuration for Tach from pyproject.toml
@@ -449,7 +449,7 @@ select = ["E", "F"]
     }
 
     // =========================================================================
-    // Phase 6.2: TachConfig Tests
+    //  TachConfig Tests
     // =========================================================================
 
     #[test]
@@ -563,7 +563,7 @@ enabled = true
     }
 
     // =========================================================================
-    // Phase 1.6: Environment Variable Denylist Tests
+    //  Environment Variable Denylist Tests
     // =========================================================================
 
     #[test]

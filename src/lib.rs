@@ -10,7 +10,7 @@
 #![warn(unused_mut)]
 
 // =============================================================================
-// Phase 5.4: Jemalloc Global Allocator
+//  Jemalloc Global Allocator
 // =============================================================================
 //
 // CRITICAL: This MUST be at the top of lib.rs before any allocations occur.
@@ -98,7 +98,7 @@ pub use execution::watch;
 pub use execution::zygote;
 
 // =============================================================================
-// Phase 3.3: Toxicity Integration
+//  Toxicity Integration
 // =============================================================================
 
 use anyhow::Result;
@@ -132,7 +132,7 @@ fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
 /// Discover tests with toxicity analysis.
 ///
 /// This function combines test discovery with toxicity graph construction,
-/// providing a single entry point for the Phase 3 pipeline.
+/// providing a single entry point for the toxicity pipeline.
 ///
 /// # Arguments
 /// * `root` - The project root directory to scan for tests

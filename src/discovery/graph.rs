@@ -1,4 +1,4 @@
-//! Toxicity Graph Module (Phase 3.2)
+//! Toxicity Graph Module 
 //!
 //! The "Contagion Engine" - builds a dependency graph of Python modules and
 //! propagates toxicity transitively. If module B is toxic and module A imports B,
@@ -114,7 +114,7 @@ impl ToxicityGraph {
                     graph.graph.add_edge(from_idx, to_idx, ());
                 }
                 // If import doesn't resolve to local module, it's external
-                // External toxicity is already handled by Phase 3.1 local analysis
+                // External toxicity is already handled by local analysis
             }
         }
 

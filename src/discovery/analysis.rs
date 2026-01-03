@@ -1,4 +1,4 @@
-//! Toxicity Analysis Module (Phase 3.1)
+//! Toxicity Analysis Module 
 //!
 //! Static analysis to detect "toxic" patterns that are unsafe for snapshot/reset.
 //! Toxic patterns include: threading, multiprocessing, sockets, native code (ctypes),
@@ -52,7 +52,7 @@ pub struct ToxicityReport {
     pub is_toxic: bool,
     /// Human-readable reasons for toxicity
     pub reasons: Vec<String>,
-    /// All imports found (for Phase 3.2 graph construction)
+    /// All imports found (for graph construction)
     pub imports: Vec<String>,
 }
 

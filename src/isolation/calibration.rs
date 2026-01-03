@@ -1,4 +1,4 @@
-//! Phase 2.3 P1: Sentinel Calibration for Dynamic TLS Offset Discovery
+//! Sentinel Calibration for Dynamic TLS Offset Discovery
 //!
 //! This module implements the "Self-Calibration" routine that automatically discovers
 //! mimalloc TLS offsets at Zygote warm-up time, eliminating hardcoded offset values.
@@ -96,7 +96,7 @@ impl TlsCalibration {
     #[cfg(target_arch = "x86_64")]
     pub fn calibrate() -> Result<Self> {
         eprintln!("{}", "=".repeat(70));
-        eprintln!("[calibration] Phase 2.3 P1: TLS Self-Calibration Starting");
+        eprintln!("[calibration]  TLS Self-Calibration Starting");
         eprintln!("{}", "=".repeat(70));
 
         // Step 1: Get fs_base
@@ -279,18 +279,18 @@ import gc
 
 # Allocate many small objects to populate mimalloc's thread-local bins
 
-# Phase 1: Small allocations (populates size-class bins)
+#  Small allocations (populates size-class bins)
 small_objects = [bytearray(64) for _ in range(1000)]
 
-# Phase 2: Float allocations (uses float free list)
+#  Float allocations (uses float free list)
 floats = [float(i) * 1.1 for i in range(1000)]
 
-# Phase 3: Delete to populate free lists
+#  Delete to populate free lists
 del small_objects
 del floats
 gc.collect()
 
-# Phase 4: Reallocate (exercises cached bins)
+#  Reallocate (exercises cached bins)
 small_objects_2 = [bytearray(64) for _ in range(500)]
 floats_2 = [float(i) * 2.2 for i in range(500)]
 "#;

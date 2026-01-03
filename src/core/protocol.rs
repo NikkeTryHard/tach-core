@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 // Command bytes
 pub const CMD_EXIT: u8 = 0x00;
 pub const CMD_FORK: u8 = 0x01;
-pub const CMD_RUN_TEST: u8 = 0x02; // Phase 4.3: Send test to existing worker
+pub const CMD_RUN_TEST: u8 = 0x02; //  Send test to existing worker
 pub const MSG_READY: u8 = 0x42;
-pub const MSG_WORKER_READY: u8 = 0x43; // Phase 4.3: Worker signals availability for reuse
+pub const MSG_WORKER_READY: u8 = 0x43; //  Worker signals availability for reuse
 
 // Result status codes
 pub const STATUS_PASS: u8 = 0;
@@ -32,7 +32,7 @@ pub struct TestPayload {
     /// Path to supervisor's debug socket for breakpoint() support
     pub debug_socket_path: String,
     /// Whether this test is toxic (requires fork/kill instead of reset)
-    /// Phase 4: Toxic tests exit after run, Safe tests reset and loop
+    ///  Toxic tests exit after run, Safe tests reset and loop
     pub is_toxic: bool,
 }
 

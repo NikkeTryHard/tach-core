@@ -25,7 +25,7 @@ use std::process::Command;
 ///
 /// If TACH_NO_ISOLATION=1 is set, skip all isolation (for benchmarking/debugging)
 pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
-    // Phase 8.1: Allow skipping isolation for raw speed benchmarks
+    //  Allow skipping isolation for raw speed benchmarks
     if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
         return Ok(());
     }

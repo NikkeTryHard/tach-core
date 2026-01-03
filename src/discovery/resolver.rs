@@ -14,7 +14,7 @@ pub struct RunnableTest {
     /// Fixtures in topological order (dependencies first)
     pub fixtures: Vec<ResolvedFixture>,
     /// Whether this test is toxic (requires fork/kill instead of reset)
-    /// Set by toxicity analysis in Phase 3
+    /// Set by toxicity analysis
     pub is_toxic: bool,
 }
 
@@ -93,7 +93,7 @@ impl FixtureRegistry {
 
             let mut module_fixtures = HashMap::new();
             for fixture in &module.fixtures {
-                // Phase 7c: Handle class-scoped fixtures
+                // Handle class-scoped fixtures
                 if let Some(ref class_name) = fixture.class_scope {
                     let key = (module.path.clone(), class_name.clone());
                     class_scoped
@@ -126,7 +126,7 @@ impl FixtureRegistry {
         module_path: &PathBuf,
         test_name: &str,
     ) -> Option<(FixtureDefinition, PathBuf)> {
-        // Phase 7c: Check class-scoped fixtures first for tests in classes
+        // Check class-scoped fixtures first for tests in classes
         // Test names in classes have format "ClassName::method_name"
         if let Some(class_name) = test_name.split("::").next() {
             if class_name.starts_with("Test") && test_name.contains("::") {
@@ -190,7 +190,7 @@ impl<'a> Resolver<'a> {
         let mut visited = HashSet::new();
         let mut stack = Vec::new();
 
-        // Phase 7b: Filter out parametrized args - they're NOT fixtures
+        // Filter out parametrized args - they're NOT fixtures
         // @pytest.mark.parametrize("arg") injects arg from the decorator, not fixture system
         let parametrized_set: HashSet<_> = test.parametrized_args.iter().collect();
 
@@ -474,7 +474,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 6: Builtin Fixture Tests
+    //  Builtin Fixture Tests
     // =========================================================================
 
     #[test]

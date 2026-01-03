@@ -1,4 +1,4 @@
-//! Phase 5.2: The Iron Dome - Sandbox Hardening
+//!  The Iron Dome - Sandbox Hardening
 //!
 //! This module implements the final security layer for Tach workers, transforming
 //! each worker from a generic process into a restricted execution unit.

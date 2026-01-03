@@ -42,7 +42,7 @@ static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
 
 // =============================================================================
-// Phase 4.3: Worker Pool for Persistent Workers
+//  Worker Pool for Persistent Workers
 // =============================================================================
 
 /// Handle to a persistent worker for reuse in Hypervisor Mode.
@@ -124,7 +124,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
     }
 
     // =========================================================================
-    // Phase 5.4: QUIESCE SEQUENCE - Critical for Hypervisor Stability
+    //  QUIESCE SEQUENCE - Critical for Hypervisor Stability
     // =========================================================================
     //
     // Before SIGSTOP, we must quiesce the jemalloc allocator to ensure the
@@ -207,14 +207,14 @@ fn reset_memory() -> PyResult<()> {
 pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
     let tach_mod = PyModule::new(py, "tach_rust")?;
 
-    // Phase 1: Snapshot mode functions
+    //  Snapshot mode functions
     tach_mod.add_function(wrap_pyfunction!(init_snapshot_mode, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(reset_memory, &tach_mod)?)?;
 
-    // Phase 5.3: Hot Reloading - Module cleanup
+    //  Hot Reloading - Module cleanup
     tach_mod.add_function(wrap_pyfunction!(cleanup_modules, &tach_mod)?)?;
 
-    // Phase 5.4: Jemalloc Allocator Control
+    //  Jemalloc Allocator Control
     // These functions allow Python to interact with the jemalloc allocator:
     // - quiesce_allocator: Flush tcache and sync epoch before snapshot
     // - verify_jemalloc: Check that jemalloc is the active allocator
@@ -227,7 +227,7 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
         &tach_mod
     )?)?;
 
-    // Phase 5.1: Zero-Overhead Coverage (PEP 669)
+    //  Zero-Overhead Coverage (PEP 669)
     // These functions allow Python's sys.monitoring callbacks to record coverage:
     // - record_line: Record a LINE event (code_id, lineno) to the ring buffer
     // - is_coverage_enabled: Check if coverage collection is active
@@ -245,7 +245,7 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
         &tach_mod
     )?)?;
 
-    // Phase 6.1: Coverage Resolution (code_id -> filename mapping)
+    //  Coverage Resolution (code_id -> filename mapping)
     // - record_py_start: Register code object on first function entry (PY_START event)
     // - get_mapping_overflow: Get count of dropped mappings due to buffer full
     tach_mod.add_function(wrap_pyfunction!(
@@ -257,7 +257,7 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
         &tach_mod
     )?)?;
 
-    // Phase 2: Zero-Copy Loader functions (Request Model)
+    //  Zero-Copy Loader functions (Request Model)
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(crate::loader::get_module_path, &tach_mod)?)?;
     tach_mod.add_function(wrap_pyfunction!(
@@ -274,10 +274,10 @@ pub fn inject_tach_rust_module(py: Python) -> PyResult<()> {
 }
 
 // =============================================================================
-// Phase 4.3: Worker Loop Helper Functions
+//  Worker Loop Helper Functions
 // =============================================================================
 
-/// Phase 5.3: Clean up test-imported modules from sys.modules
+///  Clean up test-imported modules from sys.modules
 ///
 /// Delegates to tach_harness.cleanup_test_modules() which:
 /// 1. Identifies modules imported AFTER Zygote initialization
@@ -298,13 +298,13 @@ fn cleanup_modules() -> PyResult<()> {
 /// Reset memory and signal readiness to Zygote.
 ///
 /// Called by worker after completing a safe test. Performs:
-/// 1. Phase 5.3: Clean sys.modules (remove test-imported modules)
+/// 1.  Clean sys.modules (remove test-imported modules)
 /// 2. Memory reset via madvise(MADV_DONTNEED)
 /// 3. Signals MSG_WORKER_READY to Zygote
 ///
 /// Returns Err if reset fails - worker MUST exit in this case.
 fn reset_and_signal_ready(socket: &UnixStream) -> Result<()> {
-    // 1. Phase 5.3: Clean sys.modules BEFORE memory reset
+    // 1.  Clean sys.modules BEFORE memory reset
     // This removes test-imported modules so next test gets fresh imports
     Python::with_gil(|py| -> std::result::Result<(), PyErr> {
         let tach_rust = py.import("tach_rust")?;
@@ -485,7 +485,7 @@ fn spawn_result_collector(
 
 /// Zygote with separate command and result channels
 pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<()> {
-    // DEAD MAN'S SWITCH (Phase 4.2): If supervisor dies, we die
+    // DEAD MAN'S SWITCH : If supervisor dies, we die
     // This is the ultimate safety net - no orphaned zygotes
     // Must be the FIRST thing we do, before any resource allocation
     unsafe {
@@ -499,7 +499,7 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
     let cwd = env::current_dir()?;
     let cwd_str = cwd.to_string_lossy().to_string();
 
-    // Phase 8: Detect venv and get site-packages path
+    //  Detect venv and get site-packages path
     let site_packages = find_site_packages(&cwd);
     if let Some(ref sp) = site_packages {
         eprintln!("[zygote] Found venv: {}", sp.display());
@@ -512,7 +512,7 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
             .downcast()
             .map_err(|e| anyhow::anyhow!("sys.path not a list: {}", e))?;
 
-        // Phase 8: Inject venv site-packages FIRST (highest priority)
+        //  Inject venv site-packages FIRST (highest priority)
         if let Some(ref sp) = site_packages {
             path.insert(0, sp.to_string_lossy().to_string())?;
         }
@@ -630,7 +630,7 @@ except Exception as e:
 
                 let is_toxic = payload.is_toxic;
 
-                // Phase 4.3: Check for idle worker (only for safe tests)
+                //  Check for idle worker (only for safe tests)
                 let idle_worker = if !is_toxic {
                     IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).pop()
                 } else {
@@ -689,7 +689,7 @@ except Exception as e:
                     Ok(ForkResult::Child) => {
                         drop(parent_sock);
 
-                        // 0. DEAD MAN'S SWITCH (Phase 4.2): If Zygote dies, worker dies
+                        // 0. DEAD MAN'S SWITCH : If Zygote dies, worker dies
                         // Must be FIRST - before any resource allocation
                         unsafe {
                             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
@@ -714,7 +714,7 @@ except Exception as e:
                         // Without this, the CWD handle points to the old mount
                         let _ = std::env::set_current_dir(&project_root);
 
-                        // 4. Phase 5.2: Apply Iron Dome sandbox (Landlock + Seccomp)
+                        // 4.  Apply Iron Dome sandbox (Landlock + Seccomp)
                         // SECURITY SEQUENCE:
                         //   - Landlock: Restrict filesystem view (ALWAYS applied)
                         //   - Seccomp: Block dangerous syscalls (ONLY for safe workers)
@@ -769,7 +769,7 @@ except Exception as e:
                             let _ = child_sock.try_clone().unwrap().write_all(&result_bytes);
                         }
 
-                        // 10. Phase 4.3: Dual-path decision based on toxicity
+                        // 10.  Dual-path decision based on toxicity
                         // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
                         // SAFE PATH: Reset memory and enter worker loop for reuse
                         if payload.is_toxic {
@@ -795,7 +795,7 @@ except Exception as e:
             CMD_EXIT => {
                 eprintln!("[zygote] Received EXIT.");
 
-                // Phase 4.3: Drain idle workers and send them EXIT commands
+                //  Drain idle workers and send them EXIT commands
                 let idle_workers =
                     std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
                 let worker_count = idle_workers.len();
@@ -864,14 +864,14 @@ fn run_worker(payload: &TestPayload) -> TestResult {
 }
 
 // =============================================================================
-// Phase 4: Worker Loop Prototype Tests
+//  Worker Loop Prototype Tests
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Simulates the Phase 4 worker loop decision logic.
+    /// Simulates the worker loop decision logic.
     /// This is a pure logic test - no actual processes spawned.
     #[derive(Debug, Clone, PartialEq)]
     enum WorkerAction {
@@ -910,7 +910,7 @@ mod tests {
             // Simulate: Send result (would write to socket in real code)
             // Result is ALWAYS sent before decision
 
-            // Phase 4 decision point
+            // Worker decision point
             let action = decide_worker_action(is_toxic);
             actions.push((test_id, action.clone()));
 
@@ -1049,7 +1049,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 4.3: Lifecycle Manager Integration Test
+    //  Lifecycle Manager Integration Test
     // =========================================================================
 
     /// Test that spawn_result_collector correctly manages worker lifecycle.
@@ -1178,7 +1178,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Additional Phase 2 Pre-Refactor Tests
+    // Additional Pre-Refactor Tests
     // =========================================================================
 
     #[test]

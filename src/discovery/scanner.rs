@@ -54,7 +54,7 @@ pub struct TestModule {
     pub tests: Vec<TestCase>,
     pub fixtures: Vec<FixtureDefinition>,
     /// Whether this module is toxic (requires fork/kill instead of reset)
-    /// Set by toxicity analysis in Phase 3
+    /// Set by toxicity analysis
     pub is_toxic: bool,
 }
 
@@ -223,7 +223,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         if let ast::Stmt::FunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
 
-                            // Phase 7c: Detect class-method fixtures
+                            // Detect class-method fixtures
                             if has_fixture_decorator(&func.decorator_list) {
                                 fixtures.push(FixtureDefinition {
                                     name: method_name.to_string(),
@@ -252,7 +252,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
 
-                            // Phase 7c: Detect async class-method fixtures
+                            // Detect async class-method fixtures
                             if has_fixture_decorator(&func.decorator_list) {
                                 fixtures.push(FixtureDefinition {
                                     name: method_name.to_string(),
@@ -449,7 +449,7 @@ fn expr_to_string(expr: &ast::Expr) -> Option<String> {
 }
 
 // =============================================================================
-// Phase 7b: @pytest.mark.parametrize Extraction
+// @pytest.mark.parametrize Extraction
 // =============================================================================
 
 /// Check if a decorator is @pytest.mark.parametrize
@@ -586,7 +586,7 @@ fn count_patch_decorators(decorators: &[ast::Expr]) -> usize {
 /// 1. @pytest.mark.parametrize args (explicit parameter names)
 /// 2. @patch args (FIRST N args after self/cls, where N = patch decorator count)
 ///
-/// Phase 7.4 Fix: unittest.mock.patch injects args at the START (after self),
+/// unittest.mock.patch injects args at the START (after self),
 /// not at the end. The bottom-most @patch decorator's mock becomes the first arg.
 fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<String> {
     let mut injected = extract_parametrized_args(decorators);
@@ -595,7 +595,7 @@ fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<
     // (after self/cls which are already filtered out by extract_args_from_arguments)
     let patch_count = count_patch_decorators(decorators);
     if patch_count > 0 && func_args.len() >= patch_count {
-        // Phase 7.4: Take the FIRST `patch_count` arguments as patch-injected
+        //  Take the FIRST `patch_count` arguments as patch-injected
         // Example: @patch("a") @patch("b") def test(self, mock_b, mock_a, fixture):
         //          -> mock_b and mock_a are injected, fixture is a real fixture
         for arg in func_args.iter().take(patch_count) {

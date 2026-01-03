@@ -84,7 +84,7 @@ impl Drop for RunContext {
 
 fn main() -> Result<()> {
     // ==========================================================================
-    // PHASE 5.4: JEMALLOC VERIFICATION (Replaces Phase 1.1 glibc workarounds)
+    // JEMALLOC VERIFICATION
     // ==========================================================================
     //
     // CRITICAL: Verify jemalloc is the active allocator BEFORE any allocations.
@@ -198,7 +198,7 @@ fn execute_session(
     let is_json = *format == OutputFormat::Json;
 
     // Create reporters
-    // Phase 6.3: Use ProgressReporter for interactive terminals, DotsReporter for CI
+    //  Use ProgressReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
@@ -307,7 +307,7 @@ fn execute_session(
 
     // --- PHASE 3.3: TOXICITY TAGGING ---
     // Tag each resolved test with its toxicity status from the graph.
-    // Toxic tests will use fork/kill instead of snapshot/reset in Phase 4.
+    // Toxic tests use fork/kill instead of snapshot/reset.
     let mut runnable_tests = runnable_tests;
     let mut toxic_test_count = 0;
     for test in &mut runnable_tests {

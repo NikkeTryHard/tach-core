@@ -235,7 +235,7 @@ impl DebugServer {
         worker_pids: &[i32],
         debug_worker_pid: Option<i32>,
     ) -> Result<()> {
-        // Phase 4.2: Mark that we're debugging (affects signal handling)
+        //  Mark that we're debugging (affects signal handling)
         // SIGINT will be ignored by signal handler - raw mode handles Ctrl+C
         crate::lifecycle::IS_DEBUGGING.store(true, Ordering::SeqCst);
 
@@ -329,7 +329,7 @@ impl DebugServer {
         // BOSS REFINEMENT #1: Resume all paused workers
         resume_workers(worker_pids);
 
-        // Phase 4.2: Clear debugging flag (affects signal handling)
+        //  Clear debugging flag (affects signal handling)
         crate::lifecycle::IS_DEBUGGING.store(false, Ordering::SeqCst);
 
         eprintln!("\n[tach] Debug session ended. Resuming...\n");

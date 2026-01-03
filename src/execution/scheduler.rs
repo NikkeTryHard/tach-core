@@ -1,6 +1,6 @@
 //! Parallel Scheduler with crash timeout detection
 //!
-//! Phase 4: Dual-Path Scheduler
+//!  Dual-Path Scheduler
 //! - Safe tests run first (high throughput via Hypervisor Mode)
 //! - Toxic tests run last (containment via Isolation Mode)
 
@@ -26,7 +26,7 @@ struct ActiveWorker {
 
 /// Scheduler with crash detection and dual-path execution
 ///
-/// Phase 4: Dual queues for safe/toxic test separation
+///  Dual queues for safe/toxic test separation
 /// - Safe tests execute first (Hypervisor Mode - workers reset and loop)
 /// - Toxic tests execute last (Isolation Mode - workers exit after each test)
 pub struct Scheduler {
@@ -36,7 +36,7 @@ pub struct Scheduler {
     active_workers: Arc<Mutex<HashMap<u32, ActiveWorker>>>,
     max_workers: usize,
     debug_socket_path: PathBuf,
-    // Phase 4: Dual queues for priority dispatch
+    //  Dual queues for priority dispatch
     safe_queue: VecDeque<(u32, RunnableTest)>,
     toxic_queue: VecDeque<(u32, RunnableTest)>,
 }
@@ -60,7 +60,7 @@ impl Scheduler {
             active_workers: Arc::new(Mutex::new(HashMap::new())),
             max_workers,
             debug_socket_path,
-            // Phase 4: Initialize empty queues (populated in run())
+            //  Initialize empty queues (populated in run())
             safe_queue: VecDeque::new(),
             toxic_queue: VecDeque::new(),
         })
@@ -84,7 +84,7 @@ impl Scheduler {
         }
 
         eprintln!(
-            "[scheduler] Phase 4 queue split: {} safe (Hypervisor), {} toxic (Isolation)",
+            "[scheduler] Queue split: {} safe (Hypervisor), {} toxic (Isolation)",
             safe_count, toxic_count
         );
     }
@@ -109,7 +109,7 @@ impl Scheduler {
         let mut failed = 0usize;
         let mut collected = 0usize;
 
-        // Phase 4: Populate dual queues (safe first, toxic last)
+        //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
 
         // Emit run_start event

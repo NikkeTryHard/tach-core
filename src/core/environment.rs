@@ -1,6 +1,6 @@
 //! Environment detection for Tach
 //!
-//! Phase 8: Venv auto-detection and path injection
+//!  Venv auto-detection and path injection
 
 use std::fs;
 use std::path::{Path, PathBuf};

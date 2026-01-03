@@ -7,7 +7,7 @@
 //!
 //! This eliminates fork() overhead in the hot loop (target: <50μs reset vs ~1ms fork)
 //!
-//! # Phase 5.4: ELF Segment Registration
+//! # ELF Segment Registration
 //!
 //! For correct snapshot/restore of Python's global state (small_ints, singletons),
 //! we must precisely identify and register libpython's writable segments:
@@ -35,7 +35,7 @@ use userfaultfd::{Uffd, UffdBuilder};
 const PAGE_SIZE: usize = 4096;
 
 // =============================================================================
-// Phase 2.3: TLS Snapshot/Restore Constants
+// TLS Snapshot/Restore Constants
 // =============================================================================
 //
 // These constants enable the "Restoration Quadrant" - capturing and restoring
@@ -59,10 +59,10 @@ const ARCH_GET_FS: libc::c_int = 0x1003;
 const ARCH_SET_FS: libc::c_int = 0x1002;
 
 /// TLS snapshot size hint (12KB covers typical TLS usage including mimalloc state)
-/// This value was determined empirically in Phase 2.1/2.2 TLS exploration.
+/// This value was determined empirically during TLS exploration.
 ///
 /// IMPORTANT: This is now used as a MINIMUM hint, not a hard limit.
-/// Phase 2.3 P1 fix: The actual capture size is determined dynamically by:
+/// The actual capture size is determined dynamically by:
 /// 1. Using the TLS region boundaries from /proc/pid/maps
 /// 2. Capturing from fs_base to min(fs_base + region_size, region_end)
 ///
@@ -177,7 +177,7 @@ impl MemoryRegion {
         }
 
         // =================================================================
-        // Phase 5.1: EXCLUDE coverage ring buffer from snapshot
+        //  EXCLUDE coverage ring buffer from snapshot
         // =================================================================
         // The coverage ring buffer is created via memfd_create("tach_coverage")
         // and appears in /proc/pid/maps as "memfd:tach_coverage" or similar.
@@ -223,7 +223,7 @@ impl MemoryRegion {
 }
 
 // =============================================================================
-// Phase 2.3: TLS Snapshot Structure
+//  TLS Snapshot Structure
 // =============================================================================
 
 /// Thread Local Storage snapshot for the Restoration Quadrant
@@ -253,7 +253,7 @@ pub struct TlsSnapshot {
 }
 
 // =============================================================================
-// Phase 2.3: TLS Capture/Restore via ptrace
+//  TLS Capture/Restore via ptrace
 // =============================================================================
 
 /// Get fs_base register from a stopped process via ptrace
@@ -363,7 +363,7 @@ fn find_tls_region(pid: Pid, fs_base: usize) -> Result<(usize, usize)> {
 /// 2. Find the TLS region in /proc/pid/maps
 /// 3. Read the ENTIRE TLS region via process_vm_readv (dynamic sizing)
 ///
-/// # Phase 2.3 P1: Dynamic TLS Sizing
+/// #  Dynamic TLS Sizing
 ///
 /// The Orchestrator identified a critical flaw: the 12KB hardcode fails when
 /// TensorFlow/PyTorch load dozens of C-extensions, each requesting TLS slots
@@ -384,7 +384,7 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
     let (region_start, region_end) = find_tls_region(pid, fs_base)?;
 
     // =================================================================
-    // Phase 2.3 P1: Dynamic TLS Sizing
+    //  Dynamic TLS Sizing
     // =================================================================
     // "Do not guess the size of the heart; measure the cavity."
     // - The Orchestrator
@@ -416,7 +416,7 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
 
     let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov).with_context(|| format!("process_vm_readv failed for TLS at 0x{:x}", fs_base))?;
 
-    // Phase 2.3 P1: Check for partial reads (Orchestrator's warning)
+    //  Check for partial reads (Orchestrator's warning)
     if bytes_read != capture_len {
         return Err(anyhow!("Partial TLS read: {}/{} bytes. Worker may have 'Fractured Brain' if we proceed.", bytes_read, capture_len));
     }
@@ -515,7 +515,7 @@ fn align_to_page_up(addr: usize) -> usize {
 }
 
 // =============================================================================
-// Phase 5.4: ELF Segment Parsing and Page-Aligned Merging
+//  ELF Segment Parsing and Page-Aligned Merging
 // =============================================================================
 //
 // This section implements the "Iron Dome" for Python's global state:
@@ -859,7 +859,7 @@ pub struct WorkerSnapshot {
     pub golden_pages: HashMap<usize, Vec<u8>>,
     /// Registered memory regions
     pub regions: Vec<MemoryRegion>,
-    /// Phase 2.3: TLS snapshot for the Restoration Quadrant
+    ///  TLS snapshot for the Restoration Quadrant
     /// Contains fs_base register value and 12KB TLS memory block
     #[cfg(target_arch = "x86_64")]
     pub tls_snapshot: Option<TlsSnapshot>,
@@ -877,7 +877,7 @@ pub struct SnapshotManager {
     pub available: bool,
     /// Per-worker snapshots
     workers: HashMap<i32, WorkerSnapshot>,
-    /// Phase 2.3 P1: TLS calibration data (discovered during Zygote warm-up)
+    ///  TLS calibration data (discovered during Zygote warm-up)
     /// This contains the dynamically discovered mi_heap_t offset
     #[cfg(target_arch = "x86_64")]
     calibration: Option<TlsCalibration>,
@@ -906,7 +906,7 @@ impl SnapshotManager {
         })
     }
 
-    /// Phase 2.3 P1: Perform TLS self-calibration during Zygote warm-up
+    ///  Perform TLS self-calibration during Zygote warm-up
     ///
     /// This MUST be called:
     /// - After Python is initialized
@@ -962,7 +962,7 @@ impl SnapshotManager {
     /// This is called when a worker sends its UFFD to the Supervisor.
     /// The worker must be in SIGSTOP state before calling this.
     ///
-    /// # Phase 2.3: TLS Capture
+    /// #  TLS Capture
     ///
     /// This function now captures the TLS snapshot (fs_base + 12KB TLS data)
     /// as part of the golden snapshot. This is critical for Python 3.13+
@@ -991,7 +991,7 @@ impl SnapshotManager {
         }
 
         // =================================================================
-        // Phase 2.3: Capture TLS Snapshot (Restoration Quadrant - TCB)
+        //  Capture TLS Snapshot (Restoration Quadrant - TCB)
         // =================================================================
         // The TLS block contains critical allocator state (mimalloc's mi_heap_t
         // pointers in Python 3.13+). We capture fs_base and 12KB of TLS data.
@@ -1100,7 +1100,7 @@ impl SnapshotManager {
         Ok(())
     }
 
-    /// Restore TLS state for a worker (Phase 2.3: Restoration Quadrant - TCB)
+    /// Restore TLS state for a worker ( Restoration Quadrant - TCB)
     ///
     /// This MUST be called after MADV_DONTNEED has invalidated the worker's
     /// memory pages, but BEFORE the worker resumes execution.
@@ -1136,7 +1136,7 @@ impl SnapshotManager {
         Ok(())
     }
 
-    /// Full worker reset with TLS restoration (Phase 2.3)
+    /// Full worker reset with TLS restoration 
     ///
     /// This combines memory reset (MADV_DONTNEED) with TLS restoration.
     /// Call this instead of reset_worker() when you need complete state restoration.
@@ -1381,7 +1381,7 @@ mod tests {
 
     #[test]
     fn test_region_filtering_coverage_buffer_excluded() {
-        // Phase 5.1: Coverage ring buffer must be EXCLUDED from snapshot
+        //  Coverage ring buffer must be EXCLUDED from snapshot
         // It's created via memfd_create("tach_coverage") and appears in /proc/maps
         let coverage_memfd = MemoryRegion {
             start: 0xf000,
@@ -1479,7 +1479,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 5.4: AlignedSegment Tests
+    //  AlignedSegment Tests
     // =========================================================================
 
     #[test]
@@ -1556,7 +1556,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 5.4: Segment Merge Algorithm Tests
+    //  Segment Merge Algorithm Tests
     // =========================================================================
 
     #[test]
@@ -1655,7 +1655,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 5.4: Page Alignment Up Tests
+    //  Page Alignment Up Tests
     // =========================================================================
 
     #[test]
@@ -1673,7 +1673,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 2.3: TLS Snapshot Tests
+    //  TLS Snapshot Tests
     // =========================================================================
 
     #[test]
@@ -1693,7 +1693,7 @@ mod tests {
     #[test]
     fn test_tls_snapshot_size_constant() {
         // TLS_SNAPSHOT_SIZE_HINT is the minimum hint (12KB)
-        // Phase 2.3 P1: Actual capture size is now dynamic based on region boundaries
+        //  Actual capture size is now dynamic based on region boundaries
         assert_eq!(TLS_SNAPSHOT_SIZE_HINT, 12 * 1024);
         assert_eq!(TLS_SNAPSHOT_SIZE_HINT, 12288);
     }
@@ -1710,7 +1710,7 @@ mod tests {
     #[test]
     fn test_tls_snapshot_data_roundtrip() {
         // Test that TLS snapshot can store and retrieve data correctly
-        // Phase 2.3 P1: TLS size is now dynamic, so we test with a sample size
+        //  TLS size is now dynamic, so we test with a sample size
         let sample_size = 16 * 1024; // 16KB - larger than hint to verify dynamic sizing
         let test_pattern: Vec<u8> = (0..sample_size).map(|i| (i % 256) as u8).collect();
 
