@@ -1,6 +1,6 @@
 # Self-Hosted Runner Requirements
 
-> **Status**: Phase 2 - Infrastructure Documentation
+> **Status**: Infrastructure Documentation
 > **Author**: Project Tach Development Team
 > **Purpose**: Define requirements for running Tach's Physics tests in CI
 

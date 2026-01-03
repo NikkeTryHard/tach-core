@@ -18,7 +18,7 @@ use nix::unistd::{fork, ForkResult, Pid};
 use tach_core::sandbox::{apply_iron_dome, apply_landlock, apply_seccomp, SandboxStatus};
 
 // =============================================================================
-// PHASE 1.1: SECCOMP ENFORCEMENT TESTS
+// SECCOMP ENFORCEMENT TESTS
 // =============================================================================
 // These tests verify that Seccomp actually blocks syscalls with EPERM.
 // The "Suicide Worker" pattern: fork, apply filter, attempt blocked syscall.
@@ -252,7 +252,7 @@ fn test_seccomp_allows_clone() {
 }
 
 // =============================================================================
-// PHASE 1.2: LANDLOCK ENFORCEMENT TESTS
+// LANDLOCK ENFORCEMENT TESTS
 // =============================================================================
 // These tests verify that Landlock actually blocks filesystem access with EACCES.
 
@@ -452,7 +452,7 @@ fn test_landlock_allows_project_read() {
 }
 
 // =============================================================================
-// PHASE 1.3: NAMESPACE ISOLATION TESTS (Orchestrator Amendment)
+// NAMESPACE ISOLATION TESTS
 // =============================================================================
 // Use kill(target_pid, 0) returning ESRCH to verify PID namespace isolation.
 
@@ -611,7 +611,7 @@ fn test_kill_sibling_returns_esrch() {
 }
 
 // =============================================================================
-// PHASE 1.4: FILE DESCRIPTOR LEAK TEST (Orchestrator Amendment)
+// FILE DESCRIPTOR LEAK TEST
 // =============================================================================
 // Verify that CLONE_FILES is not misused - child closing FD doesn't affect parent.
 
@@ -658,7 +658,7 @@ fn test_fd_isolation_clone_files() {
 }
 
 // =============================================================================
-// PHASE 1.5: TOXIC VS SAFE WORKER DIFFERENTIATION
+// TOXIC VS SAFE WORKER DIFFERENTIATION
 // =============================================================================
 // Verify toxic workers bypass Seccomp but not Landlock.
 

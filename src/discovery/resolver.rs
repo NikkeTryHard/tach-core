@@ -244,7 +244,7 @@ impl<'a> Resolver<'a> {
             });
         }
 
-        // PHASE 6: Skip resolution for pytest builtin fixtures
+        // Skip resolution for pytest builtin fixtures
         // These are provided by pytest at runtime, not discovered statically.
         // We mark them as visited and continue - pytest will inject them.
         if is_builtin_fixture(name) {

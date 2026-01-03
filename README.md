@@ -264,22 +264,24 @@ See [Configuration Reference](docs/configuration.md) for full details.
 
 ---
 
-## Implementation Status
+## Feature Completion
 
-| Phase | Component                   | Status   |
-| :---- | :-------------------------- | :------- |
-| 1     | Physics Check (userfaultfd) | Complete |
-| 2     | Zero-Copy Loader            | Complete |
-| 3     | Toxicity Filter             | Complete |
-| 4     | Worker Loop                 | Complete |
-| 5.1   | Coverage (PEP 669)          | Complete |
-| 5.2   | Iron Dome (Sandbox)         | Complete |
-| 5.3   | Hot Reload                  | Complete |
-| 5.4   | Allocator (Jemalloc)        | Complete |
-| 6.1   | Coverage Resolution         | Complete |
-| 6.2   | Configuration Engine        | Complete |
-| 6.3   | Progress Reporter           | Complete |
-| 7     | Security Hardening          | Complete |
+| Component                   | Status   |
+| :-------------------------- | :------- |
+| Physics Check (userfaultfd) | Complete |
+| Zero-Copy Loader            | Complete |
+| Toxicity Filter             | Complete |
+| Worker Loop                 | Complete |
+| Coverage (PEP 669)          | Complete |
+| Iron Dome (Sandbox)         | Complete |
+| Hot Reload                  | Complete |
+| Allocator (Jemalloc)        | Complete |
+| Coverage Resolution         | Complete |
+| Configuration Engine        | Complete |
+| Progress Reporter           | Complete |
+| Security Hardening          | Complete |
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
@@ -296,7 +298,7 @@ See [Configuration Reference](docs/configuration.md) for full details.
 
 ---
 
-## Security Hardening (Phase 7)
+## Security Hardening
 
 Tach implements comprehensive security hardening across all subsystems:
 

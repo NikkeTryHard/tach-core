@@ -146,7 +146,7 @@ fn main() -> Result<()> {
     // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
     std::env::set_var("TACH_TARGET_PATH", &cli.path);
 
-    // --- PHASE 4.2: LIFECYCLE SETUP ---
+    // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
     if let Err(e) = signals::install_signal_handlers() {
@@ -229,7 +229,7 @@ fn execute_session(
 
     let cleanup = CleanupGuard::new();
 
-    // --- DISCOVERY PHASE (with Toxicity Analysis) ---
+    // --- DISCOVERY ---
     if !is_json {
         eprintln!("[supervisor] Scanning {}...", cwd.display());
     }
@@ -250,7 +250,7 @@ fn execute_session(
         );
     }
 
-    // --- PHASE 2: EAGER COMPILATION (Zero-Copy Loader) ---
+    // --- EAGER COMPILATION ---
     // Compile ALL .py files in project and populate global registry BEFORE fork.
     // Workers will inherit this registry via CoW (copy-on-write).
     let start_compile = std::time::Instant::now();
@@ -292,7 +292,7 @@ fn execute_session(
         );
     }
 
-    // --- RESOLUTION PHASE ---
+    // --- RESOLUTION ---
     let fixture_registry = FixtureRegistry::from_discovery(&discovery_result);
     let resolver = Resolver::new(&fixture_registry);
     let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
@@ -316,7 +316,7 @@ fn execute_session(
         }
     }
 
-    // --- PHASE 3.3: TOXICITY TAGGING ---
+    // --- TOXICITY TAGGING ---
     // Tag each resolved test with its toxicity status from the graph.
     // Toxic tests use fork/kill instead of snapshot/reset.
     let mut runnable_tests = runnable_tests;
@@ -336,7 +336,7 @@ fn execute_session(
         );
     }
 
-    // --- PHASE 8.3: PATH FILTERING ---
+    // --- PATH FILTERING ---
     // Filter tests to only include those matching the target path
     let target = std::path::Path::new(target_path);
     let target_canonical = target
@@ -459,7 +459,7 @@ fn run_tests(
 ) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
-    // --- PHASE 6.1: COVERAGE INITIALIZATION ---
+    // --- COVERAGE INITIALIZATION ---
     // Initialize coverage ring buffers BEFORE forking Zygote.
     // These are shared memory regions (memfd) that workers will inherit via fork.
     let mut coverage_aggregator: Option<coverage::CoverageAggregator> = None;
@@ -589,7 +589,7 @@ fn run_tests(
                 eprintln!("[supervisor] Zygote is READY.\n");
             }
 
-            // --- SCHEDULER PHASE ---
+            // --- SCHEDULER ---
             let mut scheduler = Scheduler::new(
                 sup_cmd_sock,
                 sup_result_sock,
@@ -603,7 +603,7 @@ fn run_tests(
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
 
-            // --- PHASE 6.1: COVERAGE FINALIZATION ---
+            // --- COVERAGE FINALIZATION ---
             // Stop aggregator and report coverage statistics
             if let Some(mut aggregator) = coverage_aggregator {
                 aggregator.stop();
