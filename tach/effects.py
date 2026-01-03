@@ -85,6 +85,99 @@ class EnvironmentEffect:
         )
 
 
+# =============================================================================
+# Degraded Serialization Helper
+# =============================================================================
+
+
+def _try_serialize(value: Any) -> tuple[Any, Optional[str]]:
+    """
+    Attempt to serialize a value to JSON-compatible format.
+
+    If serialization fails, returns (repr(value), reason) for degraded mode.
+
+    The Marker Serialization Paradox:
+    - Simple markers: @pytest.mark.unit -> serializable
+    - Complex markers: @pytest.mark.parametrize("x", [MyObject()]) -> NOT serializable
+
+    We handle this by:
+    1. Trying JSON serialization
+    2. If it fails, capturing repr() and flagging as degraded
+    3. Never crashing the Zygote (the Orchestrator's mandate)
+
+    Args:
+        value: Any Python value to serialize
+
+    Returns:
+        (serialized_value, degraded_reason) tuple
+        - If serializable: (value, None)
+        - If not: (repr(value), "type_name: error_msg")
+    """
+    # Fast path: primitives are always serializable
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value, None
+
+    # Lists and tuples: recursively check elements
+    if isinstance(value, (list, tuple)):
+        result = []
+        degraded_reasons = []
+        for i, item in enumerate(value):
+            serialized, reason = _try_serialize(item)
+            result.append(serialized)
+            if reason:
+                degraded_reasons.append(f"[{i}]: {reason}")
+        if degraded_reasons:
+            return result, "; ".join(degraded_reasons)
+        return result if isinstance(value, list) else tuple(result), None
+
+    # Dicts: recursively check values
+    if isinstance(value, dict):
+        result = {}
+        degraded_reasons = []
+        for k, v in value.items():
+            # Keys must be strings for JSON
+            if not isinstance(k, str):
+                k_str = str(k)
+                degraded_reasons.append(f"key {repr(k)} converted to str")
+            else:
+                k_str = k
+            serialized, reason = _try_serialize(v)
+            result[k_str] = serialized
+            if reason:
+                degraded_reasons.append(f"{k_str}: {reason}")
+        if degraded_reasons:
+            return result, "; ".join(degraded_reasons)
+        return result, None
+
+    # Try JSON serialization for other types
+    try:
+        json.dumps(value)
+        return value, None
+    except (TypeError, ValueError) as e:
+        # Degraded mode: capture repr()
+        type_name = type(value).__name__
+
+        # Special handling for common non-serializable types
+        if hasattr(value, "__next__"):  # Generator
+            reason = f"{type_name}: generator object (consumed on iteration)"
+        elif callable(value):
+            reason = f"{type_name}: callable object"
+        elif hasattr(value, "__dict__"):
+            reason = f"{type_name}: custom object"
+        else:
+            reason = f"{type_name}: {str(e)[:50]}"
+
+        # Capture repr, truncating if too long
+        try:
+            repr_str = repr(value)
+            if len(repr_str) > 200:
+                repr_str = repr_str[:197] + "..."
+        except Exception:
+            repr_str = f"<{type_name} (repr failed)>"
+
+        return repr_str, reason
+
+
 @dataclass
 class MarkerEffect:
     """
@@ -97,11 +190,15 @@ class MarkerEffect:
         name: Marker name (e.g., 'django_db', 'asyncio')
         args: Positional arguments to the marker
         kwargs: Keyword arguments to the marker
+        degraded: If True, args/kwargs contain repr() strings, not actual values
+        degraded_reason: Why serialization was degraded (e.g., "generator object")
     """
 
     name: str
     args: tuple = field(default_factory=tuple)
     kwargs: Dict[str, Any] = field(default_factory=dict)
+    degraded: bool = False
+    degraded_reason: Optional[str] = None
 
     @property
     def effect_type(self) -> EffectType:
@@ -113,10 +210,20 @@ class MarkerEffect:
 
         Args:
             item: The pytest.Item to add the marker to
+
+        Note:
+            If this marker was degraded, we still apply it but with the
+            repr() strings. This may not perfectly replicate the original
+            behavior but maintains marker presence for filtering.
         """
         import pytest
 
-        marker = pytest.mark.__getattr__(self.name)(*self.args, **self.kwargs)
+        if self.degraded:
+            # Degraded mode: Apply marker with name only (args/kwargs are repr strings)
+            # This preserves marker presence for test selection but not data
+            marker = pytest.mark.__getattr__(self.name)
+        else:
+            marker = pytest.mark.__getattr__(self.name)(*self.args, **self.kwargs)
         item.add_marker(marker)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -125,6 +232,8 @@ class MarkerEffect:
             "name": self.name,
             "args": list(self.args),
             "kwargs": self.kwargs,
+            "degraded": self.degraded,
+            "degraded_reason": self.degraded_reason,
         }
 
     @classmethod
@@ -133,6 +242,52 @@ class MarkerEffect:
             name=data["name"],
             args=tuple(data.get("args", [])),
             kwargs=data.get("kwargs", {}),
+            degraded=data.get("degraded", False),
+            degraded_reason=data.get("degraded_reason"),
+        )
+
+    @classmethod
+    def from_pytest_marker(cls, marker: Any) -> "MarkerEffect":
+        """
+        Create a MarkerEffect from a pytest Mark object.
+
+        This implements "Degraded Serialization" - if an argument cannot be
+        JSON-serialized, we capture its repr() and flag the effect as degraded.
+
+        Args:
+            marker: A pytest.Mark object (from item.iter_markers())
+
+        Returns:
+            MarkerEffect with args/kwargs, possibly in degraded mode
+        """
+        name = marker.name
+        args = []
+        kwargs = {}
+        degraded = False
+        degraded_reasons = []
+
+        # Try to serialize args
+        for i, arg in enumerate(marker.args):
+            serialized, reason = _try_serialize(arg)
+            if reason:
+                degraded = True
+                degraded_reasons.append(f"arg[{i}]: {reason}")
+            args.append(serialized)
+
+        # Try to serialize kwargs
+        for key, value in marker.kwargs.items():
+            serialized, reason = _try_serialize(value)
+            if reason:
+                degraded = True
+                degraded_reasons.append(f"kwarg[{key}]: {reason}")
+            kwargs[key] = serialized
+
+        return cls(
+            name=name,
+            args=tuple(args),
+            kwargs=kwargs,
+            degraded=degraded,
+            degraded_reason="; ".join(degraded_reasons) if degraded_reasons else None,
         )
 
 
