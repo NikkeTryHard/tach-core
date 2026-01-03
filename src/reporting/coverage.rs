@@ -212,8 +212,10 @@ impl MappingEntry {
     /// # Safety
     /// This function handles UTF-8 boundary correctly by using char_indices.
     pub fn new(code_id: u64, filename: &str) -> Self {
-        let mut entry = Self::default();
-        entry.code_id = code_id;
+        let mut entry = Self {
+            code_id,
+            ..Default::default()
+        };
 
         let bytes = filename.as_bytes();
         if bytes.len() <= 240 {
@@ -382,7 +384,7 @@ impl CoverageRingBuffer {
     /// Write an entry to the ring buffer (worker side).
     ///
     /// This is the HOT PATH - must be as fast as possible.
-    /// Uses lock-free atomic operations.
+    /// Uses lock-free atomic operations with CAS loop to prevent TOCTOU race.
     ///
     /// # Returns
     /// * `true` if entry was written
@@ -391,23 +393,42 @@ impl CoverageRingBuffer {
     pub fn write(&self, entry: CoverageEntry) -> bool {
         let header = self.header();
 
-        // Check if buffer is full
-        if header.is_full() {
-            header.overflow_count.fetch_add(1, Ordering::Relaxed);
-            return false;
+        loop {
+            let write = header.write_idx.load(Ordering::Acquire);
+            let read = header.read_idx.load(Ordering::Acquire);
+
+            // Check if buffer is full
+            if write.wrapping_sub(read) >= header.capacity {
+                header.overflow_count.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+
+            // Try to reserve a slot atomically using CAS
+            match header.write_idx.compare_exchange_weak(
+                write,
+                write.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully reserved slot
+                    let slot = (write % self.capacity as u64) as usize;
+
+                    // Write the entry
+                    unsafe {
+                        let entry_ptr = self.entries_ptr().add(slot);
+                        std::ptr::write_volatile(entry_ptr, entry);
+                    }
+
+                    return true;
+                }
+                Err(_) => {
+                    // CAS failed, another thread got there first - spin and retry
+                    std::hint::spin_loop();
+                    continue;
+                }
+            }
         }
-
-        // Reserve a slot atomically
-        let idx = header.write_idx.fetch_add(1, Ordering::AcqRel);
-        let slot = (idx % self.capacity as u64) as usize;
-
-        // Write the entry
-        unsafe {
-            let entry_ptr = self.entries_ptr().add(slot);
-            std::ptr::write_volatile(entry_ptr, entry);
-        }
-
-        true
     }
 
     /// Read entries from the ring buffer (supervisor side).
@@ -588,27 +609,50 @@ impl MappingRingBuffer {
     /// Write a mapping entry to the ring buffer.
     ///
     /// Called from PY_START callback on first encounter of a code object.
+    ///
+    /// Uses a CAS (Compare-And-Swap) loop to prevent TOCTOU race:
+    /// Multiple threads could pass is_full() check simultaneously,
+    /// then all increment write_idx, causing buffer overflow.
     #[inline]
     pub fn write(&self, entry: MappingEntry) -> bool {
         let header = self.header();
 
-        // Check if buffer is full
-        if header.is_full() {
-            header.overflow_count.fetch_add(1, Ordering::Relaxed);
-            return false;
+        loop {
+            let write = header.write_idx.load(Ordering::Acquire);
+            let read = header.read_idx.load(Ordering::Acquire);
+
+            // Check if buffer is full
+            if write.wrapping_sub(read) >= header.capacity {
+                header.overflow_count.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+
+            // Try to reserve a slot atomically using CAS
+            match header.write_idx.compare_exchange_weak(
+                write,
+                write.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully reserved slot
+                    let slot = (write % self.capacity as u64) as usize;
+
+                    // Write the entry
+                    unsafe {
+                        let entry_ptr = self.entries_ptr().add(slot);
+                        std::ptr::write_volatile(entry_ptr, entry);
+                    }
+
+                    return true;
+                }
+                Err(_) => {
+                    // CAS failed, another thread got there first - spin and retry
+                    std::hint::spin_loop();
+                    continue;
+                }
+            }
         }
-
-        // Reserve a slot atomically
-        let idx = header.write_idx.fetch_add(1, Ordering::AcqRel);
-        let slot = (idx % self.capacity as u64) as usize;
-
-        // Write the entry
-        unsafe {
-            let entry_ptr = self.entries_ptr().add(slot);
-            std::ptr::write_volatile(entry_ptr, entry);
-        }
-
-        true
     }
 
     /// Drain mapping entries from the buffer.
@@ -734,7 +778,10 @@ thread_local! {
     ///
     /// Used by PY_START callback to avoid duplicate registrations.
     /// Each thread maintains its own set for lock-free operation.
-    static SEEN_CODES: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
+    ///
+    /// Pre-sized to 1024 entries to reduce reallocations during test runs.
+    /// A typical test file has 50-200 code objects, so 1024 covers most cases.
+    static SEEN_CODES: RefCell<HashSet<u64>> = RefCell::new(HashSet::with_capacity(1024));
 }
 
 /// Check if code_id has been seen, mark as seen if not.
@@ -779,7 +826,8 @@ pub struct CoverageAggregator {
     /// Accumulated coverage data: (filename, lineno) -> hit_count
     data: Arc<std::sync::Mutex<CoverageData>>,
     /// Code object ID to filename mapping (populated lazily)
-    code_map: Arc<std::sync::Mutex<HashMap<u64, String>>>,
+    /// Uses RwLock for better read performance - reads are more frequent than writes
+    code_map: Arc<std::sync::RwLock<HashMap<u64, String>>>,
     /// Signal to stop the aggregator thread
     stop_flag: Arc<AtomicBool>,
     /// Handle to the aggregator thread
@@ -791,7 +839,7 @@ impl CoverageAggregator {
     pub fn new() -> Self {
         Self {
             data: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            code_map: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            code_map: Arc::new(std::sync::RwLock::new(HashMap::new())),
             stop_flag: Arc::new(AtomicBool::new(false)),
             thread_handle: None,
         }
@@ -818,7 +866,8 @@ impl CoverageAggregator {
                 if let Some(mapping_buffer) = get_mapping_buffer() {
                     let count = mapping_buffer.drain(&mut mapping_batch, 1024);
                     if count > 0 {
-                        let mut code_map_guard = code_map.lock().unwrap();
+                        let mut code_map_guard =
+                            code_map.write().unwrap_or_else(|e| e.into_inner());
                         for entry in mapping_batch.drain(..) {
                             code_map_guard.insert(entry.code_id, entry.filename());
                         }
@@ -831,8 +880,8 @@ impl CoverageAggregator {
 
                     if count > 0 {
                         // Process batch
-                        let mut data_guard = data.lock().unwrap();
-                        let code_map_guard = code_map.lock().unwrap();
+                        let mut data_guard = data.lock().unwrap_or_else(|e| e.into_inner());
+                        let code_map_guard = code_map.read().unwrap_or_else(|e| e.into_inner());
 
                         for entry in coverage_batch.drain(..) {
                             // Try to map code_id to filename
@@ -857,7 +906,7 @@ impl CoverageAggregator {
                 let mut mapping_batch = Vec::new();
                 mapping_buffer.drain(&mut mapping_batch, usize::MAX);
                 if !mapping_batch.is_empty() {
-                    let mut code_map_guard = code_map.lock().unwrap();
+                    let mut code_map_guard = code_map.write().unwrap_or_else(|e| e.into_inner());
                     for entry in mapping_batch {
                         code_map_guard.insert(entry.code_id, entry.filename());
                     }
@@ -869,8 +918,8 @@ impl CoverageAggregator {
                 buffer.drain(&mut batch, usize::MAX);
 
                 if !batch.is_empty() {
-                    let mut data_guard = data.lock().unwrap();
-                    let code_map_guard = code_map.lock().unwrap();
+                    let mut data_guard = data.lock().unwrap_or_else(|e| e.into_inner());
+                    let code_map_guard = code_map.read().unwrap_or_else(|e| e.into_inner());
 
                     for entry in batch {
                         let filename = code_map_guard
@@ -893,7 +942,7 @@ impl CoverageAggregator {
     /// Called by the Supervisor when it learns about new code objects
     /// (e.g., from module loading or Python introspection).
     pub fn register_code(&self, code_id: u64, filename: String) {
-        let mut code_map = self.code_map.lock().unwrap();
+        let mut code_map = self.code_map.write().unwrap_or_else(|e| e.into_inner());
         code_map.insert(code_id, filename);
     }
 
@@ -909,18 +958,31 @@ impl CoverageAggregator {
     /// Get the accumulated coverage data.
     ///
     /// Returns a clone of the current coverage data.
+    /// For final collection after stop(), prefer `take_data()` to avoid cloning.
     pub fn get_data(&self) -> CoverageData {
-        self.data.lock().unwrap().clone()
+        self.data.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Take ownership of the accumulated coverage data.
+    ///
+    /// This is more efficient than `get_data()` as it avoids cloning.
+    /// Should only be called after `stop()` to ensure all data is collected.
+    pub fn take_data(&mut self) -> CoverageData {
+        std::mem::take(&mut *self.data.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Get the number of unique (file, line) pairs covered.
     pub fn covered_lines(&self) -> usize {
-        self.data.lock().unwrap().len()
+        self.data.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Get the total number of line executions recorded.
     pub fn total_hits(&self) -> u64 {
-        self.data.lock().unwrap().values().sum()
+        self.data
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .sum()
     }
 }
 
@@ -1327,5 +1389,178 @@ mod tests {
         for &code_id in &codes {
             assert!(!mark_code_seen(code_id));
         }
+    }
+
+    // =========================================================================
+    // Phase 1.3: CAS Loop Regression Tests (TOCTOU Race Prevention)
+    // =========================================================================
+
+    #[test]
+    fn test_coverage_ring_buffer_concurrent_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Create a buffer with enough capacity for concurrent writes
+        let buffer = Arc::new(CoverageRingBuffer::new(1024).expect("Failed to create buffer"));
+        let num_threads = 8;
+        let writes_per_thread = 100;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let buffer = Arc::clone(&buffer);
+                thread::spawn(move || {
+                    let mut success_count = 0;
+                    for i in 0..writes_per_thread {
+                        let code_id = (thread_id * 1000 + i) as u64;
+                        let entry = CoverageEntry::line(code_id, i as u32);
+                        if buffer.write(entry) {
+                            success_count += 1;
+                        }
+                    }
+                    success_count
+                })
+            })
+            .collect();
+
+        // Wait for all threads and sum successful writes
+        let total_writes: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        // All writes should succeed (buffer has capacity 1024, we write 800)
+        assert_eq!(total_writes, num_threads * writes_per_thread);
+
+        // Verify we can drain all entries
+        let mut entries = Vec::new();
+        let drained = buffer.drain(&mut entries, 2000);
+        assert_eq!(drained, total_writes);
+
+        // Verify no overflow occurred
+        assert_eq!(buffer.overflow_count(), 0);
+    }
+
+    #[test]
+    fn test_coverage_ring_buffer_concurrent_overflow() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Small buffer to force overflow contention
+        let buffer = Arc::new(CoverageRingBuffer::new(16).expect("Failed to create buffer"));
+        let num_threads = 4;
+        let writes_per_thread = 100;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let buffer = Arc::clone(&buffer);
+                thread::spawn(move || {
+                    let mut success_count = 0;
+                    for i in 0..writes_per_thread {
+                        let code_id = (thread_id * 1000 + i) as u64;
+                        let entry = CoverageEntry::line(code_id, i as u32);
+                        if buffer.write(entry) {
+                            success_count += 1;
+                        }
+                    }
+                    success_count
+                })
+            })
+            .collect();
+
+        // Wait for all threads
+        let total_success: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        // Buffer capacity is 16, so most writes should overflow
+        // The key invariant: success_count + overflow_count >= total_attempts
+        // (some overflows may be counted multiple times due to CAS retry)
+        assert!(total_success <= 16);
+        assert!(buffer.overflow_count() > 0);
+
+        // Drain and verify we got exactly what succeeded
+        let mut entries = Vec::new();
+        let drained = buffer.drain(&mut entries, 100);
+        assert_eq!(drained, total_success);
+    }
+
+    #[test]
+    fn test_mapping_ring_buffer_concurrent_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Create a buffer with enough capacity for concurrent writes
+        let buffer = Arc::new(MappingRingBuffer::new(256).expect("Failed to create buffer"));
+        let num_threads = 4;
+        let writes_per_thread = 50;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let buffer = Arc::clone(&buffer);
+                thread::spawn(move || {
+                    let mut success_count = 0;
+                    for i in 0..writes_per_thread {
+                        let code_id = (thread_id * 1000 + i) as u64;
+                        let filename = format!("/path/thread_{}/file_{}.py", thread_id, i);
+                        let entry = MappingEntry::new(code_id, &filename);
+                        if buffer.write(entry) {
+                            success_count += 1;
+                        }
+                    }
+                    success_count
+                })
+            })
+            .collect();
+
+        // Wait for all threads and sum successful writes
+        let total_writes: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        // All writes should succeed (buffer has capacity 256, we write 200)
+        assert_eq!(total_writes, num_threads * writes_per_thread);
+
+        // Verify we can drain all entries
+        let mut entries = Vec::new();
+        let drained = buffer.drain(&mut entries, 500);
+        assert_eq!(drained, total_writes);
+
+        // Verify no overflow occurred
+        assert_eq!(buffer.overflow_count(), 0);
+    }
+
+    #[test]
+    fn test_ring_buffer_cas_loop_stress() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Stress test with many threads competing for few slots
+        let buffer = Arc::new(CoverageRingBuffer::new(8).expect("Failed to create buffer"));
+        let num_threads = 16;
+        let writes_per_thread = 50;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let buffer = Arc::clone(&buffer);
+                thread::spawn(move || {
+                    for i in 0..writes_per_thread {
+                        let code_id = (thread_id * 1000 + i) as u64;
+                        let entry = CoverageEntry::line(code_id, i as u32);
+                        // We don't care about success/failure, just that it doesn't crash
+                        let _ = buffer.write(entry);
+                    }
+                })
+            })
+            .collect();
+
+        // All threads should complete without panic
+        for handle in handles {
+            handle.join().expect("Thread should not panic");
+        }
+
+        // Buffer should be in a consistent state
+        let header = buffer.header();
+        let write_idx = header.write_idx.load(Ordering::Acquire);
+        let read_idx = header.read_idx.load(Ordering::Acquire);
+
+        // write_idx should never be less than read_idx
+        assert!(write_idx >= read_idx);
+
+        // Available entries should be <= capacity
+        let available = write_idx.wrapping_sub(read_idx);
+        assert!(available <= buffer.capacity as u64);
     }
 }
