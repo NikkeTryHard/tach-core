@@ -171,6 +171,62 @@ These variables are set before test execution.
 
 ---
 
+## Security: Environment Variable Denylist
+
+Tach blocks dangerous environment variables in `[tool.pytest_env]` to prevent supply chain attacks via compromised `pyproject.toml` files.
+
+### Blocked Variables
+
+| Variable          | Category              | Risk                                                               |
+| :---------------- | :-------------------- | :----------------------------------------------------------------- |
+| `LD_PRELOAD`      | Library Injection     | Loads arbitrary shared libraries before all others                 |
+| `LD_LIBRARY_PATH` | Library Injection     | Redirects library loading to attacker-controlled paths             |
+| `LD_AUDIT`        | Library Injection     | Loads audit libraries that can intercept all function calls        |
+| `LD_DEBUG`        | Library Injection     | Enables debug output that can leak sensitive information           |
+| `PYTHONPATH`      | Python Hijacking      | Injects malicious Python modules into import path                  |
+| `PYTHONHOME`      | Python Hijacking      | Redirects Python installation to attacker-controlled location      |
+| `PYTHONSTARTUP`   | Python Hijacking      | Executes arbitrary Python code on interpreter startup              |
+| `PYTHONMALLOC`    | Allocator Override    | Overrides memory allocator, breaking jemalloc snapshot consistency |
+| `PATH`            | Path Manipulation     | Redirects command execution to malicious binaries                  |
+| `HOME`            | Path Manipulation     | Changes home directory, affecting config file loading              |
+| `USER`            | Identity Manipulation | Spoofs user identity for permission checks                         |
+
+### Why These Are Dangerous
+
+- **Library Injection** (`LD_*`): Allows arbitrary code execution by loading malicious shared libraries before your application starts.
+- **Python Hijacking** (`PYTHON*`): Enables module injection and startup code execution. `PYTHONMALLOC` is critical for Tach since overriding the allocator breaks jemalloc snapshot consistency.
+- **Path Manipulation** (`PATH`, `HOME`, `USER`): Redirects command execution or config file loading to attacker-controlled locations.
+
+Matching is **case-insensitive** to prevent bypass attempts (e.g., `ld_preload` is also blocked).
+
+### Warning Message
+
+When a blocked variable is detected, Tach emits a warning and skips it:
+
+```
+[config] WARNING: Blocked dangerous env var from pyproject.toml: LD_PRELOAD
+```
+
+### Workarounds
+
+If you legitimately need these variables, set them via shell environment (not blocked):
+
+```bash
+# Shell environment is trusted - only pyproject.toml parsing is restricted
+export PYTHONPATH="/my/custom/path"
+tach-core .
+```
+
+Or use a wrapper script:
+
+```bash
+#!/bin/bash
+export PYTHONPATH="/my/custom/path"
+exec tach-core "$@"
+```
+
+---
+
 ## Isolation Strategies
 
 | Strategy   | Description                                 |

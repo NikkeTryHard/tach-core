@@ -76,7 +76,11 @@ impl DiscoveryResult {
 
 /// Convert byte offset to line number (1-indexed)
 fn get_line_number(source: &str, byte_offset: usize) -> usize {
-    source[..byte_offset.min(source.len())].chars().filter(|&c| c == '\n').count() + 1
+    source[..byte_offset.min(source.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+        + 1
 }
 
 /// JSON-serializable test information for `tach list --json`
@@ -135,11 +139,18 @@ pub fn discover(root: &Path) -> Result<DiscoveryResult> {
         .filter(|e| is_test_file(e.path()))
         .map(|e| {
             // Convert to relative path for pytest node_id compatibility
-            e.path().strip_prefix(root).unwrap_or(e.path()).to_path_buf()
+            e.path()
+                .strip_prefix(root)
+                .unwrap_or(e.path())
+                .to_path_buf()
         })
         .collect();
 
-    let modules: Vec<TestModule> = paths.par_iter().filter_map(|path| parse_module(path).ok()).filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty()).collect();
+    let modules: Vec<TestModule> = paths
+        .par_iter()
+        .filter_map(|path| parse_module(path).ok())
+        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty())
+        .collect();
 
     Ok(DiscoveryResult { modules })
 }
@@ -189,7 +200,10 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                         dependencies: extract_args_from_arguments(&func.args),
                         is_async: true,
                         line_number,
-                        parametrized_args: extract_injected_args(&func.decorator_list, &extract_args_from_arguments(&func.args)),
+                        parametrized_args: extract_injected_args(
+                            &func.decorator_list,
+                            &extract_args_from_arguments(&func.args),
+                        ),
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -222,13 +236,17 @@ fn parse_module(path: &Path) -> Result<TestModule> {
 
                             // Existing: Detect test methods
                             if method_name.starts_with("test_") {
-                                let line_number = get_line_number(&source, func.range.start().to_usize());
+                                let line_number =
+                                    get_line_number(&source, func.range.start().to_usize());
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: false,
                                     line_number,
-                                    parametrized_args: extract_injected_args(&func.decorator_list, &extract_args_from_arguments(&func.args)),
+                                    parametrized_args: extract_injected_args(
+                                        &func.decorator_list,
+                                        &extract_args_from_arguments(&func.args),
+                                    ),
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
@@ -247,13 +265,17 @@ fn parse_module(path: &Path) -> Result<TestModule> {
 
                             // Existing: Detect async test methods
                             if method_name.starts_with("test_") {
-                                let line_number = get_line_number(&source, func.range.start().to_usize());
+                                let line_number =
+                                    get_line_number(&source, func.range.start().to_usize());
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
                                     is_async: true,
                                     line_number,
-                                    parametrized_args: extract_injected_args(&func.decorator_list, &extract_args_from_arguments(&func.args)),
+                                    parametrized_args: extract_injected_args(
+                                        &func.decorator_list,
+                                        &extract_args_from_arguments(&func.args),
+                                    ),
                                 });
                             }
                         }
@@ -272,7 +294,13 @@ fn parse_module(path: &Path) -> Result<TestModule> {
     })
 }
 
-fn analyze_function(func: &ast::StmtFunctionDef, source: &str, tests: &mut Vec<TestCase>, fixtures: &mut Vec<FixtureDefinition>, is_async: bool) {
+fn analyze_function(
+    func: &ast::StmtFunctionDef,
+    source: &str,
+    tests: &mut Vec<TestCase>,
+    fixtures: &mut Vec<FixtureDefinition>,
+    is_async: bool,
+) {
     let name = func.name.as_str();
 
     if name.starts_with("test_") {
@@ -282,7 +310,10 @@ fn analyze_function(func: &ast::StmtFunctionDef, source: &str, tests: &mut Vec<T
             dependencies: extract_args_from_arguments(&func.args),
             is_async,
             line_number,
-            parametrized_args: extract_injected_args(&func.decorator_list, &extract_args_from_arguments(&func.args)),
+            parametrized_args: extract_injected_args(
+                &func.decorator_list,
+                &extract_args_from_arguments(&func.args),
+            ),
         });
     }
 
@@ -775,8 +806,14 @@ class TestMyClass:
 "#;
         let module = parse_source(source);
         assert_eq!(module.tests.len(), 2);
-        assert!(module.tests.iter().any(|t| t.name == "TestMyClass::test_method_one"));
-        assert!(module.tests.iter().any(|t| t.name == "TestMyClass::test_method_two"));
+        assert!(module
+            .tests
+            .iter()
+            .any(|t| t.name == "TestMyClass::test_method_one"));
+        assert!(module
+            .tests
+            .iter()
+            .any(|t| t.name == "TestMyClass::test_method_two"));
     }
 
     #[test]

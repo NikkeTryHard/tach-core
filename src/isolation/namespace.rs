@@ -87,3 +87,234 @@ fn setup_loopback() -> Result<()> {
 
     Ok(())
 }
+
+// =============================================================================
+// Helper functions for testing (exposed for unit tests)
+// =============================================================================
+
+/// Calculate base directory path for a worker
+/// This is a pure function that can be tested without root privileges.
+#[inline]
+pub fn worker_base_dir(worker_id: u32) -> PathBuf {
+    PathBuf::from(format!("/run/tach/worker_{}", worker_id))
+}
+
+/// Generate overlay mount options string for /tmp
+/// This is a pure function that can be tested without root privileges.
+pub fn tmp_overlay_options(base: &Path) -> String {
+    let tmp_upper = base.join("tmp_upper");
+    let tmp_work = base.join("tmp_work");
+    format!("lowerdir=/tmp,upperdir={},workdir={}", tmp_upper.display(), tmp_work.display())
+}
+
+/// Generate overlay mount options string for project root
+/// This is a pure function that can be tested without root privileges.
+pub fn project_overlay_options(base: &Path, project_root: &Path) -> String {
+    let proj_upper = base.join("proj_upper");
+    let proj_work = base.join("proj_work");
+    format!("lowerdir={},upperdir={},workdir={}", project_root.display(), proj_upper.display(), proj_work.display())
+}
+
+/// Check if isolation is disabled via environment variable
+pub fn is_isolation_disabled() -> bool {
+    std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1"
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    // =========================================================================
+    // Worker Base Directory Tests
+    // =========================================================================
+
+    #[test]
+    fn test_worker_base_dir_format() {
+        assert_eq!(worker_base_dir(0), PathBuf::from("/run/tach/worker_0"));
+        assert_eq!(worker_base_dir(1), PathBuf::from("/run/tach/worker_1"));
+        assert_eq!(worker_base_dir(42), PathBuf::from("/run/tach/worker_42"));
+    }
+
+    #[test]
+    fn test_worker_base_dir_large_id() {
+        // Verify no overflow or formatting issues with large worker IDs
+        assert_eq!(worker_base_dir(u32::MAX), PathBuf::from("/run/tach/worker_4294967295"));
+    }
+
+    #[test]
+    fn test_worker_base_dir_is_absolute() {
+        let base = worker_base_dir(123);
+        assert!(base.is_absolute(), "Worker base dir should be absolute path");
+        assert!(base.starts_with("/run/tach"), "Worker base dir should be under /run/tach");
+    }
+
+    // =========================================================================
+    // Overlay Options Format Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tmp_overlay_options_format() {
+        let base = PathBuf::from("/run/tach/worker_0");
+        let opts = tmp_overlay_options(&base);
+
+        // Verify format: lowerdir=/tmp,upperdir=<upper>,workdir=<work>
+        assert!(opts.starts_with("lowerdir=/tmp,"), "Should start with lowerdir=/tmp");
+        assert!(opts.contains("upperdir=/run/tach/worker_0/tmp_upper"), "Should contain upperdir");
+        assert!(opts.contains("workdir=/run/tach/worker_0/tmp_work"), "Should contain workdir");
+    }
+
+    #[test]
+    fn test_tmp_overlay_options_no_spaces() {
+        let base = PathBuf::from("/run/tach/worker_5");
+        let opts = tmp_overlay_options(&base);
+
+        // Overlay options should not contain spaces (mount parsing issue)
+        assert!(!opts.contains(' '), "Overlay options should not contain spaces");
+    }
+
+    #[test]
+    fn test_project_overlay_options_format() {
+        let base = PathBuf::from("/run/tach/worker_0");
+        let project = PathBuf::from("/home/user/myproject");
+        let opts = project_overlay_options(&base, &project);
+
+        // Verify format: lowerdir=<project>,upperdir=<upper>,workdir=<work>
+        assert!(opts.starts_with("lowerdir=/home/user/myproject,"), "Should start with project as lowerdir");
+        assert!(opts.contains("upperdir=/run/tach/worker_0/proj_upper"), "Should contain upperdir");
+        assert!(opts.contains("workdir=/run/tach/worker_0/proj_work"), "Should contain workdir");
+    }
+
+    #[test]
+    fn test_project_overlay_options_preserves_path() {
+        let base = PathBuf::from("/run/tach/worker_1");
+        let project = PathBuf::from("/very/deep/nested/path/to/project");
+        let opts = project_overlay_options(&base, &project);
+
+        assert!(opts.contains("/very/deep/nested/path/to/project"), "Should preserve full project path");
+    }
+
+    #[test]
+    fn test_overlay_options_different_workers() {
+        // Verify each worker gets unique paths
+        let base0 = worker_base_dir(0);
+        let base1 = worker_base_dir(1);
+        let project = PathBuf::from("/home/user/proj");
+
+        let opts0 = project_overlay_options(&base0, &project);
+        let opts1 = project_overlay_options(&base1, &project);
+
+        assert_ne!(opts0, opts1, "Different workers should have different overlay paths");
+        assert!(opts0.contains("worker_0"), "Worker 0 opts should reference worker_0");
+        assert!(opts1.contains("worker_1"), "Worker 1 opts should reference worker_1");
+    }
+
+    // =========================================================================
+    // TACH_NO_ISOLATION Environment Variable Tests
+    // =========================================================================
+
+    #[test]
+    fn test_isolation_disabled_when_set_to_1() {
+        // Save original value
+        let original = env::var("TACH_NO_ISOLATION").ok();
+
+        env::set_var("TACH_NO_ISOLATION", "1");
+        assert!(is_isolation_disabled(), "Isolation should be disabled when TACH_NO_ISOLATION=1");
+
+        // Restore
+        match original {
+            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
+            None => env::remove_var("TACH_NO_ISOLATION"),
+        }
+    }
+
+    #[test]
+    fn test_isolation_enabled_when_set_to_0() {
+        let original = env::var("TACH_NO_ISOLATION").ok();
+
+        env::set_var("TACH_NO_ISOLATION", "0");
+        assert!(!is_isolation_disabled(), "Isolation should be enabled when TACH_NO_ISOLATION=0");
+
+        match original {
+            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
+            None => env::remove_var("TACH_NO_ISOLATION"),
+        }
+    }
+
+    #[test]
+    fn test_isolation_enabled_when_unset() {
+        let original = env::var("TACH_NO_ISOLATION").ok();
+
+        env::remove_var("TACH_NO_ISOLATION");
+        assert!(!is_isolation_disabled(), "Isolation should be enabled when TACH_NO_ISOLATION is unset");
+
+        if let Some(v) = original {
+            env::set_var("TACH_NO_ISOLATION", v);
+        }
+    }
+
+    #[test]
+    fn test_isolation_enabled_when_set_to_other() {
+        let original = env::var("TACH_NO_ISOLATION").ok();
+
+        env::set_var("TACH_NO_ISOLATION", "yes");
+        assert!(!is_isolation_disabled(), "Isolation should be enabled for non-'1' values");
+
+        env::set_var("TACH_NO_ISOLATION", "true");
+        assert!(!is_isolation_disabled(), "Isolation should be enabled for non-'1' values");
+
+        env::set_var("TACH_NO_ISOLATION", "");
+        assert!(!is_isolation_disabled(), "Isolation should be enabled for empty string");
+
+        match original {
+            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
+            None => env::remove_var("TACH_NO_ISOLATION"),
+        }
+    }
+
+    // =========================================================================
+    // setup_filesystem Early Return Tests
+    // =========================================================================
+
+    #[test]
+    fn test_setup_filesystem_skipped_when_no_isolation() {
+        let original = env::var("TACH_NO_ISOLATION").ok();
+
+        env::set_var("TACH_NO_ISOLATION", "1");
+
+        // This should return Ok(()) immediately without requiring root
+        let result = setup_filesystem(999, Path::new("/tmp/test"));
+        assert!(result.is_ok(), "setup_filesystem should succeed (early return) when TACH_NO_ISOLATION=1");
+
+        match original {
+            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
+            None => env::remove_var("TACH_NO_ISOLATION"),
+        }
+    }
+
+    // =========================================================================
+    // Path Component Tests
+    // =========================================================================
+
+    #[test]
+    fn test_overlay_subdirs_are_consistent() {
+        let base = worker_base_dir(7);
+
+        // Verify the subdirectory names match what setup_filesystem uses
+        assert_eq!(base.join("tmp_upper").file_name().unwrap(), "tmp_upper");
+        assert_eq!(base.join("tmp_work").file_name().unwrap(), "tmp_work");
+        assert_eq!(base.join("proj_upper").file_name().unwrap(), "proj_upper");
+        assert_eq!(base.join("proj_work").file_name().unwrap(), "proj_work");
+    }
+
+    #[test]
+    fn test_base_dir_parent_exists() {
+        let base = worker_base_dir(0);
+        let parent = base.parent().unwrap();
+        assert_eq!(parent, Path::new("/run/tach"));
+    }
+}

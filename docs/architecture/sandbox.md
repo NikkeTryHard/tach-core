@@ -1,6 +1,6 @@
 # Iron Dome (Sandbox)
 
-The Iron Dome provides defense-in-depth security for worker processes using Landlock and Seccomp.
+Defense-in-depth security for worker processes using Landlock filesystem isolation, Seccomp syscall filtering, and environment variable sanitization.
 
 ---
 
@@ -10,6 +10,7 @@ Workers execute untrusted test code. The Iron Dome restricts:
 
 1. **Filesystem access** via Landlock (kernel 5.13+)
 2. **System calls** via Seccomp-BPF (kernel 3.17+)
+3. **Environment variables** via denylist filtering
 
 ```mermaid
 flowchart TB
@@ -20,12 +21,17 @@ flowchart TB
     subgraph IronDome["IRON DOME"]
         Landlock["Landlock<br/>(Filesystem)"]
         Seccomp["Seccomp<br/>(Syscalls)"]
+        EnvFilter["Env Denylist<br/>(11 vars blocked)"]
     end
 
     subgraph Blocked["BLOCKED"]
         FS["Write to /etc"]
         Net["socket()"]
         Exec["execve()"]
+        Ptrace["ptrace()"]
+        Mount["mount()"]
+        Namespace["unshare()/setns()"]
+        LDPreload["LD_PRELOAD"]
     end
 
     Test --> IronDome
@@ -34,15 +40,14 @@ flowchart TB
 
 ---
 
-## Data Structures
-
-### SandboxStatus
+## SandboxStatus
 
 ```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxStatus {
-    FullyEnforced,      // All restrictions active
-    PartiallyEnforced,  // Some features unavailable
-    NotEnforced,        // Kernel too old
+    FullyEnforced,      // All restrictions enforced (kernel supports all features)
+    PartiallyEnforced,  // Some restrictions enforced (partial kernel support)
+    NotEnforced,        // No restrictions (kernel < 5.13 or disabled)
 }
 ```
 
@@ -50,32 +55,32 @@ pub enum SandboxStatus {
 
 ## Landlock Implementation
 
-Landlock provides kernel-level filesystem access control.
+Landlock is a Linux Security Module (LSM) for kernel-level filesystem access control, allowing unprivileged processes to restrict their own access.
 
 ### ABI Version
 
-Tach uses **ABI V1** for maximum compatibility (Linux 5.13+).
+Tach uses **ABI V1** for maximum compatibility (Linux 5.13+):
+
+| ABI | Kernel | Features Added                  |
+| :-- | :----- | :------------------------------ |
+| V1  | 5.13+  | Basic filesystem access control |
+| V2  | 5.19+  | TRUNCATE rights                 |
+| V3  | 6.2+   | Network access control          |
+| V4  | 6.7+   | More granular rights            |
 
 ### Path Rules
 
 ```mermaid
 flowchart LR
     subgraph ReadOnly["READ-ONLY"]
-        RO1["/usr"]
-        RO2["/lib"]
-        RO3["/lib64"]
-        RO4["/bin"]
-        RO5["/etc"]
-        RO6["/dev"]
-        RO7["/proc"]
-        RO8["/sys"]
-        RO9["project_root"]
+        RO1["/usr, /lib, /lib64, /bin"]
+        RO2["/etc, /dev, /proc, /sys"]
+        RO3["project_root"]
     end
 
     subgraph ReadWrite["READ-WRITE"]
-        RW1["/tmp"]
-        RW2["/run"]
-        RW3["/run/tach/worker_N"]
+        RW1["/tmp, /run"]
+        RW2["/run/tach/worker_N"]
     end
 
     subgraph Denied["DENIED"]
@@ -83,66 +88,61 @@ flowchart LR
     end
 ```
 
+| Path                                 | Access | Purpose                              |
+| :----------------------------------- | :----- | :----------------------------------- |
+| `project_root`                       | RO     | Source files (writes go to overlay)  |
+| `/usr`, `/lib`, `/lib64`, `/bin`     | RO     | System libraries and binaries        |
+| `/etc`                               | RO     | Python configs, SSL certs, timezone  |
+| `/dev`, `/proc`, `/sys`              | RO     | Device nodes, process info, hardware |
+| `/tmp`, `/run`, `/run/tach/worker_N` | RW     | Worker scratch space and overlays    |
+
+### TOCTOU Fix
+
+**Problem:** Using `path.exists()` before adding Landlock rules creates a race condition.
+
+**Solution:** Attempt `PathFd::new()` directly and handle `ENOENT` atomically:
+
+```rust
+fn add_path_rule_if_exists<T, A>(ruleset: T, path: impl AsRef<Path>, access: A) -> Result<T>
+where
+    T: landlock::RulesetCreatedAttr,
+    A: Into<landlock::BitFlags<landlock::AccessFs>> + Copy,
+{
+    match PathFd::new(path.as_ref()) {
+        Ok(fd) => ruleset.add_rule(PathBeneath::new(fd, access)),
+        Err(PathFdError::OpenCall { source, .. })
+            if source.raw_os_error() == Some(libc::ENOENT) => Ok(ruleset),
+        Err(_) => Ok(ruleset), // Graceful degradation
+    }
+}
+```
+
+This prevents TOCTOU because `PathFd::new()` opens the file descriptor atomically, and once obtained, it refers to the inode, not the path.
+
 ### Implementation
 
 ```rust
 pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStatus> {
     let abi = ABI::V1;
-    let mut ruleset = Ruleset::default()
-        .handle_access(AccessFs::from_all(abi))?
-        .create()?;
+    let project_root = project_root.canonicalize()?;
+    let worker_scratch = format!("/run/tach/worker_{}", worker_id);
+
+    let all_access = AccessFs::from_all(abi);
+    let read_access = AccessFs::from_read(abi);
+
+    let ruleset = Ruleset::default().handle_access(all_access)?.create()?;
 
     // Read-only paths
-    let ro_paths = [
-        project_root,
-        Path::new("/usr"),
-        Path::new("/lib"),
-        Path::new("/lib64"),
-        Path::new("/bin"),
-        Path::new("/etc"),
-        Path::new("/dev"),
-        Path::new("/proc"),
-        Path::new("/sys"),
-    ];
-
-    for path in &ro_paths {
-        add_path_rule_if_exists(&mut ruleset, path, AccessFs::from_read(abi))?;
-    }
+    let ruleset = add_path_rule(ruleset, &project_root, read_access)?;
+    let ruleset = add_path_rule_if_exists(ruleset, "/usr", read_access)?;
+    // ... other read-only paths ...
 
     // Read-write paths
-    let worker_dir = format!("/run/tach/worker_{}", worker_id);
-    let rw_paths = [
-        Path::new("/tmp"),
-        Path::new("/run"),
-        Path::new(&worker_dir),
-    ];
-
-    for path in &rw_paths {
-        add_path_rule_if_exists(&mut ruleset, path, AccessFs::from_all(abi))?;
-    }
+    let ruleset = add_path_rule_if_exists(ruleset, "/tmp", all_access)?;
+    let ruleset = add_path_rule_if_exists(ruleset, &worker_scratch, all_access)?;
 
     let status = ruleset.restrict_self()?;
-    Ok(status.into())
-}
-```
-
-### Path Canonicalization
-
-All paths are canonicalized before adding rules to prevent symlink bypasses:
-
-```rust
-fn add_path_rule_if_exists(
-    ruleset: &mut Ruleset,
-    path: &Path,
-    access: AccessFs,
-) -> Result<()> {
-    if let Ok(canonical) = path.canonicalize() {
-        ruleset.add_rule(PathBeneath::new(
-            PathFd::new(&canonical)?,
-            access,
-        ))?;
-    }
-    Ok(())
+    Ok(status.ruleset.into())
 }
 ```
 
@@ -150,82 +150,72 @@ fn add_path_rule_if_exists(
 
 ## Seccomp Implementation
 
-Seccomp-BPF filters system calls at the kernel level.
+Seccomp-BPF filters system calls at the kernel level. Tach uses a **blacklist approach** (Python's syscall patterns vary too much for a whitelist).
 
-### Architecture Support
+**Supported architectures:** x86_64, aarch64 (others gracefully degrade)
 
-| Architecture | Supported |
-| :----------- | :-------- |
-| x86_64       | Yes       |
-| aarch64      | Yes       |
-| Other        | No        |
+### Blocked Syscalls (15 Total)
 
-### Blocked Syscalls
-
-```rust
-const BLOCKED_SYSCALLS: &[i64] = &[
-    // Network
-    libc::SYS_socket,
-    libc::SYS_bind,
-    libc::SYS_connect,
-    libc::SYS_listen,
-    libc::SYS_accept,
-    libc::SYS_accept4,
-
-    // Process creation
-    libc::SYS_fork,
-    libc::SYS_vfork,
-    libc::SYS_execve,
-    libc::SYS_execveat,
-];
-```
+| Category          | Syscalls                                                   | Purpose                  |
+| :---------------- | :--------------------------------------------------------- | :----------------------- |
+| **Network (6)**   | `socket`, `bind`, `connect`, `listen`, `accept`, `accept4` | Prevent network I/O      |
+| **Process (4)**   | `fork`, `vfork`, `execve`, `execveat`                      | Prevent process spawning |
+| **Privilege (5)** | `ptrace`, `mount`, `umount2`, `unshare`, `setns`           | Prevent sandbox escape   |
 
 ### Critical: clone NOT Blocked
 
-```rust
-// clone and clone3 are NOT blocked
-// Python threading requires clone()
-```
+Python's `threading` module requires `clone()`. Forked processes are still harmless because:
+
+- Cannot execute new programs (`execve` blocked)
+- Cannot write outside allowed paths (Landlock)
+- Inherit the same Seccomp filter
 
 ### Implementation
 
 ```rust
 pub fn apply_seccomp() -> Result<()> {
-    let arch = std::env::consts::ARCH;
-    let arch_token = match arch {
-        "x86_64" => AUDIT_ARCH_X86_64,
-        "aarch64" => AUDIT_ARCH_AARCH64,
-        _ => return Err(anyhow!("Unsupported architecture")),
+    let target_arch = match std::env::consts::ARCH {
+        "x86_64" => TargetArch::x86_64,
+        "aarch64" => TargetArch::aarch64,
+        arch => anyhow::bail!("Unsupported architecture: {}", arch),
     };
 
-    let mut rules = BpfMap::new();
-    for syscall in BLOCKED_SYSCALLS {
-        rules.insert(*syscall, vec![SeccompRule::new(vec![])?]);
-    }
+    let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    // Network, process, and privilege escalation syscalls...
+    rules.insert(libc::SYS_socket, vec![]);
+    // ... (15 total syscalls)
 
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow,  // Default: allow
-        SeccompAction::Errno(libc::EPERM),  // Blocked: EPERM
-        arch_token,
+        SeccompAction::Allow,
+        SeccompAction::Errno(libc::EPERM as u32), // EPERM, not SIGSYS
+        target_arch,
     )?;
 
-    apply_filter(&filter)?;
+    seccompiler::apply_filter(&filter.try_into()?)?;
     Ok(())
 }
 ```
 
 ### EPERM vs SIGSYS
 
-Blocked syscalls return `EPERM` instead of killing the process. This allows Python to catch the error:
+Blocked syscalls return `EPERM` (not `SIGSYS`) so Python can catch errors gracefully via `OSError` instead of crashing with a core dump
 
-```python
-try:
-    import socket
-    s = socket.socket()  # Returns EPERM
-except OSError as e:
-    print(f"Socket blocked: {e}")
-```
+---
+
+## Environment Variable Denylist
+
+Tach blocks dangerous environment variables to prevent malicious configuration injection via `pyproject.toml`.
+
+### Blocked Variables (11 Total)
+
+| Category              | Variables                                                   |
+| :-------------------- | :---------------------------------------------------------- |
+| **Library Injection** | `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`     |
+| **Python Hijacking**  | `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`, `PYTHONMALLOC` |
+| **Path Manipulation** | `PATH`, `HOME`, `USER`                                      |
+
+Matching is **case-insensitive** to prevent bypass attempts.
 
 ---
 
@@ -236,39 +226,33 @@ flowchart LR
     subgraph Safe["SAFE WORKER"]
         S1["Landlock: ENFORCED"]
         S2["Seccomp: ENFORCED"]
-        S3["Network: BLOCKED"]
-        S4["Fork/Exec: BLOCKED"]
-        S5["Reuse: YES"]
+        S3["Network/Fork/Exec: BLOCKED"]
+        S4["Reuse: YES"]
     end
 
     subgraph Toxic["TOXIC WORKER"]
         T1["Landlock: ENFORCED"]
         T2["Seccomp: SKIPPED"]
-        T3["Network: ALLOWED"]
-        T4["Fork/Exec: ALLOWED"]
-        T5["Reuse: NO"]
+        T3["Network/Fork/Exec: ALLOWED"]
+        T4["Reuse: NO"]
     end
 ```
+
+Toxic workers (e.g., integration tests needing network or subprocesses) skip Seccomp but still have Landlock filesystem isolation.
 
 ### apply_iron_dome
 
 ```rust
-pub fn apply_iron_dome(
-    project_root: &Path,
-    worker_id: u32,
-    is_toxic: bool,
-) -> Result<SandboxStatus> {
-    // Always apply Landlock
-    let status = apply_landlock(project_root, worker_id)?;
+pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> Result<SandboxStatus> {
+    // Landlock is always applied
+    let landlock_status = apply_landlock(project_root, worker_id).unwrap_or(SandboxStatus::NotEnforced);
 
-    // Only apply Seccomp for safe workers
+    // Seccomp is for safe workers only
     if !is_toxic {
-        if let Err(e) = apply_seccomp() {
-            eprintln!("[sandbox] Seccomp failed: {}", e);
-        }
+        let _ = apply_seccomp();
     }
 
-    Ok(status)
+    Ok(landlock_status)
 }
 ```
 
@@ -276,46 +260,29 @@ pub fn apply_iron_dome(
 
 ## Graceful Degradation
 
-| Kernel Version | Landlock | Seccomp | Behavior              |
-| :------------- | :------- | :------ | :-------------------- |
-| 5.13+          | Full     | Full    | Complete sandbox      |
-| 5.0-5.12       | None     | Full    | Seccomp only, warning |
-| 3.17-4.x       | None     | Full    | Seccomp only, warning |
-| < 3.17         | None     | None    | No sandbox, warning   |
+The Iron Dome logs warnings and continues with reduced protection on older kernels.
 
-```rust
-fn apply_landlock(...) -> Result<SandboxStatus> {
-    match Ruleset::default().create() {
-        Ok(ruleset) => { /* apply rules */ }
-        Err(e) if e.kind() == ErrorKind::Unsupported => {
-            eprintln!("[sandbox] Landlock not available (kernel < 5.13)");
-            return Ok(SandboxStatus::NotEnforced);
-        }
-        Err(e) => return Err(e.into()),
-    }
-}
-```
+| Kernel | Landlock | Seccomp | Behavior         |
+| :----- | :------- | :------ | :--------------- |
+| 5.13+  | Full     | Full    | Complete sandbox |
+| 5.0+   | None     | Full    | Seccomp only     |
+| < 3.17 | None     | None    | No sandbox       |
 
 ---
 
 ## Security Considerations
 
-| Consideration              | Status    | Notes                        |
-| :------------------------- | :-------- | :--------------------------- |
-| Symlink bypass             | Mitigated | Paths canonicalized          |
-| clone bypass               | By design | Python threading needs clone |
-| Toxic network access       | Allowed   | Seccomp skipped for toxic    |
-| File write outside sandbox | Blocked   | Landlock enforced            |
+- **TOCTOU:** Prevented by atomic `PathFd::new()` handling.
+- **Symlinks:** Mitigated by path canonicalization.
+- **clone:** Allowed for threading; `execve` blocked instead.
+- **Escapes:** `ptrace`, `mount`, and namespaces blocked in Seccomp.
 
 ---
 
 ## Overhead
 
-| Component        | Overhead | Notes                    |
-| :--------------- | :------- | :----------------------- |
-| Landlock setup   | ~100us   | One-time per worker      |
-| Seccomp setup    | ~50us    | One-time per worker      |
-| Runtime overhead | ~0       | Kernel-level enforcement |
+- **Setup:** ~150us one-time per worker.
+- **Runtime:** Near zero (kernel-level enforcement).
 
 ---
 
@@ -324,3 +291,4 @@ fn apply_landlock(...) -> Result<SandboxStatus> {
 - [Isolation](isolation.md) - Namespace and OverlayFS setup
 - [Toxicity Analysis](toxicity.md) - How toxicity is determined
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
+- [Configuration](../configuration.md) - pyproject.toml settings

@@ -1,120 +1,110 @@
 # Development Guide
 
-Guide for building, testing, and contributing to Tach.
+Guide for building, testing, and contributing to Tach - the Runtime Hypervisor for Python tests.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Version                    |
-| :---------- | :------------------------- |
-| Rust        | 1.75+                      |
-| Python      | 3.10+ (3.12+ for coverage) |
-| Linux       | Kernel 5.13+               |
-| Build tools | gcc, make, autoconf        |
+| Requirement | Version                    | Notes                         |
+| :---------- | :------------------------- | :---------------------------- |
+| Rust        | 1.75+                      | Async traits, modern APIs     |
+| Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669         |
+| Linux       | Kernel 5.13+               | Landlock filesystem isolation |
+| Build tools | gcc, make, autoconf        | Jemalloc compilation          |
+| iproute2    | Any                        | Network namespace setup       |
+
+**Optional:** perf (profiling), strace (debugging), valgrind (memory leaks)
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/user/tach-core.git
-cd tach-core
-
-# Setup Python virtual environment
-python -m venv .venv
-source .venv/bin/activate
-pip install pytest
-
-# Build
-export PYO3_PYTHON=$(which python)
-cargo build
-
-# Run tests
+git clone https://github.com/user/tach-core.git && cd tach-core
+python -m venv .venv && source .venv/bin/activate && pip install pytest
+export PYO3_PYTHON=$(which python) && cargo build
 cargo test --lib
+```
+
+### Environment Variables
+
+| Variable            | Purpose                           |
+| :------------------ | :-------------------------------- |
+| `PYO3_PYTHON`       | Python interpreter path for PyO3  |
+| `TACH_NO_ISOLATION` | Skip filesystem/network isolation |
+| `TACH_FORMAT`       | Output format (human/json)        |
+| `TACH_COVERAGE`     | Enable coverage collection        |
+| `MALLOC_CONF`       | Jemalloc production config        |
+
+**Production Jemalloc:**
+
+```bash
+MALLOC_CONF="background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0" ./target/release/tach-core
 ```
 
 ---
 
 ## Build Commands
 
-### Development Build
-
 ```bash
 export PYO3_PYTHON=$(which python)
-cargo build
-```
-
-### Release Build
-
-```bash
-export PYO3_PYTHON=$(which python)
-cargo build --release
-```
-
-### Check (No Build)
-
-```bash
-cargo check
-```
-
-### Format
-
-```bash
-cargo fmt
-```
-
-### Lint
-
-```bash
-cargo clippy
+cargo build                    # Development
+cargo build --release          # Release
+cargo check                    # Check only
+cargo fmt                      # Format
+cargo clippy                   # Lint
+cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib  # Full CI
 ```
 
 ---
 
 ## Testing
 
+| Category        | Command                         |
+| :-------------- | :------------------------------ |
+| Unit Tests      | `cargo test --lib`              |
+| Integration     | `cargo test --test '*'`         |
+| Python Gauntlet | `pytest tests/gauntlet_phase*/` |
+
 ### Rust Unit Tests
 
 ```bash
-# All unit tests
-cargo test --lib
-
-# Specific module
-cargo test --lib sandbox::
-cargo test --lib coverage::
-cargo test --lib analysis::
-cargo test --lib graph::
+cargo test --lib                    # All unit tests
+cargo test --lib sandbox::          # Sandbox/Iron Dome
+cargo test --lib coverage::         # Coverage ring buffer
+cargo test --lib analysis::         # Toxicity analysis
+cargo test --lib graph::            # Toxicity graph
+cargo test --lib namespace::        # Namespace isolation
+cargo test --lib logcapture::       # Log capture
+cargo test --lib scheduler::        # Scheduler
+cargo test --lib config::           # Configuration engine
+cargo test --lib reporter::         # Progress bar/reporter
 ```
 
 ### Rust Integration Tests
 
 ```bash
-# All integration tests
-cargo test --test '*'
-
-# Specific test file
-cargo test --test phase4_integration
-cargo test --test toxicity_integration
-cargo test --test loader_integration
-
-# Physics check (requires sudo)
-sudo -E cargo test --test physics_check -- --ignored
+cargo test --test '*'                                    # All
+cargo test --test phase4_integration                     # Specific test
+sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo)
 ```
 
 ### Python Gauntlet Tests
 
 ```bash
-# All gauntlet tests
-python -m pytest tests/gauntlet_phase*/
+pytest tests/gauntlet_phase1/ -v    # Discovery
+pytest tests/gauntlet_phase2/ -v    # Zygote
+pytest tests/gauntlet_phase5/ -v    # Hot reload
+pytest tests/gauntlet_phase5_1/ -v  # Coverage
+pytest tests/gauntlet_phase5_2/ -v  # Sandbox
+pytest tests/gauntlet_phase5_4/ -v  # Allocator
+```
 
-# Specific phase
-python -m pytest tests/gauntlet_phase1/ -v
-python -m pytest tests/gauntlet_phase2/ -v
-python -m pytest tests/gauntlet_phase5_1/ -v  # Coverage
-python -m pytest tests/gauntlet_phase5_2/ -v  # Sandbox
-python -m pytest tests/gauntlet_phase5_4/ -v  # Allocator
+**Jemalloc tests** (disabled by default for WSL2 stability):
+
+```bash
+cargo test --lib allocator -- --ignored
 ```
 
 ---
@@ -124,89 +114,118 @@ python -m pytest tests/gauntlet_phase5_4/ -v  # Allocator
 ```
 tach-core/
   src/
-    main.rs           # CLI entry point
-    lib.rs            # Module exports
-    tach_harness.py   # Python test harness
+    main.rs, lib.rs, tach_harness.py
+    core/         # allocator, config, environment, lifecycle, protocol, signals
+    discovery/    # scanner, resolver, loader, graph, analysis
+    execution/    # scheduler, watch, zygote
+    isolation/    # namespace, sandbox, snapshot
+    reporting/    # reporter, junit, logcapture, debugger, coverage
 
-    core/             # Core infrastructure
-      allocator.rs    # Jemalloc integration
-      config.rs       # Configuration loading
-      environment.rs  # Environment injection
-      lifecycle.rs    # Process lifecycle management
-      protocol.rs     # IPC messages
-      signals.rs      # Signal handling
-
-    discovery/        # Test discovery & analysis
-      scanner.rs      # AST-based test discovery
-      resolver.rs     # Fixture resolution
-      loader.rs       # Bytecode compilation
-      graph.rs        # ToxicityGraph, propagation
-      analysis.rs     # Local toxicity detection
-
-    execution/        # Test execution
-      scheduler.rs    # Test dispatch
-      watch.rs        # File watching
-      zygote.rs       # Process lifecycle, FFI
-
-    isolation/        # Isolation & Security
-      namespace.rs    # Namespaces + OverlayFS
-      sandbox.rs      # Landlock + Seccomp
-      snapshot.rs     # userfaultfd, golden pages
-
-    reporting/        # Observability
-      reporter.rs     # Output formatting
-      junit.rs        # JUnit XML output
-      logcapture.rs   # Log capture
-      debugger.rs     # Debugger support
-      coverage.rs     # Ring buffers, aggregator
-
-  rust_tests/         # Rust integration tests
-    physics_check.rs
-    snapshot_integration.rs
-    loader_integration.rs
-    toxicity_integration.rs
-    tagging_integrity.rs
-    phase4_integration.rs
-
-  tests/              # Python test fixtures
-    gauntlet_phase1/  # Memory reset verification
-    gauntlet_phase2/  # Loader tests
-    gauntlet_phase5/  # Hot reload tests
-    gauntlet_phase5_1/ # Coverage tests
-    gauntlet_phase5_2/ # Sandbox tests
-    gauntlet_phase5_4/ # Allocator tests
-    benchmark/        # Performance tests
-
-  docs/               # Documentation
-    architecture/     # Architecture docs
-    configuration.md
-    development.md
-    troubleshooting.md
-    api-reference.md
-
-  .tach/              # Generated cache (gitignored)
-    cache/            # Bytecode cache
+  rust_tests/     # Integration tests
+  tests/          # Python gauntlet tests (phase1-5)
+  docs/           # Documentation
+  .tach/          # Generated cache (gitignored)
 ```
 
 ---
 
 ## Key Files
 
-| File                        | Purpose                            |
-| :-------------------------- | :--------------------------------- |
-| `src/execution/zygote.rs`   | Process lifecycle, worker spawning |
-| `src/isolation/sandbox.rs`  | Landlock + Seccomp implementation  |
-| `src/reporting/coverage.rs` | Zero-overhead coverage collection  |
-| `src/core/allocator.rs`     | Jemalloc configuration             |
-| `src/isolation/snapshot.rs` | userfaultfd memory snapshots       |
-| `src/core/config.rs`        | Configuration and CLI              |
-| `src/tach_harness.py`       | Python test harness                |
+| File                          | Purpose                                 |
+| :---------------------------- | :-------------------------------------- |
+| `src/execution/zygote.rs`     | Process lifecycle, worker spawning, FFI |
+| `src/isolation/sandbox.rs`    | Landlock + Seccomp (Iron Dome)          |
+| `src/isolation/namespace.rs`  | Linux Namespaces + OverlayFS            |
+| `src/reporting/coverage.rs`   | Zero-overhead coverage                  |
+| `src/reporting/logcapture.rs` | memfd-based stdout/stderr capture       |
+| `src/core/allocator.rs`       | Jemalloc configuration                  |
+| `src/isolation/snapshot.rs`   | userfaultfd memory snapshots            |
+| `src/core/config.rs`          | Configuration, CLI, env denylist        |
+| `src/execution/scheduler.rs`  | Dual-path test scheduling               |
+
+---
+
+## Security Hardening
+
+### Memory Safety Patterns
+
+```rust
+// BAD: static mut causes UB
+static mut COUNTER: u32 = 0;
+
+// GOOD: Use atomics or Mutex
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+```
+
+```rust
+// BAD: TOCTOU race condition
+if path.exists() { let fd = PathFd::new(path)?; }
+
+// GOOD: Atomic open with error handling
+match PathFd::new(path) {
+    Ok(fd) => { /* use fd */ }
+    Err(e) => { /* handle */ }
+}
+```
+
+### Syscall Security
+
+**Seccomp Blacklist** (blocks dangerous syscalls, allows Python threading):
+
+| Category  | Blocked                                | Reason                 |
+| :-------- | :------------------------------------- | :--------------------- |
+| Network   | socket, bind, connect, listen, accept  | Prevent network access |
+| Process   | fork, vfork, execve, execveat          | Prevent spawning       |
+| Privilege | ptrace, mount, umount2, unshare, setns | Prevent escape         |
+
+**Critical:** `clone`/`clone3` NOT blocked - Python threading requires them.
+
+**Landlock Filesystem:**
+
+| Access     | Paths                                      | Purpose        |
+| :--------- | :----------------------------------------- | :------------- |
+| READ-ONLY  | Project root, /usr, /lib, /bin, /etc, /dev | System libs    |
+| READ-WRITE | /tmp, /run/tach/worker\_{id}               | Temp files     |
+| DENY       | Everything else                            | Default policy |
+
+**Environment Denylist:** `LD_PRELOAD`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PATH`, `HOME`
+
+---
+
+## Testing Guidelines
+
+### Common Patterns
+
+```rust
+// Mutex poisoning recovery
+let guard = self.data.lock().unwrap_or_else(|e| e.into_inner());
+
+// Environment variable isolation
+let original = std::env::var("MY_VAR").ok();
+std::env::set_var("MY_VAR", "test_value");
+// ... test ...
+match original {
+    Some(v) => std::env::set_var("MY_VAR", v),
+    None => std::env::remove_var("MY_VAR"),
+}
+```
+
+### Naming Convention
+
+```python
+# Python: test_<component>.py, test_<letter>_<description>
+def test_a_kernel_version_detection():
+```
+
+```rust
+// Rust: test_<component>_<behavior>
+fn test_worker_base_dir_format() { }
+```
 
 ---
 
 ## Git Workflow
-
-### Commit Message Format
 
 ```
 <type>: <short description>
@@ -216,137 +235,74 @@ tach-core/
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-### Commit Types
-
-| Type        | Description               |
-| :---------- | :------------------------ |
-| `feat:`     | New feature               |
-| `fix:`      | Bug fix                   |
-| `docs:`     | Documentation only        |
-| `test:`     | Adding or modifying tests |
-| `refactor:` | Code restructure          |
-| `chore:`    | Maintenance, dependencies |
-| `perf:`     | Performance improvement   |
-
-### Example
-
-```bash
-git commit -m "feat: add coverage buffer overflow detection
-
-Adds overflow counter to ring buffer header and exposes
-get_coverage_overflow() FFI function.
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
+**Types:** `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `perf:`
 
 ---
 
 ## Debug Commands
 
-### Check Kernel Version
-
 ```bash
-uname -r
-```
-
-### Check Landlock Support
-
-```bash
-cat /sys/kernel/security/lsm | grep landlock
-```
-
-### Check Seccomp Support
-
-```bash
-grep CONFIG_SECCOMP /boot/config-$(uname -r)
-```
-
-### Trace Syscalls
-
-```bash
-strace -f ./target/release/tach-core . 2>&1 | head -100
-```
-
-### Check Python Version
-
-```bash
-python --version
-```
-
-### Verify Jemalloc
-
-```bash
-./target/release/tach-core --help 2>&1 | grep -i jemalloc
+uname -r                                              # Kernel version
+cat /sys/kernel/security/lsm | grep landlock          # Landlock support
+grep CONFIG_SECCOMP /boot/config-$(uname -r)          # Seccomp support
+strace -f ./target/release/tach-core . 2>&1 | head -100  # Trace syscalls
+cat /proc/sys/kernel/unprivileged_userns_clone        # User namespaces
 ```
 
 ---
 
 ## Performance Profiling
 
-### With perf
-
 ```bash
-perf record -g ./target/release/tach-core .
-perf report
-```
-
-### Lock Contention
-
-```bash
-perf lock record ./target/release/tach-core .
-perf lock report
-```
-
-### Memory Usage
-
-```bash
-/usr/bin/time -v ./target/release/tach-core .
+perf record -g ./target/release/tach-core . && perf report  # CPU profiling
+perf lock record ./target/release/tach-core . && perf lock report  # Lock contention
+/usr/bin/time -v ./target/release/tach-core .         # Memory usage
+cargo flamegraph --bin tach-core -- .                 # Flamegraph
 ```
 
 ---
 
 ## Common Development Tasks
 
-### Adding a New FFI Function
+### Adding FFI Function
 
-1. Add function in `src/execution/zygote.rs`:
+```rust
+// 1. Add in src/execution/zygote.rs
+#[pyfunction]
+fn my_function(py: Python) -> PyResult<()> { Ok(()) }
 
-   ```rust
-   #[pyfunction]
-   fn my_function(py: Python) -> PyResult<()> {
-       Ok(())
-   }
-   ```
+// 2. Register: m.add_function(wrap_pyfunction!(my_function, m)?)?;
+```
 
-2. Register in module:
+```python
+# 3. Use in tach_harness.py
+tach_rust.my_function()
+```
 
-   ```rust
-   m.add_function(wrap_pyfunction!(my_function, m)?)?;
-   ```
+### Adding Test Phase
 
-3. Use in `tach_harness.py`:
-   ```python
-   tach_rust.my_function()
-   ```
+1. Create `tests/gauntlet_phaseN/`
+2. Add `test_*.py` files
+3. Update CI if needed
 
-### Adding a New Test Phase
+### Adding Reporter
 
-1. Create directory: `tests/gauntlet_phaseN/`
-2. Add test files: `test_*.py`
-3. Update CI workflow if needed
+Implement `Reporter` trait in `src/reporting/reporter.rs`:
 
-### Modifying the Protocol
-
-1. Update structs in `src/core/protocol.rs`
-2. Update serialization if needed
-3. Update Python harness if needed
-4. Add integration tests
+- `on_run_start`, `on_test_start`, `on_test_finished`, `on_run_finished`, `on_error`
 
 ---
 
-## Troubleshooting Build Issues
+## Troubleshooting
 
-See [Troubleshooting](troubleshooting.md) for common issues.
+| Issue                 | Cause            | Solution                             |
+| :-------------------- | :--------------- | :----------------------------------- |
+| `PYO3_PYTHON` not set | Missing env var  | `export PYO3_PYTHON=$(which python)` |
+| `EPERM` on Landlock   | Kernel < 5.13    | Graceful degradation                 |
+| `EPERM` on Seccomp    | Bad filter       | Check syscalls, use blacklist        |
+| Test hangs            | Clone blocked    | Ensure clone NOT in seccomp          |
+| Coverage wrong        | GIL held         | Release GIL during Rust ops          |
+| WSL2 instability      | Jemalloc + tests | Jemalloc disabled in `cargo test`    |
 
 ---
 
@@ -355,3 +311,4 @@ See [Troubleshooting](troubleshooting.md) for common issues.
 - [Architecture Overview](architecture/overview.md)
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)
+- [API Reference](api-reference.md)

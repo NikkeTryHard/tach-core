@@ -122,6 +122,10 @@ mod tests {
         // Signal handlers should install without error
         // Note: This spawns a daemon thread that will be cleaned up when tests exit
         let result = install_signal_handlers();
-        assert!(result.is_ok(), "Signal handler installation failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Signal handler installation failed: {:?}",
+            result
+        );
     }
 }

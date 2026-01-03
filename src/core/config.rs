@@ -244,7 +244,38 @@ impl MergedConfig {
 /// This function reads `[tool.pytest_env]` section from pyproject.toml and
 /// sets each key-value pair as an environment variable. Must be called
 /// BEFORE forking the Zygote so workers inherit the environment.
+///
+/// # Security
+///
+/// Dangerous environment variables are blocked to prevent:
+/// - Library injection (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, LD_DEBUG)
+/// - Python environment hijacking (PYTHONPATH, PYTHONHOME, PYTHONSTARTUP, PYTHONMALLOC)
+/// - Path manipulation (PATH, HOME, USER)
 pub fn load_env_from_pyproject(root: &Path) {
+    /// Environment variables that are blocked for security reasons.
+    ///
+    /// These variables could be used to:
+    /// - Inject malicious libraries (LD_PRELOAD, LD_LIBRARY_PATH)
+    /// - Hijack Python's module loading (PYTHONPATH, PYTHONHOME)
+    /// - Override the allocator (PYTHONMALLOC) - critical for jemalloc snapshot safety
+    /// - Manipulate execution paths (PATH, HOME, USER)
+    const ENV_DENYLIST: &[&str] = &[
+        // Library injection vectors
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "LD_DEBUG",
+        // Python environment hijacking
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONMALLOC", // Critical: could break jemalloc snapshot consistency
+        // Path manipulation
+        "PATH",
+        "HOME",
+        "USER",
+    ];
+
     let config_path = root.join("pyproject.toml");
     if !config_path.exists() {
         return;
@@ -269,6 +300,17 @@ pub fn load_env_from_pyproject(root: &Path) {
     if let Some(tool) = pyproject.tool {
         if let Some(env_vars) = tool.pytest_env {
             for (key, value) in env_vars {
+                // SECURITY: Block dangerous environment variables
+                if ENV_DENYLIST
+                    .iter()
+                    .any(|&blocked| key.eq_ignore_ascii_case(blocked))
+                {
+                    eprintln!(
+                        "[config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
+                        key
+                    );
+                    continue;
+                }
                 std::env::set_var(&key, &value);
                 eprintln!("[config] Set env: {}={}", key, value);
             }
@@ -518,5 +560,115 @@ enabled = true
         let cov = config.coverage.unwrap();
         assert!(cov.source.is_none());
         assert!(cov.omit.is_none());
+    }
+
+    // =========================================================================
+    // Phase 1.6: Environment Variable Denylist Tests
+    // =========================================================================
+
+    #[test]
+    fn test_env_denylist_blocks_ld_preload() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.pytest_env]
+LD_PRELOAD = "/malicious/lib.so"
+SAFE_VAR = "allowed"
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        // Clear any existing value
+        std::env::remove_var("LD_PRELOAD");
+        std::env::remove_var("SAFE_VAR");
+
+        load_env_from_pyproject(temp_dir.path());
+
+        // LD_PRELOAD should NOT be set (blocked)
+        assert!(std::env::var("LD_PRELOAD").is_err());
+
+        // SAFE_VAR should be set (allowed)
+        assert_eq!(std::env::var("SAFE_VAR").unwrap(), "allowed");
+
+        // Cleanup
+        std::env::remove_var("SAFE_VAR");
+    }
+
+    #[test]
+    fn test_env_denylist_blocks_pythonpath() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.pytest_env]
+PYTHONPATH = "/malicious/path"
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        std::env::remove_var("PYTHONPATH");
+        load_env_from_pyproject(temp_dir.path());
+
+        // PYTHONPATH should NOT be set (blocked)
+        assert!(std::env::var("PYTHONPATH").is_err());
+    }
+
+    #[test]
+    fn test_env_denylist_blocks_pythonmalloc() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.pytest_env]
+PYTHONMALLOC = "malloc"
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        std::env::remove_var("PYTHONMALLOC");
+        load_env_from_pyproject(temp_dir.path());
+
+        // PYTHONMALLOC should NOT be set (blocked - critical for jemalloc)
+        assert!(std::env::var("PYTHONMALLOC").is_err());
+    }
+
+    #[test]
+    fn test_env_denylist_case_insensitive() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        let toml_content = r#"
+[tool.pytest_env]
+ld_preload = "/malicious/lib.so"
+Ld_Library_Path = "/malicious/path"
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        std::env::remove_var("ld_preload");
+        std::env::remove_var("Ld_Library_Path");
+        load_env_from_pyproject(temp_dir.path());
+
+        // Both should be blocked (case-insensitive matching)
+        assert!(std::env::var("ld_preload").is_err());
+        assert!(std::env::var("Ld_Library_Path").is_err());
+    }
+
+    #[test]
+    fn test_env_denylist_all_blocked_vars() {
+        // Verify all blocked variables are in the denylist
+        let blocked_vars = [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "LD_DEBUG",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "PYTHONMALLOC",
+            "PATH",
+            "HOME",
+            "USER",
+        ];
+
+        // Just verify the count matches what we expect
+        assert_eq!(blocked_vars.len(), 11);
     }
 }

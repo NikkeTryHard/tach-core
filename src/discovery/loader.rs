@@ -71,7 +71,10 @@ pub struct ModuleRegistry {
 impl ModuleRegistry {
     /// Create a new empty registry
     pub fn new(project_root: PathBuf) -> Self {
-        Self { entries: DashMap::new(), project_root }
+        Self {
+            entries: DashMap::new(),
+            project_root,
+        }
     }
 
     /// Insert a compiled module into the registry
@@ -229,7 +232,10 @@ impl BytecodeCompiler {
     fn path_to_module_name(&self, path: &Path) -> String {
         let relative = path.strip_prefix(&self.project_root).unwrap_or(path);
 
-        let mut name = relative.with_extension("").to_string_lossy().replace(std::path::MAIN_SEPARATOR, ".");
+        let mut name = relative
+            .with_extension("")
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, ".");
 
         // Remove __init__ suffix for packages
         if name.ends_with(".__init__") {
@@ -243,7 +249,9 @@ impl BytecodeCompiler {
     fn cache_path(&self, source: &Path) -> PathBuf {
         let relative = source.strip_prefix(&self.project_root).unwrap_or(source);
 
-        let mut cache_name = relative.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "_");
+        let mut cache_name = relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "_");
         cache_name.push_str(".pyc");
 
         self.cache_dir.join(cache_name)
@@ -257,9 +265,13 @@ impl BytecodeCompiler {
         }
 
         // Compare mtimes
-        let source_mtime = fs::metadata(source).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let source_mtime = fs::metadata(source)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
-        let cache_mtime = fs::metadata(cache).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let cache_mtime = fs::metadata(cache)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
         source_mtime > cache_mtime
     }
@@ -292,7 +304,10 @@ impl BytecodeCompiler {
             match self.validate_magic(&cache_path) {
                 Ok(true) => false, // Magic matches, use cache
                 Ok(false) => {
-                    eprintln!("[loader] Magic mismatch for {}, recompiling", source.display());
+                    eprintln!(
+                        "[loader] Magic mismatch for {}, recompiling",
+                        source.display()
+                    );
                     true
                 }
                 Err(_) => true, // Can't read cache, recompile
@@ -314,13 +329,23 @@ impl BytecodeCompiler {
             fs::create_dir_all(parent)?;
         }
 
-        let script = format!("import py_compile; py_compile.compile('{}', '{}', doraise=True)", source.display(), cache.display());
+        let script = format!(
+            "import py_compile; py_compile.compile('{}', '{}', doraise=True)",
+            source.display(),
+            cache.display()
+        );
 
-        let output = Command::new(&self.python_exe).args(["-c", &script]).output()?;
+        let output = Command::new(&self.python_exe)
+            .args(["-c", &script])
+            .output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Compilation failed for {}: {}", source.display(), stderr));
+            return Err(anyhow!(
+                "Compilation failed for {}: {}",
+                source.display(),
+                stderr
+            ));
         }
 
         Ok(())
@@ -331,7 +356,10 @@ impl BytecodeCompiler {
         let data = fs::read(pyc_path)?;
 
         if data.len() < PYC_HEADER_SIZE {
-            return Err(anyhow!("Invalid .pyc file (too short): {}", pyc_path.display()));
+            return Err(anyhow!(
+                "Invalid .pyc file (too short): {}",
+                pyc_path.display()
+            ));
         }
 
         // Return bytes after header
@@ -371,7 +399,11 @@ impl BytecodeCompiler {
             }
         }
 
-        eprintln!("[loader] Compiled {} of {} files", success_count, files.len());
+        eprintln!(
+            "[loader] Compiled {} of {} files",
+            success_count,
+            files.len()
+        );
         success_count
     }
 }
@@ -408,7 +440,10 @@ pub fn get_module(name: &str) -> Option<Vec<u8>> {
 /// Called by Python harness to set __file__ attribute.
 #[pyfunction]
 pub fn get_module_path(name: &str) -> Option<String> {
-    REGISTRY.get().and_then(|r| r.get_source_path(name)).map(|p| p.to_string_lossy().to_string())
+    REGISTRY
+        .get()
+        .and_then(|r| r.get_source_path(name))
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Check if a module is a package (has __init__.py)
@@ -429,7 +464,12 @@ pub fn is_module_package(name: &str) -> Option<bool> {
 /// - `PyImport_ExecCodeModuleObject` does NOT steal the code object reference
 /// - We must call `Py_DECREF` on the code object after use
 #[pyfunction]
-pub fn load_module(py: Python<'_>, name: &str, source_path: &str, bytecode: &[u8]) -> PyResult<bool> {
+pub fn load_module(
+    py: Python<'_>,
+    name: &str,
+    source_path: &str,
+    bytecode: &[u8],
+) -> PyResult<bool> {
     // Safety check: bytecode should not be empty
     if bytecode.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err("Bytecode is empty"));
@@ -437,7 +477,10 @@ pub fn load_module(py: Python<'_>, name: &str, source_path: &str, bytecode: &[u8
 
     unsafe {
         // 1. Deserialize bytecode to code object
-        let code_obj = ffi::PyMarshal_ReadObjectFromString(bytecode.as_ptr() as *const i8, bytecode.len() as isize);
+        let code_obj = ffi::PyMarshal_ReadObjectFromString(
+            bytecode.as_ptr() as *const i8,
+            bytecode.len() as isize,
+        );
 
         if code_obj.is_null() {
             // Fetch and return the Python exception
@@ -445,8 +488,10 @@ pub fn load_module(py: Python<'_>, name: &str, source_path: &str, bytecode: &[u8
         }
 
         // 2. Create Python strings for module name and path
-        let name_cstr = std::ffi::CString::new(name).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid module name"))?;
-        let path_cstr = std::ffi::CString::new(source_path).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid source path"))?;
+        let name_cstr = std::ffi::CString::new(name)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid module name"))?;
+        let path_cstr = std::ffi::CString::new(source_path)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid source path"))?;
 
         let name_obj = ffi::PyUnicode_FromString(name_cstr.as_ptr());
         if name_obj.is_null() {
@@ -492,10 +537,17 @@ pub fn load_module(py: Python<'_>, name: &str, source_path: &str, bytecode: &[u8
 ///
 /// # Safety
 /// `module` must be a valid, non-null PyObject pointer.
-unsafe fn patch_module_namespace(py: Python<'_>, module: *mut ffi::PyObject, name: &str, source_path: &str) -> PyResult<()> {
+unsafe fn patch_module_namespace(
+    py: Python<'_>,
+    module: *mut ffi::PyObject,
+    name: &str,
+    source_path: &str,
+) -> PyResult<()> {
     // __file__: Source file path
     let file_cstr = std::ffi::CString::new("__file__").unwrap();
-    let file_val = ffi::PyUnicode_FromString(std::ffi::CString::new(source_path).unwrap().as_ptr());
+    // SAFETY: Store CString in variable to prevent dangling pointer
+    let source_path_cstr = std::ffi::CString::new(source_path).unwrap();
+    let file_val = ffi::PyUnicode_FromString(source_path_cstr.as_ptr());
     if !file_val.is_null() {
         ffi::PyObject_SetAttrString(module, file_cstr.as_ptr(), file_val);
         ffi::Py_DECREF(file_val);
@@ -504,7 +556,9 @@ unsafe fn patch_module_namespace(py: Python<'_>, module: *mut ffi::PyObject, nam
     // __package__: Parent package name
     let package_name = name.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
     let pkg_cstr = std::ffi::CString::new("__package__").unwrap();
-    let pkg_val = ffi::PyUnicode_FromString(std::ffi::CString::new(package_name).unwrap().as_ptr());
+    // SAFETY: Store CString in variable to prevent dangling pointer
+    let package_name_cstr = std::ffi::CString::new(package_name).unwrap();
+    let pkg_val = ffi::PyUnicode_FromString(package_name_cstr.as_ptr());
     if !pkg_val.is_null() {
         ffi::PyObject_SetAttrString(module, pkg_cstr.as_ptr(), pkg_val);
         ffi::Py_DECREF(pkg_val);
@@ -512,11 +566,18 @@ unsafe fn patch_module_namespace(py: Python<'_>, module: *mut ffi::PyObject, nam
 
     // __path__: Required for packages (directories)
     // Check if this is a package by looking at the registry or source path
-    let is_package = source_path.ends_with("__init__.py") || REGISTRY.get().and_then(|r| r.is_package(name)).unwrap_or(false);
+    let is_package = source_path.ends_with("__init__.py")
+        || REGISTRY
+            .get()
+            .and_then(|r| r.is_package(name))
+            .unwrap_or(false);
 
     if is_package {
         // __path__ should be a list containing the package directory
-        let parent_dir = Path::new(source_path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let parent_dir = Path::new(source_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
 
         let path_list = PyList::new(py, &[parent_dir])?;
         let path_cstr = std::ffi::CString::new("__path__").unwrap();
@@ -589,7 +650,11 @@ mod tests {
         // Verify header was stripped (bytecode should NOT start with magic)
         // The marshalled code object starts with TYPE_CODE ('c' = 0x63 or 'C' = 0x43)
         // depending on Python version
-        assert!(bytecode[0] == 0x63 || bytecode[0] == 0xe3, "First byte should be TYPE_CODE marker, got 0x{:02x}", bytecode[0]);
+        assert!(
+            bytecode[0] == 0x63 || bytecode[0] == 0xe3,
+            "First byte should be TYPE_CODE marker, got 0x{:02x}",
+            bytecode[0]
+        );
     }
 
     /// Test cache staleness detection
@@ -698,7 +763,10 @@ mod tests {
         let bytecode = compiler.compile(&source).unwrap();
 
         // Bytecode should start with TYPE_CODE marker (0xe3 or 0x63)
-        assert!(bytecode[0] == 0xe3 || bytecode[0] == 0x63, "Header should be stripped, first byte should be TYPE_CODE");
+        assert!(
+            bytecode[0] == 0xe3 || bytecode[0] == 0x63,
+            "Header should be stripped, first byte should be TYPE_CODE"
+        );
     }
 
     /// Test find_python_cached returns consistent path
@@ -720,7 +788,10 @@ mod tests {
 
         assert_eq!(magic.len(), 4, "Magic number should be 4 bytes");
         // Magic number should not be all zeros
-        assert!(magic.iter().any(|&b| b != 0), "Magic should not be all zeros");
+        assert!(
+            magic.iter().any(|&b| b != 0),
+            "Magic should not be all zeros"
+        );
     }
 
     /// Test registry is_package for non-existent module
@@ -779,14 +850,21 @@ mod tests {
 
         // Single underscore prefix
         let underscore = temp.path().join("_private.py");
-        assert!(compiler.path_to_module_name(&underscore).contains("_private"));
+        assert!(compiler
+            .path_to_module_name(&underscore)
+            .contains("_private"));
 
         // Double underscore prefix
         let dunder = temp.path().join("__dunder__.py");
         assert!(compiler.path_to_module_name(&dunder).contains("__dunder__"));
 
         // Deeply nested __init__.py
-        let deep_init = temp.path().join("a").join("b").join("c").join("__init__.py");
+        let deep_init = temp
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("__init__.py");
         let name = compiler.path_to_module_name(&deep_init);
         assert_eq!(name, "a.b.c");
     }

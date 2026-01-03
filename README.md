@@ -279,8 +279,7 @@ See [Configuration Reference](docs/configuration.md) for full details.
 | 6.1   | Coverage Resolution         | Complete |
 | 6.2   | Configuration Engine        | Complete |
 | 6.3   | Progress Reporter           | Complete |
-
-**Total Tests: 301** (All Passing)
+| 7     | Security Hardening          | Complete |
 
 ---
 
@@ -294,6 +293,45 @@ See [Configuration Reference](docs/configuration.md) for full details.
 - **Toxicity Propagation**: Fixed-point algorithm over petgraph dependency graph
 - **Django Integration**: Automatic transaction rollback and connection pooling
 - **Async Support**: Built-in asyncio loop management for coroutine tests
+
+---
+
+## Security Hardening (Phase 7)
+
+Tach implements comprehensive security hardening across all subsystems:
+
+### Memory Safety
+
+| Fix                             | Description                                                                        |
+| :------------------------------ | :--------------------------------------------------------------------------------- |
+| **Static Mut Elimination**      | Replaced `static mut` with `OnceLock`/`Mutex` for thread-safe global state         |
+| **Dangling Pointer Prevention** | Fixed CString lifetime issues in FFI calls to prevent use-after-free               |
+| **TOCTOU Race Fix**             | Lock-free CAS loop in ring buffer prevents race conditions                         |
+| **Mutex Poisoning Recovery**    | All 37 mutex locks use `unwrap_or_else(\|e\| e.into_inner())` for crash resilience |
+
+### Syscall Security
+
+| Fix                      | Description                                                                    |
+| :----------------------- | :----------------------------------------------------------------------------- |
+| **Seccomp Hardening**    | Added `ptrace`, `mount`, `umount2`, `unshare`, `setns` to syscall blacklist    |
+| **Landlock TOCTOU**      | Removed `path.exists()` check, handle `ENOENT` atomically                      |
+| **Environment Denylist** | Blocks 11 dangerous env vars: `LD_PRELOAD`, `PYTHONPATH`, `PYTHONMALLOC`, etc. |
+
+### Performance Optimizations
+
+| Fix                            | Description                                                      |
+| :----------------------------- | :--------------------------------------------------------------- |
+| **RwLock for Read-Heavy Data** | `code_map` uses `RwLock` instead of `Mutex` for concurrent reads |
+| **Zero-Copy Data Extraction**  | `take_data()` uses `std::mem::take()` to avoid HashMap cloning   |
+| **Pre-sized Collections**      | Thread-local `HashSet` pre-allocated with 1024 capacity          |
+
+### Test Coverage
+
+Added 50+ regression tests across critical subsystems:
+
+- `namespace.rs`: 15 tests for path logic, overlay options, isolation bypass
+- `logcapture.rs`: 20 tests for memfd operations, read/clear, fd lifecycle
+- `scheduler.rs`: 15 tests for queue separation, priority dispatch, slot calculation
 
 ---
 

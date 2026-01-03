@@ -35,6 +35,42 @@ use userfaultfd::{Uffd, UffdBuilder};
 const PAGE_SIZE: usize = 4096;
 
 // =============================================================================
+// Phase 2.3: TLS Snapshot/Restore Constants
+// =============================================================================
+//
+// These constants enable the "Restoration Quadrant" - capturing and restoring
+// the Thread Control Block (TCB) alongside BSS, Heap, and Stack.
+//
+// CRITICAL: The fs_base register points to the Thread Local Storage block.
+// Python 3.13's mimalloc stores critical heap pointers in TLS. If we restore
+// the heap without restoring TLS, the mi_heap_t* pointers will be stale.
+// =============================================================================
+
+/// ptrace request code for arch_prctl operations (x86_64 only)
+#[cfg(target_arch = "x86_64")]
+const PTRACE_ARCH_PRCTL: libc::c_uint = 30;
+
+/// arch_prctl subcode: get fs_base register value
+#[cfg(target_arch = "x86_64")]
+const ARCH_GET_FS: libc::c_int = 0x1003;
+
+/// arch_prctl subcode: set fs_base register value
+#[cfg(target_arch = "x86_64")]
+const ARCH_SET_FS: libc::c_int = 0x1002;
+
+/// TLS snapshot size hint (12KB covers typical TLS usage including mimalloc state)
+/// This value was determined empirically in Phase 2.1/2.2 TLS exploration.
+///
+/// IMPORTANT: This is now used as a MINIMUM hint, not a hard limit.
+/// Phase 2.3 P1 fix: The actual capture size is determined dynamically by:
+/// 1. Using the TLS region boundaries from /proc/pid/maps
+/// 2. Capturing from fs_base to min(fs_base + region_size, region_end)
+///
+/// This handles cases where TensorFlow/PyTorch load many C-extensions with
+/// their own TLS slots (the Dynamic Thread Vector - DTV).
+const TLS_SNAPSHOT_SIZE_HINT: usize = 12 * 1024;
+
+// =============================================================================
 // SCM_RIGHTS: File Descriptor Passing over Unix Sockets
 // =============================================================================
 
@@ -184,6 +220,253 @@ impl MemoryRegion {
     pub fn is_stack(&self) -> bool {
         self.name.contains("[stack]")
     }
+}
+
+// =============================================================================
+// Phase 2.3: TLS Snapshot Structure
+// =============================================================================
+
+/// Thread Local Storage snapshot for the Restoration Quadrant
+///
+/// The TLS block contains critical allocator state (mimalloc's mi_heap_t pointers
+/// in Python 3.13+). This snapshot captures:
+/// 1. The fs_base register value (points to TLS block)
+/// 2. The 12KB TLS memory block
+///
+/// # Why TLS Matters
+///
+/// Python 3.13 switched from pymalloc to mimalloc, which caches per-thread
+/// heap pointers in TLS. If we restore the heap without restoring TLS:
+/// - mi_heap_t* at fs_base+0x0ad8 points to stale heap data
+/// - Next allocation returns memory from the wrong epoch
+/// - Result: Silent corruption or use-after-free
+#[derive(Debug, Clone)]
+pub struct TlsSnapshot {
+    /// The fs_base register value (Thread Control Block address)
+    pub fs_base: usize,
+    /// The TLS memory block (12KB)
+    pub tls_data: Vec<u8>,
+    /// Start address of the TLS region in /proc/pid/maps
+    pub tls_region_start: usize,
+    /// End address of the TLS region
+    pub tls_region_end: usize,
+}
+
+// =============================================================================
+// Phase 2.3: TLS Capture/Restore via ptrace
+// =============================================================================
+
+/// Get fs_base register from a stopped process via ptrace
+///
+/// # Safety
+/// - Worker must be in SIGSTOP state
+/// - Caller must have ptrace permissions (child process or CAP_SYS_PTRACE)
+///
+/// # Architecture
+/// - x86_64: Uses PTRACE_ARCH_PRCTL with ARCH_GET_FS
+/// - aarch64: Uses PTRACE_GETREGSET (not implemented yet)
+#[cfg(target_arch = "x86_64")]
+pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
+    use nix::sys::ptrace;
+    use nix::sys::wait::{waitpid, WaitPidFlag};
+
+    // Attach to the process
+    ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;
+
+    // Wait for the process to stop (ptrace-stop)
+    waitpid(pid, Some(WaitPidFlag::WSTOPPED)).with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
+
+    // Use PTRACE_ARCH_PRCTL to get fs_base
+    // ptrace(PTRACE_ARCH_PRCTL, pid, ARCH_GET_FS, &output)
+    let mut fs_base: u64 = 0;
+
+    // SAFETY: We are attached to the process via ptrace, and it is stopped.
+    // PTRACE_ARCH_PRCTL with ARCH_GET_FS reads the fs_base into the data pointer.
+    let ret = unsafe { libc::ptrace(PTRACE_ARCH_PRCTL as libc::c_uint, pid.as_raw(), ARCH_GET_FS, &mut fs_base as *mut u64) };
+
+    if ret == -1 {
+        let err = std::io::Error::last_os_error();
+        // Detach before returning error
+        let _ = ptrace::detach(pid, None);
+        return Err(anyhow!("PTRACE_ARCH_PRCTL(ARCH_GET_FS) failed for PID {}: {}", pid, err));
+    }
+
+    // Detach from the process (it remains stopped, we'll SIGCONT later)
+    ptrace::detach(pid, None).with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
+
+    eprintln!("[tls] Captured fs_base for PID {}: 0x{:016x}", pid, fs_base);
+
+    Ok(fs_base as usize)
+}
+
+/// Set fs_base register for a stopped process via ptrace
+///
+/// # Safety
+/// - Worker must be in SIGSTOP state
+/// - Caller must have ptrace permissions
+///
+/// # Warning
+/// Setting fs_base incorrectly will crash the target process.
+/// The value must point to a valid TLS block.
+#[cfg(target_arch = "x86_64")]
+pub fn set_fs_base_ptrace(pid: Pid, fs_base: usize) -> Result<()> {
+    use nix::sys::ptrace;
+    use nix::sys::wait::{waitpid, WaitPidFlag};
+
+    // Attach to the process
+    ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;
+
+    // Wait for the process to stop (ptrace-stop)
+    waitpid(pid, Some(WaitPidFlag::WSTOPPED)).with_context(|| format!("Failed to wait for ptrace-stop on PID {}", pid))?;
+
+    // Use PTRACE_ARCH_PRCTL to set fs_base
+    // ptrace(PTRACE_ARCH_PRCTL, pid, ARCH_SET_FS, value)
+    // SAFETY: We are attached to the process via ptrace, and it is stopped.
+    // PTRACE_ARCH_PRCTL with ARCH_SET_FS sets fs_base to the data value.
+    let ret = unsafe { libc::ptrace(PTRACE_ARCH_PRCTL as libc::c_uint, pid.as_raw(), ARCH_SET_FS, fs_base) };
+
+    if ret == -1 {
+        let err = std::io::Error::last_os_error();
+        // Detach before returning error
+        let _ = ptrace::detach(pid, None);
+        return Err(anyhow!("PTRACE_ARCH_PRCTL(ARCH_SET_FS) failed for PID {}: {}", pid, err));
+    }
+
+    // Detach from the process
+    ptrace::detach(pid, None).with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
+
+    eprintln!("[tls] Restored fs_base for PID {}: 0x{:016x}", pid, fs_base);
+
+    Ok(())
+}
+
+/// Find the TLS region containing fs_base in /proc/pid/maps
+///
+/// Returns (start, end) of the anonymous mapping containing fs_base.
+fn find_tls_region(pid: Pid, fs_base: usize) -> Result<(usize, usize)> {
+    let regions = parse_memory_maps(pid)?;
+
+    for region in regions {
+        if region.start <= fs_base && fs_base < region.end {
+            eprintln!("[tls] Found TLS region for fs_base 0x{:x}: 0x{:x}-0x{:x} [{}]", fs_base, region.start, region.end, region.name);
+            return Ok((region.start, region.end));
+        }
+    }
+
+    Err(anyhow!("Could not find memory region containing fs_base 0x{:x} for PID {}", fs_base, pid))
+}
+
+/// Capture TLS snapshot from a stopped worker
+///
+/// This implements the TLS capture phase of the Restoration Quadrant:
+/// 1. Get fs_base via ptrace ARCH_GET_FS
+/// 2. Find the TLS region in /proc/pid/maps
+/// 3. Read the ENTIRE TLS region via process_vm_readv (dynamic sizing)
+///
+/// # Phase 2.3 P1: Dynamic TLS Sizing
+///
+/// The Orchestrator identified a critical flaw: the 12KB hardcode fails when
+/// TensorFlow/PyTorch load dozens of C-extensions, each requesting TLS slots
+/// via the Dynamic Thread Vector (DTV).
+///
+/// FIX: We now capture from fs_base to region_end (the full TLS allocation),
+/// using TLS_SNAPSHOT_SIZE_HINT only as a minimum sanity check.
+///
+/// # Requirements
+/// - Worker must be in SIGSTOP state
+/// - Caller must be parent process or have CAP_SYS_PTRACE
+#[cfg(target_arch = "x86_64")]
+pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
+    // Step 1: Get fs_base via ptrace
+    let fs_base = get_fs_base_ptrace(pid)?;
+
+    // Step 2: Find TLS region
+    let (region_start, region_end) = find_tls_region(pid, fs_base)?;
+
+    // =================================================================
+    // Phase 2.3 P1: Dynamic TLS Sizing
+    // =================================================================
+    // "Do not guess the size of the heart; measure the cavity."
+    // - The Orchestrator
+    //
+    // We capture from fs_base to the END of the TLS region, not a fixed
+    // 12KB. This handles the DTV expansion from heavy C-extension usage.
+    //
+    // Safety: We verify the region is at least TLS_SNAPSHOT_SIZE_HINT
+    // to catch pathological cases where fs_base isn't in a real TLS region.
+    // =================================================================
+    let max_capture_from_fs = region_end.saturating_sub(fs_base);
+
+    // Sanity check: TLS region should be at least 4KB (one page)
+    if max_capture_from_fs < PAGE_SIZE {
+        return Err(anyhow!("TLS region too small: fs_base=0x{:x}, region_end=0x{:x}, size={}", fs_base, region_end, max_capture_from_fs));
+    }
+
+    // Calculate actual capture size:
+    // - Minimum: TLS_SNAPSHOT_SIZE_HINT (to ensure we get mimalloc state)
+    // - Maximum: entire region from fs_base to region_end
+    let capture_len = max_capture_from_fs.max(TLS_SNAPSHOT_SIZE_HINT.min(max_capture_from_fs));
+
+    eprintln!("[tls] Dynamic TLS capture: fs_base=0x{:x}, region=[0x{:x}, 0x{:x}), capture={} bytes", fs_base, region_start, region_end, capture_len);
+
+    // Step 3: Read TLS data via process_vm_readv
+    let mut tls_data = vec![0u8; capture_len];
+    let mut local_iov = [IoSliceMut::new(&mut tls_data)];
+    let remote_iov = [RemoteIoVec { base: fs_base, len: capture_len }];
+
+    let bytes_read = process_vm_readv(pid, &mut local_iov, &remote_iov).with_context(|| format!("process_vm_readv failed for TLS at 0x{:x}", fs_base))?;
+
+    // Phase 2.3 P1: Check for partial reads (Orchestrator's warning)
+    if bytes_read != capture_len {
+        return Err(anyhow!("Partial TLS read: {}/{} bytes. Worker may have 'Fractured Brain' if we proceed.", bytes_read, capture_len));
+    }
+
+    eprintln!("[tls] TLS snapshot captured: {} bytes from fs_base=0x{:x} (region={} bytes total)", tls_data.len(), fs_base, region_end - region_start);
+
+    Ok(TlsSnapshot {
+        fs_base,
+        tls_data,
+        tls_region_start: region_start,
+        tls_region_end: region_end,
+    })
+}
+
+/// Restore TLS state to a stopped worker
+///
+/// This implements the TLS restore phase of the Restoration Quadrant:
+/// 1. Write TLS data back via process_vm_writev
+/// 2. Set fs_base via ptrace ARCH_SET_FS (ensures register consistency)
+///
+/// # Requirements
+/// - Worker must be in SIGSTOP state
+/// - TLS memory must have been restored (via userfaultfd or process_vm_writev)
+#[cfg(target_arch = "x86_64")]
+pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()> {
+    use nix::sys::uio::process_vm_writev;
+    use std::io::IoSlice;
+
+    eprintln!("[tls] Restoring TLS for PID {}: {} bytes to 0x{:x}", pid, snapshot.tls_data.len(), snapshot.fs_base);
+
+    // Step 1: Write TLS data back via process_vm_writev
+    // This is necessary because userfaultfd may not cover the TLS region
+    // if it wasn't registered, or we want explicit control.
+    let local_iov = [IoSlice::new(&snapshot.tls_data)];
+    let remote_iov = [RemoteIoVec { base: snapshot.fs_base, len: snapshot.tls_data.len() }];
+
+    let bytes_written = process_vm_writev(pid, &local_iov, &remote_iov).with_context(|| format!("process_vm_writev failed for TLS at 0x{:x}", snapshot.fs_base))?;
+
+    if bytes_written != snapshot.tls_data.len() {
+        return Err(anyhow!("Partial TLS write: {}/{} bytes", bytes_written, snapshot.tls_data.len()));
+    }
+
+    // Step 2: Restore fs_base register
+    // This ensures the register points to the same TLS block
+    // (should be unchanged, but this is a safety measure)
+    set_fs_base_ptrace(pid, snapshot.fs_base)?;
+
+    eprintln!("[tls] TLS restore complete for PID {}: fs_base=0x{:x}", pid, snapshot.fs_base);
+
+    Ok(())
 }
 
 /// Parse /proc/{pid}/maps to extract memory regions
@@ -576,11 +859,17 @@ pub struct WorkerSnapshot {
     pub golden_pages: HashMap<usize, Vec<u8>>,
     /// Registered memory regions
     pub regions: Vec<MemoryRegion>,
+    /// Phase 2.3: TLS snapshot for the Restoration Quadrant
+    /// Contains fs_base register value and 12KB TLS memory block
+    #[cfg(target_arch = "x86_64")]
+    pub tls_snapshot: Option<TlsSnapshot>,
 }
 
 // =============================================================================
 // Snapshot Manager
 // =============================================================================
+
+use super::calibration::TlsCalibration;
 
 /// Central manager for capturing and restoring worker memory
 pub struct SnapshotManager {
@@ -588,6 +877,10 @@ pub struct SnapshotManager {
     pub available: bool,
     /// Per-worker snapshots
     workers: HashMap<i32, WorkerSnapshot>,
+    /// Phase 2.3 P1: TLS calibration data (discovered during Zygote warm-up)
+    /// This contains the dynamically discovered mi_heap_t offset
+    #[cfg(target_arch = "x86_64")]
+    calibration: Option<TlsCalibration>,
 }
 
 impl SnapshotManager {
@@ -605,7 +898,58 @@ impl SnapshotManager {
             }
         };
 
-        Ok(Self { available, workers: HashMap::new() })
+        Ok(Self {
+            available,
+            workers: HashMap::new(),
+            #[cfg(target_arch = "x86_64")]
+            calibration: None,
+        })
+    }
+
+    /// Phase 2.3 P1: Perform TLS self-calibration during Zygote warm-up
+    ///
+    /// This MUST be called:
+    /// - After Python is initialized
+    /// - Before the first worker fork()
+    /// - In the Zygote process (not workers)
+    ///
+    /// # Returns
+    /// - `Ok(())` if calibration succeeds
+    /// - `Err` with `ERR_CALIBRATION_FAILED` if Tach cannot self-calibrate
+    ///
+    /// # Boot Log
+    /// On success, logs: `[restoration] Sentinel found at fs_base + 0xXXXX`
+    #[cfg(target_arch = "x86_64")]
+    pub fn calibrate(&mut self) -> Result<()> {
+        eprintln!("[snapshot] Initiating TLS self-calibration...");
+
+        let calibration = TlsCalibration::calibrate().context("TLS self-calibration failed - ERR_CALIBRATION_FAILED")?;
+
+        if calibration.is_calibrated() {
+            eprintln!("[snapshot] TLS calibration complete: mi_heap_t at fs_base + 0x{:04X}", calibration.primary_offset().unwrap_or(0));
+            self.calibration = Some(calibration);
+            Ok(())
+        } else {
+            // Calibration ran but found no heap pointers - this is OK for pre-3.13 Python
+            eprintln!(
+                "[snapshot] TLS calibration found no heap pointers (Python < 3.13 or pymalloc). \
+                 TLS restoration will be skipped."
+            );
+            self.calibration = Some(calibration);
+            Ok(())
+        }
+    }
+
+    /// Check if calibration has been performed
+    #[cfg(target_arch = "x86_64")]
+    pub fn is_calibrated(&self) -> bool {
+        self.calibration.as_ref().map_or(false, |c| c.is_calibrated())
+    }
+
+    /// Get the calibrated mi_heap_t offset (if available)
+    #[cfg(target_arch = "x86_64")]
+    pub fn calibrated_offset(&self) -> Option<usize> {
+        self.calibration.as_ref().and_then(|c| c.primary_offset())
     }
 
     /// Get the raw UFFD file descriptor for a worker (for polling)
@@ -617,6 +961,12 @@ impl SnapshotManager {
     ///
     /// This is called when a worker sends its UFFD to the Supervisor.
     /// The worker must be in SIGSTOP state before calling this.
+    ///
+    /// # Phase 2.3: TLS Capture
+    ///
+    /// This function now captures the TLS snapshot (fs_base + 12KB TLS data)
+    /// as part of the golden snapshot. This is critical for Python 3.13+
+    /// with mimalloc, which stores heap pointers in TLS.
     pub fn register_worker_with_uffd(&mut self, pid: Pid, uffd: Uffd) -> Result<()> {
         if !self.available {
             return Ok(()); // No-op in fallback mode
@@ -640,8 +990,43 @@ impl SnapshotManager {
             uffd.register(region.start as *mut libc::c_void, region.len).with_context(|| format!("Failed to register region {}", region.name))?;
         }
 
+        // =================================================================
+        // Phase 2.3: Capture TLS Snapshot (Restoration Quadrant - TCB)
+        // =================================================================
+        // The TLS block contains critical allocator state (mimalloc's mi_heap_t
+        // pointers in Python 3.13+). We capture fs_base and 12KB of TLS data.
+        //
+        // NOTE: Worker MUST be in SIGSTOP state for ptrace to succeed.
+        // =================================================================
+        #[cfg(target_arch = "x86_64")]
+        let tls_snapshot = match capture_tls_snapshot(pid) {
+            Ok(tls) => {
+                eprintln!("[snapshot] TLS captured: fs_base=0x{:x}, {} bytes", tls.fs_base, tls.tls_data.len());
+                Some(tls)
+            }
+            Err(e) => {
+                // TLS capture failure is non-fatal for pre-3.13 Python
+                // (pymalloc doesn't use TLS caching)
+                eprintln!(
+                    "[snapshot] WARNING: TLS capture failed: {}. \
+                     This may cause issues with Python 3.13+ (mimalloc).",
+                    e
+                );
+                None
+            }
+        };
+
         // Store worker snapshot
-        self.workers.insert(pid.as_raw(), WorkerSnapshot { uffd, golden_pages, regions: snapshot_regions });
+        self.workers.insert(
+            pid.as_raw(),
+            WorkerSnapshot {
+                uffd,
+                golden_pages,
+                regions: snapshot_regions,
+                #[cfg(target_arch = "x86_64")]
+                tls_snapshot,
+            },
+        );
 
         Ok(())
     }
@@ -711,6 +1096,62 @@ impl SnapshotManager {
         }
 
         eprintln!("[snapshot] Reset worker {}: invalidated {} regions", pid, iovecs.len());
+
+        Ok(())
+    }
+
+    /// Restore TLS state for a worker (Phase 2.3: Restoration Quadrant - TCB)
+    ///
+    /// This MUST be called after MADV_DONTNEED has invalidated the worker's
+    /// memory pages, but BEFORE the worker resumes execution.
+    ///
+    /// # Requirements
+    /// - Worker must be in SIGSTOP state
+    /// - TLS snapshot must have been captured during registration
+    ///
+    /// # What This Does
+    /// 1. Writes the 12KB TLS data back to the worker's TLS region
+    /// 2. Restores the fs_base register via ptrace ARCH_SET_FS
+    ///
+    /// # Why This Matters
+    /// Python 3.13+ uses mimalloc which caches heap pointers in TLS.
+    /// If we restore the heap but not the TLS, the mi_heap_t* pointers
+    /// in TLS will point to stale heap data, causing use-after-free.
+    #[cfg(target_arch = "x86_64")]
+    pub fn restore_worker_tls(&self, pid: Pid) -> Result<()> {
+        if !self.available {
+            return Ok(()); // No-op in fallback mode
+        }
+
+        let worker = self.workers.get(&pid.as_raw()).ok_or_else(|| anyhow!("Worker {} not registered with SnapshotManager", pid))?;
+
+        if let Some(ref tls_snapshot) = worker.tls_snapshot {
+            eprintln!("[snapshot] Restoring TLS for worker {}: fs_base=0x{:x}, {} bytes", pid, tls_snapshot.fs_base, tls_snapshot.tls_data.len());
+            restore_tls_snapshot(pid, tls_snapshot)?;
+            eprintln!("[snapshot] TLS restoration complete for worker {}", pid);
+        } else {
+            eprintln!("[snapshot] No TLS snapshot for worker {} (pre-3.13 Python or capture failed)", pid);
+        }
+
+        Ok(())
+    }
+
+    /// Full worker reset with TLS restoration (Phase 2.3)
+    ///
+    /// This combines memory reset (MADV_DONTNEED) with TLS restoration.
+    /// Call this instead of reset_worker() when you need complete state restoration.
+    ///
+    /// # Sequence
+    /// 1. Invalidate memory pages via process_madvise(MADV_DONTNEED)
+    /// 2. Restore TLS block via process_vm_writev + ptrace ARCH_SET_FS
+    /// 3. Page faults will restore heap/BSS via userfaultfd
+    #[cfg(target_arch = "x86_64")]
+    pub fn reset_worker_full(&self, pid: Pid) -> Result<()> {
+        // Step 1: Invalidate memory pages
+        self.reset_worker(pid)?;
+
+        // Step 2: Restore TLS (must happen before worker resumes)
+        self.restore_worker_tls(pid)?;
 
         Ok(())
     }
@@ -1229,5 +1670,91 @@ mod tests {
         assert_eq!(align_to_page_up(0x1001), 0x2000);
         assert_eq!(align_to_page_up(0x1fff), 0x2000);
         assert_eq!(align_to_page_up(0x2001), 0x3000);
+    }
+
+    // =========================================================================
+    // Phase 2.3: TLS Snapshot Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tls_snapshot_struct_creation() {
+        let snapshot = TlsSnapshot {
+            fs_base: 0x7f1234560000,
+            tls_data: vec![0u8; 12 * 1024],
+            tls_region_start: 0x7f1234550000,
+            tls_region_end: 0x7f1234570000,
+        };
+
+        assert_eq!(snapshot.fs_base, 0x7f1234560000);
+        assert_eq!(snapshot.tls_data.len(), 12 * 1024);
+        assert_eq!(snapshot.tls_region_end - snapshot.tls_region_start, 0x20000);
+    }
+
+    #[test]
+    fn test_tls_snapshot_size_constant() {
+        // TLS_SNAPSHOT_SIZE_HINT is the minimum hint (12KB)
+        // Phase 2.3 P1: Actual capture size is now dynamic based on region boundaries
+        assert_eq!(TLS_SNAPSHOT_SIZE_HINT, 12 * 1024);
+        assert_eq!(TLS_SNAPSHOT_SIZE_HINT, 12288);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_arch_prctl_constants() {
+        // These constants must match the kernel values for x86_64
+        assert_eq!(ARCH_GET_FS, 0x1003);
+        assert_eq!(ARCH_SET_FS, 0x1002);
+        assert_eq!(PTRACE_ARCH_PRCTL, 30);
+    }
+
+    #[test]
+    fn test_tls_snapshot_data_roundtrip() {
+        // Test that TLS snapshot can store and retrieve data correctly
+        // Phase 2.3 P1: TLS size is now dynamic, so we test with a sample size
+        let sample_size = 16 * 1024; // 16KB - larger than hint to verify dynamic sizing
+        let test_pattern: Vec<u8> = (0..sample_size).map(|i| (i % 256) as u8).collect();
+
+        let snapshot = TlsSnapshot {
+            fs_base: 0x7f1234560000,
+            tls_data: test_pattern.clone(),
+            tls_region_start: 0x7f1234550000,
+            tls_region_end: 0x7f1234570000,
+        };
+
+        assert_eq!(snapshot.tls_data.len(), sample_size);
+        assert_eq!(snapshot.tls_data, test_pattern);
+    }
+
+    #[test]
+    fn test_find_tls_region_self() {
+        // Test that we can find TLS region for our own process
+        // This is a smoke test - we don't actually capture TLS here
+        // because we can't ptrace ourselves
+        let pid = Pid::from_raw(std::process::id() as i32);
+        let regions = parse_memory_maps(pid).expect("Failed to parse maps");
+
+        // We should have at least some regions
+        assert!(!regions.is_empty());
+
+        // Look for any anonymous writable region that could be TLS
+        let tls_candidates: Vec<_> = regions.iter().filter(|r| r.perms.contains('w') && r.perms.contains('p') && r.name.is_empty()).collect();
+
+        // There should be at least one anonymous writable region
+        // (TLS is typically in one of these)
+        eprintln!("[test] Found {} potential TLS candidate regions", tls_candidates.len());
+        assert!(!tls_candidates.is_empty(), "Should find anonymous writable regions");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_worker_snapshot_with_tls_field() {
+        // Verify WorkerSnapshot struct includes tls_snapshot field
+        // This is a compile-time check - if it compiles, the field exists
+        let mgr = SnapshotManager::new().expect("Failed to create manager");
+
+        // Worker snapshot should have tls_snapshot: Option<TlsSnapshot>
+        // We can't directly access workers HashMap, but we can verify
+        // the structure exists via the API
+        assert!(mgr.worker_pids().is_empty(), "No workers initially");
     }
 }

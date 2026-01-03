@@ -14,4 +14,6 @@ pub mod resolver;
 pub mod scanner;
 
 // Re-export main types from scanner for backward compatibility
-pub use scanner::{discover, dump_json, DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule};
+pub use scanner::{
+    discover, dump_json, DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule,
+};

@@ -312,6 +312,228 @@ static CACHED_MAGIC: OnceLock<[u8; 4]> = OnceLock::new();
 
 ---
 
+## Security: Dangling Pointer Prevention
+
+When passing C-style strings to the Python C-API, improper `CString` usage can lead to **use-after-free vulnerabilities**.
+
+### The Dangerous Pattern (BAD)
+
+```rust
+// BAD - CString is dropped immediately, pointer dangles!
+let file_val = ffi::PyUnicode_FromString(
+    std::ffi::CString::new(source_path).unwrap().as_ptr()
+);
+```
+
+The temporary `CString` is dropped after `.as_ptr()` returns, leaving a dangling pointer that `PyUnicode_FromString` reads from - undefined behavior.
+
+### The Safe Pattern (GOOD)
+
+```rust
+// GOOD - CString lives long enough for the pointer to be used
+let source_path_cstr = std::ffi::CString::new(source_path).unwrap();
+let file_val = ffi::PyUnicode_FromString(source_path_cstr.as_ptr());
+// source_path_cstr is still alive here, pointer is valid
+```
+
+Storing the `CString` in a named variable keeps it alive until scope end, ensuring the pointer remains valid during the C-API call.
+
+```mermaid
+sequenceDiagram
+    participant Code as Rust Code
+    participant CString as CString (named variable)
+    participant Memory as Heap Memory
+    participant Python as Python C-API
+
+    Code->>CString: let cstr = CString::new(source_path)
+    CString->>Memory: Allocate buffer for "path/to/file.py\0"
+    Code->>CString: cstr.as_ptr()
+    CString-->>Code: Return raw pointer 0x7fff1234
+    Note over CString: CString still alive!
+    Code->>Python: PyUnicode_FromString(0x7fff1234)
+    Python->>Memory: Read from 0x7fff1234
+    Note over Memory: Memory valid, read succeeds
+    Python-->>Code: Return PyObject*
+    Note over CString: CString dropped at scope end
+    CString->>Memory: Deallocate buffer (safe now)
+```
+
+### Implementation in Tach
+
+The `patch_module_namespace` and `load_module` functions in `src/discovery/loader.rs` demonstrate this pattern. Each `CString` is stored in a named variable with a `// SAFETY:` comment explaining why the pointer usage is safe.
+
+### Consequences of Use-After-Free
+
+| Scenario                   | Consequence                                       |
+| :------------------------- | :------------------------------------------------ |
+| Memory reused by allocator | Corrupted module path, wrong `__file__` attribute |
+| Memory zeroed by allocator | Empty string or null pointer dereference crash    |
+| Memory reused by Python    | Arbitrary string as module path (security risk)   |
+| Memory page unmapped       | Segmentation fault (SIGSEGV)                      |
+| Intermittent failures      | Heisenbugs that only appear under memory pressure |
+
+### Key Takeaways
+
+1. **Never chain `.as_ptr()` on a temporary `CString`** - always store it in a named variable first
+2. **The `CString` must outlive all uses of the pointer** - keep it alive until after the C function returns
+3. **Add `// SAFETY:` comments** explaining why the pointer usage is safe
+4. **This pattern applies to all FFI string passing** - not just Python C-API
+
+---
+
+## Zero-Copy Bytecode Loading Architecture
+
+The loader implements a zero-copy architecture that minimizes memory allocations and data movement during module loading.
+
+### Memory Flow
+
+```mermaid
+flowchart TB
+    subgraph Discovery["DISCOVERY PHASE (Eager)"]
+        Source[".py Source Files"]
+        Compile["py_compile.compile()"]
+        Strip["Strip 16-byte Header"]
+        Registry["ModuleRegistry<br/>(DashMap)"]
+    end
+
+    subgraph Worker["WORKER PHASE (On-Demand)"]
+        Request["get_module(name)"]
+        Bytecode["Raw Bytecode<br/>(Vec<u8>)"]
+        Marshal["PyMarshal_ReadObjectFromString"]
+        CodeObj["PyCodeObject*"]
+        Exec["PyImport_ExecCodeModuleObject"]
+        SysModules["sys.modules[name]"]
+    end
+
+    Source --> Compile --> Strip --> Registry
+    Registry --> Request --> Bytecode --> Marshal --> CodeObj --> Exec --> SysModules
+```
+
+### Key Design Decisions
+
+#### 1. Header Stripping at Compile Time
+
+The 16-byte `.pyc` header is stripped during compilation, not at load time:
+
+```rust
+fn read_and_strip_header(&self, pyc_path: &Path) -> Result<Vec<u8>> {
+    let data = fs::read(pyc_path)?;
+
+    if data.len() < PYC_HEADER_SIZE {
+        return Err(anyhow!("Invalid .pyc file (too short)"));
+    }
+
+    // Return bytes after header - this is the only copy
+    Ok(data[PYC_HEADER_SIZE..].to_vec())
+}
+```
+
+**Rationale:** The header is only needed for cache validation. By stripping it once during compilation, we avoid repeated slicing operations during the hot path.
+
+#### 2. Direct Pointer Passing to C-API
+
+Bytecode is passed directly to `PyMarshal_ReadObjectFromString` without intermediate copies:
+
+```rust
+let code_obj = ffi::PyMarshal_ReadObjectFromString(
+    bytecode.as_ptr() as *const i8,  // Direct pointer to Vec<u8> buffer
+    bytecode.len() as isize,
+);
+```
+
+**Rationale:** The `Vec<u8>` buffer is passed by pointer, not copied. Python's marshal module reads directly from our Rust-owned memory.
+
+#### 3. DashMap for Lock-Free Reads
+
+The registry uses `DashMap` instead of `RwLock<HashMap>`:
+
+```rust
+pub struct ModuleRegistry {
+    entries: DashMap<String, BytecodeEntry>,
+    project_root: PathBuf,
+}
+```
+
+**Rationale:** `DashMap` provides lock-free reads for concurrent worker access. Multiple workers can request different modules simultaneously without contention.
+
+#### 4. Global Caching to Prevent Subprocess Spawning
+
+Python path and magic number are cached globally:
+
+```rust
+static CACHED_PYTHON_EXE: OnceLock<PathBuf> = OnceLock::new();
+static CACHED_MAGIC: OnceLock<[u8; 4]> = OnceLock::new();
+```
+
+**Rationale:** Without caching, each `BytecodeCompiler::new()` call would spawn Python subprocesses to get the magic number. During parallel test execution, this could spawn hundreds of processes, causing OOM.
+
+### Memory Ownership Model
+
+```mermaid
+flowchart LR
+    subgraph Rust["RUST OWNERSHIP"]
+        Registry["ModuleRegistry"]
+        Entry["BytecodeEntry"]
+        Bytecode["Vec<u8>"]
+    end
+
+    subgraph Python["PYTHON OWNERSHIP"]
+        CodeObj["PyCodeObject"]
+        Module["PyModuleObject"]
+        SysModules["sys.modules"]
+    end
+
+    Registry --> Entry --> Bytecode
+    Bytecode -.->|"PyMarshal (reads)"| CodeObj
+    CodeObj -.->|"PyImport (consumes)"| Module
+    Module --> SysModules
+
+    style Bytecode fill:#e1f5fe
+    style CodeObj fill:#fff3e0
+```
+
+| Component          | Owner                   | Lifetime                   |
+| :----------------- | :---------------------- | :------------------------- |
+| `BytecodeEntry`    | Rust (`ModuleRegistry`) | Process lifetime           |
+| `Vec<u8>` bytecode | Rust (`BytecodeEntry`)  | Process lifetime           |
+| `PyCodeObject*`    | Python (new reference)  | Must `Py_DECREF` after use |
+| `PyModuleObject*`  | Python (`sys.modules`)  | Until module unloaded      |
+
+### Reference Counting in load_module
+
+The `load_module` function carefully manages Python reference counts:
+
+```rust
+unsafe {
+    // PyMarshal returns NEW reference - we own it
+    let code_obj = ffi::PyMarshal_ReadObjectFromString(...);
+
+    // PyUnicode_FromString returns NEW reference - we own it
+    let name_obj = ffi::PyUnicode_FromString(name_cstr.as_ptr());
+    let path_obj = ffi::PyUnicode_FromString(path_cstr.as_ptr());
+
+    // PyImport does NOT steal references - we still own them
+    let module = ffi::PyImport_ExecCodeModuleObject(
+        name_obj,
+        code_obj,
+        path_obj,
+        std::ptr::null_mut(),
+    );
+
+    // Clean up all references we created
+    ffi::Py_DECREF(code_obj);
+    ffi::Py_DECREF(name_obj);
+    ffi::Py_DECREF(path_obj);
+
+    // Module is in sys.modules, we can release our reference
+    ffi::Py_DECREF(module);
+}
+```
+
+**Critical:** If any step fails, we must `Py_DECREF` all previously created objects to avoid memory leaks.
+
+---
+
 ## Related Documentation
 
 - [Discovery Engine](discovery.md) - How modules are found

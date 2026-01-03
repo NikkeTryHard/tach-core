@@ -55,10 +55,7 @@ impl RunContext {
                 Some(listener)
             }
             Err(e) => {
-                eprintln!(
-                    "[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.",
-                    e
-                );
+                eprintln!("[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.", e);
                 None
             }
         };
@@ -550,32 +547,28 @@ fn run_tests(
             // Stop aggregator and report coverage statistics
             if let Some(mut aggregator) = coverage_aggregator {
                 aggregator.stop();
-                let coverage_data = aggregator.get_data();
+                // Use take_data() to avoid cloning the entire HashMap
+                let coverage_data = aggregator.take_data();
+                let total_hits: u64 = coverage_data.values().sum();
 
                 if !is_json {
                     eprintln!(
                         "[supervisor] Coverage: {} unique lines covered, {} total hits",
                         coverage_data.len(),
-                        aggregator.total_hits()
+                        total_hits
                     );
 
                     // Report overflow counts if any
                     if let Some(buffer) = coverage::get_coverage_buffer() {
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
-                            eprintln!(
-                                "[supervisor] WARNING: {} coverage entries dropped (buffer overflow)",
-                                overflow
-                            );
+                            eprintln!("[supervisor] WARNING: {} coverage entries dropped (buffer overflow)", overflow);
                         }
                     }
                     if let Some(buffer) = coverage::get_mapping_buffer() {
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
-                            eprintln!(
-                                "[supervisor] WARNING: {} mapping entries dropped (buffer overflow)",
-                                overflow
-                            );
+                            eprintln!("[supervisor] WARNING: {} mapping entries dropped (buffer overflow)", overflow);
                         }
                     }
                 }

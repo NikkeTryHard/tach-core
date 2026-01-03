@@ -85,7 +85,8 @@ impl FixtureRegistry {
     pub fn from_discovery(result: &DiscoveryResult) -> Self {
         let mut global = HashMap::new();
         let mut local = HashMap::new();
-        let mut class_scoped: HashMap<(PathBuf, String), HashMap<String, FixtureDefinition>> = HashMap::new();
+        let mut class_scoped: HashMap<(PathBuf, String), HashMap<String, FixtureDefinition>> =
+            HashMap::new();
 
         for module in &result.modules {
             let is_conftest = module.path.file_name().is_some_and(|n| n == "conftest.py");
@@ -95,7 +96,10 @@ impl FixtureRegistry {
                 // Phase 7c: Handle class-scoped fixtures
                 if let Some(ref class_name) = fixture.class_scope {
                     let key = (module.path.clone(), class_name.clone());
-                    class_scoped.entry(key).or_default().insert(fixture.name.clone(), fixture.clone());
+                    class_scoped
+                        .entry(key)
+                        .or_default()
+                        .insert(fixture.name.clone(), fixture.clone());
                 } else if is_conftest {
                     global.insert(fixture.name.clone(), (fixture.clone(), module.path.clone()));
                 } else {
@@ -108,11 +112,20 @@ impl FixtureRegistry {
             }
         }
 
-        Self { global, local, class_scoped }
+        Self {
+            global,
+            local,
+            class_scoped,
+        }
     }
 
     /// Look up a fixture: class scope -> local scope -> global scope
-    fn lookup(&self, name: &str, module_path: &PathBuf, test_name: &str) -> Option<(FixtureDefinition, PathBuf)> {
+    fn lookup(
+        &self,
+        name: &str,
+        module_path: &PathBuf,
+        test_name: &str,
+    ) -> Option<(FixtureDefinition, PathBuf)> {
         // Phase 7c: Check class-scoped fixtures first for tests in classes
         // Test names in classes have format "ClassName::method_name"
         if let Some(class_name) = test_name.split("::").next() {
@@ -148,7 +161,10 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolve all tests from discovery results
-    pub fn resolve_all(&self, result: &DiscoveryResult) -> (Vec<RunnableTest>, Vec<ResolutionError>) {
+    pub fn resolve_all(
+        &self,
+        result: &DiscoveryResult,
+    ) -> (Vec<RunnableTest>, Vec<ResolutionError>) {
         let mut runnable = Vec::new();
         let mut errors = Vec::new();
 
@@ -165,7 +181,11 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolve a single test's fixture dependencies
-    fn resolve_test(&self, test: &TestCase, module_path: &PathBuf) -> Result<RunnableTest, ResolutionError> {
+    fn resolve_test(
+        &self,
+        test: &TestCase,
+        module_path: &PathBuf,
+    ) -> Result<RunnableTest, ResolutionError> {
         let mut resolved_fixtures = Vec::new();
         let mut visited = HashSet::new();
         let mut stack = Vec::new();
@@ -181,7 +201,14 @@ impl<'a> Resolver<'a> {
                 continue;
             }
 
-            self.resolve_fixture(dep_name, module_path, &test.name, &mut resolved_fixtures, &mut visited, &mut stack)?;
+            self.resolve_fixture(
+                dep_name,
+                module_path,
+                &test.name,
+                &mut resolved_fixtures,
+                &mut visited,
+                &mut stack,
+            )?;
         }
 
         Ok(RunnableTest {
@@ -194,7 +221,15 @@ impl<'a> Resolver<'a> {
     }
 
     /// Recursively resolve a fixture and its dependencies (DFS with cycle detection)
-    fn resolve_fixture(&self, name: &str, module_path: &PathBuf, test_name: &str, resolved: &mut Vec<ResolvedFixture>, visited: &mut HashSet<String>, stack: &mut Vec<String>) -> Result<(), ResolutionError> {
+    fn resolve_fixture(
+        &self,
+        name: &str,
+        module_path: &PathBuf,
+        test_name: &str,
+        resolved: &mut Vec<ResolvedFixture>,
+        visited: &mut HashSet<String>,
+        stack: &mut Vec<String>,
+    ) -> Result<(), ResolutionError> {
         // Already fully resolved
         if visited.contains(name) {
             return Ok(());
@@ -203,7 +238,10 @@ impl<'a> Resolver<'a> {
         // Cycle detection
         if stack.contains(&name.to_string()) {
             stack.push(name.to_string());
-            return Err(ResolutionError::CyclicDependency { test: test_name.to_string(), cycle: stack.clone() });
+            return Err(ResolutionError::CyclicDependency {
+                test: test_name.to_string(),
+                cycle: stack.clone(),
+            });
         }
 
         // PHASE 6: Skip resolution for pytest builtin fixtures
@@ -215,7 +253,13 @@ impl<'a> Resolver<'a> {
         }
 
         // Look up fixture (pass test_name for class-scoped lookup)
-        let (fixture, source_file) = self.registry.lookup(name, module_path, test_name).ok_or_else(|| ResolutionError::MissingFixture { test: test_name.to_string(), fixture: name.to_string() })?;
+        let (fixture, source_file) = self
+            .registry
+            .lookup(name, module_path, test_name)
+            .ok_or_else(|| ResolutionError::MissingFixture {
+                test: test_name.to_string(),
+                fixture: name.to_string(),
+            })?;
 
         // Push onto recursion stack
         stack.push(name.to_string());
@@ -230,7 +274,11 @@ impl<'a> Resolver<'a> {
 
         // Mark as visited and add to resolved list
         visited.insert(name.to_string());
-        resolved.push(ResolvedFixture { name: name.to_string(), source_file, scope: fixture.scope });
+        resolved.push(ResolvedFixture {
+            name: name.to_string(),
+            source_file,
+            scope: fixture.scope,
+        });
 
         Ok(())
     }
@@ -295,12 +343,18 @@ mod tests {
         // Using "test_simple" as test_name (no class scope)
         let local_path = PathBuf::from("test_local.py");
         let (fixture, _) = registry.lookup("db", &local_path, "test_simple").unwrap();
-        assert!(!fixture.dependencies.is_empty(), "Local fixture should have dependencies");
+        assert!(
+            !fixture.dependencies.is_empty(),
+            "Local fixture should have dependencies"
+        );
 
         // Other module lookup should return global fixture (no deps)
         let other_path = PathBuf::from("test_other.py");
         let (fixture, _) = registry.lookup("db", &other_path, "test_simple").unwrap();
-        assert!(fixture.dependencies.is_empty(), "Global fixture should have no dependencies");
+        assert!(
+            fixture.dependencies.is_empty(),
+            "Global fixture should have no dependencies"
+        );
     }
 
     #[test]
@@ -331,7 +385,10 @@ mod tests {
         let (runnable, errors) = resolver.resolve_all(&discovery);
 
         // Should have no runnable tests and one error
-        assert!(runnable.is_empty(), "Cyclic dependency should fail resolution");
+        assert!(
+            runnable.is_empty(),
+            "Cyclic dependency should fail resolution"
+        );
         assert!(!errors.is_empty(), "Should have resolution error");
 
         // Verify it's a CyclicDependency error
@@ -361,7 +418,10 @@ mod tests {
         let (runnable, errors) = resolver.resolve_all(&discovery);
 
         // Should have no runnable tests and one error
-        assert!(runnable.is_empty(), "Missing fixture should fail resolution");
+        assert!(
+            runnable.is_empty(),
+            "Missing fixture should fail resolution"
+        );
         assert!(!errors.is_empty(), "Should have resolution error");
 
         // Verify it's a MissingFixture error
@@ -382,7 +442,11 @@ mod tests {
                 TestModule {
                     path: PathBuf::from("conftest.py"),
                     tests: vec![],
-                    fixtures: vec![make_fixture("base", vec![]), make_fixture("connection", vec!["base"]), make_fixture("db", vec!["connection"])],
+                    fixtures: vec![
+                        make_fixture("base", vec![]),
+                        make_fixture("connection", vec!["base"]),
+                        make_fixture("db", vec!["connection"]),
+                    ],
                     is_toxic: false,
                 },
                 TestModule {
@@ -459,7 +523,11 @@ mod tests {
         let (runnable, errors) = resolver.resolve_all(&discovery);
 
         // All tests should resolve - builtins are skipped, not errors
-        assert!(errors.is_empty(), "Builtin fixtures should not cause errors: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "Builtin fixtures should not cause errors: {:?}",
+            errors
+        );
         assert_eq!(runnable.len(), 4);
     }
 

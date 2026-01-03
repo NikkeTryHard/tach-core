@@ -8,123 +8,73 @@ Complete reference for Tach internal APIs and data structures.
 
 ### TestCase
 
-Represents a discovered test function.
-
 ```rust
 pub struct TestCase {
-    pub name: String,
-    pub is_async: bool,
-    pub fixtures: Vec<String>,
-    pub markers: Vec<String>,
-    pub lineno: usize,
+    pub name: String,        // Function name (e.g., `test_foo`)
+    pub is_async: bool,      // Whether function is async
+    pub fixtures: Vec<String>, // Required fixture names
+    pub markers: Vec<String>,  // Applied markers
+    pub lineno: usize,       // Line number in source file
 }
 ```
-
-| Field      | Type          | Description                      |
-| :--------- | :------------ | :------------------------------- |
-| `name`     | `String`      | Function name (e.g., `test_foo`) |
-| `is_async` | `bool`        | Whether function is async        |
-| `fixtures` | `Vec<String>` | Required fixture names           |
-| `markers`  | `Vec<String>` | Applied markers                  |
-| `lineno`   | `usize`       | Line number in source file       |
 
 ---
 
 ### TestModule
 
-Represents a parsed test file.
-
 ```rust
 pub struct TestModule {
-    pub path: PathBuf,
-    pub tests: Vec<TestCase>,
-    pub fixtures: Vec<FixtureDefinition>,
-    pub imports: Vec<String>,
+    pub path: PathBuf,                   // Absolute path to file
+    pub tests: Vec<TestCase>,            // Discovered test functions
+    pub fixtures: Vec<FixtureDefinition>, // Defined fixtures
+    pub imports: Vec<String>,            // Import statements
 }
 ```
-
-| Field      | Type                     | Description               |
-| :--------- | :----------------------- | :------------------------ |
-| `path`     | `PathBuf`                | Absolute path to file     |
-| `tests`    | `Vec<TestCase>`          | Discovered test functions |
-| `fixtures` | `Vec<FixtureDefinition>` | Defined fixtures          |
-| `imports`  | `Vec<String>`            | Import statements         |
 
 ---
 
 ### FixtureDefinition
 
-Represents a fixture definition.
-
 ```rust
 pub struct FixtureDefinition {
-    pub name: String,
-    pub scope: FixtureScope,
-    pub dependencies: Vec<String>,
-    pub is_async: bool,
-    pub autouse: bool,
+    pub name: String,              // Fixture function name
+    pub scope: FixtureScope,       // Lifetime scope
+    pub dependencies: Vec<String>, // Other fixtures this depends on
+    pub is_async: bool,            // Whether fixture is async
+    pub autouse: bool,             // Whether auto-applied
 }
 ```
-
-| Field          | Type           | Description                    |
-| :------------- | :------------- | :----------------------------- |
-| `name`         | `String`       | Fixture function name          |
-| `scope`        | `FixtureScope` | Lifetime scope                 |
-| `dependencies` | `Vec<String>`  | Other fixtures this depends on |
-| `is_async`     | `bool`         | Whether fixture is async       |
-| `autouse`      | `bool`         | Whether auto-applied           |
 
 ---
 
 ### FixtureScope
 
-Enum for fixture lifetime.
-
 ```rust
 pub enum FixtureScope {
-    Function,
-    Class,
-    Module,
-    Session,
+    Function,  // Created per test (default)
+    Class,     // Shared within test class
+    Module,    // Shared within test module
+    Session,   // Shared across entire session
 }
 ```
-
-| Variant    | Description                  |
-| :--------- | :--------------------------- |
-| `Function` | Created per test (default)   |
-| `Class`    | Shared within test class     |
-| `Module`   | Shared within test module    |
-| `Session`  | Shared across entire session |
 
 ---
 
 ### RunnableTest
 
-Test ready for execution with resolved fixtures.
-
 ```rust
 pub struct RunnableTest {
-    pub file_path: PathBuf,
-    pub test_name: String,
-    pub is_async: bool,
-    pub fixtures: Vec<ResolvedFixture>,
-    pub is_toxic: bool,
+    pub file_path: PathBuf,              // Path to test file
+    pub test_name: String,               // Fully qualified name (node ID)
+    pub is_async: bool,                  // Whether test is async
+    pub fixtures: Vec<ResolvedFixture>,  // Resolved fixture chain
+    pub is_toxic: bool,                  // Requires worker restart
 }
 ```
-
-| Field       | Type                   | Description                    |
-| :---------- | :--------------------- | :----------------------------- |
-| `file_path` | `PathBuf`              | Path to test file              |
-| `test_name` | `String`               | Fully qualified name (node ID) |
-| `is_async`  | `bool`                 | Whether test is async          |
-| `fixtures`  | `Vec<ResolvedFixture>` | Resolved fixture chain         |
-| `is_toxic`  | `bool`                 | Requires worker restart        |
 
 ---
 
 ### ResolvedFixture
-
-Fixture with source location resolved.
 
 ```rust
 pub struct ResolvedFixture {
@@ -146,27 +96,16 @@ Sent from Supervisor to Worker.
 ```rust
 #[derive(Serialize, Deserialize)]
 pub struct TestPayload {
-    pub test_id: u32,
-    pub file_path: String,
-    pub test_name: String,
+    pub test_id: u32,              // Unique test identifier
+    pub file_path: String,         // Path to test file
+    pub test_name: String,         // Fully qualified test name
     pub is_async: bool,
     pub fixtures: Vec<FixtureInfo>,
-    pub log_fd: i32,
-    pub debug_socket_path: String,
-    pub is_toxic: bool,
+    pub log_fd: i32,               // File descriptor for logging
+    pub debug_socket_path: String, // Path for pdb tunneling
+    pub is_toxic: bool,            // Whether worker should exit
 }
 ```
-
-| Field               | Type               | Description                 |
-| :------------------ | :----------------- | :-------------------------- |
-| `test_id`           | `u32`              | Unique test identifier      |
-| `file_path`         | `String`           | Path to test file           |
-| `test_name`         | `String`           | Fully qualified test name   |
-| `is_async`          | `bool`             | Whether test is async       |
-| `fixtures`          | `Vec<FixtureInfo>` | Required fixture metadata   |
-| `log_fd`            | `i32`              | File descriptor for logging |
-| `debug_socket_path` | `String`           | Path for pdb tunneling      |
-| `is_toxic`          | `bool`             | Whether worker should exit  |
 
 ---
 
@@ -177,25 +116,16 @@ Sent from Worker to Supervisor.
 ```rust
 #[derive(Serialize, Deserialize)]
 pub struct TestResult {
-    pub test_id: u32,
-    pub status: u8,
-    pub duration_ns: u64,
-    pub message: String,
+    pub test_id: u32,       // Matching test identifier
+    pub status: u8,         // Status code (see below)
+    pub duration_ns: u64,   // Execution time in ns
+    pub message: String,    // Error message if failed
 }
 ```
-
-| Field         | Type     | Description              |
-| :------------ | :------- | :----------------------- |
-| `test_id`     | `u32`    | Matching test identifier |
-| `status`      | `u8`     | Status code (see below)  |
-| `duration_ns` | `u64`    | Execution time in ns     |
-| `message`     | `String` | Error message if failed  |
 
 ---
 
 ### FixtureInfo
-
-Fixture metadata for test execution.
 
 ```rust
 #[derive(Serialize, Deserialize)]
@@ -232,61 +162,241 @@ pub struct FixtureInfo {
 
 ---
 
-## Coverage Structures
+## Coverage Module API
+
+High-performance coverage collection using shared memory ring buffers and lock-free atomic operations.
+
+### Constants
+
+```rust
+pub const DEFAULT_CAPACITY: usize = 262_144;  // 4MB total (16 bytes/entry)
+pub const HEADER_SIZE: usize = 64;            // Cache-line aligned
+pub const ENTRY_SIZE: usize = 16;
+pub const MEMFD_NAME: &str = "tach_coverage";
+pub const MAPPING_CAPACITY: usize = 8_192;
+pub const MAPPING_ENTRY_SIZE: usize = 256;
+pub const MAPPING_MEMFD_NAME: &str = "tach_mapping";
+```
+
+---
 
 ### RingBufferHeader
 
-Shared memory buffer header.
-
 ```rust
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct RingBufferHeader {
-    pub write_pos: AtomicU64,
-    pub read_pos: AtomicU64,
-    pub capacity: u64,
-    pub overflow_count: AtomicU64,
+    pub write_idx: AtomicU64,     // Next write position
+    pub read_idx: AtomicU64,      // Next read position
+    pub capacity: u64,            // Buffer capacity in entries
+    pub overflow_count: AtomicU64, // Number of dropped entries
+    _padding: [u8; 32],
+}
+
+impl RingBufferHeader {
+    #[inline] pub fn is_full(&self) -> bool;
+    #[inline] pub fn available(&self) -> u64;
 }
 ```
-
-| Field            | Type        | Description                |
-| :--------------- | :---------- | :------------------------- |
-| `write_pos`      | `AtomicU64` | Next write position        |
-| `read_pos`       | `AtomicU64` | Next read position         |
-| `capacity`       | `u64`       | Buffer capacity in entries |
-| `overflow_count` | `AtomicU64` | Number of dropped entries  |
 
 ---
 
 ### CoverageEntry
 
-Single coverage event.
-
 ```rust
-#[repr(C)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct CoverageEntry {
-    pub file_id: u32,
-    pub lineno: u32,
+    pub code_id: u64,  // Memory address of code object
+    pub lineno: u32,   // Line number executed
+    pub flags: u32,    // Event type (LINE=0x01, CALL=0x02, RETURN=0x04)
+}
+
+impl CoverageEntry {
+    #[inline] pub fn line(code_id: u64, lineno: u32) -> Self;
 }
 ```
-
-| Field     | Type  | Description          |
-| :-------- | :---- | :------------------- |
-| `file_id` | `u32` | Interned file ID     |
-| `lineno`  | `u32` | Line number executed |
 
 ---
 
 ### MappingEntry
 
-File ID to path mapping.
+```rust
+#[repr(C, align(8))]
+pub struct MappingEntry {
+    pub code_id: u64,        // Memory address of code object
+    pub filename_len: u16,   // Length of filename (max 240)
+    pub _padding: [u8; 6],
+    pub filename: [u8; 240], // UTF-8 filename, left-truncated if long
+}
+
+impl MappingEntry {
+    pub fn new(code_id: u64, filename: &str) -> Self;
+    pub fn filename(&self) -> String;
+}
+```
+
+---
+
+### CoverageRingBuffer
+
+Shared memory ring buffer via `memfd_create` + `mmap` for zero-copy IPC.
 
 ```rust
-#[repr(C)]
-pub struct MappingEntry {
-    pub file_id: u32,
-    pub path_len: u32,
-    pub path: [u8; 256],
+pub struct CoverageRingBuffer {
+    ptr: *mut u8,
+    size: usize,
+    fd: i32,
+    capacity: usize,
 }
+
+unsafe impl Send for CoverageRingBuffer {}
+unsafe impl Sync for CoverageRingBuffer {}
+
+impl CoverageRingBuffer {
+    pub fn new(capacity: usize) -> Result<Self>;
+    pub fn fd(&self) -> i32;
+    #[inline] pub fn header(&self) -> &RingBufferHeader;
+    #[inline] pub fn header_mut(&self) -> &mut RingBufferHeader;
+
+    /// Write entry using lock-free CAS loop. Returns false if buffer full.
+    #[inline] pub fn write(&self, entry: CoverageEntry) -> bool;
+
+    /// Drain up to max_entries into out vector. Returns count read.
+    pub fn drain(&self, out: &mut Vec<CoverageEntry>, max_entries: usize) -> usize;
+
+    pub fn overflow_count(&self) -> u64;
+    pub fn base_addr(&self) -> usize;
+    pub fn region_size(&self) -> usize;
+}
+```
+
+---
+
+### MappingRingBuffer
+
+Similar to `CoverageRingBuffer` but with 256-byte entries for filenames.
+
+```rust
+pub struct MappingRingBuffer { /* same fields */ }
+
+impl MappingRingBuffer {
+    pub fn new(capacity: usize) -> Result<Self>;
+    #[inline] pub fn header(&self) -> &RingBufferHeader;
+    #[inline] pub fn write(&self, entry: MappingEntry) -> bool;
+    pub fn drain(&self, out: &mut Vec<MappingEntry>, max_entries: usize) -> usize;
+    pub fn overflow_count(&self) -> u64;
+}
+```
+
+---
+
+### CoverageAggregator
+
+Drains ring buffers and accumulates coverage data in a dedicated thread.
+
+```rust
+pub type CoverageData = HashMap<(String, u32), u64>;
+
+pub struct CoverageAggregator {
+    data: Arc<Mutex<CoverageData>>,
+    code_map: Arc<RwLock<HashMap<u64, String>>>,
+    stop_flag: Arc<AtomicBool>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl CoverageAggregator {
+    pub fn new() -> Self;
+    pub fn start(&mut self, poll_interval: Duration);
+    pub fn register_code(&self, code_id: u64, filename: String);
+    pub fn stop(&mut self);
+    pub fn get_data(&self) -> CoverageData;
+    pub fn take_data(&mut self) -> CoverageData;  // Zero-copy extraction
+    pub fn covered_lines(&self) -> usize;
+    pub fn total_hits(&self) -> u64;
+}
+```
+
+---
+
+### Global Buffer Functions
+
+```rust
+pub fn init_coverage_buffer(capacity: usize) -> Result<&'static CoverageRingBuffer>;
+pub fn get_coverage_buffer() -> Option<&'static CoverageRingBuffer>;
+pub fn is_coverage_enabled() -> bool;
+pub fn init_mapping_buffer(capacity: usize) -> Result<&'static MappingRingBuffer>;
+pub fn get_mapping_buffer() -> Option<&'static MappingRingBuffer>;
+```
+
+---
+
+## Namespace Module API
+
+Worker isolation using Linux Namespaces and OverlayFS.
+
+### Main Function
+
+```rust
+/// Set up complete isolation (Iron Dome).
+/// Sequence: unshare -> private mounts -> create dirs -> RO root -> tmpfs -> overlays
+/// Set TACH_NO_ISOLATION=1 to disable.
+pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()>;
+```
+
+### Helper Functions
+
+```rust
+#[inline] pub fn worker_base_dir(worker_id: u32) -> PathBuf;
+// Returns: /run/tach/worker_{worker_id}
+
+pub fn tmp_overlay_options(base: &Path) -> String;
+// Format: lowerdir=/tmp,upperdir={base}/tmp_upper,workdir={base}/tmp_work
+
+pub fn project_overlay_options(base: &Path, project_root: &Path) -> String;
+// Format: lowerdir={project_root},upperdir={base}/proj_upper,workdir={base}/proj_work
+
+pub fn is_isolation_disabled() -> bool;
+// Returns true only if TACH_NO_ISOLATION=1
+```
+
+### Overlay Directory Structure
+
+```
+/run/tach/
+  worker_0/
+    tmp_upper/     # Writable layer for /tmp
+    tmp_work/      # OverlayFS work directory
+    proj_upper/    # Writable layer for project
+    proj_work/     # OverlayFS work directory
+```
+
+---
+
+## LogCapture API
+
+Non-blocking stdout/stderr capture using memfd.
+
+```rust
+pub const LOG_BUFFER_SIZE: usize = 1024 * 1024;  // 1MB per slot
+
+pub struct LogCapture {
+    fds: HashMap<usize, RawFd>,
+    num_slots: usize,
+}
+
+impl LogCapture {
+    pub fn new(max_slots: usize) -> Result<Self>;
+    pub fn get_fd(&self, slot: usize) -> Option<RawFd>;
+    pub fn slot_count(&self) -> usize;
+    pub fn read_and_clear(&self, slot: usize) -> Result<String>;
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self);  // Closes all file descriptors
+}
+
+/// Redirect stdout/stderr to fd (call in worker after fork).
+pub fn redirect_output(fd: RawFd) -> Result<()>;
 ```
 
 ---
@@ -294,8 +404,6 @@ pub struct MappingEntry {
 ## Toxicity Structures
 
 ### ToxicityReport
-
-Module toxicity classification.
 
 ```rust
 pub struct ToxicityReport {
@@ -305,17 +413,7 @@ pub struct ToxicityReport {
 }
 ```
 
-| Field             | Type             | Description                     |
-| :---------------- | :--------------- | :------------------------------ |
-| `is_toxic`        | `bool`           | Whether module is toxic         |
-| `reason`          | `Option<String>` | Direct toxicity reason          |
-| `propagated_from` | `Vec<String>`    | Modules that caused propagation |
-
----
-
 ### ToxicityGraph
-
-Dependency graph for toxicity propagation.
 
 ```rust
 pub struct ToxicityGraph {
@@ -330,29 +428,16 @@ pub struct ToxicityGraph {
 
 ### MemoryRegion
 
-Captured memory region.
-
 ```rust
 pub struct MemoryRegion {
-    pub start: usize,
-    pub end: usize,
-    pub prot: i32,
-    pub path: Option<String>,
+    pub start: usize,        // Start address
+    pub end: usize,          // End address
+    pub prot: i32,           // Protection flags (mmap)
+    pub path: Option<String>, // Backing file path if any
 }
 ```
 
-| Field   | Type             | Description              |
-| :------ | :--------------- | :----------------------- |
-| `start` | `usize`          | Start address            |
-| `end`   | `usize`          | End address              |
-| `prot`  | `i32`            | Protection flags (mmap)  |
-| `path`  | `Option<String>` | Backing file path if any |
-
----
-
 ### WorkerSnapshot
-
-Complete worker memory state.
 
 ```rust
 pub struct WorkerSnapshot {
@@ -362,11 +447,7 @@ pub struct WorkerSnapshot {
 }
 ```
 
----
-
 ### AlignedSegment
-
-Page-aligned data segment.
 
 ```rust
 pub struct AlignedSegment {
@@ -379,16 +460,12 @@ pub struct AlignedSegment {
 
 ## Sandbox Types
 
-### SandboxStatus
-
-Result of sandbox application.
-
 ```rust
 pub enum SandboxStatus {
-    Full,           // Landlock + Seccomp
-    LandlockOnly,   // Landlock without Seccomp
-    Degraded,       // Partial isolation
-    Disabled,       // No isolation
+    Full,         // Landlock + Seccomp
+    LandlockOnly, // Landlock without Seccomp
+    Degraded,     // Partial isolation
+    Disabled,     // No isolation
 }
 ```
 
@@ -397,8 +474,6 @@ pub enum SandboxStatus {
 ## Configuration Structures
 
 ### TachConfig
-
-Parsed configuration.
 
 ```rust
 pub struct TachConfig {
@@ -410,11 +485,7 @@ pub struct TachConfig {
 }
 ```
 
----
-
 ### CoverageConfig
-
-Coverage collection settings.
 
 ```rust
 pub struct CoverageConfig {
@@ -426,11 +497,7 @@ pub struct CoverageConfig {
 }
 ```
 
----
-
 ### IsolationStrategy
-
-Worker isolation mode.
 
 ```rust
 pub enum IsolationStrategy {
@@ -444,8 +511,6 @@ pub enum IsolationStrategy {
 
 ## Reporter Trait
 
-Interface for test result reporting.
-
 ```rust
 pub trait Reporter {
     fn on_run_start(&mut self, total: usize);
@@ -455,20 +520,11 @@ pub trait Reporter {
 }
 ```
 
-| Method             | Description                     |
-| :----------------- | :------------------------------ |
-| `on_run_start`     | Called before first test        |
-| `on_test_started`  | Called when test begins         |
-| `on_test_finished` | Called when test completes      |
-| `on_run_finished`  | Called after all tests complete |
-
 ---
 
 ## FFI Functions
 
-### Python-Callable Functions
-
-Exposed via PyO3 for the Python harness.
+### Python-Callable Functions (PyO3)
 
 | Function                | Signature                   | Description                 |
 | :---------------------- | :-------------------------- | :-------------------------- |
@@ -480,11 +536,26 @@ Exposed via PyO3 for the Python harness.
 | `quiesce_allocator`     | `()`                        | Flush jemalloc caches       |
 | `inject_entropy`        | `() -> bool`                | Refresh random state        |
 
----
+### Coverage PyO3 Functions
+
+```rust
+#[pyfunction]
+pub fn py_record_line(py: Python<'_>, code_id: u64, lineno: u32) -> bool;
+
+#[pyfunction]
+pub fn py_is_coverage_enabled() -> bool;
+
+#[pyfunction]
+pub fn py_get_coverage_overflow() -> u64;
+
+#[pyfunction]
+pub fn py_record_py_start(py: Python<'_>, code_id: u64, filename: String);
+
+#[pyfunction]
+pub fn py_get_mapping_overflow() -> u64;
+```
 
 ### Internal FFI
-
-Used between Rust components.
 
 | Function             | Description                            |
 | :------------------- | :------------------------------------- |
@@ -497,25 +568,7 @@ Used between Rust components.
 
 ## Environment Variables
 
-### Build-Time
-
-| Variable      | Description             |
-| :------------ | :---------------------- |
-| `PYO3_PYTHON` | Python interpreter path |
-| `MALLOC_CONF` | Jemalloc configuration  |
-
-### Runtime
-
-| Variable               | Description                       |
-| :--------------------- | :-------------------------------- |
-| `TACH_FORMAT`          | Output format (`human` or `json`) |
-| `TACH_JUNIT_XML`       | JUnit XML output path             |
-| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   |
-| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)   |
-| `TACH_TARGET_PATH`     | Test path (set internally)        |
-| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally) |
-| `RUST_LOG`             | Log level for debugging           |
-| `CI`                   | Detected for reporter selection   |
+See [Configuration Reference](configuration.md#environment-variables) for complete environment variable documentation.
 
 ---
 
@@ -547,7 +600,7 @@ Used between Rust components.
 </testsuites>
 ```
 
-### NDJSON (JSON Lines)
+### NDJSON
 
 ```json
 {"event":"run_start","total":100}

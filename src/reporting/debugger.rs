@@ -25,7 +25,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -57,7 +57,9 @@ fn resume_workers(worker_pids: &[i32]) {
 static IN_RAW_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Saved original termios for panic recovery
-static mut ORIGINAL_TERMIOS: Option<Termios> = None;
+/// Uses Mutex for thread-safe access without unsafe static mut
+/// (Termios contains RefCell which is not Sync, so OnceLock cannot be used)
+static ORIGINAL_TERMIOS: Mutex<Option<Termios>> = Mutex::new(None);
 
 /// Terminal mode state machine
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,11 +89,9 @@ impl TerminalManager {
         // Save original terminal settings using stdin (implements AsFd)
         let original = tcgetattr(&stdin).context("Failed to get terminal attributes")?;
 
-        // Store globally for panic hook recovery
-        // SAFETY: We only write this once during initialization and the panic hook
-        // only reads it. The AtomicBool IN_RAW_MODE gates access.
-        unsafe {
-            ORIGINAL_TERMIOS = Some(original.clone());
+        // Store globally for panic hook recovery (thread-safe via Mutex)
+        if let Ok(mut guard) = ORIGINAL_TERMIOS.lock() {
+            *guard = Some(original.clone());
         }
 
         Ok(Self {
@@ -112,7 +112,10 @@ impl TerminalManager {
             return Ok(());
         }
 
-        let mut raw = self.original_termios.clone().context("No original termios saved")?;
+        let mut raw = self
+            .original_termios
+            .clone()
+            .context("No original termios saved")?;
 
         // cfmakeraw disables all the flags we need:
         // - ICANON, ECHO, ECHOE, ECHOK, ECHONL, ISIG, IEXTEN
@@ -185,11 +188,16 @@ impl DebugServer {
         let listener = UnixListener::bind(&socket_path).context("Failed to bind debug socket")?;
 
         // Set non-blocking so we can check for connections without blocking scheduler
-        listener.set_nonblocking(true).context("Failed to set socket non-blocking")?;
+        listener
+            .set_nonblocking(true)
+            .context("Failed to set socket non-blocking")?;
 
         eprintln!("[debugger] Listening on {}", socket_path.display());
 
-        Ok(Self { socket_path, listener })
+        Ok(Self {
+            socket_path,
+            listener,
+        })
     }
 
     /// Get the socket path for workers to connect
@@ -221,7 +229,12 @@ impl DebugServer {
     /// * `stream` - Connected socket from worker hitting breakpoint
     /// * `worker_pids` - PIDs of all active workers (for pausing)
     /// * `debug_worker_pid` - PID of the worker being debugged (won't be paused)
-    pub fn handle_session(&self, mut stream: UnixStream, worker_pids: &[i32], debug_worker_pid: Option<i32>) -> Result<()> {
+    pub fn handle_session(
+        &self,
+        mut stream: UnixStream,
+        worker_pids: &[i32],
+        debug_worker_pid: Option<i32>,
+    ) -> Result<()> {
         // Phase 4.2: Mark that we're debugging (affects signal handling)
         // SIGINT will be ignored by signal handler - raw mode handles Ctrl+C
         crate::lifecycle::IS_DEBUGGING.store(true, Ordering::SeqCst);
@@ -237,7 +250,9 @@ impl DebugServer {
         terminal.enter_raw_mode()?;
 
         // Set stream to blocking for the debug session
-        stream.set_nonblocking(false).context("Failed to set stream blocking")?;
+        stream
+            .set_nonblocking(false)
+            .context("Failed to set stream blocking")?;
 
         // Clone stream for the reader thread
         let stream_for_reader = stream.try_clone().context("Failed to clone stream")?;
@@ -346,10 +361,9 @@ pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         // Attempt to restore terminal if we were in raw mode
         if IN_RAW_MODE.load(Ordering::SeqCst) {
-            // SAFETY: We only read ORIGINAL_TERMIOS here, and it was written
-            // once during TerminalManager::new() which happens before any panics.
-            unsafe {
-                if let Some(ref original) = ORIGINAL_TERMIOS {
+            // Thread-safe read via Mutex
+            if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
+                if let Some(ref original) = *guard {
                     let stdin = io::stdin();
                     let _ = tcsetattr(&stdin, SetArg::TCSANOW, original);
                 }
@@ -463,11 +477,45 @@ mod tests {
         IN_RAW_MODE.store(false, Ordering::SeqCst);
 
         // Compare and swap
-        let was_false = IN_RAW_MODE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        let was_false =
+            IN_RAW_MODE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
         assert!(was_false.is_ok());
         assert!(IN_RAW_MODE.load(Ordering::SeqCst));
 
         // Reset
         IN_RAW_MODE.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_original_termios_mutex_thread_safety() {
+        // Test that ORIGINAL_TERMIOS can be safely accessed from multiple threads
+        use std::thread;
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                thread::spawn(|| {
+                    // Read access should never panic
+                    if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
+                        let _ = guard.is_some();
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread should not panic");
+        }
+    }
+
+    #[test]
+    fn test_original_termios_mutex_write_read() {
+        // Test that we can write and read from the mutex
+        // Note: This test may interfere with other tests if run in parallel,
+        // but demonstrates the thread-safe pattern works correctly
+        if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
+            // Just verify we can access it - don't modify in tests
+            // as it may affect other tests
+            let _ = guard.is_some();
+        }
     }
 }

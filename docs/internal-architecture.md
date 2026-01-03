@@ -1,6 +1,6 @@
 # Internal Architecture: The Physics of Restoration
 
-> **Status**: Phase 2.2 - Iron Dome Activation
+> **Status**: Phase 2.3 - The Final Sync (COMPLETE)
 > **Author**: Project Tach Development Team
 > **Purpose**: Define restoration invariants and document allocator-specific state locations
 
@@ -401,25 +401,77 @@ graph LR
 
 ## Future Work
 
-### Phase 2.2: TLS Restoration Implementation (IN PROGRESS)
+### Phase 2.2: TLS Restoration Implementation (COMPLETE)
 
 1. **Runtime Sentinel Scan** - COMPLETE (`experiments/tls_sentinel_scan.rs`)
 2. **Stack Registration** - COMPLETE (`src/isolation/snapshot.rs` includes `[stack]`)
-3. **Capture TLS** during golden snapshot alongside BSS/Heap/Stack
-4. **Restore TLS** via `ptrace(PTRACE_ARCH_PRCTL, ARCH_SET_FS)` or direct memory write
-5. **Validate** mimalloc state after restoration
+3. **Capture TLS** - COMPLETE (via `ptrace(PTRACE_ARCH_PRCTL, ARCH_GET_FS)`)
+4. **Restore TLS** - COMPLETE (via `process_vm_writev` + `ptrace(PTRACE_ARCH_PRCTL, ARCH_SET_FS)`)
+5. **Validate** mimalloc state after restoration - COMPLETE (via physics tests)
 
-### Phase 2.3: Multi-Version Support
+### Phase 2.3: The Final Sync (COMPLETE)
 
-1. **Detect Python version** at runtime
-2. **Load appropriate offset registry** for that version
-3. **Skip TLS restoration** for pre-3.13 (pymalloc doesn't use TLS)
+Implemented the full TLS Snapshot/Restore mechanism in `src/isolation/snapshot.rs`:
 
-### Phase 3: Performance Optimization
+#### Key Functions Added
+
+| Function                 | Purpose                                          |
+| ------------------------ | ------------------------------------------------ |
+| `get_fs_base_ptrace()`   | Read fs_base register via ptrace ARCH_GET_FS     |
+| `set_fs_base_ptrace()`   | Write fs_base register via ptrace ARCH_SET_FS    |
+| `capture_tls_snapshot()` | Capture 12KB TLS block + fs_base during snapshot |
+| `restore_tls_snapshot()` | Restore TLS block via process_vm_writev + ptrace |
+| `restore_worker_tls()`   | SnapshotManager method for TLS restoration       |
+| `reset_worker_full()`    | Combined memory + TLS reset for complete restore |
+
+#### TLS Snapshot Structure
+
+```rust
+pub struct TlsSnapshot {
+    pub fs_base: usize,           // Thread Control Block address
+    pub tls_data: Vec<u8>,        // 12KB TLS memory block
+    pub tls_region_start: usize,  // TLS region bounds (from /proc/maps)
+    pub tls_region_end: usize,
+}
+```
+
+#### Restoration Flow
+
+```mermaid
+sequenceDiagram
+    participant S as Supervisor
+    participant W as Worker (SIGSTOP)
+    participant K as Kernel
+
+    S->>K: process_madvise(MADV_DONTNEED)
+    Note over W: Memory pages invalidated
+
+    S->>K: process_vm_writev(TLS data)
+    Note over W: TLS block restored
+
+    S->>K: ptrace(ARCH_SET_FS, fs_base)
+    Note over W: fs_base register restored
+
+    S->>W: SIGCONT
+    Note over W: Worker resumes
+
+    W->>K: Access heap (page fault)
+    K->>S: userfaultfd event
+    S->>K: uffd.copy(golden_page)
+    Note over W: Page restored from golden
+```
+
+### Phase 3: Performance Optimization (PENDING)
 
 1. **Lazy TLS capture**: Only snapshot TLS offsets that contain heap pointers
 2. **COW optimization**: Use `userfaultfd(UFFD_FEATURE_MINOR_HUGETLBFS)` for huge pages
 3. **Batched restoration**: Group page faults for reduced syscall overhead
+
+### Phase 3.1: Multi-Version Support (PENDING)
+
+1. **Detect Python version** at runtime
+2. **Load appropriate offset registry** for that version
+3. **Skip TLS restoration** for pre-3.13 (pymalloc doesn't use TLS)
 
 ---
 

@@ -231,50 +231,7 @@ flowchart TB
 
 ## File Organization
 
-```
-src/
-  main.rs           # CLI entry, orchestration
-  lib.rs            # Module exports, discover_with_toxicity()
-
-  # Core Infrastructure
-  core/
-    allocator.rs    # Jemalloc integration
-    config.rs       # Configuration loading
-    environment.rs  # Environment injection
-    lifecycle.rs    # Process lifecycle management
-    protocol.rs     # IPC messages
-    signals.rs      # Signal handling
-
-  # Discovery & Analysis
-  discovery/
-    scanner.rs      # AST-based test discovery (was discovery.rs)
-    resolver.rs     # Fixture resolution
-    loader.rs       # Bytecode compilation
-    graph.rs        # ToxicityGraph, propagation
-    analysis.rs     # Local toxicity detection
-
-  # Execution
-  execution/
-    scheduler.rs    # Test dispatch
-    watch.rs        # File watching
-    zygote.rs       # Process lifecycle, FFI
-
-  # Isolation & Security
-  isolation/
-    namespace.rs    # Namespaces + OverlayFS (was isolation.rs)
-    sandbox.rs      # Landlock + Seccomp
-    snapshot.rs     # userfaultfd, golden pages
-
-  # Reporting & Observability
-  reporting/
-    reporter.rs     # Output formatting
-    junit.rs        # JUnit XML output
-    logcapture.rs   # Log capture
-    debugger.rs     # Debugger integration
-    coverage.rs     # Ring buffers, aggregator
-
-  tach_harness.py   # Python test harness
-```
+See [README.md](../../README.md#project-structure) for complete source file organization.
 
 ---
 

@@ -119,7 +119,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
             .map(|r| (r.start, r.len))
             .collect();
         let count = cached.len();
-        *RESET_REGIONS.lock().unwrap() = cached;
+        *RESET_REGIONS.lock().unwrap_or_else(|e| e.into_inner()) = cached;
         eprintln!("[tach_rust] Cached {} regions for self-reset", count);
     }
 
@@ -181,7 +181,7 @@ fn reset_memory() -> PyResult<()> {
         return Ok(());
     }
 
-    let regions = RESET_REGIONS.lock().unwrap();
+    let regions = RESET_REGIONS.lock().unwrap_or_else(|e| e.into_inner());
     for &(start, len) in regions.iter() {
         // SAFETY: madvise with MADV_DONTNEED is safe - it just marks pages as discardable.
         // The kernel will zero-fill them on next access (or UFFD will handle it).
@@ -632,7 +632,7 @@ except Exception as e:
 
                 // Phase 4.3: Check for idle worker (only for safe tests)
                 let idle_worker = if !is_toxic {
-                    IDLE_WORKERS.lock().unwrap().pop()
+                    IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).pop()
                 } else {
                     None // Always fork fresh for toxic tests
                 };
@@ -796,7 +796,8 @@ except Exception as e:
                 eprintln!("[zygote] Received EXIT.");
 
                 // Phase 4.3: Drain idle workers and send them EXIT commands
-                let idle_workers = std::mem::take(&mut *IDLE_WORKERS.lock().unwrap());
+                let idle_workers =
+                    std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
                 let worker_count = idle_workers.len();
                 for mut worker in idle_workers {
                     eprintln!("[zygote] Sending EXIT to idle worker {}", worker.pid);
@@ -1059,7 +1060,10 @@ mod tests {
         use std::time::Duration;
 
         // Clear the pool before test (in case previous tests left state)
-        IDLE_WORKERS.lock().unwrap().clear();
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
 
         // Create socket pair (simulating Zygote <-> Worker)
         let (zygote_sock, worker_sock) = UnixStream::pair().expect("Failed to create socket pair");
@@ -1103,7 +1107,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
 
         // Verify worker was added to pool
-        let pool_size = IDLE_WORKERS.lock().unwrap().len();
+        let pool_size = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).len();
         assert_eq!(pool_size, 1, "Pool should have 1 idle worker");
 
         // Pop and verify it's the same PID
@@ -1116,7 +1120,7 @@ mod tests {
 
         // Pool should now be empty
         assert_eq!(
-            IDLE_WORKERS.lock().unwrap().len(),
+            IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).len(),
             0,
             "Pool should be empty after pop"
         );
@@ -1129,7 +1133,10 @@ mod tests {
         use std::time::Duration;
 
         // Clear the pool before test
-        IDLE_WORKERS.lock().unwrap().clear();
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
 
         let (zygote_sock, worker_sock) = UnixStream::pair().expect("Failed to create socket pair");
         let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
@@ -1166,7 +1173,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
 
         // Verify worker was NOT added to pool
-        let pool_size = IDLE_WORKERS.lock().unwrap().len();
+        let pool_size = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).len();
         assert_eq!(pool_size, 0, "Toxic worker should NOT be in pool");
     }
 
@@ -1177,7 +1184,7 @@ mod tests {
     #[test]
     fn test_reset_regions_mutex_access() {
         // Test that RESET_REGIONS can be safely accessed
-        let regions = RESET_REGIONS.lock().unwrap();
+        let regions = RESET_REGIONS.lock().unwrap_or_else(|e| e.into_inner());
         // Should be empty or have some regions
         let _ = regions.len();
     }
@@ -1193,30 +1200,45 @@ mod tests {
     #[test]
     fn test_idle_workers_pool_operations() {
         // Clear pool first
-        IDLE_WORKERS.lock().unwrap().clear();
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
 
         // Pool should be empty
-        assert!(IDLE_WORKERS.lock().unwrap().is_empty());
+        assert!(IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
 
         // Create a socket pair for testing
         let (sock1, _sock2) = UnixStream::pair().expect("Failed to create socket pair");
 
         // Add a worker handle
-        IDLE_WORKERS.lock().unwrap().push(WorkerHandle {
-            pid: 12345,
-            socket: sock1,
-        });
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(WorkerHandle {
+                pid: 12345,
+                socket: sock1,
+            });
 
         // Pool should have one worker
-        assert_eq!(IDLE_WORKERS.lock().unwrap().len(), 1);
+        assert_eq!(
+            IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).len(),
+            1
+        );
 
         // Pop the worker
-        let worker = IDLE_WORKERS.lock().unwrap().pop();
+        let worker = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).pop();
         assert!(worker.is_some());
         assert_eq!(worker.unwrap().pid, 12345);
 
         // Pool should be empty again
-        assert!(IDLE_WORKERS.lock().unwrap().is_empty());
+        assert!(IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
     }
 
     #[test]
@@ -1246,10 +1268,7 @@ mod tests {
     fn test_tach_harness_embedded() {
         // Verify the harness is embedded
         assert!(!TACH_HARNESS_PY.is_empty(), "Harness should be embedded");
-        assert!(
-            TACH_HARNESS_PY.len() > 100,
-            "Harness should be substantial"
-        );
+        assert!(TACH_HARNESS_PY.len() > 100, "Harness should be substantial");
         // Verify it contains expected Python code
         assert!(
             TACH_HARNESS_PY.contains("def "),

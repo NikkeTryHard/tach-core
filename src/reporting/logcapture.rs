@@ -149,3 +149,339 @@ pub fn redirect_output(fd: RawFd) -> Result<()> {
     }
     Ok(())
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // LogCapture Creation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_logcapture_new_single_slot() {
+        let capture = LogCapture::new(1).expect("Failed to create LogCapture with 1 slot");
+        assert_eq!(capture.slot_count(), 1);
+        assert!(capture.get_fd(0).is_some());
+        assert!(capture.get_fd(1).is_none());
+    }
+
+    #[test]
+    fn test_logcapture_new_multiple_slots() {
+        let capture = LogCapture::new(4).expect("Failed to create LogCapture with 4 slots");
+        assert_eq!(capture.slot_count(), 4);
+
+        for slot in 0..4 {
+            assert!(
+                capture.get_fd(slot).is_some(),
+                "Slot {} should have an fd",
+                slot
+            );
+        }
+        assert!(capture.get_fd(4).is_none(), "Slot 4 should not exist");
+    }
+
+    #[test]
+    fn test_logcapture_new_zero_slots() {
+        let capture = LogCapture::new(0).expect("Failed to create LogCapture with 0 slots");
+        assert_eq!(capture.slot_count(), 0);
+        assert!(capture.get_fd(0).is_none());
+    }
+
+    // =========================================================================
+    // get_fd Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_fd_valid_slot() {
+        let capture = LogCapture::new(3).unwrap();
+
+        let fd0 = capture.get_fd(0);
+        let fd1 = capture.get_fd(1);
+        let fd2 = capture.get_fd(2);
+
+        assert!(fd0.is_some());
+        assert!(fd1.is_some());
+        assert!(fd2.is_some());
+
+        // Each slot should have a unique fd
+        assert_ne!(fd0, fd1);
+        assert_ne!(fd1, fd2);
+        assert_ne!(fd0, fd2);
+    }
+
+    #[test]
+    fn test_get_fd_invalid_slot() {
+        let capture = LogCapture::new(2).unwrap();
+
+        assert!(capture.get_fd(2).is_none());
+        assert!(capture.get_fd(100).is_none());
+        assert!(capture.get_fd(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn test_get_fd_returns_valid_fd() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Valid fds are non-negative
+        assert!(fd >= 0, "fd should be non-negative");
+
+        // Verify fd is valid by checking with fcntl
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(flags >= 0, "fd should be valid (fcntl should succeed)");
+    }
+
+    // =========================================================================
+    // slot_count Tests
+    // =========================================================================
+
+    #[test]
+    fn test_slot_count_matches_requested() {
+        for count in [1, 2, 4, 8, 16] {
+            let capture = LogCapture::new(count).unwrap();
+            assert_eq!(
+                capture.slot_count(),
+                count,
+                "slot_count should match requested count"
+            );
+        }
+    }
+
+    // =========================================================================
+    // read_and_clear Tests
+    // =========================================================================
+
+    #[test]
+    fn test_read_and_clear_empty_buffer() {
+        let capture = LogCapture::new(1).unwrap();
+
+        // Reading an empty buffer should return empty string
+        let content = capture.read_and_clear(0).unwrap();
+        assert!(
+            content.is_empty(),
+            "Empty buffer should return empty string"
+        );
+    }
+
+    #[test]
+    fn test_read_and_clear_with_content() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write some content to the memfd
+        let test_message = "Hello, test log!";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(
+                fd,
+                test_message.as_ptr() as *const libc::c_void,
+                test_message.len(),
+            );
+        }
+
+        // Read it back
+        let content = capture.read_and_clear(0).unwrap();
+        assert_eq!(content, test_message);
+
+        // After read_and_clear, buffer should be empty
+        let content_after = capture.read_and_clear(0).unwrap();
+        assert!(
+            content_after.is_empty(),
+            "Buffer should be cleared after read_and_clear"
+        );
+    }
+
+    #[test]
+    fn test_read_and_clear_trims_null_bytes() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write content followed by null bytes
+        let test_message = b"test\0\0\0";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(
+                fd,
+                test_message.as_ptr() as *const libc::c_void,
+                test_message.len(),
+            );
+        }
+
+        let content = capture.read_and_clear(0).unwrap();
+        assert_eq!(content, "test", "Null bytes should be trimmed");
+    }
+
+    #[test]
+    fn test_read_and_clear_trims_whitespace() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write content with trailing whitespace
+        let test_message = "test message  \n\n";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(
+                fd,
+                test_message.as_ptr() as *const libc::c_void,
+                test_message.len(),
+            );
+        }
+
+        let content = capture.read_and_clear(0).unwrap();
+        assert_eq!(
+            content, "test message",
+            "Trailing whitespace should be trimmed"
+        );
+    }
+
+    #[test]
+    fn test_read_and_clear_invalid_slot() {
+        let capture = LogCapture::new(1).unwrap();
+
+        let result = capture.read_and_clear(999);
+        assert!(result.is_err(), "Invalid slot should return error");
+    }
+
+    #[test]
+    fn test_read_and_clear_multiple_times() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // First write and read
+        let msg1 = "first message";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(fd, msg1.as_ptr() as *const libc::c_void, msg1.len());
+        }
+        let content1 = capture.read_and_clear(0).unwrap();
+        assert_eq!(content1, msg1);
+
+        // Second write and read (buffer was cleared)
+        let msg2 = "second message";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(fd, msg2.as_ptr() as *const libc::c_void, msg2.len());
+        }
+        let content2 = capture.read_and_clear(0).unwrap();
+        assert_eq!(content2, msg2);
+    }
+
+    // =========================================================================
+    // redirect_output Tests
+    // =========================================================================
+
+    #[test]
+    fn test_redirect_output_negative_fd_returns_ok() {
+        // Negative fd should return Ok without doing anything
+        let result = redirect_output(-1);
+        assert!(result.is_ok(), "Negative fd should return Ok");
+
+        let result = redirect_output(-100);
+        assert!(result.is_ok(), "Any negative fd should return Ok");
+    }
+
+    // =========================================================================
+    // create_memfd Tests
+    // =========================================================================
+
+    #[test]
+    fn test_create_memfd_success() {
+        let fd = create_memfd("test_memfd").expect("create_memfd should succeed");
+        assert!(fd >= 0, "memfd should have non-negative fd");
+
+        // Verify it's a valid fd
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(flags >= 0, "fd should be valid");
+
+        // Clean up
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[test]
+    fn test_create_memfd_unique_fds() {
+        let fd1 = create_memfd("test1").unwrap();
+        let fd2 = create_memfd("test2").unwrap();
+
+        assert_ne!(fd1, fd2, "Each memfd should have a unique fd");
+
+        // Clean up
+        unsafe {
+            libc::close(fd1);
+            libc::close(fd2);
+        }
+    }
+
+    #[test]
+    fn test_create_memfd_inheritable() {
+        // memfd should NOT have FD_CLOEXEC set (so it survives fork)
+        let fd = create_memfd("test_inherit").unwrap();
+
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(flags >= 0, "fcntl should succeed");
+        assert_eq!(flags & libc::FD_CLOEXEC, 0, "FD_CLOEXEC should NOT be set");
+
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[test]
+    fn test_create_memfd_writable() {
+        let fd = create_memfd("test_write").unwrap();
+
+        // Resize the memfd
+        let result = unsafe { libc::ftruncate(fd, 1024) };
+        assert_eq!(result, 0, "ftruncate should succeed");
+
+        // Write to it
+        let data = b"test data";
+        let written = unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) };
+        assert_eq!(written as usize, data.len(), "write should succeed");
+
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    // =========================================================================
+    // LOG_BUFFER_SIZE Constant Test
+    // =========================================================================
+
+    #[test]
+    fn test_log_buffer_size_is_1mb() {
+        assert_eq!(
+            LOG_BUFFER_SIZE,
+            1024 * 1024,
+            "LOG_BUFFER_SIZE should be 1MB"
+        );
+    }
+
+    // =========================================================================
+    // Drop Behavior Test
+    // =========================================================================
+
+    #[test]
+    fn test_drop_closes_fds() {
+        let fd_to_check;
+
+        {
+            let capture = LogCapture::new(1).unwrap();
+            fd_to_check = capture.get_fd(0).unwrap();
+
+            // Verify fd is valid before drop
+            let flags = unsafe { libc::fcntl(fd_to_check, libc::F_GETFD) };
+            assert!(flags >= 0, "fd should be valid before drop");
+        } // capture is dropped here
+
+        // After drop, fd should be closed (fcntl should fail)
+        let flags = unsafe { libc::fcntl(fd_to_check, libc::F_GETFD) };
+        assert_eq!(flags, -1, "fd should be closed after drop");
+    }
+}

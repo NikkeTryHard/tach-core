@@ -51,11 +51,11 @@ def tach_breakpointhook(*args, **kwargs):
     global _debug_socket_path
 
     if not _debug_socket_path:
-        print(
-            "[tach] WARNING: breakpoint() called but no debug socket.", file=sys.stderr
-        )
+        print("[tach] WARNING: breakpoint() called but no debug socket.", file=sys.stderr)
         return
 
+    sock = None
+    sock_file = None
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(_debug_socket_path)
@@ -63,13 +63,20 @@ def tach_breakpointhook(*args, **kwargs):
         debugger = TachPdb(sock_file)
         frame = sys._getframe(1)
         debugger.set_trace(frame)
-        try:
-            sock_file.close()
-            sock.close()
-        except Exception:
-            pass
     except Exception as e:
         print(f"[tach] ERROR: Failed to start debug session: {e}", file=sys.stderr)
+    finally:
+        # Always clean up socket resources
+        if sock_file is not None:
+            try:
+                sock_file.close()
+            except Exception:
+                pass
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 sys.breakpointhook = tach_breakpointhook
@@ -88,9 +95,6 @@ def inject_entropy():
     # The logging module uses RLocks that become corrupted after fork()
     # because the lock state is shared but the threads are not
     try:
-        import logging
-        import threading
-
         # Recreate ALL module-level locks
         logging._lock = threading.RLock()
 
@@ -268,9 +272,7 @@ def uninstall_tach_import_hook():
     """Remove the Tach import hook from sys.meta_path."""
     global _TACH_IMPORT_HOOK_INSTALLED
 
-    sys.meta_path[:] = [
-        f for f in sys.meta_path if not isinstance(f, TachMetaPathFinder)
-    ]
+    sys.meta_path[:] = [f for f in sys.meta_path if not isinstance(f, TachMetaPathFinder)]
     _TACH_IMPORT_HOOK_INSTALLED = False
 
 
@@ -353,9 +355,7 @@ def post_fork_init() -> bool:
     # 3. Phase 5.3: Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
-    print(
-        f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr
-    )
+    print(f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
 
     # 4. Check if snapshot mode is enabled
     import os
@@ -505,22 +505,20 @@ def run_test(file_path: str, node_id: str) -> tuple:
 
                     try:
                         connections.close_all()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[harness] WARN: Failed to close Django connections: {e}", file=sys.stderr)
                     for alias in connections:
                         try:
                             atomic = transaction.atomic(using=alias)
                             atomic.__enter__()
                             django_atomics.append((alias, atomic))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"[harness] WARN: Failed to start transaction for '{alias}': {e}", file=sys.stderr)
             except ImportError:
                 pass
 
         try:
-            reports = _pytest.runner.runtestprotocol(
-                target_item, nextitem=None, log=False
-            )
+            reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
             if django_atomics:
                 from django.db import transaction
@@ -529,8 +527,8 @@ def run_test(file_path: str, node_id: str) -> tuple:
                     try:
                         transaction.set_rollback(True, using=alias)
                         atomic.__exit__(None, None, None)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[harness] WARN: Failed to rollback transaction for '{alias}': {e}", file=sys.stderr)
 
         duration = time.perf_counter() - start
 
@@ -549,9 +547,7 @@ def run_test(file_path: str, node_id: str) -> tuple:
             return (STATUS_FAIL, duration, msg)
 
         if skipped_report:
-            skip_reason = (
-                str(skipped_report.longrepr) if skipped_report.longrepr else ""
-            )
+            skip_reason = str(skipped_report.longrepr) if skipped_report.longrepr else ""
             return (STATUS_SKIP, duration, f"Skipped: {skip_reason}")
 
         return (STATUS_PASS, duration, "")
@@ -866,9 +862,7 @@ def enable_coverage():
         )
 
         # Register LINE callback (coverage recording)
-        sys.monitoring.register_callback(
-            _coverage_tool_id, sys.monitoring.events.LINE, _coverage_line_callback
-        )
+        sys.monitoring.register_callback(_coverage_tool_id, sys.monitoring.events.LINE, _coverage_line_callback)
 
         # Enable both PY_START and LINE events globally
         sys.monitoring.set_events(
@@ -900,12 +894,8 @@ def disable_coverage():
         sys.monitoring.set_events(_coverage_tool_id, 0)
 
         # Unregister callbacks
-        sys.monitoring.register_callback(
-            _coverage_tool_id, sys.monitoring.events.PY_START, None
-        )
-        sys.monitoring.register_callback(
-            _coverage_tool_id, sys.monitoring.events.LINE, None
-        )
+        sys.monitoring.register_callback(_coverage_tool_id, sys.monitoring.events.PY_START, None)
+        sys.monitoring.register_callback(_coverage_tool_id, sys.monitoring.events.LINE, None)
 
         # Free tool ID
         sys.monitoring.free_tool_id(_coverage_tool_id)
@@ -929,12 +919,8 @@ def get_coverage_stats() -> dict:
 
         return {
             "enabled": _coverage_enabled,
-            "coverage_overflow": tach_rust.get_coverage_overflow()
-            if _coverage_enabled
-            else 0,
-            "mapping_overflow": tach_rust.get_mapping_overflow()
-            if _coverage_enabled
-            else 0,
+            "coverage_overflow": tach_rust.get_coverage_overflow() if _coverage_enabled else 0,
+            "mapping_overflow": tach_rust.get_mapping_overflow() if _coverage_enabled else 0,
         }
     except Exception:
         return {"enabled": False, "coverage_overflow": 0, "mapping_overflow": 0}

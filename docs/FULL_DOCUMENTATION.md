@@ -10,15 +10,16 @@
 ### Architecture
 - [Allocator (Jemalloc)](#allocator-jemalloc)
 - [Coverage System](#coverage-system)
+- [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
 - [Discovery Engine](#discovery-engine)
-- [Isolation (Namespaces and OverlayFS)](#isolation-namespaces-and-overlayfs)
+- [Isolation Architecture (Namespaces and OverlayFS)](#isolation-architecture-namespaces-and-overlayfs)
 - [Zero-Copy Loader](#zero-copy-loader)
 - [Architecture Overview](#architecture-overview)
 - [IPC Protocol](#ipc-protocol)
 - [Reporter](#reporter)
 - [Fixture Resolver](#fixture-resolver)
 - [Iron Dome (Sandbox)](#iron-dome-sandbox)
-- [Scheduler](#scheduler)
+- [Scheduler Architecture](#scheduler-architecture)
 - [Physics Engine (Snapshot)](#physics-engine-snapshot)
 - [Toxicity Analysis](#toxicity-analysis)
 - [Zygote Lifecycle](#zygote-lifecycle)
@@ -281,17 +282,11 @@ goblin = "0.7"
 
 # Coverage System
 
-The Coverage System implements PEP 669 `sys.monitoring` with lock-free ring buffers.
+Zero-overhead coverage collection using PEP 669 `sys.monitoring` with lock-free ring buffers.
 
 ---
 
 ## Overview
-
-Tach provides zero-overhead coverage collection using:
-
-1. **PEP 669 `sys.monitoring`** (Python 3.12+) for event callbacks
-2. **Dual ring buffers** in shared memory for lock-free data transfer
-3. **Aggregator thread** for periodic buffer draining
 
 ```mermaid
 flowchart LR
@@ -308,8 +303,8 @@ flowchart LR
 
     subgraph Supervisor["SUPERVISOR"]
         Aggregator["CoverageAggregator"]
-        CodeMap["code_map"]
-        Data["coverage_data"]
+        CodeMap["code_map<br/>(RwLock)"]
+        Data["coverage_data<br/>(Mutex)"]
     end
 
     Test --> PyStart --> MapBuf
@@ -318,41 +313,42 @@ flowchart LR
     CovBuf --> Aggregator --> Data
 ```
 
+**Key Components:**
+
+- **PEP 669 `sys.monitoring`** (Python 3.12+) for event callbacks
+- **Dual ring buffers** with lock-free CAS loops
+- **RwLock** for read-heavy code_map access
+- **Mutex poisoning recovery** for panic resilience
+
 ---
 
 ## Data Structures
 
-### RingBufferHeader
-
-64-byte aligned header for cache-line efficiency.
+### RingBufferHeader (64 bytes, cache-line aligned)
 
 ```rust
 #[repr(C, align(64))]
 pub struct RingBufferHeader {
-    pub write_idx: AtomicU64,      // Producer index
-    pub read_idx: AtomicU64,       // Consumer index
-    pub capacity: u64,             // Number of entries
-    pub overflow_count: AtomicU64, // Dropped entries
-    _padding: [u8; 32],            // Pad to 64 bytes
+    pub write_idx: AtomicU64,      // Worker increments atomically
+    pub read_idx: AtomicU64,       // Supervisor increments
+    pub capacity: u64,
+    pub overflow_count: AtomicU64, // Entries dropped when full
+    _padding: [u8; 32],
 }
 ```
 
-### CoverageEntry
-
-16-byte aligned entry for line events.
+### CoverageEntry (16 bytes)
 
 ```rust
 #[repr(C, align(16))]
 pub struct CoverageEntry {
-    pub code_id: u64,   // id(code_object)
-    pub lineno: u32,    // Line number
-    pub flags: u32,     // Reserved
+    pub code_id: u64,  // Python code object address
+    pub lineno: u32,
+    pub flags: u32,    // Reserved: LINE/CALL/RETURN bits
 }
 ```
 
-### MappingEntry
-
-256-byte entry for code registration.
+### MappingEntry (256 bytes)
 
 ```rust
 #[repr(C, align(8))]
@@ -360,7 +356,7 @@ pub struct MappingEntry {
     pub code_id: u64,
     pub filename_len: u16,
     pub _padding: [u8; 6],
-    pub filename: [u8; 240],
+    pub filename: [u8; 240],  // Truncated from LEFT if > 240 bytes
 }
 ```
 
@@ -368,10 +364,16 @@ pub struct MappingEntry {
 
 ## Buffer Configuration
 
-| Buffer   | Entry Size | Capacity | Total Size | Purpose           |
-| :------- | :--------- | :------- | :--------- | :---------------- |
-| Coverage | 16 bytes   | 262,144  | ~4 MB      | Line events       |
-| Mapping  | 256 bytes  | 8,192    | ~2 MB      | Code registration |
+| Buffer   | Entry Size | Capacity | Total Size |
+| :------- | :--------- | :------- | :--------- |
+| Coverage | 16 bytes   | 262,144  | ~4 MB      |
+| Mapping  | 256 bytes  | 8,192    | ~2 MB      |
+
+```rust
+pub const DEFAULT_CAPACITY: usize = 262_144;  // Coverage entries
+pub const MAPPING_CAPACITY: usize = 8_192;    // Mapping entries
+pub const HEADER_SIZE: usize = 64;
+```
 
 ---
 
@@ -399,250 +401,694 @@ flowchart TB
     Line --> LineWrite
 ```
 
-### Why Two Buffers?
-
-1. **PY_START** events are infrequent (once per function)
-2. **LINE** events are very frequent (every line)
-3. Mapping entries are large (256 bytes for filename)
-4. Coverage entries are small (16 bytes)
-
-Separating them prevents large mapping entries from consuming coverage buffer space.
+**Why Two Buffers?** PY_START events are infrequent with large entries (256B), LINE events are frequent with small entries (16B). Separation prevents mapping entries from consuming coverage buffer space.
 
 ---
 
-## Lock-Free Algorithm
+## Lock-Free CAS Loop
 
-### Write Path (Worker)
-
-```rust
-fn write_entry(&self, entry: CoverageEntry) -> bool {
-    let write = self.header.write_idx.load(Ordering::Acquire);
-    let read = self.header.read_idx.load(Ordering::Acquire);
-
-    // Check if full
-    if write.wrapping_sub(read) >= self.header.capacity {
-        self.header.overflow_count.fetch_add(1, Ordering::Relaxed);
-        return false;
-    }
-
-    // Reserve slot
-    let slot = self.header.write_idx.fetch_add(1, Ordering::AcqRel);
-    let index = (slot % self.header.capacity) as usize;
-
-    // Write entry
-    unsafe {
-        std::ptr::write_volatile(
-            self.entries.add(index),
-            entry,
-        );
-    }
-    true
-}
-```
-
-### Read Path (Aggregator)
+The CAS (Compare-And-Swap) loop prevents TOCTOU races by atomically checking capacity AND reserving a slot:
 
 ```rust
-fn drain(&self) -> Vec<CoverageEntry> {
-    let mut entries = Vec::new();
+#[inline]
+pub fn write(&self, entry: CoverageEntry) -> bool {
+    let header = self.header();
     loop {
-        let write = self.header.write_idx.load(Ordering::Acquire);
-        let read = self.header.read_idx.load(Ordering::Acquire);
+        let write = header.write_idx.load(Ordering::Acquire);
+        let read = header.read_idx.load(Ordering::Acquire);
 
-        if read >= write {
-            break;
+        if write.wrapping_sub(read) >= header.capacity {
+            header.overflow_count.fetch_add(1, Ordering::Relaxed);
+            return false;
         }
 
-        let slot = self.header.read_idx.fetch_add(1, Ordering::AcqRel);
-        let index = (slot % self.header.capacity) as usize;
-
-        let entry = unsafe {
-            std::ptr::read_volatile(self.entries.add(index))
-        };
-        entries.push(entry);
+        match header.write_idx.compare_exchange_weak(
+            write, write.wrapping_add(1), Ordering::AcqRel, Ordering::Relaxed
+        ) {
+            Ok(_) => {
+                let slot = (write % self.capacity as u64) as usize;
+                unsafe { std::ptr::write_volatile(self.entries_ptr().add(slot), entry); }
+                return true;
+            }
+            Err(_) => { std::hint::spin_loop(); continue; }
+        }
     }
-    entries
 }
 ```
-
----
-
-## Aggregator Thread
 
 ```mermaid
 sequenceDiagram
+    participant T1 as Thread 1
+    participant Mem as write_idx (Atomic)
+    participant T2 as Thread 2
+
+    Note over Mem: write_idx = 5
+    T1->>Mem: load() -> 5
+    T2->>Mem: load() -> 5
+    T1->>Mem: CAS(5, 6)
+    Mem-->>T1: Ok (write_idx = 6)
+    T2->>Mem: CAS(5, 6)
+    Mem-->>T2: Err (expected 5, found 6)
+    Note over T2: spin_loop() and retry
+    T2->>Mem: CAS(6, 7)
+    Mem-->>T2: Ok (write_idx = 7)
+```
+
+**Invariants:** No slot double-allocation, no buffer overflow, lock-free progress guarantee.
+
+**spin_loop():** Emits `PAUSE` (x86) or `YIELD` (ARM) to reduce power consumption during retry.
+
+---
+
+## RwLock for code_map
+
+The `code_map` uses RwLock for read-heavy access (writes are infrequent, reads happen for every coverage entry):
+
+```rust
+pub struct CoverageAggregator {
+    data: Arc<Mutex<CoverageData>>,
+    code_map: Arc<RwLock<HashMap<u64, String>>>,  // Read-heavy
+    stop_flag: Arc<AtomicBool>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+```
+
+```rust
+// WRITE: Populating from mapping buffer
+let mut guard = code_map.write().unwrap_or_else(|e| e.into_inner());
+
+// READ: Resolving coverage entries (concurrent readers allowed)
+let guard = code_map.read().unwrap_or_else(|e| e.into_inner());
+```
+
+---
+
+## Mutex Poisoning Recovery
+
+When a thread panics while holding a lock, it becomes "poisoned". Tach recovers using:
+
+```rust
+let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+```
+
+This extracts the guard from `PoisonError`, allowing coverage collection to continue despite test panics.
+
+---
+
+## Performance Optimizations
+
+1. **Zero-Copy Extraction:** `take_data()` uses `std::mem::take()` to move coverage data without cloning.
+2. **Pre-allocated HashSet:** `SEEN_CODES` (thread-local) starts with 1024 capacity to avoid hot-path reallocations.
+3. **Batch Processing:** Aggregator drains in batches (4096 coverage, 1024 mapping) to amortize lock acquisition.
+4. **Volatile Writes:** Ensures visibility across processes without compiler optimization interference.
+
+---
+
+## Ring Buffer Architecture
+
+- **Shared Memory:** Created via `memfd_create` with `MAP_SHARED`.
+- **Index Wrapping:** Uses wrapping arithmetic to handle `u64` overflow.
+- **Memory Layout:** 64-byte header followed by entry array.
+
+```mermaid
+sequenceDiagram
+    participant Worker as Worker Process
+    participant MapBuf as MappingRingBuffer
+    participant CovBuf as CoverageRingBuffer
+    participant Agg as Aggregator Thread
+    participant CodeMap as code_map (RwLock)
+    participant Data as coverage_data (Mutex)
+
     loop Every 100ms
-        Aggregator->>MapBuf: drain()
-        Aggregator->>Aggregator: Update code_map
-        Aggregator->>CovBuf: drain()
-        Aggregator->>Aggregator: Resolve code_id -> filename
-        Aggregator->>Aggregator: Update coverage_data
+        Agg->>MapBuf: drain mapping FIRST
+        Agg->>CodeMap: write().insert(code_id, filename)
+        Agg->>CovBuf: drain coverage
+        Agg->>CodeMap: read().get(code_id)
+        Agg->>Data: update hit counts
     end
 ```
 
-### Critical: Drain Order
-
-Mapping buffer is drained **FIRST** to ensure `code_map` is populated before coverage entries are resolved.
-
-```rust
-impl CoverageAggregator {
-    fn poll(&mut self) {
-        // FIRST: Drain mapping buffer
-        for entry in self.mapping_buffer.drain() {
-            let filename = String::from_utf8_lossy(&entry.filename[..entry.filename_len as usize]);
-            self.code_map.insert(entry.code_id, filename.to_string());
-        }
-
-        // SECOND: Drain coverage buffer
-        for entry in self.coverage_buffer.drain() {
-            let filename = self.code_map
-                .get(&entry.code_id)
-                .cloned()
-                .unwrap_or_else(|| format!("<code:{:x}>", entry.code_id));
-
-            let key = (filename, entry.lineno);
-            *self.coverage_data.entry(key).or_insert(0) += 1;
-        }
-    }
-}
-```
-
 ---
 
-## Python Callbacks
+## Python Callbacks & FFI
 
-### PY_START Callback
-
-```python
-def _coverage_py_start_callback(code, offset):
-    code_id = id(code)
-
-    # Thread-local deduplication
-    if code_id in _SEEN_CODES:
-        return sys.monitoring.DISABLE
-
-    _SEEN_CODES.add(code_id)
-    tach_rust.record_py_start(code_id, code.co_filename)
-    return sys.monitoring.DISABLE  # Only need to register once
-```
-
-### LINE Callback
-
-```python
-def _coverage_line_callback(code, line_number):
-    tach_rust.record_line(id(code), line_number)
-    # No return value - continue monitoring
-```
-
----
-
-## FFI Functions
-
-### record_line
-
-Hot path - writes to coverage buffer.
-
-```rust
-#[pyfunction]
-fn record_line(py: Python, code_id: u64, lineno: u32) {
-    py.allow_threads(|| {
-        COVERAGE_BUFFER.write(CoverageEntry {
-            code_id,
-            lineno,
-            flags: 0,
-        });
-    });
-}
-```
-
-### record_py_start
-
-Registration path - writes to mapping buffer.
-
-```rust
-#[pyfunction]
-fn record_py_start(py: Python, code_id: u64, filename: String) {
-    py.allow_threads(|| {
-        MAPPING_BUFFER.write(MappingEntry::new(code_id, &filename));
-    });
-}
-```
-
----
-
-## GIL Discipline
-
-Both callbacks release the GIL before accessing shared memory:
-
-```rust
-py.allow_threads(|| {
-    // Shared memory access here
-});
-```
-
-This prevents contention between the Python interpreter and the aggregator thread.
+- **PY_START:** Registers `code_id -> filename` once per function.
+- **LINE:** Records `(code_id, lineno)` for every line executed.
+- **GIL Discipline:** All FFI functions (`record_line`, `record_py_start`) release the GIL using `py.allow_threads` before shared memory access.
 
 ---
 
 ## Filename Truncation
 
-Long filenames are truncated from the **LEFT** to preserve the actual filename:
-
-```rust
-fn truncate_filename(filename: &str, max_len: usize) -> &str {
-    if filename.len() <= max_len {
-        return filename;
-    }
-
-    let bytes = filename.as_bytes();
-    let start = filename.len() - max_len;
-
-    // Find valid UTF-8 boundary
-    let mut safe_start = start;
-    while safe_start < bytes.len() && (bytes[safe_start] & 0b1100_0000) == 0b1000_0000 {
-        safe_start += 1;
-    }
-
-    &filename[safe_start..]
-}
-```
-
-Example: `/very/long/path/to/project/src/module.py` becomes `project/src/module.py`
+Long paths are truncated from the **LEFT** to preserve filenames while fitting in 240-byte `MappingEntry` slots. Truncation respects UTF-8 boundaries.
 
 ---
 
 ## Memory Exclusion
 
-Coverage buffers must survive memory resets:
-
-```rust
-fn should_snapshot(region: &MemoryRegion) -> bool {
-    if region.name.contains("tach_coverage") ||
-       region.name.contains("tach_mapping") {
-        return false;  // Exclude from snapshot
-    }
-    // ...
-}
-```
+Coverage buffers (`memfd:tach_coverage`, `memfd:tach_mapping`) are excluded from `userfaultfd` snapshots to ensure coverage persists across memory resets.
 
 ---
 
-## Performance
+## Performance Metrics
 
-| Metric        | Value        |
-| :------------ | :----------- |
-| Overhead      | < 1%         |
-| Write latency | ~10ns        |
-| Drain batch   | 4096 entries |
-| Poll interval | 100ms        |
+| Metric        | Value |
+| :------------ | :---- |
+| Overhead      | < 1%  |
+| Write Latency | ~10ns |
+| Poll Interval | 100ms |
+
+---
+
+## Test Coverage
+
+Validated by comprehensive unit tests for alignment/wrapping and stress tests for CAS loop concurrency (up to 16 threads). Run `cargo test --lib coverage::` to execute.
 
 ---
 
 ## Related Documentation
 
-- [Physics Engine](snapshot.md) - Buffer exclusion from snapshots
-- [API Reference](../api-reference.md) - FFI function signatures
+- [Physics Engine](snapshot.md) - Snapshot exclusion
+- [API Reference](../api-reference.md) - FFI signatures
 - [Configuration](../configuration.md) - Coverage options
+
+
+---
+
+
+# TTY Proxy for Interactive Debugging
+
+The Debugger module enables `breakpoint()` and `pdb` inside isolated, parallel workers by implementing a bidirectional terminal tunnel between the Supervisor and Workers.
+
+---
+
+## Overview
+
+When a worker hits a breakpoint, the debugger:
+
+1. Pauses all other workers (SIGSTOP) to prevent log interleaving
+2. Switches the terminal to Raw mode for character-by-character I/O
+3. Tunnels stdin/stdout bidirectionally through a Unix socket
+4. Restores Cooked mode and resumes workers (SIGCONT) when debugging ends
+
+```mermaid
+flowchart TB
+    subgraph Supervisor["SUPERVISOR PROCESS"]
+        DebugServer["DebugServer<br/>(Unix Socket)"]
+        TerminalManager["TerminalManager<br/>(Raw/Cooked)"]
+        PanicHook["Panic Hook<br/>(Terminal Restore)"]
+    end
+
+    subgraph Worker["WORKER PROCESS"]
+        Test["Test Code"]
+        Breakpoint["breakpoint()"]
+    end
+
+    subgraph Terminal["USER TERMINAL"]
+        Stdin["stdin"]
+        Stdout["stdout"]
+    end
+
+    Test --> Breakpoint
+    Breakpoint -->|"Connect"| DebugServer
+    DebugServer <-->|"Bidirectional I/O"| TerminalManager
+    TerminalManager <--> Stdin
+    TerminalManager <--> Stdout
+    PanicHook -.->|"Restore on crash"| TerminalManager
+```
+
+---
+
+## Security Fix: Static Mut Elimination
+
+### The Problem: Unsafe Static Mutable State
+
+The original implementation used `static mut` to store the original terminal settings:
+
+```rust
+// BAD: Unsafe static mut - causes undefined behavior
+static mut ORIGINAL_TERMIOS: Option<Termios> = None;
+
+// Accessing requires unsafe blocks everywhere
+unsafe {
+    ORIGINAL_TERMIOS = Some(termios);
+}
+```
+
+This pattern is **fundamentally unsafe** because:
+
+| Issue                    | Description                                                                      |
+| :----------------------- | :------------------------------------------------------------------------------- |
+| **Data Races**           | Multiple threads accessing `static mut` simultaneously causes undefined behavior |
+| **No Synchronization**   | No memory barriers or locks protect the data                                     |
+| **Compiler Assumptions** | The compiler may optimize reads/writes incorrectly                               |
+| **Undefined Behavior**   | Even single-threaded access can cause UB if the compiler reorders operations     |
+
+### The Solution: Thread-Safe Mutex Pattern
+
+The fix replaces `static mut` with a thread-safe `Mutex<Option<Termios>>`:
+
+```rust
+// GOOD: Thread-safe via Mutex
+static ORIGINAL_TERMIOS: Mutex<Option<Termios>> = Mutex::new(None);
+```
+
+This pattern provides:
+
+| Benefit             | Description                                  |
+| :------------------ | :------------------------------------------- |
+| **Thread Safety**   | Mutex ensures exclusive access               |
+| **Memory Ordering** | Lock/unlock provides proper memory barriers  |
+| **No Unsafe**       | All access is through safe Rust APIs         |
+| **Panic Safety**    | Mutex poisoning detects panics during access |
+
+### Why Not OnceLock?
+
+The code includes a comment explaining why `OnceLock` cannot be used:
+
+```rust
+/// Saved original termios for panic recovery
+/// Uses Mutex for thread-safe access without unsafe static mut
+/// (Termios contains RefCell which is not Sync, so OnceLock cannot be used)
+static ORIGINAL_TERMIOS: Mutex<Option<Termios>> = Mutex::new(None);
+```
+
+`OnceLock<T>` requires `T: Sync`, but `Termios` from the `nix` crate contains a `RefCell` internally, which is not `Sync`. Therefore, `Mutex` is the correct choice.
+
+### Safe Access Pattern
+
+Reading from the mutex:
+
+```rust
+// Thread-safe read via Mutex
+if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
+    if let Some(ref original) = *guard {
+        let stdin = io::stdin();
+        let _ = tcsetattr(&stdin, SetArg::TCSANOW, original);
+    }
+}
+```
+
+Writing to the mutex:
+
+```rust
+// Thread-safe write via Mutex
+if let Ok(mut guard) = ORIGINAL_TERMIOS.lock() {
+    *guard = Some(original.clone());
+}
+```
+
+---
+
+## Data Structures
+
+### TerminalMode
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TerminalMode {
+    /// Normal line-buffered mode with echo
+    Cooked,
+    /// Character-by-character, no echo, no signal processing
+    Raw,
+}
+```
+
+### TerminalManager
+
+Manages terminal state transitions and ensures safe restoration:
+
+```rust
+pub struct TerminalManager {
+    stdin_fd: RawFd,
+    original_termios: Option<Termios>,
+    current_mode: TerminalMode,
+}
+```
+
+### DebugServer
+
+Listens for worker connections on a Unix socket:
+
+```rust
+pub struct DebugServer {
+    socket_path: PathBuf,  // /tmp/tach_debug_{pid}.sock
+    listener: UnixListener,
+}
+```
+
+---
+
+## Terminal Mode Management
+
+### Raw Mode
+
+Raw mode disables terminal processing for direct character I/O:
+
+```rust
+pub fn enter_raw_mode(&mut self) -> Result<()> {
+    if self.current_mode == TerminalMode::Raw {
+        return Ok(());
+    }
+
+    let mut raw = self.original_termios.clone()
+        .context("No original termios saved")?;
+
+    // cfmakeraw disables all the flags we need:
+    // - ICANON, ECHO, ECHOE, ECHOK, ECHONL, ISIG, IEXTEN
+    // - BRKINT, ICRNL, INPCK, ISTRIP, IXON
+    // - OPOST
+    // - CSIZE, PARENB (sets CS8)
+    cfmakeraw(&mut raw);
+
+    let stdin = io::stdin();
+    tcsetattr(&stdin, SetArg::TCSANOW, &raw)
+        .context("Failed to set raw mode")?;
+
+    IN_RAW_MODE.store(true, Ordering::SeqCst);
+    self.current_mode = TerminalMode::Raw;
+
+    Ok(())
+}
+```
+
+### Cooked Mode Restoration
+
+```rust
+pub fn restore(&mut self) -> Result<()> {
+    if self.current_mode == TerminalMode::Cooked {
+        return Ok(());
+    }
+
+    if let Some(ref original) = self.original_termios {
+        let stdin = io::stdin();
+        tcsetattr(&stdin, SetArg::TCSANOW, original)
+            .context("Failed to restore terminal")?;
+    }
+
+    IN_RAW_MODE.store(false, Ordering::SeqCst);
+    self.current_mode = TerminalMode::Cooked;
+
+    Ok(())
+}
+```
+
+### Drop Implementation
+
+The `TerminalManager` implements `Drop` to ensure terminal restoration:
+
+```rust
+impl Drop for TerminalManager {
+    fn drop(&mut self) {
+        // Best-effort restoration on drop
+        let _ = self.restore();
+    }
+}
+```
+
+---
+
+## Panic Hook Installation
+
+### The Problem
+
+If the program panics while in Raw mode, the terminal is left in an unusable state:
+
+- No echo (you cannot see what you type)
+- No line buffering (Enter does not work normally)
+- No signal processing (Ctrl+C does not work)
+
+### The Solution
+
+A panic hook is installed at program startup to restore the terminal:
+
+```rust
+/// Install panic hook to restore terminal on crash
+///
+/// CRITICAL: Without this, a panic in raw mode leaves the terminal unusable.
+/// Call this once at program startup.
+pub fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+
+    std::panic::set_hook(Box::new(move |info| {
+        // Attempt to restore terminal if we were in raw mode
+        if IN_RAW_MODE.load(Ordering::SeqCst) {
+            // Thread-safe read via Mutex
+            if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
+                if let Some(ref original) = *guard {
+                    let stdin = io::stdin();
+                    let _ = tcsetattr(&stdin, SetArg::TCSANOW, original);
+                }
+            }
+            IN_RAW_MODE.store(false, Ordering::SeqCst);
+            eprintln!("\n[tach] Terminal restored after panic.\n");
+        }
+
+        // Call the default panic handler
+        default_hook(info);
+    }));
+}
+```
+
+### How It Works
+
+```mermaid
+flowchart TB
+    subgraph Normal["NORMAL EXECUTION"]
+        A["enter_raw_mode()"]
+        B["IN_RAW_MODE = true"]
+        C["ORIGINAL_TERMIOS = saved"]
+        D["Debug session"]
+        E["restore()"]
+        F["IN_RAW_MODE = false"]
+    end
+
+    subgraph Panic["PANIC RECOVERY"]
+        P1["Panic occurs!"]
+        P2["Panic hook runs"]
+        P3["Check IN_RAW_MODE"]
+        P4["Lock ORIGINAL_TERMIOS"]
+        P5["tcsetattr(original)"]
+        P6["Print recovery message"]
+        P7["Call default handler"]
+    end
+
+    A --> B --> C --> D --> E --> F
+
+    D -.->|"Panic!"| P1
+    P1 --> P2 --> P3
+    P3 -->|"true"| P4 --> P5 --> P6 --> P7
+    P3 -->|"false"| P7
+```
+
+### Global State for Panic Recovery
+
+Two global variables enable panic recovery:
+
+```rust
+/// Global flag to track if we're in raw mode (for panic hook)
+static IN_RAW_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Saved original termios for panic recovery
+/// Uses Mutex for thread-safe access without unsafe static mut
+static ORIGINAL_TERMIOS: Mutex<Option<Termios>> = Mutex::new(None);
+```
+
+| Variable           | Type                     | Purpose                                  |
+| :----------------- | :----------------------- | :--------------------------------------- |
+| `IN_RAW_MODE`      | `AtomicBool`             | Fast check if terminal needs restoration |
+| `ORIGINAL_TERMIOS` | `Mutex<Option<Termios>>` | Thread-safe storage of original settings |
+
+---
+
+## DebugServer Implementation
+
+### Socket Creation
+
+```rust
+pub fn new() -> Result<Self> {
+    let pid = std::process::id();
+    let socket_path = PathBuf::from(format!("/tmp/tach_debug_{}.sock", pid));
+
+    // Clean up any stale socket file
+    if socket_path.exists() {
+        fs::remove_file(&socket_path)
+            .context("Failed to remove stale debug socket")?;
+    }
+
+    let listener = UnixListener::bind(&socket_path)
+        .context("Failed to bind debug socket")?;
+
+    // Set non-blocking so we can check for connections without blocking scheduler
+    listener.set_nonblocking(true)
+        .context("Failed to set socket non-blocking")?;
+
+    eprintln!("[debugger] Listening on {}", socket_path.display());
+
+    Ok(Self { socket_path, listener })
+}
+```
+
+### Non-Blocking Accept
+
+```rust
+/// Check if a worker is waiting to connect (non-blocking)
+pub fn try_accept(&self) -> Option<UnixStream> {
+    match self.listener.accept() {
+        Ok((stream, _)) => Some(stream),
+        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => None,
+        Err(e) => {
+            eprintln!("[debugger] Accept error: {}", e);
+            None
+        }
+    }
+}
+```
+
+### Debug Session Handling
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant D as DebugServer
+    participant T as TerminalManager
+    participant O as Other Workers
+
+    W->>D: Connect (breakpoint hit)
+    D->>O: SIGSTOP (pause)
+    D->>T: enter_raw_mode()
+
+    loop Bidirectional I/O
+        D->>T: Read stdin
+        T->>W: Forward to socket
+        W->>T: Read socket
+        T->>D: Forward to stdout
+    end
+
+    W->>D: Socket close (debug end)
+    D->>T: restore()
+    D->>O: SIGCONT (resume)
+```
+
+### Worker Pause/Resume
+
+Other workers are paused during debugging to prevent log interleaving:
+
+```rust
+/// Pause all workers by sending SIGSTOP
+fn pause_workers(worker_pids: &[i32], debug_worker_pid: Option<i32>) {
+    for &pid in worker_pids {
+        if Some(pid) == debug_worker_pid {
+            continue; // Don't stop the worker we're debugging!
+        }
+        if pid > 0 {
+            let _ = kill(Pid::from_raw(pid), Signal::SIGSTOP);
+        }
+    }
+}
+
+/// Resume all paused workers by sending SIGCONT
+fn resume_workers(worker_pids: &[i32]) {
+    for &pid in worker_pids {
+        if pid > 0 {
+            let _ = kill(Pid::from_raw(pid), Signal::SIGCONT);
+        }
+    }
+}
+```
+
+### Socket Cleanup
+
+```rust
+impl Drop for DebugServer {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+fn cleanup(&self) {
+    if self.socket_path.exists() {
+        let _ = fs::remove_file(&self.socket_path);
+    }
+}
+```
+
+---
+
+## Integration with Lifecycle
+
+The debugger integrates with the lifecycle module via a global flag:
+
+```rust
+// In handle_session():
+crate::lifecycle::IS_DEBUGGING.store(true, Ordering::SeqCst);
+
+// ... debug session ...
+
+crate::lifecycle::IS_DEBUGGING.store(false, Ordering::SeqCst);
+```
+
+This flag affects signal handling - SIGINT is ignored during debugging because Raw mode handles Ctrl+C directly (as byte 0x03).
+
+---
+
+## Thread Safety Summary
+
+| Component          | Synchronization          | Notes                                    |
+| :----------------- | :----------------------- | :--------------------------------------- |
+| `IN_RAW_MODE`      | `AtomicBool`             | Lock-free, fast check                    |
+| `ORIGINAL_TERMIOS` | `Mutex<Option<Termios>>` | Thread-safe, handles non-Sync inner type |
+| `DebugServer`      | Single-threaded          | Only supervisor uses it                  |
+| `TerminalManager`  | Instance-based           | Created per session                      |
+
+---
+
+## Error Handling
+
+| Error                               | Cause             | Recovery                     |
+| :---------------------------------- | :---------------- | :--------------------------- |
+| `Failed to get terminal attributes` | stdin not a TTY   | Return error, skip debugging |
+| `Failed to set raw mode`            | Permission denied | Return error, skip debugging |
+| `Failed to bind debug socket`       | Port in use       | Clean stale socket, retry    |
+| Panic in raw mode                   | Any panic         | Panic hook restores terminal |
+
+---
+
+## Usage Example
+
+```rust
+use tach::reporting::debugger::{DebugServer, install_panic_hook};
+
+fn main() -> Result<()> {
+    // Install panic hook at startup (once)
+    install_panic_hook();
+
+    // Create debug server
+    let debug_server = DebugServer::new()?;
+
+    // In scheduler loop:
+    if let Some(stream) = debug_server.try_accept() {
+        let worker_pids = get_all_worker_pids();
+        let debug_worker_pid = get_connecting_worker_pid();
+
+        debug_server.handle_session(
+            stream,
+            &worker_pids,
+            Some(debug_worker_pid),
+        )?;
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## Related Documentation
+
+- [Scheduler](scheduler.md) - How the scheduler integrates with the debug server
+- [Zygote Lifecycle](zygote.md) - Worker process management
+- [Isolation](isolation.md) - How workers are isolated
 
 
 ---
@@ -953,36 +1399,51 @@ See [Toxicity Analysis](toxicity.md) for details.
 ---
 
 
-# Isolation (Namespaces and OverlayFS)
+# Isolation Architecture (Namespaces and OverlayFS)
 
-Isolation provides filesystem and network separation for worker processes.
+Worker isolation provides filesystem and network separation for test processes, ensuring tests cannot interfere with each other or the host system.
 
 ---
 
 ## Overview
 
-Tach uses Linux namespaces and OverlayFS to create isolated environments:
+Tach uses Linux namespaces and OverlayFS to create isolated environments for each worker:
 
-1. **Mount Namespace**: Private filesystem view
-2. **Network Namespace**: Isolated network stack
-3. **OverlayFS**: Copy-on-write filesystem layers
+1. **Mount Namespace (CLONE_NEWNS)**: Private filesystem view per worker
+2. **Network Namespace (CLONE_NEWNET)**: Isolated network stack with own loopback
+3. **OverlayFS**: Copy-on-write layers for `/tmp` and project directory
 
 ```mermaid
 flowchart TB
     subgraph Host["HOST SYSTEM"]
-        HostFS["Filesystem"]
-        HostNet["Network"]
+        HostFS["Host Filesystem<br/>(read-only to workers)"]
+        HostTmp["/tmp (host)"]
+        ProjectRoot["Project Root"]
     end
 
-    subgraph Worker["WORKER NAMESPACE"]
-        MountNS["Mount Namespace"]
-        NetNS["Network Namespace"]
-        Overlay["OverlayFS"]
-        Loopback["lo interface"]
+    subgraph Worker["WORKER NAMESPACE (worker_N)"]
+        subgraph Namespaces["Linux Namespaces"]
+            MountNS["CLONE_NEWNS"]
+            NetNS["CLONE_NEWNET"]
+        end
+
+        subgraph Overlays["OverlayFS Mounts"]
+            TmpOverlay["/tmp overlay"]
+            ProjOverlay["project_root overlay"]
+        end
+
+        subgraph Scratch["Scratch Space"]
+            Tmpfs["tmpfs @ /run/tach/worker_N<br/>(100MB limit)"]
+        end
+
+        Loopback["lo interface (127.0.0.1)"]
     end
 
-    HostFS -.->|"read-only"| Overlay
-    Overlay -->|"writes"| Tmpfs["tmpfs scratch"]
+    HostTmp -.->|"lowerdir (RO)"| TmpOverlay
+    ProjectRoot -.->|"lowerdir (RO)"| ProjOverlay
+    TmpOverlay -->|"writes"| Tmpfs
+    ProjOverlay -->|"writes"| Tmpfs
+    NetNS --> Loopback
 ```
 
 ---
@@ -991,267 +1452,300 @@ flowchart TB
 
 ### Mount Namespace (CLONE_NEWNS)
 
-Provides a private set of mount points.
+Provides a private set of mount points. After entering, mount operations are invisible to host and other workers.
 
 ```rust
-unsafe {
-    libc::unshare(libc::CLONE_NEWNS)?;
-}
+unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET)
+    .context("unshare failed - requires CAP_SYS_ADMIN")?;
 ```
 
-After unshare, the worker's mounts are isolated from the host.
+**Key Properties:** Worker mounts isolated from host; mount propagation disabled via `MS_PRIVATE`.
 
 ### Network Namespace (CLONE_NEWNET)
 
-Provides an isolated network stack.
+Provides isolated network stack preventing tests from binding conflicting ports or interfering with host services.
+
+**Each Worker Gets:** Own network interfaces, routing tables, firewall rules, and port bindings.
+
+**Loopback Setup:** After entering namespace, bring up loopback manually:
 
 ```rust
-unsafe {
-    libc::unshare(libc::CLONE_NEWNET)?;
+fn setup_loopback() -> Result<()> {
+    Command::new("ip").args(["link", "set", "lo", "up"]).output()?;
+    Ok(())
 }
 ```
 
-The worker gets its own:
-
-- Network interfaces
-- Routing tables
-- Firewall rules
-- Port bindings
-
 ### PID Namespace
 
-**Not used.** Tach relies on standard `fork()` and `PR_SET_PDEATHSIG` for process management.
+**Not used.** Tach uses standard `fork()` and `PR_SET_PDEATHSIG` for process management.
+
+---
+
+## The setup_filesystem Function
+
+Main entry point for worker isolation with a critical execution sequence.
+
+### Function Signature
+
+```rust
+/// Set up complete isolation for a worker (Iron Dome)
+/// If TACH_NO_ISOLATION=1, skip all isolation (for benchmarking/debugging)
+pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()>
+```
+
+### Critical Execution Sequence
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant K as Kernel
+
+    W->>W: Check TACH_NO_ISOLATION
+    W->>K: unshare(CLONE_NEWNS | CLONE_NEWNET)
+    W->>K: mount("/", MS_REC | MS_PRIVATE)
+    W->>K: ip link set lo up
+    W->>K: mkdir /run/tach/worker_N
+    W->>K: Remount root as RO
+    W->>K: Mount tmpfs on base dir
+    W->>K: Create overlay subdirs
+    W->>K: Mount /tmp overlay
+    W->>K: Mount project overlay
+```
+
+### Implementation (Key Steps)
+
+```rust
+pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
+    if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
+        return Ok(());
+    }
+
+    // 1. Create namespaces
+    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET)?;
+
+    // 2. Privatize mounts
+    mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None)?;
+
+    // 3. Setup loopback
+    setup_loopback()?;
+
+    // 4. Create base dir (while root still writable)
+    let base = PathBuf::from(format!("/run/tach/worker_{}", worker_id));
+    fs::create_dir_all(&base)?;
+
+    // 5. Lock root as read-only
+    mount::<str, str, str, str>(Some("/"), "/", None, MsFlags::MS_BIND | MsFlags::MS_REC, None)?;
+    mount::<str, str, str, str>(Some("/"), "/", None,
+        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC, None)?;
+
+    // 6. Mount tmpfs
+    mount::<str, PathBuf, str, str>(Some("tmpfs"), &base, Some("tmpfs"),
+        MsFlags::empty(), Some("size=100M,mode=0755"))?;
+
+    // 7. Create overlay subdirs and mount overlays
+    // ... (tmp_upper, tmp_work, proj_upper, proj_work)
+    // ... mount overlay on /tmp and project_root
+
+    Ok(())
+}
+```
+
+### Mount Flags
+
+| Flag         | Purpose                            |
+| :----------- | :--------------------------------- |
+| `MS_REC`     | Apply recursively to all submounts |
+| `MS_PRIVATE` | Disable mount propagation          |
+| `MS_BIND`    | Create bind mount                  |
+| `MS_REMOUNT` | Change flags on existing mount     |
+| `MS_RDONLY`  | Make mount read-only               |
 
 ---
 
 ## OverlayFS Structure
 
+OverlayFS provides copy-on-write semantics, allowing workers to appear to modify files while writing to a separate location.
+
 ```mermaid
 flowchart TB
-    subgraph Layers["OVERLAY LAYERS"]
-        Lower["lowerdir<br/>(read-only)"]
-        Upper["upperdir<br/>(writes go here)"]
-        Work["workdir<br/>(internal)"]
-        Merged["merged<br/>(visible to worker)"]
-    end
+    Lower["lowerdir (read-only source)"]
+    Upper["upperdir (writes captured)"]
+    Work["workdir (internal)"]
+    Merged["merged view (visible to worker)"]
 
-    Lower --> Merged
-    Upper --> Merged
+    Lower -->|"provides base"| Merged
+    Upper -->|"overlays mods"| Merged
+    Work -.->|"atomic ops"| Upper
 ```
 
-### /tmp Isolation
+### Overlay Configurations
 
-```
-lowerdir: /tmp (host)
-upperdir: /run/tach/worker_N/tmp_upper
-workdir:  /run/tach/worker_N/tmp_work
-merged:   /tmp (worker view)
-```
-
-Tests can write to `/tmp`, but changes are stored in the worker's tmpfs.
-
-### Project Root Isolation
-
-```
-lowerdir: {project_root} (source code)
-upperdir: /run/tach/worker_N/proj_upper
-workdir:  /run/tach/worker_N/proj_work
-merged:   {project_root} (worker view)
-```
-
-Tests can modify source files without affecting the actual codebase.
+| Mount Point    | lowerdir         | upperdir                        | workdir                        |
+| :------------- | :--------------- | :------------------------------ | :----------------------------- |
+| `/tmp`         | `/tmp` (host)    | `/run/tach/worker_N/tmp_upper`  | `/run/tach/worker_N/tmp_work`  |
+| `project_root` | `{project_root}` | `/run/tach/worker_N/proj_upper` | `/run/tach/worker_N/proj_work` |
 
 ---
 
-## Setup Sequence
+## Worker Base Directory Structure
 
-```mermaid
-sequenceDiagram
-    participant Worker
-    participant Kernel
-
-    Worker->>Kernel: unshare(CLONE_NEWNS | CLONE_NEWNET)
-    Worker->>Kernel: mount("", "/", MS_PRIVATE | MS_REC)
-    Worker->>Worker: mkdir /run/tach/worker_N
-    Worker->>Kernel: mount(tmpfs, /run/tach/worker_N)
-    Worker->>Kernel: mount("", "/", MS_RDONLY | MS_REMOUNT)
-    Worker->>Kernel: mount(overlay, /tmp)
-    Worker->>Kernel: mount(overlay, project_root)
-    Worker->>Worker: setup_loopback()
-```
-
-### Step 1: Enter Namespaces
-
-```rust
-pub fn setup_filesystem(project_root: &Path, worker_id: u32) -> Result<()> {
-    unsafe {
-        libc::unshare(libc::CLONE_NEWNS | libc::CLONE_NEWNET)?;
-    }
-    Ok(())
-}
-```
-
-### Step 2: Privatize Mounts
-
-```rust
-unsafe {
-    libc::mount(
-        ptr::null(),
-        c"/".as_ptr(),
-        ptr::null(),
-        libc::MS_PRIVATE | libc::MS_REC,
-        ptr::null(),
-    )?;
-}
-```
-
-This prevents mount events from leaking to the host.
-
-### Step 3: Create Worker Directory
-
-```rust
-let worker_dir = format!("/run/tach/worker_{}", worker_id);
-std::fs::create_dir_all(&worker_dir)?;
-```
-
-### Step 4: Mount tmpfs
-
-```rust
-unsafe {
-    libc::mount(
-        c"tmpfs".as_ptr(),
-        worker_dir.as_ptr(),
-        c"tmpfs".as_ptr(),
-        0,
-        c"size=100M".as_ptr(),
-    )?;
-}
-```
-
-100MB memory-backed storage for worker scratch space.
-
-### Step 5: Lock Down Root
-
-```rust
-unsafe {
-    libc::mount(
-        ptr::null(),
-        c"/".as_ptr(),
-        ptr::null(),
-        libc::MS_RDONLY | libc::MS_REMOUNT | libc::MS_BIND,
-        ptr::null(),
-    )?;
-}
-```
-
-The root filesystem becomes read-only.
-
-### Step 6: Mount Overlays
-
-```rust
-fn mount_overlay(lower: &Path, upper: &Path, work: &Path, target: &Path) -> Result<()> {
-    let options = format!(
-        "lowerdir={},upperdir={},workdir={}",
-        lower.display(),
-        upper.display(),
-        work.display(),
-    );
-
-    unsafe {
-        libc::mount(
-            c"overlay".as_ptr(),
-            target.as_ptr(),
-            c"overlay".as_ptr(),
-            0,
-            options.as_ptr(),
-        )?;
-    }
-    Ok(())
-}
-```
-
-### Step 7: Setup Loopback
-
-```rust
-fn setup_loopback() -> Result<()> {
-    // Bring up lo interface in the new network namespace
-    let sock = socket(AF_INET, SOCK_DGRAM, 0)?;
-    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
-    ifr.ifr_name[..2].copy_from_slice(b"lo");
-    ifr.ifr_ifru.ifru_flags = libc::IFF_UP as i16;
-
-    unsafe {
-        libc::ioctl(sock, libc::SIOCSIFFLAGS, &ifr)?;
-    }
-    Ok(())
-}
-```
-
----
-
-## Directory Structure
+Each worker gets dedicated scratch space under `/run/tach/`:
 
 ```
 /run/tach/
   worker_0/
-    tmp_upper/      # /tmp writes
-    tmp_work/       # OverlayFS internal
-    proj_upper/     # Project writes
-    proj_work/      # OverlayFS internal
+    tmp_upper/     # /tmp writes
+    tmp_work/      # OverlayFS workdir
+    proj_upper/    # Project writes
+    proj_work/     # OverlayFS workdir
   worker_1/
     ...
+```
+
+**Path Format:** `/run/tach/worker_{worker_id}` (worker_id is u32)
+
+**tmpfs Config:** `size=100M,mode=0755` - prevents disk exhaustion, auto-freed on exit.
+
+---
+
+## Helper Functions API
+
+Pure functions testable without root privileges.
+
+### worker_base_dir
+
+```rust
+#[inline]
+pub fn worker_base_dir(worker_id: u32) -> PathBuf {
+    PathBuf::from(format!("/run/tach/worker_{}", worker_id))
+}
+```
+
+### tmp_overlay_options / project_overlay_options
+
+```rust
+pub fn tmp_overlay_options(base: &Path) -> String {
+    format!("lowerdir=/tmp,upperdir={}/tmp_upper,workdir={}/tmp_work",
+        base.display(), base.display())
+}
+
+pub fn project_overlay_options(base: &Path, project_root: &Path) -> String {
+    format!("lowerdir={},upperdir={}/proj_upper,workdir={}/proj_work",
+        project_root.display(), base.display(), base.display())
+}
+```
+
+### is_isolation_disabled
+
+```rust
+pub fn is_isolation_disabled() -> bool {
+    std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1"
+}
+```
+
+| TACH_NO_ISOLATION | Returns |
+| :---------------- | :------ |
+| `"1"`             | `true`  |
+| Any other value   | `false` |
+
+---
+
+## TACH_NO_ISOLATION Bypass
+
+Skip all isolation for benchmarking, debugging, or CI without privileges.
+
+```bash
+TACH_NO_ISOLATION=1 ./tach-core .
+```
+
+### Security Implications
+
+| Protection           | With Isolation             | Without Isolation         |
+| :------------------- | :------------------------- | :------------------------ |
+| Filesystem isolation | Workers isolated           | Workers share filesystem  |
+| Network isolation    | Private network per worker | Shared network stack      |
+| Write containment    | Writes to tmpfs            | Writes to real filesystem |
+| Host protection      | Root read-only             | Root writable             |
+
+```mermaid
+flowchart LR
+    subgraph Isolated["TACH_NO_ISOLATION=0"]
+        I1["Worker"] -->|"writes"| T1["tmpfs"]
+        I1 x--x|"blocked"| Host1["Host FS"]
+    end
+
+    subgraph NotIsolated["TACH_NO_ISOLATION=1"]
+        N1["Worker"] -->|"writes"| Host2["Host FS"]
+    end
 ```
 
 ---
 
 ## Security Properties
 
-| Property             | Mechanism                         |
-| :------------------- | :-------------------------------- |
-| Filesystem isolation | Mount namespace + OverlayFS       |
-| Network isolation    | Network namespace                 |
-| Write containment    | tmpfs + OverlayFS upperdir        |
-| Host protection      | Root remounted read-only          |
-| Cleanup              | tmpfs automatically freed on exit |
+| Property             | Mechanism                   | Description                            |
+| :------------------- | :-------------------------- | :------------------------------------- |
+| Filesystem isolation | Mount namespace + OverlayFS | Workers can't see each other's changes |
+| Network isolation    | Network namespace           | Each worker has own network stack      |
+| Write containment    | tmpfs + OverlayFS           | All writes to memory-backed storage    |
+| Host protection      | Root remounted read-only    | Workers can't modify system files      |
+| Automatic cleanup    | tmpfs freed on exit         | No persistent state left behind        |
+| Resource limits      | tmpfs size=100M             | Workers can't exhaust host memory      |
 
----
+### Iron Dome Integration
 
-## Interaction with Landlock
+Isolation works with Landlock and Seccomp for defense in depth:
 
-Isolation and Landlock provide redundant protection:
+```mermaid
+flowchart TB
+    subgraph IronDome["IRON DOME"]
+        L1["Layer 1: Namespaces<br/>Mount + Network isolation"]
+        L2["Layer 2: OverlayFS<br/>CoW + RO root"]
+        L3["Layer 3: Landlock<br/>Kernel-level ACL"]
+        L4["Layer 4: Seccomp<br/>Syscall filtering"]
+    end
 
-| Layer           | Protection                         |
-| :-------------- | :--------------------------------- |
-| Mount namespace | Worker can't see host mounts       |
-| OverlayFS       | Writes go to tmpfs, not real files |
-| Root read-only  | Can't modify system files          |
-| Landlock        | Kernel-level access control        |
-
-This "belt and suspenders" approach ensures security even if one layer fails.
-
----
-
-## Environment Variable
-
-To disable isolation for development:
-
-```bash
-TACH_NO_ISOLATION=1 ./tach-core .
+    L1 --> L2 --> L3 --> L4
 ```
 
-Or:
+| Layer           | Protection                  | Failure Mode            |
+| :-------------- | :-------------------------- | :---------------------- |
+| Mount namespace | Can't see host mounts       | Other layers protect    |
+| OverlayFS       | Writes to tmpfs             | Landlock blocks paths   |
+| Landlock        | Kernel-level access control | Seccomp blocks syscalls |
+| Seccomp         | Syscall filtering           | Process termination     |
+
+---
+
+## Unit Tests
+
+The isolation module includes 15 unit tests verifiable without root privileges.
+
+### Test Categories
+
+| Category              | Tests | Description                              |
+| :-------------------- | :---- | :--------------------------------------- |
+| Worker Base Directory | 3     | Path format, large IDs, absolute paths   |
+| Overlay Options       | 5     | Format validation, no spaces, uniqueness |
+| TACH_NO_ISOLATION     | 5     | Environment variable behavior            |
+| Path Components       | 2     | Subdirectory consistency                 |
+
+### Running Tests
 
 ```bash
-./tach-core --no-isolation .
+cargo test --lib isolation::namespace
+cargo test --lib isolation::namespace -- --nocapture
 ```
 
 ---
 
 ## Related Documentation
 
-- [Iron Dome](sandbox.md) - Landlock and Seccomp
-- [Zygote Lifecycle](zygote.md) - When isolation is applied
-- [Configuration](../configuration.md) - --no-isolation flag
+- [Iron Dome (Sandbox)](sandbox.md) - Landlock and Seccomp security layers
+- [Zygote Lifecycle](zygote.md) - When isolation is applied during worker spawning
+- [Configuration](../configuration.md) - `--no-isolation` CLI flag
+- [README](../../README.md) - Project architecture overview
 
 
 ---
@@ -1571,6 +2065,228 @@ static CACHED_MAGIC: OnceLock<[u8; 4]> = OnceLock::new();
 
 ---
 
+## Security: Dangling Pointer Prevention
+
+When passing C-style strings to the Python C-API, improper `CString` usage can lead to **use-after-free vulnerabilities**.
+
+### The Dangerous Pattern (BAD)
+
+```rust
+// BAD - CString is dropped immediately, pointer dangles!
+let file_val = ffi::PyUnicode_FromString(
+    std::ffi::CString::new(source_path).unwrap().as_ptr()
+);
+```
+
+The temporary `CString` is dropped after `.as_ptr()` returns, leaving a dangling pointer that `PyUnicode_FromString` reads from - undefined behavior.
+
+### The Safe Pattern (GOOD)
+
+```rust
+// GOOD - CString lives long enough for the pointer to be used
+let source_path_cstr = std::ffi::CString::new(source_path).unwrap();
+let file_val = ffi::PyUnicode_FromString(source_path_cstr.as_ptr());
+// source_path_cstr is still alive here, pointer is valid
+```
+
+Storing the `CString` in a named variable keeps it alive until scope end, ensuring the pointer remains valid during the C-API call.
+
+```mermaid
+sequenceDiagram
+    participant Code as Rust Code
+    participant CString as CString (named variable)
+    participant Memory as Heap Memory
+    participant Python as Python C-API
+
+    Code->>CString: let cstr = CString::new(source_path)
+    CString->>Memory: Allocate buffer for "path/to/file.py\0"
+    Code->>CString: cstr.as_ptr()
+    CString-->>Code: Return raw pointer 0x7fff1234
+    Note over CString: CString still alive!
+    Code->>Python: PyUnicode_FromString(0x7fff1234)
+    Python->>Memory: Read from 0x7fff1234
+    Note over Memory: Memory valid, read succeeds
+    Python-->>Code: Return PyObject*
+    Note over CString: CString dropped at scope end
+    CString->>Memory: Deallocate buffer (safe now)
+```
+
+### Implementation in Tach
+
+The `patch_module_namespace` and `load_module` functions in `src/discovery/loader.rs` demonstrate this pattern. Each `CString` is stored in a named variable with a `// SAFETY:` comment explaining why the pointer usage is safe.
+
+### Consequences of Use-After-Free
+
+| Scenario                   | Consequence                                       |
+| :------------------------- | :------------------------------------------------ |
+| Memory reused by allocator | Corrupted module path, wrong `__file__` attribute |
+| Memory zeroed by allocator | Empty string or null pointer dereference crash    |
+| Memory reused by Python    | Arbitrary string as module path (security risk)   |
+| Memory page unmapped       | Segmentation fault (SIGSEGV)                      |
+| Intermittent failures      | Heisenbugs that only appear under memory pressure |
+
+### Key Takeaways
+
+1. **Never chain `.as_ptr()` on a temporary `CString`** - always store it in a named variable first
+2. **The `CString` must outlive all uses of the pointer** - keep it alive until after the C function returns
+3. **Add `// SAFETY:` comments** explaining why the pointer usage is safe
+4. **This pattern applies to all FFI string passing** - not just Python C-API
+
+---
+
+## Zero-Copy Bytecode Loading Architecture
+
+The loader implements a zero-copy architecture that minimizes memory allocations and data movement during module loading.
+
+### Memory Flow
+
+```mermaid
+flowchart TB
+    subgraph Discovery["DISCOVERY PHASE (Eager)"]
+        Source[".py Source Files"]
+        Compile["py_compile.compile()"]
+        Strip["Strip 16-byte Header"]
+        Registry["ModuleRegistry<br/>(DashMap)"]
+    end
+
+    subgraph Worker["WORKER PHASE (On-Demand)"]
+        Request["get_module(name)"]
+        Bytecode["Raw Bytecode<br/>(Vec<u8>)"]
+        Marshal["PyMarshal_ReadObjectFromString"]
+        CodeObj["PyCodeObject*"]
+        Exec["PyImport_ExecCodeModuleObject"]
+        SysModules["sys.modules[name]"]
+    end
+
+    Source --> Compile --> Strip --> Registry
+    Registry --> Request --> Bytecode --> Marshal --> CodeObj --> Exec --> SysModules
+```
+
+### Key Design Decisions
+
+#### 1. Header Stripping at Compile Time
+
+The 16-byte `.pyc` header is stripped during compilation, not at load time:
+
+```rust
+fn read_and_strip_header(&self, pyc_path: &Path) -> Result<Vec<u8>> {
+    let data = fs::read(pyc_path)?;
+
+    if data.len() < PYC_HEADER_SIZE {
+        return Err(anyhow!("Invalid .pyc file (too short)"));
+    }
+
+    // Return bytes after header - this is the only copy
+    Ok(data[PYC_HEADER_SIZE..].to_vec())
+}
+```
+
+**Rationale:** The header is only needed for cache validation. By stripping it once during compilation, we avoid repeated slicing operations during the hot path.
+
+#### 2. Direct Pointer Passing to C-API
+
+Bytecode is passed directly to `PyMarshal_ReadObjectFromString` without intermediate copies:
+
+```rust
+let code_obj = ffi::PyMarshal_ReadObjectFromString(
+    bytecode.as_ptr() as *const i8,  // Direct pointer to Vec<u8> buffer
+    bytecode.len() as isize,
+);
+```
+
+**Rationale:** The `Vec<u8>` buffer is passed by pointer, not copied. Python's marshal module reads directly from our Rust-owned memory.
+
+#### 3. DashMap for Lock-Free Reads
+
+The registry uses `DashMap` instead of `RwLock<HashMap>`:
+
+```rust
+pub struct ModuleRegistry {
+    entries: DashMap<String, BytecodeEntry>,
+    project_root: PathBuf,
+}
+```
+
+**Rationale:** `DashMap` provides lock-free reads for concurrent worker access. Multiple workers can request different modules simultaneously without contention.
+
+#### 4. Global Caching to Prevent Subprocess Spawning
+
+Python path and magic number are cached globally:
+
+```rust
+static CACHED_PYTHON_EXE: OnceLock<PathBuf> = OnceLock::new();
+static CACHED_MAGIC: OnceLock<[u8; 4]> = OnceLock::new();
+```
+
+**Rationale:** Without caching, each `BytecodeCompiler::new()` call would spawn Python subprocesses to get the magic number. During parallel test execution, this could spawn hundreds of processes, causing OOM.
+
+### Memory Ownership Model
+
+```mermaid
+flowchart LR
+    subgraph Rust["RUST OWNERSHIP"]
+        Registry["ModuleRegistry"]
+        Entry["BytecodeEntry"]
+        Bytecode["Vec<u8>"]
+    end
+
+    subgraph Python["PYTHON OWNERSHIP"]
+        CodeObj["PyCodeObject"]
+        Module["PyModuleObject"]
+        SysModules["sys.modules"]
+    end
+
+    Registry --> Entry --> Bytecode
+    Bytecode -.->|"PyMarshal (reads)"| CodeObj
+    CodeObj -.->|"PyImport (consumes)"| Module
+    Module --> SysModules
+
+    style Bytecode fill:#e1f5fe
+    style CodeObj fill:#fff3e0
+```
+
+| Component          | Owner                   | Lifetime                   |
+| :----------------- | :---------------------- | :------------------------- |
+| `BytecodeEntry`    | Rust (`ModuleRegistry`) | Process lifetime           |
+| `Vec<u8>` bytecode | Rust (`BytecodeEntry`)  | Process lifetime           |
+| `PyCodeObject*`    | Python (new reference)  | Must `Py_DECREF` after use |
+| `PyModuleObject*`  | Python (`sys.modules`)  | Until module unloaded      |
+
+### Reference Counting in load_module
+
+The `load_module` function carefully manages Python reference counts:
+
+```rust
+unsafe {
+    // PyMarshal returns NEW reference - we own it
+    let code_obj = ffi::PyMarshal_ReadObjectFromString(...);
+
+    // PyUnicode_FromString returns NEW reference - we own it
+    let name_obj = ffi::PyUnicode_FromString(name_cstr.as_ptr());
+    let path_obj = ffi::PyUnicode_FromString(path_cstr.as_ptr());
+
+    // PyImport does NOT steal references - we still own them
+    let module = ffi::PyImport_ExecCodeModuleObject(
+        name_obj,
+        code_obj,
+        path_obj,
+        std::ptr::null_mut(),
+    );
+
+    // Clean up all references we created
+    ffi::Py_DECREF(code_obj);
+    ffi::Py_DECREF(name_obj);
+    ffi::Py_DECREF(path_obj);
+
+    // Module is in sys.modules, we can release our reference
+    ffi::Py_DECREF(module);
+}
+```
+
+**Critical:** If any step fails, we must `Py_DECREF` all previously created objects to avoid memory leaks.
+
+---
+
 ## Related Documentation
 
 - [Discovery Engine](discovery.md) - How modules are found
@@ -1813,50 +2529,7 @@ flowchart TB
 
 ## File Organization
 
-```
-src/
-  main.rs           # CLI entry, orchestration
-  lib.rs            # Module exports, discover_with_toxicity()
-
-  # Core Infrastructure
-  core/
-    allocator.rs    # Jemalloc integration
-    config.rs       # Configuration loading
-    environment.rs  # Environment injection
-    lifecycle.rs    # Process lifecycle management
-    protocol.rs     # IPC messages
-    signals.rs      # Signal handling
-
-  # Discovery & Analysis
-  discovery/
-    scanner.rs      # AST-based test discovery (was discovery.rs)
-    resolver.rs     # Fixture resolution
-    loader.rs       # Bytecode compilation
-    graph.rs        # ToxicityGraph, propagation
-    analysis.rs     # Local toxicity detection
-
-  # Execution
-  execution/
-    scheduler.rs    # Test dispatch
-    watch.rs        # File watching
-    zygote.rs       # Process lifecycle, FFI
-
-  # Isolation & Security
-  isolation/
-    namespace.rs    # Namespaces + OverlayFS (was isolation.rs)
-    sandbox.rs      # Landlock + Seccomp
-    snapshot.rs     # userfaultfd, golden pages
-
-  # Reporting & Observability
-  reporting/
-    reporter.rs     # Output formatting
-    junit.rs        # JUnit XML output
-    logcapture.rs   # Log capture
-    debugger.rs     # Debugger integration
-    coverage.rs     # Ring buffers, aggregator
-
-  tach_harness.py   # Python test harness
-```
+See [README.md](../../README.md#project-structure) for complete source file organization.
 
 ---
 
@@ -2870,7 +3543,7 @@ def run_test(file_path, test_name, fixtures):
 
 # Iron Dome (Sandbox)
 
-The Iron Dome provides defense-in-depth security for worker processes using Landlock and Seccomp.
+Defense-in-depth security for worker processes using Landlock filesystem isolation, Seccomp syscall filtering, and environment variable sanitization.
 
 ---
 
@@ -2880,6 +3553,7 @@ Workers execute untrusted test code. The Iron Dome restricts:
 
 1. **Filesystem access** via Landlock (kernel 5.13+)
 2. **System calls** via Seccomp-BPF (kernel 3.17+)
+3. **Environment variables** via denylist filtering
 
 ```mermaid
 flowchart TB
@@ -2890,12 +3564,17 @@ flowchart TB
     subgraph IronDome["IRON DOME"]
         Landlock["Landlock<br/>(Filesystem)"]
         Seccomp["Seccomp<br/>(Syscalls)"]
+        EnvFilter["Env Denylist<br/>(11 vars blocked)"]
     end
 
     subgraph Blocked["BLOCKED"]
         FS["Write to /etc"]
         Net["socket()"]
         Exec["execve()"]
+        Ptrace["ptrace()"]
+        Mount["mount()"]
+        Namespace["unshare()/setns()"]
+        LDPreload["LD_PRELOAD"]
     end
 
     Test --> IronDome
@@ -2904,15 +3583,14 @@ flowchart TB
 
 ---
 
-## Data Structures
-
-### SandboxStatus
+## SandboxStatus
 
 ```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxStatus {
-    FullyEnforced,      // All restrictions active
-    PartiallyEnforced,  // Some features unavailable
-    NotEnforced,        // Kernel too old
+    FullyEnforced,      // All restrictions enforced (kernel supports all features)
+    PartiallyEnforced,  // Some restrictions enforced (partial kernel support)
+    NotEnforced,        // No restrictions (kernel < 5.13 or disabled)
 }
 ```
 
@@ -2920,32 +3598,32 @@ pub enum SandboxStatus {
 
 ## Landlock Implementation
 
-Landlock provides kernel-level filesystem access control.
+Landlock is a Linux Security Module (LSM) for kernel-level filesystem access control, allowing unprivileged processes to restrict their own access.
 
 ### ABI Version
 
-Tach uses **ABI V1** for maximum compatibility (Linux 5.13+).
+Tach uses **ABI V1** for maximum compatibility (Linux 5.13+):
+
+| ABI | Kernel | Features Added                  |
+| :-- | :----- | :------------------------------ |
+| V1  | 5.13+  | Basic filesystem access control |
+| V2  | 5.19+  | TRUNCATE rights                 |
+| V3  | 6.2+   | Network access control          |
+| V4  | 6.7+   | More granular rights            |
 
 ### Path Rules
 
 ```mermaid
 flowchart LR
     subgraph ReadOnly["READ-ONLY"]
-        RO1["/usr"]
-        RO2["/lib"]
-        RO3["/lib64"]
-        RO4["/bin"]
-        RO5["/etc"]
-        RO6["/dev"]
-        RO7["/proc"]
-        RO8["/sys"]
-        RO9["project_root"]
+        RO1["/usr, /lib, /lib64, /bin"]
+        RO2["/etc, /dev, /proc, /sys"]
+        RO3["project_root"]
     end
 
     subgraph ReadWrite["READ-WRITE"]
-        RW1["/tmp"]
-        RW2["/run"]
-        RW3["/run/tach/worker_N"]
+        RW1["/tmp, /run"]
+        RW2["/run/tach/worker_N"]
     end
 
     subgraph Denied["DENIED"]
@@ -2953,66 +3631,61 @@ flowchart LR
     end
 ```
 
+| Path                                 | Access | Purpose                              |
+| :----------------------------------- | :----- | :----------------------------------- |
+| `project_root`                       | RO     | Source files (writes go to overlay)  |
+| `/usr`, `/lib`, `/lib64`, `/bin`     | RO     | System libraries and binaries        |
+| `/etc`                               | RO     | Python configs, SSL certs, timezone  |
+| `/dev`, `/proc`, `/sys`              | RO     | Device nodes, process info, hardware |
+| `/tmp`, `/run`, `/run/tach/worker_N` | RW     | Worker scratch space and overlays    |
+
+### TOCTOU Fix
+
+**Problem:** Using `path.exists()` before adding Landlock rules creates a race condition.
+
+**Solution:** Attempt `PathFd::new()` directly and handle `ENOENT` atomically:
+
+```rust
+fn add_path_rule_if_exists<T, A>(ruleset: T, path: impl AsRef<Path>, access: A) -> Result<T>
+where
+    T: landlock::RulesetCreatedAttr,
+    A: Into<landlock::BitFlags<landlock::AccessFs>> + Copy,
+{
+    match PathFd::new(path.as_ref()) {
+        Ok(fd) => ruleset.add_rule(PathBeneath::new(fd, access)),
+        Err(PathFdError::OpenCall { source, .. })
+            if source.raw_os_error() == Some(libc::ENOENT) => Ok(ruleset),
+        Err(_) => Ok(ruleset), // Graceful degradation
+    }
+}
+```
+
+This prevents TOCTOU because `PathFd::new()` opens the file descriptor atomically, and once obtained, it refers to the inode, not the path.
+
 ### Implementation
 
 ```rust
 pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStatus> {
     let abi = ABI::V1;
-    let mut ruleset = Ruleset::default()
-        .handle_access(AccessFs::from_all(abi))?
-        .create()?;
+    let project_root = project_root.canonicalize()?;
+    let worker_scratch = format!("/run/tach/worker_{}", worker_id);
+
+    let all_access = AccessFs::from_all(abi);
+    let read_access = AccessFs::from_read(abi);
+
+    let ruleset = Ruleset::default().handle_access(all_access)?.create()?;
 
     // Read-only paths
-    let ro_paths = [
-        project_root,
-        Path::new("/usr"),
-        Path::new("/lib"),
-        Path::new("/lib64"),
-        Path::new("/bin"),
-        Path::new("/etc"),
-        Path::new("/dev"),
-        Path::new("/proc"),
-        Path::new("/sys"),
-    ];
-
-    for path in &ro_paths {
-        add_path_rule_if_exists(&mut ruleset, path, AccessFs::from_read(abi))?;
-    }
+    let ruleset = add_path_rule(ruleset, &project_root, read_access)?;
+    let ruleset = add_path_rule_if_exists(ruleset, "/usr", read_access)?;
+    // ... other read-only paths ...
 
     // Read-write paths
-    let worker_dir = format!("/run/tach/worker_{}", worker_id);
-    let rw_paths = [
-        Path::new("/tmp"),
-        Path::new("/run"),
-        Path::new(&worker_dir),
-    ];
-
-    for path in &rw_paths {
-        add_path_rule_if_exists(&mut ruleset, path, AccessFs::from_all(abi))?;
-    }
+    let ruleset = add_path_rule_if_exists(ruleset, "/tmp", all_access)?;
+    let ruleset = add_path_rule_if_exists(ruleset, &worker_scratch, all_access)?;
 
     let status = ruleset.restrict_self()?;
-    Ok(status.into())
-}
-```
-
-### Path Canonicalization
-
-All paths are canonicalized before adding rules to prevent symlink bypasses:
-
-```rust
-fn add_path_rule_if_exists(
-    ruleset: &mut Ruleset,
-    path: &Path,
-    access: AccessFs,
-) -> Result<()> {
-    if let Ok(canonical) = path.canonicalize() {
-        ruleset.add_rule(PathBeneath::new(
-            PathFd::new(&canonical)?,
-            access,
-        ))?;
-    }
-    Ok(())
+    Ok(status.ruleset.into())
 }
 ```
 
@@ -3020,82 +3693,72 @@ fn add_path_rule_if_exists(
 
 ## Seccomp Implementation
 
-Seccomp-BPF filters system calls at the kernel level.
+Seccomp-BPF filters system calls at the kernel level. Tach uses a **blacklist approach** (Python's syscall patterns vary too much for a whitelist).
 
-### Architecture Support
+**Supported architectures:** x86_64, aarch64 (others gracefully degrade)
 
-| Architecture | Supported |
-| :----------- | :-------- |
-| x86_64       | Yes       |
-| aarch64      | Yes       |
-| Other        | No        |
+### Blocked Syscalls (15 Total)
 
-### Blocked Syscalls
-
-```rust
-const BLOCKED_SYSCALLS: &[i64] = &[
-    // Network
-    libc::SYS_socket,
-    libc::SYS_bind,
-    libc::SYS_connect,
-    libc::SYS_listen,
-    libc::SYS_accept,
-    libc::SYS_accept4,
-
-    // Process creation
-    libc::SYS_fork,
-    libc::SYS_vfork,
-    libc::SYS_execve,
-    libc::SYS_execveat,
-];
-```
+| Category          | Syscalls                                                   | Purpose                  |
+| :---------------- | :--------------------------------------------------------- | :----------------------- |
+| **Network (6)**   | `socket`, `bind`, `connect`, `listen`, `accept`, `accept4` | Prevent network I/O      |
+| **Process (4)**   | `fork`, `vfork`, `execve`, `execveat`                      | Prevent process spawning |
+| **Privilege (5)** | `ptrace`, `mount`, `umount2`, `unshare`, `setns`           | Prevent sandbox escape   |
 
 ### Critical: clone NOT Blocked
 
-```rust
-// clone and clone3 are NOT blocked
-// Python threading requires clone()
-```
+Python's `threading` module requires `clone()`. Forked processes are still harmless because:
+
+- Cannot execute new programs (`execve` blocked)
+- Cannot write outside allowed paths (Landlock)
+- Inherit the same Seccomp filter
 
 ### Implementation
 
 ```rust
 pub fn apply_seccomp() -> Result<()> {
-    let arch = std::env::consts::ARCH;
-    let arch_token = match arch {
-        "x86_64" => AUDIT_ARCH_X86_64,
-        "aarch64" => AUDIT_ARCH_AARCH64,
-        _ => return Err(anyhow!("Unsupported architecture")),
+    let target_arch = match std::env::consts::ARCH {
+        "x86_64" => TargetArch::x86_64,
+        "aarch64" => TargetArch::aarch64,
+        arch => anyhow::bail!("Unsupported architecture: {}", arch),
     };
 
-    let mut rules = BpfMap::new();
-    for syscall in BLOCKED_SYSCALLS {
-        rules.insert(*syscall, vec![SeccompRule::new(vec![])?]);
-    }
+    let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    // Network, process, and privilege escalation syscalls...
+    rules.insert(libc::SYS_socket, vec![]);
+    // ... (15 total syscalls)
 
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow,  // Default: allow
-        SeccompAction::Errno(libc::EPERM),  // Blocked: EPERM
-        arch_token,
+        SeccompAction::Allow,
+        SeccompAction::Errno(libc::EPERM as u32), // EPERM, not SIGSYS
+        target_arch,
     )?;
 
-    apply_filter(&filter)?;
+    seccompiler::apply_filter(&filter.try_into()?)?;
     Ok(())
 }
 ```
 
 ### EPERM vs SIGSYS
 
-Blocked syscalls return `EPERM` instead of killing the process. This allows Python to catch the error:
+Blocked syscalls return `EPERM` (not `SIGSYS`) so Python can catch errors gracefully via `OSError` instead of crashing with a core dump
 
-```python
-try:
-    import socket
-    s = socket.socket()  # Returns EPERM
-except OSError as e:
-    print(f"Socket blocked: {e}")
-```
+---
+
+## Environment Variable Denylist
+
+Tach blocks dangerous environment variables to prevent malicious configuration injection via `pyproject.toml`.
+
+### Blocked Variables (11 Total)
+
+| Category              | Variables                                                   |
+| :-------------------- | :---------------------------------------------------------- |
+| **Library Injection** | `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`     |
+| **Python Hijacking**  | `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`, `PYTHONMALLOC` |
+| **Path Manipulation** | `PATH`, `HOME`, `USER`                                      |
+
+Matching is **case-insensitive** to prevent bypass attempts.
 
 ---
 
@@ -3106,39 +3769,33 @@ flowchart LR
     subgraph Safe["SAFE WORKER"]
         S1["Landlock: ENFORCED"]
         S2["Seccomp: ENFORCED"]
-        S3["Network: BLOCKED"]
-        S4["Fork/Exec: BLOCKED"]
-        S5["Reuse: YES"]
+        S3["Network/Fork/Exec: BLOCKED"]
+        S4["Reuse: YES"]
     end
 
     subgraph Toxic["TOXIC WORKER"]
         T1["Landlock: ENFORCED"]
         T2["Seccomp: SKIPPED"]
-        T3["Network: ALLOWED"]
-        T4["Fork/Exec: ALLOWED"]
-        T5["Reuse: NO"]
+        T3["Network/Fork/Exec: ALLOWED"]
+        T4["Reuse: NO"]
     end
 ```
+
+Toxic workers (e.g., integration tests needing network or subprocesses) skip Seccomp but still have Landlock filesystem isolation.
 
 ### apply_iron_dome
 
 ```rust
-pub fn apply_iron_dome(
-    project_root: &Path,
-    worker_id: u32,
-    is_toxic: bool,
-) -> Result<SandboxStatus> {
-    // Always apply Landlock
-    let status = apply_landlock(project_root, worker_id)?;
+pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> Result<SandboxStatus> {
+    // Landlock is always applied
+    let landlock_status = apply_landlock(project_root, worker_id).unwrap_or(SandboxStatus::NotEnforced);
 
-    // Only apply Seccomp for safe workers
+    // Seccomp is for safe workers only
     if !is_toxic {
-        if let Err(e) = apply_seccomp() {
-            eprintln!("[sandbox] Seccomp failed: {}", e);
-        }
+        let _ = apply_seccomp();
     }
 
-    Ok(status)
+    Ok(landlock_status)
 }
 ```
 
@@ -3146,46 +3803,29 @@ pub fn apply_iron_dome(
 
 ## Graceful Degradation
 
-| Kernel Version | Landlock | Seccomp | Behavior              |
-| :------------- | :------- | :------ | :-------------------- |
-| 5.13+          | Full     | Full    | Complete sandbox      |
-| 5.0-5.12       | None     | Full    | Seccomp only, warning |
-| 3.17-4.x       | None     | Full    | Seccomp only, warning |
-| < 3.17         | None     | None    | No sandbox, warning   |
+The Iron Dome logs warnings and continues with reduced protection on older kernels.
 
-```rust
-fn apply_landlock(...) -> Result<SandboxStatus> {
-    match Ruleset::default().create() {
-        Ok(ruleset) => { /* apply rules */ }
-        Err(e) if e.kind() == ErrorKind::Unsupported => {
-            eprintln!("[sandbox] Landlock not available (kernel < 5.13)");
-            return Ok(SandboxStatus::NotEnforced);
-        }
-        Err(e) => return Err(e.into()),
-    }
-}
-```
+| Kernel | Landlock | Seccomp | Behavior         |
+| :----- | :------- | :------ | :--------------- |
+| 5.13+  | Full     | Full    | Complete sandbox |
+| 5.0+   | None     | Full    | Seccomp only     |
+| < 3.17 | None     | None    | No sandbox       |
 
 ---
 
 ## Security Considerations
 
-| Consideration              | Status    | Notes                        |
-| :------------------------- | :-------- | :--------------------------- |
-| Symlink bypass             | Mitigated | Paths canonicalized          |
-| clone bypass               | By design | Python threading needs clone |
-| Toxic network access       | Allowed   | Seccomp skipped for toxic    |
-| File write outside sandbox | Blocked   | Landlock enforced            |
+- **TOCTOU:** Prevented by atomic `PathFd::new()` handling.
+- **Symlinks:** Mitigated by path canonicalization.
+- **clone:** Allowed for threading; `execve` blocked instead.
+- **Escapes:** `ptrace`, `mount`, and namespaces blocked in Seccomp.
 
 ---
 
 ## Overhead
 
-| Component        | Overhead | Notes                    |
-| :--------------- | :------- | :----------------------- |
-| Landlock setup   | ~100us   | One-time per worker      |
-| Seccomp setup    | ~50us    | One-time per worker      |
-| Runtime overhead | ~0       | Kernel-level enforcement |
+- **Setup:** ~150us one-time per worker.
+- **Runtime:** Near zero (kernel-level enforcement).
 
 ---
 
@@ -3194,168 +3834,193 @@ fn apply_landlock(...) -> Result<SandboxStatus> {
 - [Isolation](isolation.md) - Namespace and OverlayFS setup
 - [Toxicity Analysis](toxicity.md) - How toxicity is determined
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
+- [Configuration](../configuration.md) - pyproject.toml settings
 
 
 ---
 
 
-# Scheduler
+# Scheduler Architecture
 
-The Scheduler dispatches tests to workers using a dual-queue system.
+The Scheduler orchestrates test execution using a **dual-queue priority system** with crash detection and mutex poisoning recovery.
 
 ---
 
 ## Overview
 
-The Scheduler manages test execution with:
+Key capabilities:
 
-1. **Dual queues** for safe and toxic tests
-2. **Worker slot management** for parallelism
-3. **Result collection** with timeout handling
+- **Dual-queue priority** - Safe tests first (Hypervisor Mode), toxic tests last (Isolation Mode)
+- **Worker slot management** - Parallelism based on CPU cores
+- **Crash detection** - Timeout-based stale worker identification
+- **Mutex poisoning recovery** - Prevents panics from worker failures
+- **Deadline-based result collection** - Non-blocking with timeout handling
 
 ```mermaid
 flowchart TB
-    subgraph Input["INPUT"]
-        Tests["RunnableTest[]"]
+    subgraph Input["INPUT PHASE"]
+        Tests["Vec<RunnableTest>"]
+        Populate["populate_queues()"]
     end
 
-    subgraph Scheduler["SCHEDULER"]
-        SafeQ["Safe Queue"]
-        ToxicQ["Toxic Queue"]
-        Slots["Worker Slots"]
-        Dispatch["Dispatch Loop"]
+    subgraph Scheduler["SCHEDULER CORE"]
+        subgraph Queues["DUAL-QUEUE SYSTEM"]
+            SafeQ["Safe Queue<br/>(Hypervisor Mode)"]
+            ToxicQ["Toxic Queue<br/>(Isolation Mode)"]
+        end
+
+        NextTest["next_test()<br/>Safe First Priority"]
+        Slots["Worker Slots<br/>(max_workers)"]
+        Dispatch["dispatch_test()"]
+        Collect["try_collect_result_for_reporter()"]
+        Stale["get_stale_workers()"]
     end
 
-    subgraph Output["OUTPUT"]
-        Results["TestResult[]"]
+    subgraph Output["OUTPUT PHASE"]
+        Results["SchedulerStats"]
+        Reporter["Reporter Events"]
     end
 
-    Tests --> SafeQ
-    Tests --> ToxicQ
-    SafeQ --> Dispatch
-    ToxicQ --> Dispatch
-    Dispatch --> Slots --> Results
+    Tests --> Populate
+    Populate --> SafeQ
+    Populate --> ToxicQ
+    SafeQ --> NextTest
+    ToxicQ --> NextTest
+    NextTest --> Dispatch
+    Dispatch --> Slots
+    Slots --> Collect
+    Collect --> Reporter
+    Stale --> Collect
+    Collect --> Results
 ```
+
+---
+
+## Dual-Queue Architecture
+
+| Mode                | Queue       | Worker Behavior             | Throughput         |
+| ------------------- | ----------- | --------------------------- | ------------------ |
+| **Hypervisor Mode** | Safe Queue  | Reset via snapshot and loop | High (~50us reset) |
+| **Isolation Mode**  | Toxic Queue | Exit after each test        | Lower (~2ms spawn) |
+
+**Why Safe First?** Safe workers reset via userfaultfd in ~50us; toxic workers must exit and respawn (~2ms). Processing safe tests first maximizes snapshot reuse before incurring isolation overhead.
 
 ---
 
 ## Data Structures
 
-### Scheduler
+### Scheduler Struct
 
 ```rust
 pub struct Scheduler {
     cmd_socket: UnixStream,
-    result_socket: UnixStream,
-    safe_queue: VecDeque<RunnableTest>,
-    toxic_queue: VecDeque<RunnableTest>,
-    active_workers: Mutex<HashMap<u32, ActiveWorker>>,
+    result_socket: Arc<Mutex<UnixStream>>,
+    log_capture: Arc<Mutex<LogCapture>>,
+    active_workers: Arc<Mutex<HashMap<u32, ActiveWorker>>>,
     max_workers: usize,
+    debug_socket_path: PathBuf,
+    safe_queue: VecDeque<(u32, RunnableTest)>,
+    toxic_queue: VecDeque<(u32, RunnableTest)>,
 }
 ```
 
-### ActiveWorker
+| Field            | Purpose                                    |
+| ---------------- | ------------------------------------------ |
+| `cmd_socket`     | Sends CMD_FORK/CMD_EXIT to Zygote          |
+| `result_socket`  | Receives TestResult from workers           |
+| `log_capture`    | Per-slot memfd log capture                 |
+| `active_workers` | Tracks in-flight tests for crash detection |
+| `max_workers`    | Maximum concurrent workers                 |
+| `safe_queue`     | Queue of non-toxic tests (Hypervisor Mode) |
+| `toxic_queue`    | Queue of toxic tests (Isolation Mode)      |
+
+### ActiveWorker Struct
 
 ```rust
-pub struct ActiveWorker {
-    pub test_id: u32,
-    pub start_time: Instant,
-    pub pid: Option<i32>,
+struct ActiveWorker {
+    test_name: String,
+    slot: usize,
+    start_time: Instant,
 }
 ```
 
----
-
-## Queue Priority
-
-Safe tests are dispatched first to maximize worker reuse:
-
-```mermaid
-flowchart LR
-    subgraph Priority["DISPATCH PRIORITY"]
-        P1["1. Safe tests (reusable workers)"]
-        P2["2. Toxic tests (disposable workers)"]
-    end
-
-    P1 --> P2
-```
-
-### Rationale
-
-- **Safe workers** reset in ~50us and continue
-- **Toxic workers** exit and must be replaced (~2ms)
-
-Processing safe tests first maximizes the benefit of snapshot-based reset.
-
----
-
-## Dispatch Loop
+### SchedulerStats Struct
 
 ```rust
-impl Scheduler {
-    pub fn run(&mut self, reporter: &mut dyn Reporter) -> Result<Vec<TestResult>> {
-        let mut results = Vec::new();
-
-        while !self.safe_queue.is_empty() || !self.toxic_queue.is_empty() {
-            // Wait for available slot
-            while self.active_count() >= self.max_workers {
-                if let Some(result) = self.try_collect_result()? {
-                    results.push(result);
-                    reporter.on_test_finished(&result);
-                }
-            }
-
-            // Dispatch next test (safe first)
-            let test = self.safe_queue.pop_front()
-                .or_else(|| self.toxic_queue.pop_front());
-
-            if let Some(test) = test {
-                self.dispatch(test)?;
-            }
-        }
-
-        // Collect remaining results
-        while self.active_count() > 0 {
-            if let Some(result) = self.try_collect_result()? {
-                results.push(result);
-                reporter.on_test_finished(&result);
-            }
-        }
-
-        Ok(results)
-    }
+pub struct SchedulerStats {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub duration_ms: u64,
 }
 ```
 
 ---
 
-## Test Dispatch
+## Queue Population and Priority Dispatch
+
+`populate_queues()` sorts tests into queues based on toxicity. `next_test()` implements priority dispatch: safe tests first (high throughput via reset), then toxic tests (containment via exit).
 
 ```rust
-fn dispatch(&mut self, test: RunnableTest) -> Result<()> {
-    let payload = TestPayload {
-        test_id: self.next_test_id(),
-        file_path: test.file_path.to_string_lossy().to_string(),
-        test_name: test.test_name.clone(),
-        is_async: test.is_async,
-        fixtures: test.fixtures.iter().map(FixtureInfo::from).collect(),
-        log_fd: self.log_capture.get_fd()?,
-        debug_socket_path: self.debug_socket_path.clone(),
-        is_toxic: test.is_toxic,
-    };
+fn next_test(&mut self) -> Option<(u32, RunnableTest)> {
+    self.safe_queue.pop_front().or_else(|| self.toxic_queue.pop_front())
+}
+```
 
-    // Send to Zygote
+---
+
+## Mutex Poisoning Recovery
+
+The scheduler uses a **recovery pattern** to prevent panics if a thread holding a lock panics:
+
+```rust
+.lock().unwrap_or_else(|e| e.into_inner())
+```
+
+This extracts the underlying `MutexGuard` from a `PoisonError`, allowing the scheduler to continue operating even after worker failures. This is applied to `active_workers`, `result_socket`, and `log_capture`.
+
+---
+
+## Stale Worker Detection
+
+Crash detection is implemented via timeout-based identification:
+
+```rust
+fn get_stale_workers(&self, timeout: Duration) -> Vec<(u32, String, usize)> {
+    let workers = self.active_workers.lock().unwrap_or_else(|e| e.into_inner());
+    workers.iter()
+        .filter(|(_, w)| w.start_time.elapsed() > timeout)
+        .map(|(id, w)| (*id, w.test_name.clone(), w.slot))
+        .collect()
+}
+```
+
+| Timeout                | Value      | Purpose                             |
+| ---------------------- | ---------- | ----------------------------------- |
+| Socket read timeout    | 5 seconds  | Result socket timeout               |
+| Stale worker threshold | 3 seconds  | Threshold for `get_stale_workers()` |
+| Collection deadline    | 10 seconds | Maximum wait for remaining results  |
+
+---
+
+## Test Dispatch Protocol
+
+`dispatch_test()` serializes a `TestPayload` and sends it to the Zygote via `cmd_socket`:
+
+```rust
+fn dispatch_test(&mut self, test: &RunnableTest, test_id: u32, slot: usize) -> Result<()> {
+    let log_fd = self.log_capture.lock().unwrap_or_else(|e| e.into_inner()).get_fd(slot).unwrap_or(-1);
+    let payload = TestPayload { /* ... */ };
+    let payload_bytes = bincode::serialize(&payload)?;
+    let len = payload_bytes.len() as u32;
+
     self.cmd_socket.write_all(&[CMD_FORK])?;
-    let encoded = encode_with_length(&payload)?;
-    self.cmd_socket.write_all(&encoded)?;
+    self.cmd_socket.write_all(&len.to_le_bytes())?;
+    self.cmd_socket.write_all(&payload_bytes)?;
 
-    // Track active worker
-    self.active_workers.lock().insert(payload.test_id, ActiveWorker {
-        test_id: payload.test_id,
-        start_time: Instant::now(),
-        pid: None,
-    });
-
+    let mut pid_buf = [0u8; 4];
+    self.cmd_socket.read_exact(&mut pid_buf)?;
+    // ... track in active_workers
     Ok(())
 }
 ```
@@ -3364,49 +4029,23 @@ fn dispatch(&mut self, test: RunnableTest) -> Result<()> {
 
 ## Result Collection
 
-```rust
-fn try_collect_result(&mut self) -> Result<Option<TestResult>> {
-    self.result_socket.set_read_timeout(Some(Duration::from_millis(100)))?;
-
-    match decode_with_length::<TestResult>(&mut self.result_socket) {
-        Ok(result) => {
-            self.active_workers.lock().remove(&result.test_id);
-            Ok(Some(result))
-        }
-        Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
-        Err(e) if e.kind() == ErrorKind::TimedOut => {
-            self.check_stale_workers()?;
-            Ok(None)
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-```
-
----
-
-## Crash Detection
-
-Workers that don't respond within the timeout are marked as crashed:
+`try_collect_result_for_reporter()` handles non-blocking result retrieval and log cleanup:
 
 ```rust
-fn check_stale_workers(&mut self) -> Result<()> {
-    let stale_threshold = Duration::from_secs(3);
-    let now = Instant::now();
-
-    let stale: Vec<u32> = self.active_workers.lock()
-        .iter()
-        .filter(|(_, w)| now.duration_since(w.start_time) > stale_threshold)
-        .map(|(id, _)| *id)
-        .collect();
-
-    for test_id in stale {
-        self.active_workers.lock().remove(&test_id);
-        // Report as crashed
-        self.report_crash(test_id)?;
+fn try_collect_result_for_reporter(&self) -> Option<(String, &'static str, u64, Option<String>)> {
+    let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
+    let mut len_buf = [0u8; 4];
+    if socket.read_exact(&mut len_buf).is_ok() {
+        let len = u32::from_le_bytes(len_buf) as usize;
+        let mut result_buf = vec![0u8; len];
+        if socket.read_exact(&mut result_buf).is_ok() {
+            if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+                // ... remove worker, clear logs, format for reporter
+                return Some((test_name, status, duration_ms, msg));
+            }
+        }
     }
-
-    Ok(())
+    None
 }
 ```
 
@@ -3414,51 +4053,34 @@ fn check_stale_workers(&mut self) -> Result<()> {
 
 ## Slot Management
 
-The number of concurrent workers is limited:
+Worker slots are assigned using modular arithmetic to ensure even distribution:
 
 ```rust
-fn active_count(&self) -> usize {
-    self.active_workers.lock().len()
-}
+let slot = test_id as usize % self.max_workers;
 ```
 
-`max_workers` is typically set to `num_cpus` or configured via `[tool.tach].workers`.
+The scheduler blocks when `active_workers.len() >= max_workers`, waiting for results to free up slots.
 
 ---
 
-## Log Capture
+## Log Capture Integration
 
-Each worker slot has a dedicated memfd for stdout/stderr:
+Each worker slot has a dedicated memfd for stdout/stderr. The scheduler:
 
-```rust
-pub struct LogCapture {
-    slots: Vec<OwnedFd>,
-    slot_count: usize,
-}
-
-impl LogCapture {
-    pub fn get_fd(&mut self) -> Result<i32> {
-        // Round-robin slot assignment
-        let slot = self.next_slot % self.slot_count;
-        self.next_slot += 1;
-        Ok(self.slots[slot].as_raw_fd())
-    }
-}
-```
+1. Passes the log FD to the worker via `TestPayload.log_fd`
+2. Clears the log slot after collecting the result via `log_capture.read_and_clear(slot)`
 
 ---
 
 ## Synchronous Design
 
-The current scheduler is **synchronous** (not async/tokio):
+The scheduler uses **synchronous blocking I/O** (with timeouts) instead of async/tokio.
 
-```rust
-// Blocking socket operations
-self.result_socket.set_read_timeout(Some(Duration::from_millis(100)))?;
-let result = decode_with_length::<TestResult>(&mut self.result_socket)?;
-```
+**Rationale:**
 
-This simplifies the implementation while still achieving high throughput due to the fast worker reset times.
+- **Complexity:** Lower overhead, no async runtime needed.
+- **Throughput:** Worker reset (~50us) is the bottleneck, not I/O.
+- **Debugging:** Straightforward stack traces.
 
 ---
 
@@ -3470,38 +4092,46 @@ sequenceDiagram
     participant Sched as Scheduler
     participant Zyg as Zygote
     participant Work as Worker
+    participant Rep as Reporter
 
     Main->>Sched: run(tests, reporter)
+    Sched->>Sched: populate_queues(tests)
+    Sched->>Rep: on_run_start(total)
 
-    loop For each test
-        Sched->>Sched: pop from queue
+    loop For each test (safe first, then toxic)
+        Sched->>Sched: next_test()
+        alt At max capacity
+            Sched->>Sched: try_collect_result_for_reporter()
+            Sched->>Rep: on_test_finished()
+        end
+        Sched->>Rep: on_test_start()
         Sched->>Zyg: CMD_FORK + TestPayload
-        Zyg->>Work: fork/dispatch
-        Work->>Work: run_test()
+        Zyg->>Work: fork/run_test()
         Work->>Zyg: TestResult
         Zyg->>Sched: TestResult
-        Sched->>Main: reporter.on_test_finished()
     end
 
-    Sched->>Main: Vec<TestResult>
+    loop Collect remaining with deadline
+        alt Result available
+            Sched->>Sched: try_collect_result_for_reporter()
+            Sched->>Rep: on_test_finished()
+        else Timeout
+            Sched->>Sched: get_stale_workers()
+            Sched->>Rep: on_test_finished(CRASHED)
+        end
+    end
+    Sched->>Rep: on_run_finished()
 ```
-
----
-
-## Configuration
-
-| Setting   | Source                | Default    |
-| :-------- | :-------------------- | :--------- |
-| `workers` | `[tool.tach].workers` | `num_cpus` |
-| `timeout` | `[tool.tach].timeout` | 60 seconds |
 
 ---
 
 ## Related Documentation
 
-- [IPC Protocol](protocol.md) - Message format
-- [Zygote Lifecycle](zygote.md) - Command handling
-- [Reporter](reporter.md) - Result reporting
+- [IPC Protocol](protocol.md)
+- [Zygote Lifecycle](zygote.md)
+- [Reporter](reporter.md)
+- [Sandbox](sandbox.md)
+- [Coverage](coverage.md)
 
 
 ---
@@ -4633,123 +5263,73 @@ Complete reference for Tach internal APIs and data structures.
 
 ### TestCase
 
-Represents a discovered test function.
-
 ```rust
 pub struct TestCase {
-    pub name: String,
-    pub is_async: bool,
-    pub fixtures: Vec<String>,
-    pub markers: Vec<String>,
-    pub lineno: usize,
+    pub name: String,        // Function name (e.g., `test_foo`)
+    pub is_async: bool,      // Whether function is async
+    pub fixtures: Vec<String>, // Required fixture names
+    pub markers: Vec<String>,  // Applied markers
+    pub lineno: usize,       // Line number in source file
 }
 ```
-
-| Field      | Type          | Description                      |
-| :--------- | :------------ | :------------------------------- |
-| `name`     | `String`      | Function name (e.g., `test_foo`) |
-| `is_async` | `bool`        | Whether function is async        |
-| `fixtures` | `Vec<String>` | Required fixture names           |
-| `markers`  | `Vec<String>` | Applied markers                  |
-| `lineno`   | `usize`       | Line number in source file       |
 
 ---
 
 ### TestModule
 
-Represents a parsed test file.
-
 ```rust
 pub struct TestModule {
-    pub path: PathBuf,
-    pub tests: Vec<TestCase>,
-    pub fixtures: Vec<FixtureDefinition>,
-    pub imports: Vec<String>,
+    pub path: PathBuf,                   // Absolute path to file
+    pub tests: Vec<TestCase>,            // Discovered test functions
+    pub fixtures: Vec<FixtureDefinition>, // Defined fixtures
+    pub imports: Vec<String>,            // Import statements
 }
 ```
-
-| Field      | Type                     | Description               |
-| :--------- | :----------------------- | :------------------------ |
-| `path`     | `PathBuf`                | Absolute path to file     |
-| `tests`    | `Vec<TestCase>`          | Discovered test functions |
-| `fixtures` | `Vec<FixtureDefinition>` | Defined fixtures          |
-| `imports`  | `Vec<String>`            | Import statements         |
 
 ---
 
 ### FixtureDefinition
 
-Represents a fixture definition.
-
 ```rust
 pub struct FixtureDefinition {
-    pub name: String,
-    pub scope: FixtureScope,
-    pub dependencies: Vec<String>,
-    pub is_async: bool,
-    pub autouse: bool,
+    pub name: String,              // Fixture function name
+    pub scope: FixtureScope,       // Lifetime scope
+    pub dependencies: Vec<String>, // Other fixtures this depends on
+    pub is_async: bool,            // Whether fixture is async
+    pub autouse: bool,             // Whether auto-applied
 }
 ```
-
-| Field          | Type           | Description                    |
-| :------------- | :------------- | :----------------------------- |
-| `name`         | `String`       | Fixture function name          |
-| `scope`        | `FixtureScope` | Lifetime scope                 |
-| `dependencies` | `Vec<String>`  | Other fixtures this depends on |
-| `is_async`     | `bool`         | Whether fixture is async       |
-| `autouse`      | `bool`         | Whether auto-applied           |
 
 ---
 
 ### FixtureScope
 
-Enum for fixture lifetime.
-
 ```rust
 pub enum FixtureScope {
-    Function,
-    Class,
-    Module,
-    Session,
+    Function,  // Created per test (default)
+    Class,     // Shared within test class
+    Module,    // Shared within test module
+    Session,   // Shared across entire session
 }
 ```
-
-| Variant    | Description                  |
-| :--------- | :--------------------------- |
-| `Function` | Created per test (default)   |
-| `Class`    | Shared within test class     |
-| `Module`   | Shared within test module    |
-| `Session`  | Shared across entire session |
 
 ---
 
 ### RunnableTest
 
-Test ready for execution with resolved fixtures.
-
 ```rust
 pub struct RunnableTest {
-    pub file_path: PathBuf,
-    pub test_name: String,
-    pub is_async: bool,
-    pub fixtures: Vec<ResolvedFixture>,
-    pub is_toxic: bool,
+    pub file_path: PathBuf,              // Path to test file
+    pub test_name: String,               // Fully qualified name (node ID)
+    pub is_async: bool,                  // Whether test is async
+    pub fixtures: Vec<ResolvedFixture>,  // Resolved fixture chain
+    pub is_toxic: bool,                  // Requires worker restart
 }
 ```
-
-| Field       | Type                   | Description                    |
-| :---------- | :--------------------- | :----------------------------- |
-| `file_path` | `PathBuf`              | Path to test file              |
-| `test_name` | `String`               | Fully qualified name (node ID) |
-| `is_async`  | `bool`                 | Whether test is async          |
-| `fixtures`  | `Vec<ResolvedFixture>` | Resolved fixture chain         |
-| `is_toxic`  | `bool`                 | Requires worker restart        |
 
 ---
 
 ### ResolvedFixture
-
-Fixture with source location resolved.
 
 ```rust
 pub struct ResolvedFixture {
@@ -4771,27 +5351,16 @@ Sent from Supervisor to Worker.
 ```rust
 #[derive(Serialize, Deserialize)]
 pub struct TestPayload {
-    pub test_id: u32,
-    pub file_path: String,
-    pub test_name: String,
+    pub test_id: u32,              // Unique test identifier
+    pub file_path: String,         // Path to test file
+    pub test_name: String,         // Fully qualified test name
     pub is_async: bool,
     pub fixtures: Vec<FixtureInfo>,
-    pub log_fd: i32,
-    pub debug_socket_path: String,
-    pub is_toxic: bool,
+    pub log_fd: i32,               // File descriptor for logging
+    pub debug_socket_path: String, // Path for pdb tunneling
+    pub is_toxic: bool,            // Whether worker should exit
 }
 ```
-
-| Field               | Type               | Description                 |
-| :------------------ | :----------------- | :-------------------------- |
-| `test_id`           | `u32`              | Unique test identifier      |
-| `file_path`         | `String`           | Path to test file           |
-| `test_name`         | `String`           | Fully qualified test name   |
-| `is_async`          | `bool`             | Whether test is async       |
-| `fixtures`          | `Vec<FixtureInfo>` | Required fixture metadata   |
-| `log_fd`            | `i32`              | File descriptor for logging |
-| `debug_socket_path` | `String`           | Path for pdb tunneling      |
-| `is_toxic`          | `bool`             | Whether worker should exit  |
 
 ---
 
@@ -4802,25 +5371,16 @@ Sent from Worker to Supervisor.
 ```rust
 #[derive(Serialize, Deserialize)]
 pub struct TestResult {
-    pub test_id: u32,
-    pub status: u8,
-    pub duration_ns: u64,
-    pub message: String,
+    pub test_id: u32,       // Matching test identifier
+    pub status: u8,         // Status code (see below)
+    pub duration_ns: u64,   // Execution time in ns
+    pub message: String,    // Error message if failed
 }
 ```
-
-| Field         | Type     | Description              |
-| :------------ | :------- | :----------------------- |
-| `test_id`     | `u32`    | Matching test identifier |
-| `status`      | `u8`     | Status code (see below)  |
-| `duration_ns` | `u64`    | Execution time in ns     |
-| `message`     | `String` | Error message if failed  |
 
 ---
 
 ### FixtureInfo
-
-Fixture metadata for test execution.
 
 ```rust
 #[derive(Serialize, Deserialize)]
@@ -4857,61 +5417,241 @@ pub struct FixtureInfo {
 
 ---
 
-## Coverage Structures
+## Coverage Module API
+
+High-performance coverage collection using shared memory ring buffers and lock-free atomic operations.
+
+### Constants
+
+```rust
+pub const DEFAULT_CAPACITY: usize = 262_144;  // 4MB total (16 bytes/entry)
+pub const HEADER_SIZE: usize = 64;            // Cache-line aligned
+pub const ENTRY_SIZE: usize = 16;
+pub const MEMFD_NAME: &str = "tach_coverage";
+pub const MAPPING_CAPACITY: usize = 8_192;
+pub const MAPPING_ENTRY_SIZE: usize = 256;
+pub const MAPPING_MEMFD_NAME: &str = "tach_mapping";
+```
+
+---
 
 ### RingBufferHeader
 
-Shared memory buffer header.
-
 ```rust
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct RingBufferHeader {
-    pub write_pos: AtomicU64,
-    pub read_pos: AtomicU64,
-    pub capacity: u64,
-    pub overflow_count: AtomicU64,
+    pub write_idx: AtomicU64,     // Next write position
+    pub read_idx: AtomicU64,      // Next read position
+    pub capacity: u64,            // Buffer capacity in entries
+    pub overflow_count: AtomicU64, // Number of dropped entries
+    _padding: [u8; 32],
+}
+
+impl RingBufferHeader {
+    #[inline] pub fn is_full(&self) -> bool;
+    #[inline] pub fn available(&self) -> u64;
 }
 ```
-
-| Field            | Type        | Description                |
-| :--------------- | :---------- | :------------------------- |
-| `write_pos`      | `AtomicU64` | Next write position        |
-| `read_pos`       | `AtomicU64` | Next read position         |
-| `capacity`       | `u64`       | Buffer capacity in entries |
-| `overflow_count` | `AtomicU64` | Number of dropped entries  |
 
 ---
 
 ### CoverageEntry
 
-Single coverage event.
-
 ```rust
-#[repr(C)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct CoverageEntry {
-    pub file_id: u32,
-    pub lineno: u32,
+    pub code_id: u64,  // Memory address of code object
+    pub lineno: u32,   // Line number executed
+    pub flags: u32,    // Event type (LINE=0x01, CALL=0x02, RETURN=0x04)
+}
+
+impl CoverageEntry {
+    #[inline] pub fn line(code_id: u64, lineno: u32) -> Self;
 }
 ```
-
-| Field     | Type  | Description          |
-| :-------- | :---- | :------------------- |
-| `file_id` | `u32` | Interned file ID     |
-| `lineno`  | `u32` | Line number executed |
 
 ---
 
 ### MappingEntry
 
-File ID to path mapping.
+```rust
+#[repr(C, align(8))]
+pub struct MappingEntry {
+    pub code_id: u64,        // Memory address of code object
+    pub filename_len: u16,   // Length of filename (max 240)
+    pub _padding: [u8; 6],
+    pub filename: [u8; 240], // UTF-8 filename, left-truncated if long
+}
+
+impl MappingEntry {
+    pub fn new(code_id: u64, filename: &str) -> Self;
+    pub fn filename(&self) -> String;
+}
+```
+
+---
+
+### CoverageRingBuffer
+
+Shared memory ring buffer via `memfd_create` + `mmap` for zero-copy IPC.
 
 ```rust
-#[repr(C)]
-pub struct MappingEntry {
-    pub file_id: u32,
-    pub path_len: u32,
-    pub path: [u8; 256],
+pub struct CoverageRingBuffer {
+    ptr: *mut u8,
+    size: usize,
+    fd: i32,
+    capacity: usize,
 }
+
+unsafe impl Send for CoverageRingBuffer {}
+unsafe impl Sync for CoverageRingBuffer {}
+
+impl CoverageRingBuffer {
+    pub fn new(capacity: usize) -> Result<Self>;
+    pub fn fd(&self) -> i32;
+    #[inline] pub fn header(&self) -> &RingBufferHeader;
+    #[inline] pub fn header_mut(&self) -> &mut RingBufferHeader;
+
+    /// Write entry using lock-free CAS loop. Returns false if buffer full.
+    #[inline] pub fn write(&self, entry: CoverageEntry) -> bool;
+
+    /// Drain up to max_entries into out vector. Returns count read.
+    pub fn drain(&self, out: &mut Vec<CoverageEntry>, max_entries: usize) -> usize;
+
+    pub fn overflow_count(&self) -> u64;
+    pub fn base_addr(&self) -> usize;
+    pub fn region_size(&self) -> usize;
+}
+```
+
+---
+
+### MappingRingBuffer
+
+Similar to `CoverageRingBuffer` but with 256-byte entries for filenames.
+
+```rust
+pub struct MappingRingBuffer { /* same fields */ }
+
+impl MappingRingBuffer {
+    pub fn new(capacity: usize) -> Result<Self>;
+    #[inline] pub fn header(&self) -> &RingBufferHeader;
+    #[inline] pub fn write(&self, entry: MappingEntry) -> bool;
+    pub fn drain(&self, out: &mut Vec<MappingEntry>, max_entries: usize) -> usize;
+    pub fn overflow_count(&self) -> u64;
+}
+```
+
+---
+
+### CoverageAggregator
+
+Drains ring buffers and accumulates coverage data in a dedicated thread.
+
+```rust
+pub type CoverageData = HashMap<(String, u32), u64>;
+
+pub struct CoverageAggregator {
+    data: Arc<Mutex<CoverageData>>,
+    code_map: Arc<RwLock<HashMap<u64, String>>>,
+    stop_flag: Arc<AtomicBool>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl CoverageAggregator {
+    pub fn new() -> Self;
+    pub fn start(&mut self, poll_interval: Duration);
+    pub fn register_code(&self, code_id: u64, filename: String);
+    pub fn stop(&mut self);
+    pub fn get_data(&self) -> CoverageData;
+    pub fn take_data(&mut self) -> CoverageData;  // Zero-copy extraction
+    pub fn covered_lines(&self) -> usize;
+    pub fn total_hits(&self) -> u64;
+}
+```
+
+---
+
+### Global Buffer Functions
+
+```rust
+pub fn init_coverage_buffer(capacity: usize) -> Result<&'static CoverageRingBuffer>;
+pub fn get_coverage_buffer() -> Option<&'static CoverageRingBuffer>;
+pub fn is_coverage_enabled() -> bool;
+pub fn init_mapping_buffer(capacity: usize) -> Result<&'static MappingRingBuffer>;
+pub fn get_mapping_buffer() -> Option<&'static MappingRingBuffer>;
+```
+
+---
+
+## Namespace Module API
+
+Worker isolation using Linux Namespaces and OverlayFS.
+
+### Main Function
+
+```rust
+/// Set up complete isolation (Iron Dome).
+/// Sequence: unshare -> private mounts -> create dirs -> RO root -> tmpfs -> overlays
+/// Set TACH_NO_ISOLATION=1 to disable.
+pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()>;
+```
+
+### Helper Functions
+
+```rust
+#[inline] pub fn worker_base_dir(worker_id: u32) -> PathBuf;
+// Returns: /run/tach/worker_{worker_id}
+
+pub fn tmp_overlay_options(base: &Path) -> String;
+// Format: lowerdir=/tmp,upperdir={base}/tmp_upper,workdir={base}/tmp_work
+
+pub fn project_overlay_options(base: &Path, project_root: &Path) -> String;
+// Format: lowerdir={project_root},upperdir={base}/proj_upper,workdir={base}/proj_work
+
+pub fn is_isolation_disabled() -> bool;
+// Returns true only if TACH_NO_ISOLATION=1
+```
+
+### Overlay Directory Structure
+
+```
+/run/tach/
+  worker_0/
+    tmp_upper/     # Writable layer for /tmp
+    tmp_work/      # OverlayFS work directory
+    proj_upper/    # Writable layer for project
+    proj_work/     # OverlayFS work directory
+```
+
+---
+
+## LogCapture API
+
+Non-blocking stdout/stderr capture using memfd.
+
+```rust
+pub const LOG_BUFFER_SIZE: usize = 1024 * 1024;  // 1MB per slot
+
+pub struct LogCapture {
+    fds: HashMap<usize, RawFd>,
+    num_slots: usize,
+}
+
+impl LogCapture {
+    pub fn new(max_slots: usize) -> Result<Self>;
+    pub fn get_fd(&self, slot: usize) -> Option<RawFd>;
+    pub fn slot_count(&self) -> usize;
+    pub fn read_and_clear(&self, slot: usize) -> Result<String>;
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self);  // Closes all file descriptors
+}
+
+/// Redirect stdout/stderr to fd (call in worker after fork).
+pub fn redirect_output(fd: RawFd) -> Result<()>;
 ```
 
 ---
@@ -4919,8 +5659,6 @@ pub struct MappingEntry {
 ## Toxicity Structures
 
 ### ToxicityReport
-
-Module toxicity classification.
 
 ```rust
 pub struct ToxicityReport {
@@ -4930,17 +5668,7 @@ pub struct ToxicityReport {
 }
 ```
 
-| Field             | Type             | Description                     |
-| :---------------- | :--------------- | :------------------------------ |
-| `is_toxic`        | `bool`           | Whether module is toxic         |
-| `reason`          | `Option<String>` | Direct toxicity reason          |
-| `propagated_from` | `Vec<String>`    | Modules that caused propagation |
-
----
-
 ### ToxicityGraph
-
-Dependency graph for toxicity propagation.
 
 ```rust
 pub struct ToxicityGraph {
@@ -4955,29 +5683,16 @@ pub struct ToxicityGraph {
 
 ### MemoryRegion
 
-Captured memory region.
-
 ```rust
 pub struct MemoryRegion {
-    pub start: usize,
-    pub end: usize,
-    pub prot: i32,
-    pub path: Option<String>,
+    pub start: usize,        // Start address
+    pub end: usize,          // End address
+    pub prot: i32,           // Protection flags (mmap)
+    pub path: Option<String>, // Backing file path if any
 }
 ```
 
-| Field   | Type             | Description              |
-| :------ | :--------------- | :----------------------- |
-| `start` | `usize`          | Start address            |
-| `end`   | `usize`          | End address              |
-| `prot`  | `i32`            | Protection flags (mmap)  |
-| `path`  | `Option<String>` | Backing file path if any |
-
----
-
 ### WorkerSnapshot
-
-Complete worker memory state.
 
 ```rust
 pub struct WorkerSnapshot {
@@ -4987,11 +5702,7 @@ pub struct WorkerSnapshot {
 }
 ```
 
----
-
 ### AlignedSegment
-
-Page-aligned data segment.
 
 ```rust
 pub struct AlignedSegment {
@@ -5004,16 +5715,12 @@ pub struct AlignedSegment {
 
 ## Sandbox Types
 
-### SandboxStatus
-
-Result of sandbox application.
-
 ```rust
 pub enum SandboxStatus {
-    Full,           // Landlock + Seccomp
-    LandlockOnly,   // Landlock without Seccomp
-    Degraded,       // Partial isolation
-    Disabled,       // No isolation
+    Full,         // Landlock + Seccomp
+    LandlockOnly, // Landlock without Seccomp
+    Degraded,     // Partial isolation
+    Disabled,     // No isolation
 }
 ```
 
@@ -5022,8 +5729,6 @@ pub enum SandboxStatus {
 ## Configuration Structures
 
 ### TachConfig
-
-Parsed configuration.
 
 ```rust
 pub struct TachConfig {
@@ -5035,11 +5740,7 @@ pub struct TachConfig {
 }
 ```
 
----
-
 ### CoverageConfig
-
-Coverage collection settings.
 
 ```rust
 pub struct CoverageConfig {
@@ -5051,11 +5752,7 @@ pub struct CoverageConfig {
 }
 ```
 
----
-
 ### IsolationStrategy
-
-Worker isolation mode.
 
 ```rust
 pub enum IsolationStrategy {
@@ -5069,8 +5766,6 @@ pub enum IsolationStrategy {
 
 ## Reporter Trait
 
-Interface for test result reporting.
-
 ```rust
 pub trait Reporter {
     fn on_run_start(&mut self, total: usize);
@@ -5080,20 +5775,11 @@ pub trait Reporter {
 }
 ```
 
-| Method             | Description                     |
-| :----------------- | :------------------------------ |
-| `on_run_start`     | Called before first test        |
-| `on_test_started`  | Called when test begins         |
-| `on_test_finished` | Called when test completes      |
-| `on_run_finished`  | Called after all tests complete |
-
 ---
 
 ## FFI Functions
 
-### Python-Callable Functions
-
-Exposed via PyO3 for the Python harness.
+### Python-Callable Functions (PyO3)
 
 | Function                | Signature                   | Description                 |
 | :---------------------- | :-------------------------- | :-------------------------- |
@@ -5105,11 +5791,26 @@ Exposed via PyO3 for the Python harness.
 | `quiesce_allocator`     | `()`                        | Flush jemalloc caches       |
 | `inject_entropy`        | `() -> bool`                | Refresh random state        |
 
----
+### Coverage PyO3 Functions
+
+```rust
+#[pyfunction]
+pub fn py_record_line(py: Python<'_>, code_id: u64, lineno: u32) -> bool;
+
+#[pyfunction]
+pub fn py_is_coverage_enabled() -> bool;
+
+#[pyfunction]
+pub fn py_get_coverage_overflow() -> u64;
+
+#[pyfunction]
+pub fn py_record_py_start(py: Python<'_>, code_id: u64, filename: String);
+
+#[pyfunction]
+pub fn py_get_mapping_overflow() -> u64;
+```
 
 ### Internal FFI
-
-Used between Rust components.
 
 | Function             | Description                            |
 | :------------------- | :------------------------------------- |
@@ -5122,25 +5823,7 @@ Used between Rust components.
 
 ## Environment Variables
 
-### Build-Time
-
-| Variable      | Description             |
-| :------------ | :---------------------- |
-| `PYO3_PYTHON` | Python interpreter path |
-| `MALLOC_CONF` | Jemalloc configuration  |
-
-### Runtime
-
-| Variable               | Description                       |
-| :--------------------- | :-------------------------------- |
-| `TACH_FORMAT`          | Output format (`human` or `json`) |
-| `TACH_JUNIT_XML`       | JUnit XML output path             |
-| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   |
-| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)   |
-| `TACH_TARGET_PATH`     | Test path (set internally)        |
-| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally) |
-| `RUST_LOG`             | Log level for debugging           |
-| `CI`                   | Detected for reporter selection   |
+See [Configuration Reference](configuration.md#environment-variables) for complete environment variable documentation.
 
 ---
 
@@ -5172,7 +5855,7 @@ Used between Rust components.
 </testsuites>
 ```
 
-### NDJSON (JSON Lines)
+### NDJSON
 
 ```json
 {"event":"run_start","total":100}
@@ -5380,6 +6063,62 @@ These variables are set before test execution.
 
 ---
 
+## Security: Environment Variable Denylist
+
+Tach blocks dangerous environment variables in `[tool.pytest_env]` to prevent supply chain attacks via compromised `pyproject.toml` files.
+
+### Blocked Variables
+
+| Variable          | Category              | Risk                                                               |
+| :---------------- | :-------------------- | :----------------------------------------------------------------- |
+| `LD_PRELOAD`      | Library Injection     | Loads arbitrary shared libraries before all others                 |
+| `LD_LIBRARY_PATH` | Library Injection     | Redirects library loading to attacker-controlled paths             |
+| `LD_AUDIT`        | Library Injection     | Loads audit libraries that can intercept all function calls        |
+| `LD_DEBUG`        | Library Injection     | Enables debug output that can leak sensitive information           |
+| `PYTHONPATH`      | Python Hijacking      | Injects malicious Python modules into import path                  |
+| `PYTHONHOME`      | Python Hijacking      | Redirects Python installation to attacker-controlled location      |
+| `PYTHONSTARTUP`   | Python Hijacking      | Executes arbitrary Python code on interpreter startup              |
+| `PYTHONMALLOC`    | Allocator Override    | Overrides memory allocator, breaking jemalloc snapshot consistency |
+| `PATH`            | Path Manipulation     | Redirects command execution to malicious binaries                  |
+| `HOME`            | Path Manipulation     | Changes home directory, affecting config file loading              |
+| `USER`            | Identity Manipulation | Spoofs user identity for permission checks                         |
+
+### Why These Are Dangerous
+
+- **Library Injection** (`LD_*`): Allows arbitrary code execution by loading malicious shared libraries before your application starts.
+- **Python Hijacking** (`PYTHON*`): Enables module injection and startup code execution. `PYTHONMALLOC` is critical for Tach since overriding the allocator breaks jemalloc snapshot consistency.
+- **Path Manipulation** (`PATH`, `HOME`, `USER`): Redirects command execution or config file loading to attacker-controlled locations.
+
+Matching is **case-insensitive** to prevent bypass attempts (e.g., `ld_preload` is also blocked).
+
+### Warning Message
+
+When a blocked variable is detected, Tach emits a warning and skips it:
+
+```
+[config] WARNING: Blocked dangerous env var from pyproject.toml: LD_PRELOAD
+```
+
+### Workarounds
+
+If you legitimately need these variables, set them via shell environment (not blocked):
+
+```bash
+# Shell environment is trusted - only pyproject.toml parsing is restricted
+export PYTHONPATH="/my/custom/path"
+tach-core .
+```
+
+Or use a wrapper script:
+
+```bash
+#!/bin/bash
+export PYTHONPATH="/my/custom/path"
+exec tach-core "$@"
+```
+
+---
+
 ## Isolation Strategies
 
 | Strategy   | Description                                 |
@@ -5482,121 +6221,111 @@ test:
 
 # Development Guide
 
-Guide for building, testing, and contributing to Tach.
+Guide for building, testing, and contributing to Tach - the Runtime Hypervisor for Python tests.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Version                    |
-| :---------- | :------------------------- |
-| Rust        | 1.75+                      |
-| Python      | 3.10+ (3.12+ for coverage) |
-| Linux       | Kernel 5.13+               |
-| Build tools | gcc, make, autoconf        |
+| Requirement | Version                    | Notes                         |
+| :---------- | :------------------------- | :---------------------------- |
+| Rust        | 1.75+                      | Async traits, modern APIs     |
+| Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669         |
+| Linux       | Kernel 5.13+               | Landlock filesystem isolation |
+| Build tools | gcc, make, autoconf        | Jemalloc compilation          |
+| iproute2    | Any                        | Network namespace setup       |
+
+**Optional:** perf (profiling), strace (debugging), valgrind (memory leaks)
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/user/tach-core.git
-cd tach-core
-
-# Setup Python virtual environment
-python -m venv .venv
-source .venv/bin/activate
-pip install pytest
-
-# Build
-export PYO3_PYTHON=$(which python)
-cargo build
-
-# Run tests
+git clone https://github.com/user/tach-core.git && cd tach-core
+python -m venv .venv && source .venv/bin/activate && pip install pytest
+export PYO3_PYTHON=$(which python) && cargo build
 cargo test --lib
+```
+
+### Environment Variables
+
+| Variable            | Purpose                           |
+| :------------------ | :-------------------------------- |
+| `PYO3_PYTHON`       | Python interpreter path for PyO3  |
+| `TACH_NO_ISOLATION` | Skip filesystem/network isolation |
+| `TACH_FORMAT`       | Output format (human/json)        |
+| `TACH_COVERAGE`     | Enable coverage collection        |
+| `MALLOC_CONF`       | Jemalloc production config        |
+
+**Production Jemalloc:**
+
+```bash
+MALLOC_CONF="background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0" ./target/release/tach-core
 ```
 
 ---
 
 ## Build Commands
 
-### Development Build
-
 ```bash
 export PYO3_PYTHON=$(which python)
-cargo build
-```
-
-### Release Build
-
-```bash
-export PYO3_PYTHON=$(which python)
-cargo build --release
-```
-
-### Check (No Build)
-
-```bash
-cargo check
-```
-
-### Format
-
-```bash
-cargo fmt
-```
-
-### Lint
-
-```bash
-cargo clippy
+cargo build                    # Development
+cargo build --release          # Release
+cargo check                    # Check only
+cargo fmt                      # Format
+cargo clippy                   # Lint
+cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib  # Full CI
 ```
 
 ---
 
 ## Testing
 
+| Category        | Command                         |
+| :-------------- | :------------------------------ |
+| Unit Tests      | `cargo test --lib`              |
+| Integration     | `cargo test --test '*'`         |
+| Python Gauntlet | `pytest tests/gauntlet_phase*/` |
+
 ### Rust Unit Tests
 
 ```bash
-# All unit tests
-cargo test --lib
-
-# Specific module
-cargo test --lib sandbox::
-cargo test --lib coverage::
-cargo test --lib analysis::
-cargo test --lib graph::
+cargo test --lib                    # All unit tests
+cargo test --lib sandbox::          # Sandbox/Iron Dome
+cargo test --lib coverage::         # Coverage ring buffer
+cargo test --lib analysis::         # Toxicity analysis
+cargo test --lib graph::            # Toxicity graph
+cargo test --lib namespace::        # Namespace isolation
+cargo test --lib logcapture::       # Log capture
+cargo test --lib scheduler::        # Scheduler
+cargo test --lib config::           # Configuration engine
+cargo test --lib reporter::         # Progress bar/reporter
 ```
 
 ### Rust Integration Tests
 
 ```bash
-# All integration tests
-cargo test --test '*'
-
-# Specific test file
-cargo test --test phase4_integration
-cargo test --test toxicity_integration
-cargo test --test loader_integration
-
-# Physics check (requires sudo)
-sudo -E cargo test --test physics_check -- --ignored
+cargo test --test '*'                                    # All
+cargo test --test phase4_integration                     # Specific test
+sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo)
 ```
 
 ### Python Gauntlet Tests
 
 ```bash
-# All gauntlet tests
-python -m pytest tests/gauntlet_phase*/
+pytest tests/gauntlet_phase1/ -v    # Discovery
+pytest tests/gauntlet_phase2/ -v    # Zygote
+pytest tests/gauntlet_phase5/ -v    # Hot reload
+pytest tests/gauntlet_phase5_1/ -v  # Coverage
+pytest tests/gauntlet_phase5_2/ -v  # Sandbox
+pytest tests/gauntlet_phase5_4/ -v  # Allocator
+```
 
-# Specific phase
-python -m pytest tests/gauntlet_phase1/ -v
-python -m pytest tests/gauntlet_phase2/ -v
-python -m pytest tests/gauntlet_phase5_1/ -v  # Coverage
-python -m pytest tests/gauntlet_phase5_2/ -v  # Sandbox
-python -m pytest tests/gauntlet_phase5_4/ -v  # Allocator
+**Jemalloc tests** (disabled by default for WSL2 stability):
+
+```bash
+cargo test --lib allocator -- --ignored
 ```
 
 ---
@@ -5606,89 +6335,118 @@ python -m pytest tests/gauntlet_phase5_4/ -v  # Allocator
 ```
 tach-core/
   src/
-    main.rs           # CLI entry point
-    lib.rs            # Module exports
-    tach_harness.py   # Python test harness
+    main.rs, lib.rs, tach_harness.py
+    core/         # allocator, config, environment, lifecycle, protocol, signals
+    discovery/    # scanner, resolver, loader, graph, analysis
+    execution/    # scheduler, watch, zygote
+    isolation/    # namespace, sandbox, snapshot
+    reporting/    # reporter, junit, logcapture, debugger, coverage
 
-    core/             # Core infrastructure
-      allocator.rs    # Jemalloc integration
-      config.rs       # Configuration loading
-      environment.rs  # Environment injection
-      lifecycle.rs    # Process lifecycle management
-      protocol.rs     # IPC messages
-      signals.rs      # Signal handling
-
-    discovery/        # Test discovery & analysis
-      scanner.rs      # AST-based test discovery
-      resolver.rs     # Fixture resolution
-      loader.rs       # Bytecode compilation
-      graph.rs        # ToxicityGraph, propagation
-      analysis.rs     # Local toxicity detection
-
-    execution/        # Test execution
-      scheduler.rs    # Test dispatch
-      watch.rs        # File watching
-      zygote.rs       # Process lifecycle, FFI
-
-    isolation/        # Isolation & Security
-      namespace.rs    # Namespaces + OverlayFS
-      sandbox.rs      # Landlock + Seccomp
-      snapshot.rs     # userfaultfd, golden pages
-
-    reporting/        # Observability
-      reporter.rs     # Output formatting
-      junit.rs        # JUnit XML output
-      logcapture.rs   # Log capture
-      debugger.rs     # Debugger support
-      coverage.rs     # Ring buffers, aggregator
-
-  rust_tests/         # Rust integration tests
-    physics_check.rs
-    snapshot_integration.rs
-    loader_integration.rs
-    toxicity_integration.rs
-    tagging_integrity.rs
-    phase4_integration.rs
-
-  tests/              # Python test fixtures
-    gauntlet_phase1/  # Memory reset verification
-    gauntlet_phase2/  # Loader tests
-    gauntlet_phase5/  # Hot reload tests
-    gauntlet_phase5_1/ # Coverage tests
-    gauntlet_phase5_2/ # Sandbox tests
-    gauntlet_phase5_4/ # Allocator tests
-    benchmark/        # Performance tests
-
-  docs/               # Documentation
-    architecture/     # Architecture docs
-    configuration.md
-    development.md
-    troubleshooting.md
-    api-reference.md
-
-  .tach/              # Generated cache (gitignored)
-    cache/            # Bytecode cache
+  rust_tests/     # Integration tests
+  tests/          # Python gauntlet tests (phase1-5)
+  docs/           # Documentation
+  .tach/          # Generated cache (gitignored)
 ```
 
 ---
 
 ## Key Files
 
-| File                        | Purpose                            |
-| :-------------------------- | :--------------------------------- |
-| `src/execution/zygote.rs`   | Process lifecycle, worker spawning |
-| `src/isolation/sandbox.rs`  | Landlock + Seccomp implementation  |
-| `src/reporting/coverage.rs` | Zero-overhead coverage collection  |
-| `src/core/allocator.rs`     | Jemalloc configuration             |
-| `src/isolation/snapshot.rs` | userfaultfd memory snapshots       |
-| `src/core/config.rs`        | Configuration and CLI              |
-| `src/tach_harness.py`       | Python test harness                |
+| File                          | Purpose                                 |
+| :---------------------------- | :-------------------------------------- |
+| `src/execution/zygote.rs`     | Process lifecycle, worker spawning, FFI |
+| `src/isolation/sandbox.rs`    | Landlock + Seccomp (Iron Dome)          |
+| `src/isolation/namespace.rs`  | Linux Namespaces + OverlayFS            |
+| `src/reporting/coverage.rs`   | Zero-overhead coverage                  |
+| `src/reporting/logcapture.rs` | memfd-based stdout/stderr capture       |
+| `src/core/allocator.rs`       | Jemalloc configuration                  |
+| `src/isolation/snapshot.rs`   | userfaultfd memory snapshots            |
+| `src/core/config.rs`          | Configuration, CLI, env denylist        |
+| `src/execution/scheduler.rs`  | Dual-path test scheduling               |
+
+---
+
+## Security Hardening
+
+### Memory Safety Patterns
+
+```rust
+// BAD: static mut causes UB
+static mut COUNTER: u32 = 0;
+
+// GOOD: Use atomics or Mutex
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+```
+
+```rust
+// BAD: TOCTOU race condition
+if path.exists() { let fd = PathFd::new(path)?; }
+
+// GOOD: Atomic open with error handling
+match PathFd::new(path) {
+    Ok(fd) => { /* use fd */ }
+    Err(e) => { /* handle */ }
+}
+```
+
+### Syscall Security
+
+**Seccomp Blacklist** (blocks dangerous syscalls, allows Python threading):
+
+| Category  | Blocked                                | Reason                 |
+| :-------- | :------------------------------------- | :--------------------- |
+| Network   | socket, bind, connect, listen, accept  | Prevent network access |
+| Process   | fork, vfork, execve, execveat          | Prevent spawning       |
+| Privilege | ptrace, mount, umount2, unshare, setns | Prevent escape         |
+
+**Critical:** `clone`/`clone3` NOT blocked - Python threading requires them.
+
+**Landlock Filesystem:**
+
+| Access     | Paths                                      | Purpose        |
+| :--------- | :----------------------------------------- | :------------- |
+| READ-ONLY  | Project root, /usr, /lib, /bin, /etc, /dev | System libs    |
+| READ-WRITE | /tmp, /run/tach/worker\_{id}               | Temp files     |
+| DENY       | Everything else                            | Default policy |
+
+**Environment Denylist:** `LD_PRELOAD`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PATH`, `HOME`
+
+---
+
+## Testing Guidelines
+
+### Common Patterns
+
+```rust
+// Mutex poisoning recovery
+let guard = self.data.lock().unwrap_or_else(|e| e.into_inner());
+
+// Environment variable isolation
+let original = std::env::var("MY_VAR").ok();
+std::env::set_var("MY_VAR", "test_value");
+// ... test ...
+match original {
+    Some(v) => std::env::set_var("MY_VAR", v),
+    None => std::env::remove_var("MY_VAR"),
+}
+```
+
+### Naming Convention
+
+```python
+# Python: test_<component>.py, test_<letter>_<description>
+def test_a_kernel_version_detection():
+```
+
+```rust
+// Rust: test_<component>_<behavior>
+fn test_worker_base_dir_format() { }
+```
 
 ---
 
 ## Git Workflow
-
-### Commit Message Format
 
 ```
 <type>: <short description>
@@ -5698,137 +6456,74 @@ tach-core/
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-### Commit Types
-
-| Type        | Description               |
-| :---------- | :------------------------ |
-| `feat:`     | New feature               |
-| `fix:`      | Bug fix                   |
-| `docs:`     | Documentation only        |
-| `test:`     | Adding or modifying tests |
-| `refactor:` | Code restructure          |
-| `chore:`    | Maintenance, dependencies |
-| `perf:`     | Performance improvement   |
-
-### Example
-
-```bash
-git commit -m "feat: add coverage buffer overflow detection
-
-Adds overflow counter to ring buffer header and exposes
-get_coverage_overflow() FFI function.
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
+**Types:** `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `perf:`
 
 ---
 
 ## Debug Commands
 
-### Check Kernel Version
-
 ```bash
-uname -r
-```
-
-### Check Landlock Support
-
-```bash
-cat /sys/kernel/security/lsm | grep landlock
-```
-
-### Check Seccomp Support
-
-```bash
-grep CONFIG_SECCOMP /boot/config-$(uname -r)
-```
-
-### Trace Syscalls
-
-```bash
-strace -f ./target/release/tach-core . 2>&1 | head -100
-```
-
-### Check Python Version
-
-```bash
-python --version
-```
-
-### Verify Jemalloc
-
-```bash
-./target/release/tach-core --help 2>&1 | grep -i jemalloc
+uname -r                                              # Kernel version
+cat /sys/kernel/security/lsm | grep landlock          # Landlock support
+grep CONFIG_SECCOMP /boot/config-$(uname -r)          # Seccomp support
+strace -f ./target/release/tach-core . 2>&1 | head -100  # Trace syscalls
+cat /proc/sys/kernel/unprivileged_userns_clone        # User namespaces
 ```
 
 ---
 
 ## Performance Profiling
 
-### With perf
-
 ```bash
-perf record -g ./target/release/tach-core .
-perf report
-```
-
-### Lock Contention
-
-```bash
-perf lock record ./target/release/tach-core .
-perf lock report
-```
-
-### Memory Usage
-
-```bash
-/usr/bin/time -v ./target/release/tach-core .
+perf record -g ./target/release/tach-core . && perf report  # CPU profiling
+perf lock record ./target/release/tach-core . && perf lock report  # Lock contention
+/usr/bin/time -v ./target/release/tach-core .         # Memory usage
+cargo flamegraph --bin tach-core -- .                 # Flamegraph
 ```
 
 ---
 
 ## Common Development Tasks
 
-### Adding a New FFI Function
+### Adding FFI Function
 
-1. Add function in `src/execution/zygote.rs`:
+```rust
+// 1. Add in src/execution/zygote.rs
+#[pyfunction]
+fn my_function(py: Python) -> PyResult<()> { Ok(()) }
 
-   ```rust
-   #[pyfunction]
-   fn my_function(py: Python) -> PyResult<()> {
-       Ok(())
-   }
-   ```
+// 2. Register: m.add_function(wrap_pyfunction!(my_function, m)?)?;
+```
 
-2. Register in module:
+```python
+# 3. Use in tach_harness.py
+tach_rust.my_function()
+```
 
-   ```rust
-   m.add_function(wrap_pyfunction!(my_function, m)?)?;
-   ```
+### Adding Test Phase
 
-3. Use in `tach_harness.py`:
-   ```python
-   tach_rust.my_function()
-   ```
+1. Create `tests/gauntlet_phaseN/`
+2. Add `test_*.py` files
+3. Update CI if needed
 
-### Adding a New Test Phase
+### Adding Reporter
 
-1. Create directory: `tests/gauntlet_phaseN/`
-2. Add test files: `test_*.py`
-3. Update CI workflow if needed
+Implement `Reporter` trait in `src/reporting/reporter.rs`:
 
-### Modifying the Protocol
-
-1. Update structs in `src/core/protocol.rs`
-2. Update serialization if needed
-3. Update Python harness if needed
-4. Add integration tests
+- `on_run_start`, `on_test_start`, `on_test_finished`, `on_run_finished`, `on_error`
 
 ---
 
-## Troubleshooting Build Issues
+## Troubleshooting
 
-See [Troubleshooting](troubleshooting.md) for common issues.
+| Issue                 | Cause            | Solution                             |
+| :-------------------- | :--------------- | :----------------------------------- |
+| `PYO3_PYTHON` not set | Missing env var  | `export PYO3_PYTHON=$(which python)` |
+| `EPERM` on Landlock   | Kernel < 5.13    | Graceful degradation                 |
+| `EPERM` on Seccomp    | Bad filter       | Check syscalls, use blacklist        |
+| Test hangs            | Clone blocked    | Ensure clone NOT in seccomp          |
+| Coverage wrong        | GIL held         | Release GIL during Rust ops          |
+| WSL2 instability      | Jemalloc + tests | Jemalloc disabled in `cargo test`    |
 
 ---
 
@@ -5837,6 +6532,7 @@ See [Troubleshooting](troubleshooting.md) for common issues.
 - [Architecture Overview](architecture/overview.md)
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)
+- [API Reference](api-reference.md)
 
 
 ---
