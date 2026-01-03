@@ -74,7 +74,7 @@ indicatif = "0.18"
 atty = "0.2"
 
 # Watch mode
-notify = "6.1"
+notify = "8.2"
 crossbeam-channel = "0.5"
 
 # Deterministic allocator (required for snapshot integrity)
