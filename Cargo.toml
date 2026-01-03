@@ -22,6 +22,11 @@ path = "experiments/tls_restoration_poc.rs"
 name = "tls_python_poc"
 path = "experiments/tls_python_poc.rs"
 
+# Phase 2.2: Runtime Sentinel Scan (dynamic TLS offset discovery)
+[[bin]]
+name = "tls_sentinel_scan"
+path = "experiments/tls_sentinel_scan.rs"
+
 [dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }
 anyhow = "1.0"

@@ -42,7 +42,7 @@
 //! cd /home/louiskaneko/dev/tach-core
 //! source .venv/bin/activate
 //! export PYO3_PYTHON=$(which python)
-//! cargo test --test memory_invariant -- --nocapture --ignored
+//! cargo test --test memory_invariant -- --nocapture
 //! ```
 
 use nix::sys::signal::{kill, Signal};
@@ -303,7 +303,6 @@ print(f'Sum: {result}')
 /// 6. Worker runs gc.collect() 100 times
 /// 7. If no SIGSEGV: PASS
 #[test]
-#[ignore]
 fn test_bss_heap_split_brain_validation() {
     let run_dir = create_test_run_dir();
     let uffd_sock_path = run_dir.join("uffd.sock");

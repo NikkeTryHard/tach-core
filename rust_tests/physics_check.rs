@@ -120,10 +120,9 @@ fn test_snapshot_manager_creation() {
 /// 1. Heap: Create data, mutate, reset, verify restoration
 /// 2. Stability: Run multiple iterations without segfault
 ///
-/// NOTE: This test requires userfaultfd privileges and is marked #[ignore]
-/// Run with: cargo test physics_check -- --ignored --test-threads=1
+/// NOTE: This test requires userfaultfd privileges.
+/// Run with: cargo test physics_check -- --test-threads=1
 #[test]
-#[ignore]
 fn test_physics_check_memory_reset() {
     use nix::unistd::Pid as NixPid;
     use std::os::fd::{FromRawFd, IntoRawFd};
