@@ -268,9 +268,9 @@ fn explore_python_tls() {
     // Step 2: Initialize Python and run allocations
     eprintln!("\n[Step 2] Initializing Python interpreter via PyO3...");
 
-    pyo3::prepare_freethreaded_python();
+    Python::initialize();
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         eprintln!("[PyO3] Python interpreter initialized.");
 
         // Run the allocation stressor

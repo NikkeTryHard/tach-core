@@ -86,6 +86,7 @@ impl CleanupGuard {
     }
 
     /// Force kill all tracked workers
+    #[allow(dead_code)]
     fn kill_workers(&self) {
         // BOSS REFINEMENT: Ignore mutex poison - we MUST kill workers even after panic
         let pids = self.worker_pids.lock().unwrap_or_else(|e| e.into_inner());

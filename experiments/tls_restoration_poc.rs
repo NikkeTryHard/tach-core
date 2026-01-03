@@ -51,6 +51,7 @@ const ARCH_GET_GS: i32 = 0x1004;
 
 /// Information about a memory region from /proc/self/maps
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct MemoryRegion {
     start: usize,
     end: usize,

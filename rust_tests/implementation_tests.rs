@@ -43,6 +43,7 @@ fn run_tach(args: &[&str]) -> std::process::Output {
 }
 
 /// Helper to run tach-core with timeout
+#[allow(dead_code)]
 fn run_tach_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
     let binary = binary_path();
 
@@ -67,7 +68,7 @@ fn run_tach_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::proces
 
     // Wait with timeout
     match child.wait_timeout(Duration::from_secs(timeout_secs)) {
-        Ok(Some(status)) => {
+        Ok(Some(_status)) => {
             let output = child.wait_with_output().ok()?;
             Some(output)
         }
@@ -263,7 +264,7 @@ fn test_binary_json_format_to_stdout() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // JSON should be on stdout, not stderr
-    assert!(stdout.len() > 0, "JSON output should be on stdout");
+    assert!(!stdout.is_empty(), "JSON output should be on stdout");
 
     // Should be parseable JSON
     assert!(

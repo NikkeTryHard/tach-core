@@ -573,7 +573,29 @@ fn run_tests(
                     }
                 }
 
-                // TODO: Write coverage data to .coverage file or generate report
+                // Write coverage report to file
+                // Use defaults or environment variables for output path and format
+                if !coverage_data.is_empty() {
+                    let output_file = std::env::var("TACH_COVERAGE_OUTPUT")
+                        .unwrap_or_else(|_| "coverage.lcov".to_string());
+                    let output_path = std::path::Path::new(&output_file);
+                    let format_str = std::env::var("TACH_COVERAGE_FORMAT").ok();
+                    let format = format_str.as_deref();
+
+                    if let Err(e) =
+                        coverage::write_coverage_report(&coverage_data, output_path, format)
+                    {
+                        eprintln!(
+                            "[supervisor] WARNING: Failed to write coverage report: {}",
+                            e
+                        );
+                    } else if !is_json {
+                        eprintln!(
+                            "[supervisor] Coverage report written to: {}",
+                            output_path.display()
+                        );
+                    }
+                }
             }
 
             if !is_json {

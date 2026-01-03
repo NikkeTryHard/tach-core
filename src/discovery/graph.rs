@@ -374,7 +374,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = create_file(tmp.path(), "safe.py", "import os\nx = 1");
 
-        let graph = ToxicityGraph::build(&[path.clone()], tmp.path());
+        let graph = ToxicityGraph::build(std::slice::from_ref(&path), tmp.path());
 
         assert_eq!(graph.node_count(), 1);
         assert!(!graph.is_toxic(&path));
@@ -385,7 +385,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = create_file(tmp.path(), "toxic.py", "import threading");
 
-        let graph = ToxicityGraph::build(&[path.clone()], tmp.path());
+        let graph = ToxicityGraph::build(std::slice::from_ref(&path), tmp.path());
 
         assert_eq!(graph.node_count(), 1);
         assert!(graph.is_toxic(&path));
@@ -623,7 +623,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = create_file(tmp.path(), "main.py", "import requests\nimport flask");
 
-        let graph = ToxicityGraph::build(&[path.clone()], tmp.path());
+        let graph = ToxicityGraph::build(std::slice::from_ref(&path), tmp.path());
 
         assert!(!graph.is_toxic(&path));
     }
@@ -634,7 +634,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = create_file(tmp.path(), "main.py", "import nonexistent_local");
 
-        let graph = ToxicityGraph::build(&[path.clone()], tmp.path());
+        let graph = ToxicityGraph::build(std::slice::from_ref(&path), tmp.path());
 
         // Should not crash, just ignore unresolved import
         assert!(!graph.is_toxic(&path));
@@ -646,7 +646,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = create_file(tmp.path(), "self_ref.py", "import self_ref");
 
-        let graph = ToxicityGraph::build(&[path.clone()], tmp.path());
+        let graph = ToxicityGraph::build(std::slice::from_ref(&path), tmp.path());
 
         // Should not crash or infinite loop
         assert!(!graph.is_toxic(&path));

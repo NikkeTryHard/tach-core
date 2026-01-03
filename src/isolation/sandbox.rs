@@ -125,7 +125,9 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // ========================================================================
     // Landlock requires absolute paths. Relative paths are a source of bugs.
     // We canonicalize project_root to ensure it's absolute and resolved.
-    let project_root = project_root.canonicalize().context("Failed to canonicalize project_root for Landlock")?;
+    let project_root = project_root
+        .canonicalize()
+        .context("Failed to canonicalize project_root for Landlock")?;
 
     // Worker scratch space (created by isolation.rs)
     let worker_scratch = format!("/run/tach/worker_{}", worker_id);
@@ -145,7 +147,11 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // By calling handle_access(all_access), we're saying "we want to control
     // all filesystem operations". Any operation not explicitly allowed will
     // be denied after restrict_self().
-    let ruleset = Ruleset::default().handle_access(all_access).context("Failed to create Landlock ruleset")?.create().context("Failed to create Landlock ruleset")?;
+    let ruleset = Ruleset::default()
+        .handle_access(all_access)
+        .context("Failed to create Landlock ruleset")?
+        .create()
+        .context("Failed to create Landlock ruleset")?;
 
     // ========================================================================
     // ADD READ-ONLY RULES
@@ -195,7 +201,9 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // restrict_self() applies the ruleset to the current thread and all
     // future threads. After this call, any filesystem operation not
     // explicitly allowed above will fail with EACCES.
-    let status = ruleset.restrict_self().context("Failed to apply Landlock restrictions")?;
+    let status = ruleset
+        .restrict_self()
+        .context("Failed to apply Landlock restrictions")?;
 
     // ========================================================================
     // RETURN STATUS
@@ -217,9 +225,12 @@ where
     use landlock::{PathBeneath, PathFd};
 
     let path = path.as_ref();
-    let fd = PathFd::new(path).with_context(|| format!("Failed to open path for Landlock: {}", path.display()))?;
+    let fd = PathFd::new(path)
+        .with_context(|| format!("Failed to open path for Landlock: {}", path.display()))?;
 
-    ruleset.add_rule(PathBeneath::new(fd, access)).with_context(|| format!("Failed to add Landlock rule for: {}", path.display()))
+    ruleset
+        .add_rule(PathBeneath::new(fd, access))
+        .with_context(|| format!("Failed to add Landlock rule for: {}", path.display()))
 }
 
 /// Helper: Add a Landlock rule for a path (silently skips if path doesn't exist).
@@ -241,7 +252,9 @@ where
     // SECURITY: Do NOT use path.exists() - that creates a TOCTOU race.
     // Instead, try to open the path and handle errors atomically.
     match PathFd::new(path) {
-        Ok(fd) => ruleset.add_rule(PathBeneath::new(fd, access)).with_context(|| format!("Failed to add Landlock rule for: {}", path.display())),
+        Ok(fd) => ruleset
+            .add_rule(PathBeneath::new(fd, access))
+            .with_context(|| format!("Failed to add Landlock rule for: {}", path.display())),
         Err(PathFdError::OpenCall { source, .. }) => {
             // Check if the error is ENOENT (path doesn't exist)
             if let Some(os_err) = source.raw_os_error() {
@@ -389,7 +402,7 @@ pub fn apply_seccomp() -> Result<()> {
 
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow,                     // Allow syscalls not in blacklist
+        SeccompAction::Allow, // Allow syscalls not in blacklist
         SeccompAction::Errno(libc::EPERM as u32), // Block with EPERM (not SIGSYS)
         target_arch,
     )
@@ -399,7 +412,9 @@ pub fn apply_seccomp() -> Result<()> {
     // COMPILE TO BPF
     // ========================================================================
     // Convert the high-level filter to a BPF program that the kernel can execute.
-    let bpf_prog: seccompiler::BpfProgram = filter.try_into().context("Failed to compile Seccomp filter to BPF")?;
+    let bpf_prog: seccompiler::BpfProgram = filter
+        .try_into()
+        .context("Failed to compile Seccomp filter to BPF")?;
 
     // ========================================================================
     // APPLY FILTER
@@ -442,7 +457,11 @@ pub fn apply_seccomp() -> Result<()> {
 /// This function never fails fatally. If Landlock or Seccomp setup fails,
 /// it logs a warning and continues. The test runner must remain functional
 /// on older kernels.
-pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> Result<SandboxStatus> {
+pub fn apply_iron_dome(
+    project_root: &Path,
+    worker_id: u32,
+    is_toxic: bool,
+) -> Result<SandboxStatus> {
     // ========================================================================
     // STEP 1: APPLY LANDLOCK (ALWAYS)
     // ========================================================================
@@ -455,16 +474,25 @@ pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> R
                     // Ideal case - full protection
                 }
                 SandboxStatus::PartiallyEnforced => {
-                    eprintln!("[worker:{}] Landlock partially enforced (some features unavailable)", worker_id);
+                    eprintln!(
+                        "[worker:{}] Landlock partially enforced (some features unavailable)",
+                        worker_id
+                    );
                 }
                 SandboxStatus::NotEnforced => {
-                    eprintln!("[worker:{}] WARNING: Landlock not enforced - kernel too old (< 5.13)", worker_id);
+                    eprintln!(
+                        "[worker:{}] WARNING: Landlock not enforced - kernel too old (< 5.13)",
+                        worker_id
+                    );
                 }
             }
             status
         }
         Err(e) => {
-            eprintln!("[worker:{}] WARNING: Landlock setup failed: {}", worker_id, e);
+            eprintln!(
+                "[worker:{}] WARNING: Landlock setup failed: {}",
+                worker_id, e
+            );
             SandboxStatus::NotEnforced
         }
     };
@@ -476,7 +504,10 @@ pub fn apply_iron_dome(project_root: &Path, worker_id: u32, is_toxic: bool) -> R
     // they may legitimately need network access or fork for integration tests.
     if !is_toxic {
         if let Err(e) = apply_seccomp() {
-            eprintln!("[worker:{}] WARNING: Seccomp setup failed: {}", worker_id, e);
+            eprintln!(
+                "[worker:{}] WARNING: Seccomp setup failed: {}",
+                worker_id, e
+            );
             // Continue execution - Seccomp is defense-in-depth, not critical
         }
     }
@@ -509,6 +540,7 @@ mod tests {
     #[test]
     fn test_sandbox_status_clone_copy() {
         let status = SandboxStatus::FullyEnforced;
+        #[allow(clippy::clone_on_copy)]
         let cloned = status.clone();
         let copied = status;
 
@@ -560,11 +592,16 @@ mod tests {
         let arch = std::env::consts::ARCH;
 
         // Verify we're on a supported architecture
-        assert!(arch == "x86_64" || arch == "aarch64", "Unsupported architecture: {}", arch);
+        assert!(
+            arch == "x86_64" || arch == "aarch64",
+            "Unsupported architecture: {}",
+            arch
+        );
     }
 
     /// Test that syscall numbers are valid
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_syscall_numbers() {
         // Verify the syscall numbers we're using are defined
         assert!(libc::SYS_socket > 0);
@@ -576,6 +613,7 @@ mod tests {
 
     /// Test all network syscall numbers
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_network_syscall_numbers() {
         assert!(libc::SYS_socket > 0);
         assert!(libc::SYS_bind > 0);
@@ -587,6 +625,7 @@ mod tests {
 
     /// Test all process syscall numbers
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_process_syscall_numbers() {
         assert!(libc::SYS_fork > 0);
         assert!(libc::SYS_vfork > 0);
@@ -648,7 +687,12 @@ mod tests {
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
         rules.insert(libc::SYS_socket, vec![]);
 
-        let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(libc::EPERM as u32), target_arch);
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Allow,
+            SeccompAction::Errno(libc::EPERM as u32),
+            target_arch,
+        );
 
         assert!(filter.is_ok(), "Failed to create Seccomp filter");
     }
@@ -673,7 +717,13 @@ mod tests {
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
         rules.insert(libc::SYS_fork, vec![]);
 
-        let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(libc::EPERM as u32), target_arch).unwrap();
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Allow,
+            SeccompAction::Errno(libc::EPERM as u32),
+            target_arch,
+        )
+        .unwrap();
 
         let bpf_result: Result<BpfProgram, _> = filter.try_into();
         assert!(bpf_result.is_ok(), "Failed to compile BPF program");
@@ -681,6 +731,7 @@ mod tests {
 
     /// Test all privilege escalation syscall numbers
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_privilege_escalation_syscall_numbers() {
         // Verify the new privilege escalation syscalls are defined
         assert!(libc::SYS_ptrace > 0);
@@ -735,13 +786,22 @@ mod tests {
         assert_eq!(rules.len(), 15, "Expected 15 blocked syscalls");
 
         // Verify filter creation succeeds
-        let filter = SeccompFilter::new(rules, SeccompAction::Allow, SeccompAction::Errno(libc::EPERM as u32), target_arch);
-        assert!(filter.is_ok(), "Failed to create Seccomp filter with all blocked syscalls");
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Allow,
+            SeccompAction::Errno(libc::EPERM as u32),
+            target_arch,
+        );
+        assert!(
+            filter.is_ok(),
+            "Failed to create Seccomp filter with all blocked syscalls"
+        );
     }
 
     /// Test that add_path_rule_if_exists handles non-existent paths correctly
     /// This tests the TOCTOU fix - we should handle ENOENT atomically
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_add_path_rule_nonexistent_path() {
         // Verify that ENOENT constant is defined correctly
         assert!(libc::ENOENT > 0);

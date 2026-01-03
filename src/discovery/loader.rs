@@ -543,10 +543,20 @@ unsafe fn patch_module_namespace(
     name: &str,
     source_path: &str,
 ) -> PyResult<()> {
+    // Helper to create CString, returning error if null byte is present
+    fn make_cstring(s: &str) -> PyResult<std::ffi::CString> {
+        std::ffi::CString::new(s).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid string for C interop (null byte): {}",
+                e
+            ))
+        })
+    }
+
     // __file__: Source file path
-    let file_cstr = std::ffi::CString::new("__file__").unwrap();
+    let file_cstr = make_cstring("__file__")?;
     // SAFETY: Store CString in variable to prevent dangling pointer
-    let source_path_cstr = std::ffi::CString::new(source_path).unwrap();
+    let source_path_cstr = make_cstring(source_path)?;
     let file_val = ffi::PyUnicode_FromString(source_path_cstr.as_ptr());
     if !file_val.is_null() {
         ffi::PyObject_SetAttrString(module, file_cstr.as_ptr(), file_val);
@@ -555,9 +565,9 @@ unsafe fn patch_module_namespace(
 
     // __package__: Parent package name
     let package_name = name.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
-    let pkg_cstr = std::ffi::CString::new("__package__").unwrap();
+    let pkg_cstr = make_cstring("__package__")?;
     // SAFETY: Store CString in variable to prevent dangling pointer
-    let package_name_cstr = std::ffi::CString::new(package_name).unwrap();
+    let package_name_cstr = make_cstring(package_name)?;
     let pkg_val = ffi::PyUnicode_FromString(package_name_cstr.as_ptr());
     if !pkg_val.is_null() {
         ffi::PyObject_SetAttrString(module, pkg_cstr.as_ptr(), pkg_val);
@@ -580,7 +590,7 @@ unsafe fn patch_module_namespace(
             .unwrap_or_default();
 
         let path_list = PyList::new(py, &[parent_dir])?;
-        let path_cstr = std::ffi::CString::new("__path__").unwrap();
+        let path_cstr = make_cstring("__path__")?;
         ffi::PyObject_SetAttrString(module, path_cstr.as_ptr(), path_list.as_ptr());
     }
 

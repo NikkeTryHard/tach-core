@@ -105,29 +105,49 @@ impl TlsCalibration {
 
         // Step 2: Parse memory maps to find TLS region
         let regions = parse_memory_maps()?;
-        let tls_region = find_containing_region(&regions, fs_base).ok_or_else(|| anyhow!("fs_base 0x{:x} not in any mapped region", fs_base))?;
+        let tls_region = find_containing_region(&regions, fs_base)
+            .ok_or_else(|| anyhow!("fs_base 0x{:x} not in any mapped region", fs_base))?;
 
-        eprintln!("[calibration] TLS region: 0x{:x}-0x{:x} ({} bytes)", tls_region.start, tls_region.end, tls_region.size());
+        eprintln!(
+            "[calibration] TLS region: 0x{:x}-0x{:x} ({} bytes)",
+            tls_region.start,
+            tls_region.end,
+            tls_region.size()
+        );
 
         let tls_region_size = tls_region.size();
 
         // Step 3: Populate mimalloc TLS by allocating Python objects
         eprintln!("[calibration] Populating mimalloc TLS structures...");
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             populate_mimalloc_tls(py)?;
 
             // Step 4: Allocate sentinel
-            eprintln!("[calibration] Allocating sentinel (0x{:016X})...", SENTINEL_PATTERN);
+            eprintln!(
+                "[calibration] Allocating sentinel (0x{:016X})...",
+                SENTINEL_PATTERN
+            );
             let sentinel_addr = allocate_sentinel(py)?;
 
             // Step 5: Identify heap regions
-            let heap_regions: Vec<_> = regions.iter().filter(|r| r.perms.contains('w') && (r.pathname.contains("[heap]") || (r.pathname.is_empty() && r.start != tls_region.start))).collect();
+            let heap_regions: Vec<_> = regions
+                .iter()
+                .filter(|r| {
+                    r.perms.contains('w')
+                        && (r.pathname.contains("[heap]")
+                            || (r.pathname.is_empty() && r.start != tls_region.start))
+                })
+                .collect();
 
-            eprintln!("[calibration] Found {} potential heap regions", heap_regions.len());
+            eprintln!(
+                "[calibration] Found {} potential heap regions",
+                heap_regions.len()
+            );
 
             // Step 6: Scan TLS for heap pointers
             eprintln!("[calibration] Scanning TLS for heap pointers...");
-            let (heap_pointer_offsets, sentinel_offsets) = scan_tls_for_pointers(fs_base, &tls_region, &heap_regions, sentinel_addr);
+            let (heap_pointer_offsets, sentinel_offsets) =
+                scan_tls_for_pointers(fs_base, tls_region, &heap_regions, sentinel_addr);
 
             // Step 7: Determine primary mi_heap_t offset
             let mi_heap_offset = heap_pointer_offsets.first().map(|p| p.offset);
@@ -142,8 +162,20 @@ impl TlsCalibration {
             eprintln!("[calibration] CALIBRATION RESULTS");
             eprintln!("{}", "=".repeat(70));
             eprintln!("  Heap pointers in TLS: {}", heap_pointer_offsets.len());
-            eprintln!("  Primary mi_heap_t:    {}", mi_heap_offset.map(|o| format!("fs_base + 0x{:04X}", o)).unwrap_or_else(|| "NOT FOUND".to_string()));
-            eprintln!("  Sentinel direct refs: {}", if sentinel_offsets.is_empty() { "None (expected)" } else { "Found (unexpected)" });
+            eprintln!(
+                "  Primary mi_heap_t:    {}",
+                mi_heap_offset
+                    .map(|o| format!("fs_base + 0x{:04X}", o))
+                    .unwrap_or_else(|| "NOT FOUND".to_string())
+            );
+            eprintln!(
+                "  Sentinel direct refs: {}",
+                if sentinel_offsets.is_empty() {
+                    "None (expected)"
+                } else {
+                    "Found (unexpected)"
+                }
+            );
 
             let calibrated = mi_heap_offset.is_some();
 
@@ -151,7 +183,9 @@ impl TlsCalibration {
                 eprintln!("\n[calibration] CALIBRATION SUCCESSFUL");
             } else {
                 eprintln!("\n[calibration] CALIBRATION FAILED - No heap pointers found in TLS");
-                eprintln!("[calibration] This may indicate Python < 3.13 (pymalloc, no TLS caching)");
+                eprintln!(
+                    "[calibration] This may indicate Python < 3.13 (pymalloc, no TLS caching)"
+                );
             }
 
             eprintln!("{}", "=".repeat(70));
@@ -218,9 +252,18 @@ fn parse_memory_maps() -> Result<Vec<MemoryRegion>> {
         let start = usize::from_str_radix(addr_parts[0], 16).unwrap_or(0);
         let end = usize::from_str_radix(addr_parts[1], 16).unwrap_or(0);
         let perms = parts[1].to_string();
-        let pathname = if parts.len() > 5 { parts[5..].join(" ") } else { String::new() };
+        let pathname = if parts.len() > 5 {
+            parts[5..].join(" ")
+        } else {
+            String::new()
+        };
 
-        regions.push(MemoryRegion { start, end, perms, pathname });
+        regions.push(MemoryRegion {
+            start,
+            end,
+            perms,
+            pathname,
+        });
     }
 
     Ok(regions)
@@ -244,7 +287,10 @@ fn get_fs_base() -> Result<usize> {
     if ret == 0 {
         Ok(fs_base as usize)
     } else {
-        Err(anyhow!("arch_prctl(ARCH_GET_FS) failed: {}", std::io::Error::last_os_error()))
+        Err(anyhow!(
+            "arch_prctl(ARCH_GET_FS) failed: {}",
+            std::io::Error::last_os_error()
+        ))
     }
 }
 
@@ -254,20 +300,39 @@ fn get_fs_base() -> Result<usize> {
 
 /// Allocate a sentinel object in Python heap and return its address
 fn allocate_sentinel(py: Python<'_>) -> Result<usize> {
-    let ctypes = py.import("ctypes").map_err(|e| anyhow!("Failed to import ctypes: {}", e))?;
+    let ctypes = py
+        .import("ctypes")
+        .map_err(|e| anyhow!("Failed to import ctypes: {}", e))?;
 
-    let c_uint64 = ctypes.getattr("c_uint64").map_err(|e| anyhow!("Failed to get c_uint64: {}", e))?;
-    let sentinel = c_uint64.call1((SENTINEL_PATTERN,)).map_err(|e| anyhow!("Failed to create sentinel: {}", e))?;
+    let c_uint64 = ctypes
+        .getattr("c_uint64")
+        .map_err(|e| anyhow!("Failed to get c_uint64: {}", e))?;
+    let sentinel = c_uint64
+        .call1((SENTINEL_PATTERN,))
+        .map_err(|e| anyhow!("Failed to create sentinel: {}", e))?;
 
-    let addressof = ctypes.getattr("addressof").map_err(|e| anyhow!("Failed to get addressof: {}", e))?;
-    let addr_obj = addressof.call1((sentinel.clone(),)).map_err(|e| anyhow!("Failed to get sentinel address: {}", e))?;
-    let addr_value: usize = addr_obj.extract().map_err(|e| anyhow!("Failed to extract address: {}", e))?;
+    let addressof = ctypes
+        .getattr("addressof")
+        .map_err(|e| anyhow!("Failed to get addressof: {}", e))?;
+    let addr_obj = addressof
+        .call1((sentinel.clone(),))
+        .map_err(|e| anyhow!("Failed to get sentinel address: {}", e))?;
+    let addr_value: usize = addr_obj
+        .extract()
+        .map_err(|e| anyhow!("Failed to extract address: {}", e))?;
 
-    eprintln!("[calibration] Sentinel allocated at 0x{:016x}, value: 0x{:016X}", addr_value, SENTINEL_PATTERN);
+    eprintln!(
+        "[calibration] Sentinel allocated at 0x{:016x}, value: 0x{:016X}",
+        addr_value, SENTINEL_PATTERN
+    );
 
     // Keep sentinel alive by storing in Python's __main__ module
-    let main_module = py.import("__main__").map_err(|e| anyhow!("Failed to import __main__: {}", e))?;
-    main_module.setattr("_tach_sentinel", sentinel).map_err(|e| anyhow!("Failed to store sentinel: {}", e))?;
+    let main_module = py
+        .import("__main__")
+        .map_err(|e| anyhow!("Failed to import __main__: {}", e))?;
+    main_module
+        .setattr("_tach_sentinel", sentinel)
+        .map_err(|e| anyhow!("Failed to store sentinel: {}", e))?;
 
     Ok(addr_value)
 }
@@ -296,9 +361,11 @@ floats_2 = [float(i) * 2.2 for i in range(500)]
 "#;
 
     let code_with_nul = format!("{}\0", code);
-    let code_cstr = std::ffi::CStr::from_bytes_with_nul(code_with_nul.as_bytes()).expect("CStr creation failed");
+    let code_cstr = std::ffi::CStr::from_bytes_with_nul(code_with_nul.as_bytes())
+        .expect("CStr creation failed");
 
-    py.run(code_cstr, None, None).map_err(|e| anyhow!("Failed to populate mimalloc TLS: {}", e))?;
+    py.run(code_cstr, None, None)
+        .map_err(|e| anyhow!("Failed to populate mimalloc TLS: {}", e))?;
 
     Ok(())
 }
@@ -308,7 +375,12 @@ floats_2 = [float(i) * 2.2 for i in range(500)]
 // =============================================================================
 
 /// Scan TLS region for heap pointers and sentinel references
-fn scan_tls_for_pointers(fs_base: usize, tls_region: &MemoryRegion, heap_regions: &[&MemoryRegion], sentinel_addr: usize) -> (Vec<HeapPointerInfo>, Vec<usize>) {
+fn scan_tls_for_pointers(
+    fs_base: usize,
+    tls_region: &MemoryRegion,
+    heap_regions: &[&MemoryRegion],
+    sentinel_addr: usize,
+) -> (Vec<HeapPointerInfo>, Vec<usize>) {
     let mut heap_pointers = Vec::new();
     let mut sentinel_offsets = Vec::new();
 
@@ -324,13 +396,20 @@ fn scan_tls_for_pointers(fs_base: usize, tls_region: &MemoryRegion, heap_regions
             // Check if this is our sentinel
             if value == sentinel_addr {
                 sentinel_offsets.push(offset);
-                eprintln!("[calibration] SENTINEL POINTER at fs_base+0x{:04x} -> 0x{:016x}", offset, value);
+                eprintln!(
+                    "[calibration] SENTINEL POINTER at fs_base+0x{:04x} -> 0x{:016x}",
+                    offset, value
+                );
             }
 
             // Check if this points to any heap region
             for heap in heap_regions {
                 if heap.contains(value) {
-                    let target_desc = if heap.pathname.is_empty() { format!("anon@0x{:x}", heap.start) } else { heap.pathname.clone() };
+                    let target_desc = if heap.pathname.is_empty() {
+                        format!("anon@0x{:x}", heap.start)
+                    } else {
+                        heap.pathname.clone()
+                    };
 
                     heap_pointers.push(HeapPointerInfo {
                         offset,
@@ -409,7 +488,7 @@ mod tests {
     #[test]
     #[ignore] // Run with: cargo test test_tls_calibration -- --ignored --nocapture
     fn test_tls_calibration() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
         let result = TlsCalibration::calibrate();
         assert!(result.is_ok(), "Calibration should succeed");

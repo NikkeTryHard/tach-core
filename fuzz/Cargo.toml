@@ -1,0 +1,45 @@
+[package]
+name = "tach-core-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+bincode = "1.3"
+
+[dependencies.tach-core]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_mapping_entry"
+path = "fuzz_targets/fuzz_mapping_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_coverage_entry"
+path = "fuzz_targets/fuzz_coverage_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_protocol_deserialize"
+path = "fuzz_targets/fuzz_protocol_deserialize.rs"
+test = false
+doc = false
+bench = false
