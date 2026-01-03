@@ -1,4 +1,4 @@
-//! Phase 1: Sandbox Enforcement Tests - "Suicide Workers"
+//! Sandbox Enforcement: Sandbox Enforcement Tests - "Suicide Workers"
 //!
 //! These tests verify that Landlock and Seccomp actually block operations
 //! at the KERNEL level, not just that our code thinks they are enforced.

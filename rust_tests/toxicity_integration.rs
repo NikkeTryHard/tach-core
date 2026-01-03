@@ -1,4 +1,4 @@
-//! Integration tests for Phase 3: Toxicity Analysis
+//! Integration tests for Toxicity Analysis: Toxicity Analysis
 //!
 //! Tests the full pipeline: discover_with_toxicity() -> RunnableTest.is_toxic
 

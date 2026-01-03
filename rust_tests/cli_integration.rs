@@ -1,4 +1,4 @@
-//! CLI Integration Tests for Phase 5.2 and 5.3 features
+//! CLI Integration Tests for Isolation and Hot Reload features
 //!
 //! Tests for:
 //! - Line number metadata in discovery

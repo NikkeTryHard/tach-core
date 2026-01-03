@@ -2,7 +2,7 @@
 # This module is loaded directly into the worker process to execute tests.
 # DO NOT MODIFY: This file is embedded via include_str! in zygote.rs
 #
-# Phase 4: Dual-Path Execution Support
+# Dual-Path Execution Support
 # - Safe tests: Workers can reset memory and loop (Hypervisor Mode)
 # - Toxic tests: Workers exit after execution (Isolation Mode)
 
@@ -125,7 +125,7 @@ def inject_entropy():
 
 
 # =============================================================================
-# ZERO-COPY LOADER: sys.meta_path Import Hook (Phase 2)
+# ZERO-COPY LOADER: sys.meta_path Import Hook
 # =============================================================================
 
 import importlib.abc
@@ -337,7 +337,7 @@ def post_fork_init() -> bool:
     This function:
     1. Performs post-fork hygiene (RNG reseed, logging reset)
     2. Installs the Tach import hook for zero-copy module loading
-    3. Captures baseline sys.modules for Phase 5.3 Hot Reloading
+    3. Captures baseline sys.modules for Hot Reloading
     4. Initiates snapshot handshake with Supervisor if TACH_SUPERVISOR_SOCK is set
     5. Freezes (SIGSTOP) for Supervisor to capture golden snapshot
 
@@ -348,11 +348,11 @@ def post_fork_init() -> bool:
     # 1. Post-fork hygiene
     inject_entropy()
 
-    # 2. Install import hook for zero-copy module loading (Phase 2)
+    # 2. Install import hook for zero-copy module loading
     # This must be done BEFORE snapshot to be part of the golden state
     install_tach_import_hook()
 
-    # 3. Phase 5.3: Capture baseline sys.modules for hot reloading
+    # 3. Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
     print(f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
@@ -596,7 +596,7 @@ def reset_worker_state() -> bool:
 def cleanup_test_modules() -> int:
     """Remove test-imported modules from sys.modules.
 
-    Phase 5.3: Hot Reloading Support
+    Hot Reloading Support
 
     This function:
     1. Identifies modules imported AFTER Zygote initialization
@@ -654,7 +654,7 @@ def cleanup_test_modules() -> int:
 def should_worker_exit(is_toxic: bool) -> bool:
     """Determine if worker should exit after test execution.
 
-    Phase 4 Dual-Path Decision:
+    Dual-Path Decision:
     - Toxic tests: Always exit (Isolation Mode)
     - Safe tests: Can continue if reset succeeds (Hypervisor Mode)
 
@@ -675,15 +675,15 @@ def should_worker_exit(is_toxic: bool) -> bool:
 
 
 # =============================================================================
-# PHASE 4.3: PERSISTENT WORKER LOOP (FUTURE)
-# This function will be called by zygote.rs when Hypervisor Mode is enabled
+# PERSISTENT WORKER LOOP
+# This function is called by zygote.rs when Hypervisor Mode is enabled
 # =============================================================================
 
 
 def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple:
     """Execute one iteration of the worker loop.
 
-    This is the main entry point for Phase 4.3 persistent workers.
+    This is the main entry point for persistent workers.
     It combines test execution with the dual-path decision.
 
     Args:

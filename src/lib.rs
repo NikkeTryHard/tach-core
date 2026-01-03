@@ -68,7 +68,9 @@ pub mod reporting;
 // Re-export core modules at top level for backward compatibility
 pub use core::allocator;
 pub use core::config;
+pub use core::diagnostics;
 pub use core::environment;
+pub use core::errors;
 pub use core::lifecycle;
 pub use core::protocol;
 pub use core::signals;
@@ -93,6 +95,7 @@ pub use reporting::logcapture;
 pub use reporting::reporter;
 
 // Re-export execution modules at top level for backward compatibility
+pub use execution::plugin_bridge;
 pub use execution::scheduler;
 pub use execution::watch;
 pub use execution::zygote;

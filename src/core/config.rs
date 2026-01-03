@@ -1,6 +1,6 @@
 //! Configuration Loader
 //! - Reads pyproject.toml for environment variables (pytest-env replacement)
-//! - Provides CLI argument parsing with clap 
+//! - Provides CLI argument parsing with clap
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 // =============================================================================
-// CLI Configuration 
+// CLI Configuration (0.9.0 Beta - pytest Compatibility Layer)
 // =============================================================================
 
 /// Output format for tach results
@@ -22,37 +22,199 @@ pub enum OutputFormat {
     Json,
 }
 
-/// Tach CLI - Fast Python Test Runner
+/// Verbosity level for output
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum Verbosity {
+    /// Minimal output
+    Quiet,
+    /// Normal output (default)
+    #[default]
+    Normal,
+    /// Verbose output with test names
+    Verbose,
+    /// Extra verbose with timing
+    VeryVerbose,
+}
+
+/// tach - Hypervisor-Accelerated Python Test Runner
+///
+/// A drop-in replacement for pytest using userfaultfd snapshots for
+/// sub-millisecond test isolation. Compatible with pytest arguments.
+///
+/// EXAMPLES:
+///     tach                          Run all tests in current directory
+///     tach tests/                   Run tests in specific directory
+///     tach -n auto                  Auto-detect worker count
+///     tach -k "network"             Run tests matching "network"
+///     tach -x --coverage            Stop on first failure, with coverage
+///     tach -- -v --tb=short         Pass arguments directly to pytest shim
+///
+/// PYTEST COMPATIBILITY:
+///     Most pytest flags are supported. Use -- to pass through unknown args.
+///
+/// ENVIRONMENT VARIABLES:
+///     TACH_WORKERS      Number of parallel workers (default: auto)
+///     TACH_FORMAT       Output format: human, json
+///     TACH_COVERAGE     Enable coverage collection
+///     TACH_NO_ISOLATION Disable sandboxing (for debugging)
 #[derive(Parser)]
-#[command(name = "tach", version, about = "Fast Python Test Runner")]
+#[command(
+    name = "tach",
+    version = env!("CARGO_PKG_VERSION"),
+    author = "Anthropic",
+    about = "Hypervisor-Accelerated Python Test Runner",
+    long_about = "A drop-in replacement for pytest using userfaultfd snapshots for sub-millisecond test isolation. Compatible with pytest arguments.",
+    after_help = "For more information, visit: https://github.com/anthropics/tach-core"
+)]
 pub struct Cli {
-    /// Output format (also: TACH_FORMAT env var)
-    #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
-    pub format: OutputFormat,
+    // =========================================================================
+    // Parallel Execution (pytest-xdist compatible)
+    // =========================================================================
+    /// Number of workers for parallel test execution.
+    ///
+    /// Use 'auto' (or 0) to auto-detect based on CPU count.
+    /// Default: auto
+    #[arg(short = 'n', long, value_name = "WORKERS", default_value = "auto", env = "TACH_WORKERS")]
+    pub workers: String,
 
-    /// Path to generate JUnit XML report (also: TACH_JUNIT_XML env var)
-    #[arg(long, env = "TACH_JUNIT_XML")]
-    pub junit_xml: Option<std::path::PathBuf>,
+    // =========================================================================
+    // Test Selection (pytest compatible)
+    // =========================================================================
+    /// Run tests matching the given substring expression.
+    ///
+    /// Examples: -k "network", -k "not slow", -k "test_login or test_logout"
+    #[arg(short = 'k', long, value_name = "EXPRESSION")]
+    pub keyword: Option<String>,
 
-    /// Watch for changes and re-run tests automatically
-    #[arg(long, short = 'w')]
-    pub watch: bool,
-
-    /// Disable filesystem and network isolation (runs without CAP_SYS_ADMIN)
-    #[arg(long)]
-    pub no_isolation: bool,
-
-    /// Enable coverage collection (PEP 669 sys.monitoring)
-    /// Requires Python 3.12+. Coverage data is written to .coverage file.
-    #[arg(long, env = "TACH_COVERAGE")]
-    pub coverage: bool,
+    /// Run tests matching the given marker expression.
+    ///
+    /// Examples: -m "slow", -m "not integration", -m "smoke and not flaky"
+    #[arg(short = 'm', long, value_name = "MARKERS")]
+    pub markers: Option<String>,
 
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,
 
+    // =========================================================================
+    // Execution Control (pytest compatible)
+    // =========================================================================
+    /// Exit on first failure (fail fast).
+    ///
+    /// Stops test execution immediately after the first test failure.
+    #[arg(short = 'x', long)]
+    pub exitfirst: bool,
+
+    /// Exit after N failures (--maxfail=N).
+    #[arg(long, value_name = "N")]
+    pub maxfail: Option<usize>,
+
+    /// Watch for changes and re-run tests automatically.
+    ///
+    /// Uses inotify to detect file changes and triggers re-runs.
+    #[arg(long, short = 'w')]
+    pub watch: bool,
+
+    // =========================================================================
+    // Output Control (pytest compatible)
+    // =========================================================================
+    /// Increase verbosity (-v for verbose, -vv for very verbose).
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Decrease verbosity (quiet mode).
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+
+    /// Output format (also: TACH_FORMAT env var)
+    #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
+    pub format: OutputFormat,
+
+    // =========================================================================
+    // Coverage (pytest-cov compatible)
+    // =========================================================================
+    /// Enable coverage collection (PEP 669 sys.monitoring).
+    ///
+    /// Requires Python 3.12+. Coverage data is written to .coverage file.
+    /// This is zero-overhead coverage using Python's monitoring API.
+    #[arg(long, env = "TACH_COVERAGE")]
+    pub coverage: bool,
+
+    /// Source directories for coverage (can specify multiple).
+    #[arg(long = "cov", value_name = "PATH")]
+    pub cov_source: Vec<String>,
+
+    // =========================================================================
+    // Reporting
+    // =========================================================================
+    /// Path to generate JUnit XML report (also: TACH_JUNIT_XML env var).
+    ///
+    /// Compatible with CI systems like Jenkins, CircleCI, GitHub Actions.
+    #[arg(long, env = "TACH_JUNIT_XML", value_name = "PATH")]
+    pub junit_xml: Option<std::path::PathBuf>,
+
+    // =========================================================================
+    // Tach-Specific Options
+    // =========================================================================
+    /// Disable filesystem and network isolation.
+    ///
+    /// Runs without Landlock/Seccomp sandboxing. Useful for debugging
+    /// or when CAP_SYS_ADMIN is not available.
+    #[arg(long)]
+    pub no_isolation: bool,
+
+    /// Force toxic mode for all tests (no snapshot reuse).
+    ///
+    /// Each test runs in a fresh forked process. Slower but more isolated.
+    #[arg(long)]
+    pub force_toxic: bool,
+
+    /// Show timing for slowest N tests.
+    #[arg(long, value_name = "N")]
+    pub durations: Option<usize>,
+
+    // =========================================================================
+    // Passthrough Arguments
+    // =========================================================================
+    /// Extra arguments to pass to pytest shim.
+    ///
+    /// Use after -- separator: tach -- -v --tb=short
+    #[arg(last = true)]
+    pub pytest_args: Vec<String>,
+
+    // =========================================================================
+    // Subcommands
+    // =========================================================================
     #[command(subcommand)]
     pub command: Option<Commands>,
+}
+
+impl Cli {
+    /// Parse worker count, returning None for "auto"
+    pub fn worker_count(&self) -> Option<usize> {
+        match self.workers.as_str() {
+            "auto" | "0" => None,
+            n => n.parse().ok(),
+        }
+    }
+
+    /// Get effective verbosity level
+    pub fn verbosity(&self) -> Verbosity {
+        if self.quiet {
+            Verbosity::Quiet
+        } else {
+            match self.verbose {
+                0 => Verbosity::Normal,
+                1 => Verbosity::Verbose,
+                _ => Verbosity::VeryVerbose,
+            }
+        }
+    }
+
+    /// Check if fail-fast is enabled
+    pub fn fail_fast(&self) -> bool {
+        self.exitfirst || self.maxfail == Some(1)
+    }
 }
 
 /// Subcommands
@@ -60,8 +222,19 @@ pub struct Cli {
 pub enum Commands {
     /// Run tests (default if no subcommand)
     Test,
+
     /// List discovered tests without running
     List,
+
+    /// Run self-diagnostics to verify kernel support
+    ///
+    /// Checks userfaultfd, Landlock, Seccomp, and other kernel features
+    /// required for full Tach functionality. Use this to troubleshoot
+    /// issues on new systems.
+    SelfTest,
+
+    /// Show version and build information
+    Version,
 }
 
 // =============================================================================
@@ -159,10 +332,7 @@ impl TachConfig {
 
     /// Check if coverage is enabled
     pub fn coverage_enabled(&self) -> bool {
-        self.coverage
-            .as_ref()
-            .and_then(|c| c.enabled)
-            .unwrap_or(false)
+        self.coverage.as_ref().and_then(|c| c.enabled).unwrap_or(false)
     }
 }
 
@@ -301,14 +471,8 @@ pub fn load_env_from_pyproject(root: &Path) {
         if let Some(env_vars) = tool.pytest_env {
             for (key, value) in env_vars {
                 // SECURITY: Block dangerous environment variables
-                if ENV_DENYLIST
-                    .iter()
-                    .any(|&blocked| key.eq_ignore_ascii_case(blocked))
-                {
-                    eprintln!(
-                        "[config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
-                        key
-                    );
+                if ENV_DENYLIST.iter().any(|&blocked| key.eq_ignore_ascii_case(blocked)) {
+                    eprintln!("[config] WARNING: Blocked dangerous env var from pyproject.toml: {}", key);
                     continue;
                 }
                 std::env::set_var(&key, &value);
@@ -432,10 +596,7 @@ select = ["E", "F"]
 "#;
         let pyproject: PyProject = toml::from_str(toml_content).unwrap();
         let env_vars = pyproject.tool.unwrap().pytest_env.unwrap();
-        assert_eq!(
-            env_vars.get("DB_URL"),
-            Some(&"sqlite:///:memory:".to_string())
-        );
+        assert_eq!(env_vars.get("DB_URL"), Some(&"sqlite:///:memory:".to_string()));
     }
 
     #[test]
@@ -654,19 +815,7 @@ Ld_Library_Path = "/malicious/path"
     #[test]
     fn test_env_denylist_all_blocked_vars() {
         // Verify all blocked variables are in the denylist
-        let blocked_vars = [
-            "LD_PRELOAD",
-            "LD_LIBRARY_PATH",
-            "LD_AUDIT",
-            "LD_DEBUG",
-            "PYTHONPATH",
-            "PYTHONHOME",
-            "PYTHONSTARTUP",
-            "PYTHONMALLOC",
-            "PATH",
-            "HOME",
-            "USER",
-        ];
+        let blocked_vars = ["LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONMALLOC", "PATH", "HOME", "USER"];
 
         // Just verify the count matches what we expect
         assert_eq!(blocked_vars.len(), 11);

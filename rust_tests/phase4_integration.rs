@@ -1,6 +1,6 @@
-//! Phase 4 Integration Tests: Dual-Path Scheduler
+//! Scheduler Integration Tests: Dual-Path Scheduler
 //!
-//! Verifies the Phase 4 implementation:
+//! Verifies the Scheduler implementation:
 //! - Sub-Stage 4.1: Queue split (safe first, toxic last)
 //! - Sub-Stage 4.2: Dual-path decision (reset vs exit)
 //!

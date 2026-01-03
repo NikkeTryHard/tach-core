@@ -32,12 +32,7 @@ pub enum MachineEvent<'a> {
         message: Option<&'a str>,
     },
     /// Emitted at end of test run
-    RunFinished {
-        passed: usize,
-        failed: usize,
-        skipped: usize,
-        duration_ms: u64,
-    },
+    RunFinished { passed: usize, failed: usize, skipped: usize, duration_ms: u64 },
     /// Emitted on fatal error (Boss Refinement #2)
     Error { message: &'a str },
 }
@@ -79,31 +74,15 @@ impl Reporter for JsonReporter {
         }
     }
 
-    fn on_test_finished(
-        &mut self,
-        id: &str,
-        status: &str,
-        duration_ms: u64,
-        message: Option<&str>,
-    ) {
-        let event = MachineEvent::TestFinished {
-            id,
-            status,
-            duration_ms,
-            message,
-        };
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>) {
+        let event = MachineEvent::TestFinished { id, status, duration_ms, message };
         if let Ok(json) = serde_json::to_string(&event) {
             println!("{}", json);
         }
     }
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
-        let event = MachineEvent::RunFinished {
-            passed,
-            failed,
-            skipped,
-            duration_ms,
-        };
+        let event = MachineEvent::RunFinished { passed, failed, skipped, duration_ms };
         if let Ok(json) = serde_json::to_string(&event) {
             println!("{}", json);
         }
@@ -129,13 +108,7 @@ impl Reporter for HumanReporter {
         eprint!("  {} ... ", id);
     }
 
-    fn on_test_finished(
-        &mut self,
-        _id: &str,
-        status: &str,
-        duration_ms: u64,
-        message: Option<&str>,
-    ) {
+    fn on_test_finished(&mut self, _id: &str, status: &str, duration_ms: u64, message: Option<&str>) {
         match status {
             "pass" => eprintln!("✓ ({}ms)", duration_ms),
             "fail" => {
@@ -154,10 +127,7 @@ impl Reporter for HumanReporter {
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
         eprintln!();
-        eprintln!(
-            "[tach] {} passed, {} failed, {} skipped in {}ms",
-            passed, failed, skipped, duration_ms
-        );
+        eprintln!("[tach] {} passed, {} failed, {} skipped in {}ms", passed, failed, skipped, duration_ms);
     }
 
     fn on_error(&mut self, message: &str) {
@@ -166,7 +136,7 @@ impl Reporter for HumanReporter {
 }
 
 // =============================================================================
-// MultiReporter 
+// MultiReporter
 // =============================================================================
 
 /// MultiReporter - broadcasts events to multiple reporters
@@ -193,13 +163,7 @@ impl Reporter for MultiReporter {
         }
     }
 
-    fn on_test_finished(
-        &mut self,
-        id: &str,
-        status: &str,
-        duration_ms: u64,
-        message: Option<&str>,
-    ) {
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>) {
         for r in &mut self.reporters {
             r.on_test_finished(id, status, duration_ms, message);
         }
@@ -247,14 +211,7 @@ impl ProgressReporter {
     /// Create a new progress reporter
     pub fn new() -> Self {
         let bar = ProgressBar::new(0);
-        bar.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-                )
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("=>-"),
-        );
+        bar.set_style(ProgressStyle::default_bar().template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}").unwrap_or_else(|_| ProgressStyle::default_bar()).progress_chars("=>-"));
 
         Self {
             bar,
@@ -287,21 +244,11 @@ impl Reporter for ProgressReporter {
 
     fn on_test_start(&mut self, id: &str, _file: &str) {
         // Truncate long test IDs for display
-        let display_id = if id.len() > 50 {
-            format!("...{}", &id[id.len() - 47..])
-        } else {
-            id.to_string()
-        };
+        let display_id = if id.len() > 50 { format!("...{}", &id[id.len() - 47..]) } else { id.to_string() };
         self.bar.set_message(display_id);
     }
 
-    fn on_test_finished(
-        &mut self,
-        id: &str,
-        status: &str,
-        _duration_ms: u64,
-        message: Option<&str>,
-    ) {
+    fn on_test_finished(&mut self, id: &str, status: &str, _duration_ms: u64, message: Option<&str>) {
         match status {
             "pass" => self.passed += 1,
             "fail" => {
@@ -317,10 +264,7 @@ impl Reporter for ProgressReporter {
         }
 
         self.bar.inc(1);
-        self.bar.set_message(format!(
-            "P:{} F:{} S:{}",
-            self.passed, self.failed, self.skipped
-        ));
+        self.bar.set_message(format!("P:{} F:{} S:{}", self.passed, self.failed, self.skipped));
     }
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
@@ -343,15 +287,26 @@ impl Reporter for ProgressReporter {
         // Print summary with colors
         let duration_secs = duration_ms as f64 / 1000.0;
         if failed > 0 {
-            eprintln!(
-                "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
-                passed, failed, skipped, duration_secs
-            );
+            eprintln!("\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m", passed, failed, skipped, duration_secs);
         } else {
-            eprintln!(
-                "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
-                passed, failed, skipped, duration_secs
-            );
+            eprintln!("\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m", passed, failed, skipped, duration_secs);
+        }
+
+        // Time Saved metric: compare actual time vs estimated cold pytest time
+        // Baseline: 300ms per test (typical pytest startup + import overhead)
+        let total_tests = passed + failed + skipped;
+        let estimated_cold_ms = total_tests as u64 * 300;
+        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
+
+        if time_saved_ms > 1000 && total_tests > 10 {
+            let saved_secs = time_saved_ms as f64 / 1000.0;
+            if saved_secs >= 60.0 {
+                let mins = (saved_secs / 60.0).floor() as u64;
+                let secs = saved_secs % 60.0;
+                eprintln!("\x1b[36m(Saved {}m {:.0}s of initialization overhead)\x1b[0m", mins, secs);
+            } else {
+                eprintln!("\x1b[36m(Saved {:.1}s of initialization overhead)\x1b[0m", saved_secs);
+            }
         }
     }
 
@@ -418,13 +373,7 @@ impl Reporter for DotsReporter {
         // No output on test start
     }
 
-    fn on_test_finished(
-        &mut self,
-        id: &str,
-        status: &str,
-        _duration_ms: u64,
-        message: Option<&str>,
-    ) {
+    fn on_test_finished(&mut self, id: &str, status: &str, _duration_ms: u64, message: Option<&str>) {
         match status {
             "pass" => {
                 self.passed += 1;
@@ -471,10 +420,24 @@ impl Reporter for DotsReporter {
 
         // Print summary
         let duration_secs = duration_ms as f64 / 1000.0;
-        eprintln!(
-            "\n[tach] {} passed, {} failed, {} skipped in {:.2}s",
-            passed, failed, skipped, duration_secs
-        );
+        eprintln!("\n[tach] {} passed, {} failed, {} skipped in {:.2}s", passed, failed, skipped, duration_secs);
+
+        // Time Saved metric: compare actual time vs estimated cold pytest time
+        // Baseline: 300ms per test (typical pytest startup + import overhead)
+        let total_tests = passed + failed + skipped;
+        let estimated_cold_ms = total_tests as u64 * 300;
+        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
+
+        if time_saved_ms > 1000 && total_tests > 10 {
+            let saved_secs = time_saved_ms as f64 / 1000.0;
+            if saved_secs >= 60.0 {
+                let mins = (saved_secs / 60.0).floor() as u64;
+                let secs = saved_secs % 60.0;
+                eprintln!("[tach] (Saved {}m {:.0}s of initialization overhead)", mins, secs);
+            } else {
+                eprintln!("[tach] (Saved {:.1}s of initialization overhead)", saved_secs);
+            }
+        }
     }
 
     fn on_error(&mut self, message: &str) {
@@ -523,9 +486,7 @@ mod tests {
 
     #[test]
     fn test_error_event() {
-        let event = MachineEvent::Error {
-            message: "Zygote died unexpectedly",
-        };
+        let event = MachineEvent::Error { message: "Zygote died unexpectedly" };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"error\""));
     }
@@ -540,12 +501,7 @@ mod tests {
 
     #[test]
     fn test_run_finished_event() {
-        let event = MachineEvent::RunFinished {
-            passed: 10,
-            failed: 2,
-            skipped: 1,
-            duration_ms: 5000,
-        };
+        let event = MachineEvent::RunFinished { passed: 10, failed: 2, skipped: 1, duration_ms: 5000 };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"run_finished\""));
         assert!(json.contains("\"passed\":10"));
@@ -555,10 +511,7 @@ mod tests {
 
     #[test]
     fn test_test_start_event() {
-        let event = MachineEvent::TestStart {
-            id: "test_foo.py::test_bar",
-            file: "test_foo.py",
-        };
+        let event = MachineEvent::TestStart { id: "test_foo.py::test_bar", file: "test_foo.py" };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"test_start\""));
         assert!(json.contains("\"file\":\"test_foo.py\""));
@@ -566,8 +519,7 @@ mod tests {
 
     #[test]
     fn test_multi_reporter_creation() {
-        let reporters: Vec<Box<dyn Reporter>> =
-            vec![Box::new(HumanReporter), Box::new(JsonReporter)];
+        let reporters: Vec<Box<dyn Reporter>> = vec![Box::new(HumanReporter), Box::new(JsonReporter)];
         let _multi = MultiReporter::new(reporters);
         // Should compile and not panic
     }
@@ -588,12 +540,7 @@ mod tests {
     fn test_status_strings() {
         // Ensure common status strings work
         for status in &["pass", "fail", "skip"] {
-            let event = MachineEvent::TestFinished {
-                id: "test",
-                status,
-                duration_ms: 1,
-                message: None,
-            };
+            let event = MachineEvent::TestFinished { id: "test", status, duration_ms: 1, message: None };
             let json = serde_json::to_string(&event).unwrap();
             assert!(json.contains(status));
         }

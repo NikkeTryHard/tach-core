@@ -1,5 +1,5 @@
 """
-Phase 5.2: The Iron Dome - Sandbox Hardening Tests
+Iron Dome: The Iron Dome - Sandbox Hardening Tests
 
 This test suite verifies the Landlock and Seccomp sandbox implementation.
 Tests are designed to run both inside and outside the sandbox to verify

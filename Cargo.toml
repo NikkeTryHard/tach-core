@@ -1,6 +1,6 @@
 [package]
 name = "tach-core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 # Lib for integration tests, bin for actual CLI
@@ -99,6 +99,7 @@ seccompiler = "0.5"
 # atty: TTY detection for CI fallback
 indicatif = "0.18"
 atty = "0.2"
+thiserror = "2.0.17"
 
 [dev-dependencies]
 tempfile = "3"
