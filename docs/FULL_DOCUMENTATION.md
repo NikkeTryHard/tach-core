@@ -12,6 +12,7 @@
 - [Coverage System](#coverage-system)
 - [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
 - [Discovery Engine](#discovery-engine)
+- [Internal Architecture: The Physics of Restoration](#internal-architecture-the-physics-of-restoration)
 - [Isolation Architecture (Namespaces and OverlayFS)](#isolation-architecture-namespaces-and-overlayfs)
 - [Zero-Copy Loader](#zero-copy-loader)
 - [Architecture Overview](#architecture-overview)
@@ -24,11 +25,21 @@
 - [Toxicity Analysis](#toxicity-analysis)
 - [Zygote Lifecycle](#zygote-lifecycle)
 
+### Security
+- [Sandbox Enforcement: The EPERM Doctrine](#sandbox-enforcement-the-eperm-doctrine)
+
+### Operations
+- [Self-Hosted Runner Requirements](#self-hosted-runner-requirements)
+
+### Decisions
+- [Rust 2024 Edition Migration Analysis](#rust-2024-edition-migration-analysis)
+
 ### Reference
 - [API Reference](#api-reference)
 - [Configuration Reference](#configuration-reference)
 - [Development Guide](#development-guide)
 - [Troubleshooting Guide](#troubleshooting-guide)
+- [WSL2 Setup Guide for tach-core](#wsl2-setup-guide-for-tach-core)
 
 ---
 
@@ -1394,6 +1405,505 @@ See [Toxicity Analysis](toxicity.md) for details.
 
 - [Toxicity Analysis](toxicity.md) - How discovered modules are analyzed for safety
 - [Fixture Resolver](resolver.md) - How fixture dependencies are resolved
+
+
+---
+
+
+# Internal Architecture: The Physics of Restoration
+
+> **Status**: Physics-Complete (v0.8.0-alpha)
+> **Author**: Project Tach Development Team
+> **Purpose**: Define restoration invariants and document allocator-specific state locations
+
+---
+
+## Executive Summary
+
+This document bridges the **EPERM Doctrine** (security enforcement) with the **Physics of Restoration** (memory snapshot/restore). It defines the invariants that must hold for successful test isolation and documents the critical memory locations that must be synchronized during restoration.
+
+---
+
+## The Restoration Quadrant
+
+Successful memory restoration requires the synchronization of **four** interdependent memory regions:
+
+```mermaid
+graph TB
+    subgraph "THE RESTORATION QUADRANT"
+        TCB[Thread Control Block<br/>fs_base register]
+        BSS[BSS Segment<br/>.data/.bss in libpython]
+        HEAP[Heap Segment<br/>PyObject allocations]
+        STACK[Stack Segment<br/>C call frames + RSP]
+    end
+
+    TCB -->|"mi_heap_t pointer"| HEAP
+    BSS -->|"PyFloat_FreeList head"| HEAP
+    HEAP -->|"next pointers"| HEAP
+    STACK -->|"local pointers"| HEAP
+    STACK -->|"return addresses"| BSS
+
+    subgraph "FAILURE MODES"
+        F1[TCB stale → use-after-free]
+        F2[BSS stale → double-free]
+        F3[HEAP stale → dangling pointers]
+        F4[STACK stale → corrupted frames]
+    end
+
+    TCB -.->|"If not restored"| F1
+    BSS -.->|"If not restored"| F2
+    HEAP -.->|"If not restored"| F3
+    STACK -.->|"If not restored"| F4
+```
+
+### The Four Pillars
+
+| Pillar    | Memory Location             | Contains                            | Restoration Method          |
+| --------- | --------------------------- | ----------------------------------- | --------------------------- |
+| **TCB**   | `fs_base` register          | TLS pointers (mi_heap_t, mi_tld_t)  | arch_prctl(ARCH_SET_FS)     |
+| **BSS**   | libpython .data/.bss        | Free list heads, singletons         | userfaultfd + MADV_DONTNEED |
+| **Heap**  | `[heap]` + anonymous maps   | PyObject allocations                | userfaultfd + MADV_DONTNEED |
+| **Stack** | `[stack]` in /proc/pid/maps | C call frames, local variables, RSP | userfaultfd + longjmp       |
+
+### Stack Restoration Semantics
+
+The Stack pillar is special because it requires **two-phase restoration**:
+
+1. **Memory Restoration**: userfaultfd restores the stack memory contents (same as Heap/BSS)
+2. **Register Restoration**: `longjmp` restores RSP/RBP to point to the correct stack frame
+
+```c
+// Phase 1: setjmp captures stack context during golden snapshot
+jmp_buf golden_context;
+if (setjmp(golden_context) == 0) {
+    // First return: capture golden state
+    take_snapshot();
+} else {
+    // Second return: we just restored!
+    verify_restoration();
+}
+
+// Phase 2: longjmp restores registers after memory is restored
+longjmp(golden_context, 1);  // Jumps to setjmp, returns 1
+```
+
+**Critical**: `longjmp` only restores **registers** (RSP, RBP, RIP). The actual stack **memory** must already be restored via userfaultfd before longjmp is called.
+
+---
+
+## Restoration Invariants
+
+### Invariant 1: Bit-Perfect Alignment
+
+A successful restore is **NOT** just "no crash." It is a **bit-perfect** alignment of:
+
+| Component | Location                      | Validation                           |
+| --------- | ----------------------------- | ------------------------------------ |
+| **TCB**   | `fs_base` register            | `self_ptr == fs_base`                |
+| **BSS**   | libpython .data/.bss segments | `sha256(restored) == sha256(golden)` |
+| **Heap**  | Anonymous mappings + `[heap]` | `sha256(restored) == sha256(golden)` |
+| **Stack** | `[stack]` region              | `sha256(restored) == sha256(golden)` |
+
+### Invariant 2: Pointer Consistency
+
+All pointers from BSS → Heap must point to valid, restored objects:
+
+```
+BEFORE RESTORE:
+  BSS: PyFloat_FreeList → 0x7f1234560000 (heap object A)
+  Heap: Object A at 0x7f1234560000, next → Object B
+
+AFTER RESTORE (CORRECT):
+  BSS: PyFloat_FreeList → 0x7f1234560000 (SAME address)
+  Heap: Object A at 0x7f1234560000 (RESTORED content)
+
+AFTER RESTORE (FAILURE):
+  BSS: PyFloat_FreeList → 0x7f1234560000 (old address)
+  Heap: 0x7f1234560000 is ZEROED (MADV_DONTNEED zapped it)
+  RESULT: Next float allocation follows NULL/garbage pointer → SIGSEGV
+```
+
+### Invariant 3: TLS Synchronization
+
+Thread Local Storage must be restored alongside Heap when using allocators that cache state in TLS (mimalloc in Python 3.13+):
+
+```
+TCB at fs_base:
+  +0x0ad8: mi_heap_t* → points into anonymous heap region
+  +0x0ae0: mi_tld_t* → thread-local data
+  ...
+
+If Heap is restored but TLS is not:
+  mi_heap_t* points to RESTORED memory
+  BUT mi_heap_t->pages still references STALE page list
+  RESULT: Allocator returns memory that was "freed" in snapshot
+```
+
+### Invariant 4: GC Stability
+
+Post-restoration, the garbage collector must be able to traverse all objects without fault:
+
+```python
+# Verification: Run 100 times without SIGSEGV
+for _ in range(100):
+    gc.collect()
+```
+
+If any of the following occur, restoration has FAILED:
+
+- `SIGSEGV` (invalid pointer dereference)
+- `SIGBUS` (unaligned access)
+- Python exception from gc internals
+- Memory leak detected by gc
+
+### Invariant 5: Stack Integrity
+
+The C stack must be restored with valid return addresses and frame pointers:
+
+```
+BEFORE RESTORE (Golden):
+  RSP: 0x7ffe12345000
+  Stack: [...][return_addr_A][frame_ptr_A][locals_A][...]
+
+AFTER RESTORE (CORRECT):
+  RSP: 0x7ffe12345000 (restored via longjmp)
+  Stack: [...][return_addr_A][frame_ptr_A][locals_A][...] (restored via uffd)
+
+AFTER RESTORE (FAILURE):
+  RSP: 0x7ffe12345000 (restored via longjmp)
+  Stack: [...][GARBAGE][GARBAGE][GARBAGE][...] (not restored)
+  RESULT: Next function return jumps to invalid address → SIGSEGV
+```
+
+Stack restoration is validated by:
+
+1. Deep recursion before snapshot (stress test with 100+ frames)
+2. Restore triggers stack page faults
+3. Continue execution without crash
+4. Verify local variables are preserved
+
+---
+
+## The mimalloc Offset Registry
+
+Python 3.13 uses mimalloc as its memory allocator. mimalloc stores thread-local state at fixed offsets from `fs_base`.
+
+### Discovered Offsets (Python 3.13, x86_64, glibc)
+
+| Offset from fs_base | Structure    | Description                         |
+| ------------------- | ------------ | ----------------------------------- |
+| `+0x0ad8`           | `mi_heap_t*` | **Primary heap pointer** (CRITICAL) |
+| `+0x0ae0`           | `mi_tld_t*`  | Thread-local data                   |
+| `+0x0af8`           | Unknown      | Secondary heap reference            |
+| `+0x0b00`           | Unknown      | Page list pointer                   |
+| `+0x0b20`           | Unknown      | Segment metadata                    |
+| `+0x0b40`           | Unknown      | Segment base                        |
+| `+0x0b60`           | Unknown      | Free list cache                     |
+| `+0x0b80`           | Unknown      | Free list cache                     |
+
+### Version Compatibility Matrix
+
+| Python Version | Allocator | TLS Offsets               | Status     |
+| -------------- | --------- | ------------------------- | ---------- |
+| 3.11.x         | pymalloc  | N/A (no TLS caching)      | Safe       |
+| 3.12.x         | pymalloc  | N/A (no TLS caching)      | Safe       |
+| 3.13.x         | mimalloc  | `fs_base+0xad8` (primary) | **HAZARD** |
+| 3.14.x         | TBD       | TBD                       | Unknown    |
+
+### Detection Method
+
+The mimalloc TLS offsets are discovered at runtime using **Sentinel Scan**:
+
+1. Allocate a unique sentinel pattern (`0xDEADC0DE_BAADF00D`) in Python heap via ctypes
+2. Read `fs_base` via `arch_prctl(ARCH_GET_FS)`
+3. Parse `/proc/self/maps` to identify TLS region boundaries
+4. Scan TLS (12KB range) for pointers targeting the sentinel or heap regions
+5. Record offsets where valid heap pointers are found
+
+**Why Runtime Discovery?**
+
+Hardcoded offsets are "Voodoo Engineering" because they vary with:
+
+- Python version (3.13.x vs 3.14.x)
+- glibc version
+- libpython build configuration
+- ASLR state
+
+The sentinel scan is performed **once during Zygote warm-up** and cached for the process tree's lifetime.
+
+See `experiments/tls_sentinel_scan.rs` for the implementation.
+
+---
+
+## The Split-Brain Hazard
+
+### Definition
+
+The **Split-Brain Hazard** occurs when BSS and Heap are restored independently, leaving cross-segment pointers in an inconsistent state.
+
+```mermaid
+sequenceDiagram
+    participant BSS as BSS (.data)
+    participant Heap as Heap
+    participant GC as gc.collect()
+
+    Note over BSS,Heap: GOLDEN SNAPSHOT
+    BSS->>Heap: FreeList head → Object A
+    Heap->>Heap: Object A.next → Object B
+
+    Note over BSS,Heap: TEST EXECUTION (DIRTY)
+    BSS->>Heap: FreeList head → Object C (new)
+    Heap->>Heap: Object C.next → Object D (new)
+
+    Note over BSS,Heap: RESTORE (INCORRECT)
+    BSS->>BSS: Restored to → Object A
+    Heap->>Heap: NOT restored (still Object C, D)
+
+    GC->>BSS: Read FreeList head
+    BSS-->>GC: Returns Object A address
+    GC->>Heap: Access Object A
+    Heap-->>GC: SIGSEGV (Object A doesn't exist)
+```
+
+### Mitigation
+
+The Split-Brain Hazard is mitigated by:
+
+1. **Atomic Restoration**: Both BSS and Heap are invalidated in a single `madvise(MADV_DONTNEED)` pass
+2. **userfaultfd Handling**: All page faults are resolved from the golden snapshot
+3. **Validation**: Post-restore GC stress test (100 iterations)
+
+---
+
+## The Free List Architecture
+
+### PyFloat_FreeList (Example)
+
+Python caches freed `PyFloatObject` instances in a singly-linked free list:
+
+```c
+// In Objects/floatobject.c
+static PyFloatObject *free_list = NULL;  // BSS segment
+static int numfree = 0;                   // BSS segment
+
+// When a float is freed:
+void float_dealloc(PyFloatObject *op) {
+    op->ob_type = (PyTypeObject *)free_list;  // Heap modification
+    free_list = op;                            // BSS modification
+    numfree++;
+}
+
+// When a float is allocated:
+PyFloatObject *float_alloc(void) {
+    if (free_list != NULL) {
+        PyFloatObject *op = free_list;              // Read from BSS
+        free_list = (PyFloatObject *)op->ob_type;   // BSS modification
+        numfree--;
+        return op;  // Return from Heap
+    }
+    return PyObject_Malloc(sizeof(PyFloatObject));
+}
+```
+
+### Restoration Requirement
+
+For correct restoration:
+
+| Segment | Must Contain                                         |
+| ------- | ---------------------------------------------------- |
+| BSS     | `free_list` pointer from golden snapshot             |
+| Heap    | The exact `PyFloatObject` that `free_list` points to |
+
+If BSS is restored but Heap is not:
+
+- `free_list` points to golden address (e.g., `0x7f1234560000`)
+- But that address now contains post-test data
+- Next `float_alloc()` returns corrupted object
+
+---
+
+## Validation Strategy
+
+### The Memory Invariant Test
+
+Located at: `rust_tests/memory_invariant.rs`
+
+```mermaid
+flowchart TB
+    subgraph Phase1["WARMUP"]
+        W1[Initialize Python]
+        W2[Allocate 1000 floats]
+        W3[Delete floats → populate FreeList]
+    end
+
+    subgraph Phase2["SNAPSHOT"]
+        S1[SIGSTOP]
+        S2[Supervisor captures golden]
+        S3[SIGCONT]
+    end
+
+    subgraph Phase3["DIRTY"]
+        D1[Allocate 500 more floats]
+        D2[Mutate heap]
+        D3[BSS and Heap now diverged]
+    end
+
+    subgraph Phase4["RESTORE"]
+        R1[madvise MADV_DONTNEED]
+        R2[Access triggers UFFD]
+        R3[Supervisor restores golden]
+    end
+
+    subgraph Phase5["VERIFY"]
+        V1[Run gc.collect 100x]
+        V2[Allocate 100 floats]
+        V3[Access all floats]
+        V4[No SIGSEGV = PASS]
+    end
+
+    Phase1 --> Phase2 --> Phase3 --> Phase4 --> Phase5
+```
+
+### Success Criteria
+
+| Metric                      | Target            | Validation Method                |
+| --------------------------- | ----------------- | -------------------------------- |
+| **Bit-Perfect Restoration** | sha256 match      | Compare memory ranges            |
+| **GC Stability**            | 100x gc.collect() | No SIGSEGV                       |
+| **Float Allocation**        | Success           | Allocate 100 floats post-restore |
+| **Latency**                 | <500μs for 1GB    | Benchmark restoration time       |
+
+---
+
+## Security Integration
+
+### From EPERM Doctrine to Physics
+
+The EPERM Doctrine (documented in `docs/security/sandbox-enforcement.md`) ensures that workers cannot escape their sandbox. The Physics of Restoration ensures that workers cannot corrupt each other through stale memory state.
+
+```mermaid
+graph LR
+    subgraph Security["EPERM DOCTRINE"]
+        S1[Seccomp blocks syscalls]
+        S2[Landlock blocks filesystem]
+        S3[PID namespace isolates processes]
+    end
+
+    subgraph Physics["RESTORATION PHYSICS"]
+        P1[userfaultfd captures faults]
+        P2[Golden snapshot provides source of truth]
+        P3[TLS restoration prevents allocator desync]
+    end
+
+    S1 --> P1
+    S2 --> P2
+    S3 --> P3
+
+    subgraph Result["IRON DOME"]
+        R1[Workers cannot escape]
+        R2[Workers cannot corrupt]
+        R3[Workers are perfectly recyclable]
+    end
+
+    Security --> Result
+    Physics --> Result
+```
+
+---
+
+## Future Work
+
+### Phase 2.2: TLS Restoration Implementation (COMPLETE)
+
+1. **Runtime Sentinel Scan** - COMPLETE (`experiments/tls_sentinel_scan.rs`)
+2. **Stack Registration** - COMPLETE (`src/isolation/snapshot.rs` includes `[stack]`)
+3. **Capture TLS** - COMPLETE (via `ptrace(PTRACE_ARCH_PRCTL, ARCH_GET_FS)`)
+4. **Restore TLS** - COMPLETE (via `process_vm_writev` + `ptrace(PTRACE_ARCH_PRCTL, ARCH_SET_FS)`)
+5. **Validate** mimalloc state after restoration - COMPLETE (via physics tests)
+
+### Phase 2.3: The Final Sync (COMPLETE)
+
+Implemented the full TLS Snapshot/Restore mechanism in `src/isolation/snapshot.rs`:
+
+#### Key Functions Added
+
+| Function                 | Purpose                                          |
+| ------------------------ | ------------------------------------------------ |
+| `get_fs_base_ptrace()`   | Read fs_base register via ptrace ARCH_GET_FS     |
+| `set_fs_base_ptrace()`   | Write fs_base register via ptrace ARCH_SET_FS    |
+| `capture_tls_snapshot()` | Capture 12KB TLS block + fs_base during snapshot |
+| `restore_tls_snapshot()` | Restore TLS block via process_vm_writev + ptrace |
+| `restore_worker_tls()`   | SnapshotManager method for TLS restoration       |
+| `reset_worker_full()`    | Combined memory + TLS reset for complete restore |
+
+#### TLS Snapshot Structure
+
+```rust
+pub struct TlsSnapshot {
+    pub fs_base: usize,           // Thread Control Block address
+    pub tls_data: Vec<u8>,        // 12KB TLS memory block
+    pub tls_region_start: usize,  // TLS region bounds (from /proc/maps)
+    pub tls_region_end: usize,
+}
+```
+
+#### Restoration Flow
+
+```mermaid
+sequenceDiagram
+    participant S as Supervisor
+    participant W as Worker (SIGSTOP)
+    participant K as Kernel
+
+    S->>K: process_madvise(MADV_DONTNEED)
+    Note over W: Memory pages invalidated
+
+    S->>K: process_vm_writev(TLS data)
+    Note over W: TLS block restored
+
+    S->>K: ptrace(ARCH_SET_FS, fs_base)
+    Note over W: fs_base register restored
+
+    S->>W: SIGCONT
+    Note over W: Worker resumes
+
+    W->>K: Access heap (page fault)
+    K->>S: userfaultfd event
+    S->>K: uffd.copy(golden_page)
+    Note over W: Page restored from golden
+```
+
+### Performance Optimization (PLANNED for 0.9.0)
+
+1. **Lazy TLS capture**: Only snapshot TLS offsets that contain heap pointers
+2. **COW optimization**: Use `userfaultfd(UFFD_FEATURE_MINOR_HUGETLBFS)` for huge pages
+3. **Batched restoration**: Group page faults for reduced syscall overhead
+4. **Syscall batching**: Explore vectorized `process_vm_writev` for TLS + Stack
+
+### Multi-Version Support (PLANNED for 0.9.0)
+
+1. **Detect Python version** at runtime
+2. **Load appropriate offset registry** for that version
+3. **Skip TLS restoration** for pre-3.13 (pymalloc doesn't use TLS)
+
+---
+
+## References
+
+- `docs/security/sandbox-enforcement.md` - EPERM Doctrine
+- `docs/ci/self-hosted-runner.md` - CI infrastructure requirements
+- `experiments/tls_python_poc.rs` - mimalloc TLS detection (static)
+- `experiments/tls_sentinel_scan.rs` - Runtime TLS offset discovery (dynamic)
+- `rust_tests/memory_invariant.rs` - BSS/Heap validation test
+- `rust_tests/physics_check.rs` - Core physics validation
+- `src/isolation/snapshot.rs` - Snapshot manager implementation
+- `scripts/run_physics_local.sh` - Local physics test bootstrap
+
+---
+
+_"The Iron Dome is only as strong as its weakest pointer."_
+
+_Project Tach Internal Architecture Standard_
 
 
 ---
@@ -5250,6 +5760,1055 @@ def run_django_test(test_func):
 ---
 
 
+# Security Documentation
+
+
+# Sandbox Enforcement: The EPERM Doctrine
+
+> **Status**: Complete - Kernel Validation Achieved
+> **Author**: Project Tach Development Team
+> **Mandate**: "Stop testing if the code works. Start testing if the kernel is being obeyed."
+
+---
+
+## Executive Summary
+
+Project Tach is not a Python application; it is a **userspace kernel extension**. Our sandbox is not a configuration setting - it is a verified hardware-level boundary enforced by the Linux kernel.
+
+This document codifies the **EPERM Doctrine**: the principle that security enforcement must be validated at the syscall level, not through logical assertions about code behavior.
+
+---
+
+## The EPERM Doctrine
+
+### Core Principle
+
+> A sandbox is only as strong as the kernel's refusal to cooperate with malicious code.
+
+We do not trust our sandbox implementation based on code inspection. We trust it because:
+
+1. **Seccomp** returns `EPERM` (errno 1) when blocked syscalls are attempted
+2. **Landlock** returns `EACCES` (errno 13) when blocked filesystem access is attempted
+3. **PID Namespaces** return `ESRCH` (errno 3) when attempting to signal invisible processes
+
+### Validation Philosophy
+
+```
+Traditional Testing:     "Did our code set up the sandbox correctly?"
+EPERM Doctrine Testing:  "Does the kernel actually block the operation?"
+```
+
+---
+
+## The Suicide Worker Pattern
+
+The **Suicide Worker** is Project Tach's gold standard for isolation testing. It validates kernel enforcement by deliberately attempting prohibited operations.
+
+### Pattern Definition
+
+```mermaid
+sequenceDiagram
+    participant Parent as Test Process
+    participant Child as Suicide Worker
+    participant Kernel as Linux Kernel
+
+    Parent->>Child: fork()
+    Child->>Child: apply_sandbox()
+    Child->>Kernel: attempt_blocked_syscall()
+    Kernel-->>Child: EPERM/EACCES
+    Child->>Parent: exit(errno)
+    Parent->>Parent: assert!(exit_code == expected_errno)
+```
+
+### Implementation Reference
+
+```rust
+// From rust_tests/sandbox_enforcement.rs
+#[test]
+fn test_seccomp_blocks_socket() {
+    match unsafe { fork() }.expect("fork failed") {
+        ForkResult::Child => {
+            // Apply Seccomp filter
+            apply_seccomp().expect("Failed to apply Seccomp");
+
+            // Attempt blocked syscall
+            let result = unsafe {
+                libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0)
+            };
+
+            if result == -1 {
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error().unwrap_or(0);
+                std::process::exit(errno);  // Exit with errno
+            } else {
+                std::process::exit(255);  // CRITICAL: Sandbox failed!
+            }
+        }
+        ForkResult::Parent { child } => {
+            match waitpid(child, None).expect("waitpid failed") {
+                WaitStatus::Exited(_, code) => {
+                    assert_eq!(code, libc::EPERM,
+                        "Seccomp should block socket() with EPERM");
+                }
+                status => panic!("Unexpected status: {:?}", status),
+            }
+        }
+    }
+}
+```
+
+### Why Exit with errno?
+
+The child process exits with the errno value, allowing the parent to verify:
+
+- `exit(1)` = `EPERM` - Seccomp blocked the syscall
+- `exit(13)` = `EACCES` - Landlock blocked filesystem access
+- `exit(255)` = Operation succeeded - **SANDBOX FAILURE**
+
+---
+
+## The Fork-Clone Duality
+
+### Discovery
+
+During Phase 1 implementation, we discovered that modern glibc maps `fork()` to the `clone()` syscall internally. This is a critical finding for sandbox testing.
+
+### Technical Details
+
+```
+User Code:           libc::fork()
+Glibc Translation:   SYS_clone(SIGCHLD, 0, NULL, NULL, 0)
+Kernel Execution:    clone() syscall
+```
+
+### Implications for Seccomp Testing
+
+| Approach                  | Syscall     | Result                                       |
+| ------------------------- | ----------- | -------------------------------------------- |
+| `libc::fork()`            | `SYS_clone` | Allowed (clone is whitelisted for threading) |
+| `libc::syscall(SYS_fork)` | `SYS_fork`  | Blocked with EPERM                           |
+
+### Correct Implementation
+
+```rust
+// WRONG: Tests clone(), not fork()
+let result = unsafe { libc::fork() };
+
+// CORRECT: Tests actual SYS_fork syscall
+let result = unsafe { libc::syscall(libc::SYS_fork) };
+```
+
+### Reference
+
+See `test_seccomp_blocks_fork` in `rust_tests/sandbox_enforcement.rs` for the canonical implementation.
+
+---
+
+## The "Matrix" Boundary: PID Namespace Isolation
+
+### Concept
+
+Workers operate in separate PID namespaces. From inside their namespace, sibling workers do not exist - they are invisible to `kill()`, `ptrace()`, and `/proc` enumeration.
+
+### Validation Method
+
+Use `kill(target_pid, 0)` to probe for process existence:
+
+- Returns `0` if process exists and is signalable
+- Returns `-1` with `ESRCH` if process does not exist
+- Returns `-1` with `EPERM` if process exists but is not signalable
+
+### Implementation
+
+```rust
+// From rust_tests/sandbox_enforcement.rs
+#[test]
+fn test_kill_sibling_returns_esrch() {
+    let fake_pid = Pid::from_raw(999999);
+
+    let result = kill(fake_pid, None);  // Signal 0 = probe
+
+    match result {
+        Err(Errno::ESRCH) => {
+            // Expected: process doesn't exist in our namespace
+        }
+        Ok(_) => {
+            panic!("kill() should return ESRCH for invisible PID");
+        }
+        Err(e) => {
+            assert!(e == Errno::ESRCH || e == Errno::EPERM,
+                "Expected ESRCH or EPERM, got {:?}", e);
+        }
+    }
+}
+```
+
+### Namespace Proof
+
+Workers in separate PID namespaces have low PIDs (typically 1-10) because each namespace has its own PID counter:
+
+```rust
+#[test]
+fn test_pid_namespace_isolation() {
+    let (worker1_host_pid, worker1_inner_pid) = spawn_namespaced_worker();
+    let (worker2_host_pid, worker2_inner_pid) = spawn_namespaced_worker();
+
+    // Inside their namespaces, both workers have low PIDs
+    assert!(worker1_inner_pid < 100);
+    assert!(worker2_inner_pid < 100);
+
+    // But they have different host PIDs
+    assert_ne!(worker1_host_pid, worker2_host_pid);
+}
+```
+
+---
+
+## Test Matrix: Phase 1 Results
+
+### Seccomp Enforcement Tests
+
+| Test                          | Syscall           | Expected | Status |
+| ----------------------------- | ----------------- | -------- | ------ |
+| `test_seccomp_blocks_socket`  | `socket(AF_INET)` | EPERM    | PASS   |
+| `test_seccomp_blocks_connect` | `connect()`       | EPERM    | PASS   |
+| `test_seccomp_blocks_fork`    | `SYS_fork` (raw)  | EPERM    | PASS   |
+| `test_seccomp_blocks_execve`  | `execve()`        | EPERM    | PASS   |
+| `test_seccomp_allows_clone`   | `clone()`         | Success  | PASS   |
+
+### Landlock Enforcement Tests
+
+| Test                                | Operation | Path          | Expected | Status |
+| ----------------------------------- | --------- | ------------- | -------- | ------ |
+| `test_landlock_blocks_etc_write`    | write     | `/etc/passwd` | EACCES   | PASS   |
+| `test_landlock_blocks_root_write`   | create    | `/evil.txt`   | EACCES   | PASS   |
+| `test_landlock_allows_tmp_write`    | create    | `/tmp/*`      | Success  | PASS   |
+| `test_landlock_allows_project_read` | read      | `{project}/`  | Success  | PASS   |
+
+### Namespace Isolation Tests
+
+| Test                              | Validation                     | Status |
+| --------------------------------- | ------------------------------ | ------ |
+| `test_pid_namespace_isolation`    | Workers have isolated low PIDs | PASS   |
+| `test_kill_sibling_returns_esrch` | Invisible PIDs return ESRCH    | PASS   |
+
+### Toxic vs Safe Worker Differentiation
+
+| Test                                   | Worker Type | Network | Filesystem | Status |
+| -------------------------------------- | ----------- | ------- | ---------- | ------ |
+| `test_toxic_worker_can_use_network`    | Toxic       | Allowed | Restricted | PASS   |
+| `test_toxic_worker_still_has_landlock` | Toxic       | N/A     | Restricted | PASS   |
+| `test_safe_worker_full_iron_dome`      | Safe        | Blocked | Restricted | PASS   |
+
+### File Descriptor Isolation
+
+| Test                            | Validation                           | Status |
+| ------------------------------- | ------------------------------------ | ------ |
+| `test_fd_isolation_clone_files` | Child FD close doesn't affect parent | PASS   |
+
+---
+
+## Iron Dome Architecture
+
+### Two-Tier Sandbox Model
+
+```mermaid
+graph TB
+    subgraph "Safe Worker"
+        SW_LL[Landlock: Filesystem Restriction]
+        SW_SC[Seccomp: Syscall Filtering]
+        SW_NS[PID Namespace: Process Isolation]
+    end
+
+    subgraph "Toxic Worker"
+        TW_LL[Landlock: Filesystem Restriction]
+        TW_NS[PID Namespace: Process Isolation]
+        TW_NET[Network: ALLOWED]
+    end
+
+    SW_LL --> SW_SC
+    SW_SC --> SW_NS
+
+    TW_LL --> TW_NS
+    TW_NET -.->|Seccomp Bypassed| TW_NS
+```
+
+### Safe Workers
+
+Full Iron Dome protection:
+
+- **Landlock**: Filesystem restricted to project root, `/tmp`, Python stdlib
+- **Seccomp**: Network, fork, exec syscalls blocked
+- **Namespaces**: PID, mount, user isolation
+
+### Toxic Workers
+
+Relaxed Seccomp for subprocess support:
+
+- **Landlock**: Full filesystem restrictions (same as safe)
+- **Seccomp**: BYPASSED (toxic tests may need subprocesses)
+- **Namespaces**: PID, mount, user isolation
+
+### Why Clone Must Be Allowed
+
+Python's `threading` module uses `clone()` internally:
+
+```
+import threading
+threading.Thread(target=fn).start()
+    ↓
+pthread_create()
+    ↓
+clone(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | ...)
+```
+
+Blocking `clone()` breaks Python threading. Our Seccomp filter explicitly allows it.
+
+---
+
+## Error Code Reference
+
+| Error    | Code | Context  | Meaning                                 |
+| -------- | ---- | -------- | --------------------------------------- |
+| `EPERM`  | 1    | Seccomp  | Syscall blocked by BPF filter           |
+| `EACCES` | 13   | Landlock | Filesystem access denied                |
+| `ESRCH`  | 3    | kill()   | Process not found (namespace isolation) |
+| `EINVAL` | 22   | Landlock | Invalid ruleset configuration           |
+| `SIGSYS` | 31   | Seccomp  | Process killed (SECCOMP_RET_KILL mode)  |
+
+---
+
+## Kernel Version Requirements
+
+| Feature         | Minimum Kernel | Notes                          |
+| --------------- | -------------- | ------------------------------ |
+| Seccomp-BPF     | 3.17           | Required for syscall filtering |
+| Landlock        | 5.13           | Filesystem sandboxing          |
+| Landlock ABI v2 | 5.19           | File truncation rules          |
+| userfaultfd     | 4.11           | Memory snapshot/restore        |
+| PID Namespaces  | 2.6.24         | Process isolation              |
+
+### Graceful Degradation
+
+On unsupported kernels, Tach logs warnings but continues:
+
+```rust
+match apply_landlock(&project_root, 9999) {
+    Ok(SandboxStatus::NotEnforced) => {
+        eprintln!("[sandbox] WARNING: Landlock not supported, continuing without");
+    }
+    Ok(SandboxStatus::Enforced) => {
+        eprintln!("[sandbox] Landlock enforced");
+    }
+    Err(e) => {
+        return Err(e);  // Critical error, fail fast
+    }
+}
+```
+
+---
+
+## Future Work: Phase 2
+
+### BSS/Heap Split-Brain Validation
+
+Verify that memory snapshots correctly restore:
+
+1. BSS segment (global variables, free lists)
+2. Heap segment (allocated objects)
+3. Cross-references between them (pointers from BSS to Heap)
+
+### TLS Restoration for Python 3.13
+
+Python 3.13's mimalloc stores allocator state in Thread Local Storage:
+
+1. Read `fs_base` via `arch_prctl(ARCH_GET_FS)`
+2. Identify and snapshot TLS segment
+3. Restore TLS on memory reset
+
+---
+
+## References
+
+- `rust_tests/sandbox_enforcement.rs` - All 15 Suicide Worker tests
+- `src/isolation/sandbox.rs` - Landlock and Seccomp implementation
+- `docs/GLASS_HOUSE_REMEDIATION_PLAN.md` - Full remediation roadmap
+- Linux Kernel Documentation: [Seccomp](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html)
+- Linux Kernel Documentation: [Landlock](https://www.kernel.org/doc/html/latest/security/landlock.html)
+
+---
+
+_"A sandbox is not secure until the kernel says no."_
+
+_The EPERM Doctrine - Project Tach Security Standard_
+
+
+---
+
+
+# Operations Documentation
+
+
+# Self-Hosted Runner Requirements
+
+> **Status**: Infrastructure Documentation
+> **Author**: Project Tach Development Team
+> **Purpose**: Define requirements for running Tach's Physics tests in CI
+
+---
+
+## Executive Summary
+
+Tach's Physics tests (memory snapshot/restore validation) require kernel capabilities that are unavailable in standard GitHub Actions runners. This document specifies the requirements for a self-hosted runner capable of executing the full test suite.
+
+---
+
+## Why Self-Hosted?
+
+```mermaid
+graph TB
+    subgraph "GitHub Actions Standard Runner"
+        GHA[Ubuntu Runner]
+        GHA --> |"userfaultfd"| BLOCKED1[EPERM - Kernel locked down]
+        GHA --> |"ptrace"| BLOCKED2[No CAP_SYS_PTRACE]
+        GHA --> |"namespaces"| BLOCKED3[Disabled in container]
+    end
+
+    subgraph "Self-Hosted Runner"
+        SHR[Custom Runner]
+        SHR --> |"userfaultfd"| OK1[sysctl vm.unprivileged_userfaultfd=1]
+        SHR --> |"ptrace"| OK2[CAP_SYS_PTRACE granted]
+        SHR --> |"namespaces"| OK3[Full namespace support]
+    end
+```
+
+### Kernel Features Required
+
+| Feature        | Purpose                             | Why Not Available in GHA                   |
+| -------------- | ----------------------------------- | ------------------------------------------ |
+| `userfaultfd`  | Memory snapshot/restore             | `vm.unprivileged_userfaultfd=0` by default |
+| `ptrace`       | TLS exploration, process inspection | Container lacks `CAP_SYS_PTRACE`           |
+| PID Namespaces | Worker isolation                    | Container namespace nesting disabled       |
+| Landlock       | Filesystem sandboxing               | Requires kernel 5.13+, GHA may be older    |
+| Seccomp        | Syscall filtering                   | GHA applies restrictive seccomp profile    |
+
+---
+
+## Runner Requirements
+
+### Operating System
+
+| Requirement      | Specification                         |
+| ---------------- | ------------------------------------- |
+| **Distribution** | Ubuntu 22.04 LTS or later             |
+| **Kernel**       | 5.15+ (required for Landlock ABI v1)  |
+| **Architecture** | x86_64 (primary), aarch64 (secondary) |
+
+### Kernel Configuration
+
+The following sysctl settings must be applied:
+
+```bash
+# Enable unprivileged userfaultfd (required for Physics tests)
+sudo sysctl -w vm.unprivileged_userfaultfd=1
+
+# Persist across reboots
+echo "vm.unprivileged_userfaultfd=1" | sudo tee /etc/sysctl.d/99-tach.conf
+```
+
+### Docker Configuration (If Using Docker)
+
+If the runner uses Docker for isolation, the container must be started with:
+
+```bash
+docker run \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --security-opt apparmor=unconfined \
+  --privileged \
+  <image>
+```
+
+**Or with specific capabilities:**
+
+```bash
+docker run \
+  --cap-add=SYS_PTRACE \
+  --cap-add=SYS_ADMIN \
+  --security-opt seccomp=unconfined \
+  <image>
+```
+
+### Required Capabilities
+
+| Capability       | Purpose                                           |
+| ---------------- | ------------------------------------------------- |
+| `CAP_SYS_PTRACE` | Process memory access, TLS exploration            |
+| `CAP_SYS_ADMIN`  | Namespace creation (optional, enhances isolation) |
+
+---
+
+## Software Dependencies
+
+### Build Tools
+
+```bash
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+
+# Python 3.12+ (PyO3 requires 3.8+, but 3.12+ recommended for sys.monitoring)
+sudo apt install python3.12 python3.12-venv python3.12-dev
+
+# Build essentials
+sudo apt install build-essential pkg-config libssl-dev
+```
+
+### Python Environment
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install pytest
+```
+
+### Environment Variables
+
+```bash
+# Required for PyO3 compilation
+export PYO3_PYTHON=/path/to/.venv/bin/python
+
+# Optional: Jemalloc configuration for production builds
+export MALLOC_CONF="background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0"
+```
+
+---
+
+## GitHub Actions Integration
+
+### Runner Labels
+
+Add the following labels to the self-hosted runner:
+
+- `self-hosted`
+- `linux`
+- `x86_64`
+- `physics` (custom label for Physics tests)
+
+### Workflow Configuration
+
+```yaml
+# .github/workflows/physics.yml
+name: Physics Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  physics:
+    runs-on: [self-hosted, linux, physics]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Kernel Support
+        run: |
+          echo "Kernel version: $(uname -r)"
+          sysctl vm.unprivileged_userfaultfd
+
+      - name: Setup Python
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install pytest
+
+      - name: Build
+        run: |
+          source .venv/bin/activate
+          export PYO3_PYTHON=$(which python)
+          cargo build --release
+
+      - name: Run Physics Tests
+        run: |
+          source .venv/bin/activate
+          export PYO3_PYTHON=$(which python)
+          cargo test --test physics_check -- --ignored --nocapture
+          cargo test --test memory_invariant -- --ignored --nocapture
+
+      - name: Run Sandbox Enforcement Tests
+        run: |
+          source .venv/bin/activate
+          export PYO3_PYTHON=$(which python)
+          cargo test --test sandbox_enforcement -- --nocapture
+```
+
+---
+
+## Verification Script
+
+Run this script to verify the runner meets all requirements:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== Tach Self-Hosted Runner Verification ==="
+
+# Check kernel version
+KERNEL=$(uname -r)
+echo "Kernel: $KERNEL"
+
+# Check userfaultfd
+UFFD=$(sysctl -n vm.unprivileged_userfaultfd 2>/dev/null || echo "0")
+if [ "$UFFD" = "1" ]; then
+    echo "userfaultfd: ENABLED"
+else
+    echo "userfaultfd: DISABLED (run: sudo sysctl -w vm.unprivileged_userfaultfd=1)"
+    exit 1
+fi
+
+# Check for landlock support
+if [ -d "/sys/kernel/security/landlock" ]; then
+    echo "Landlock: AVAILABLE"
+else
+    echo "Landlock: NOT AVAILABLE (kernel too old)"
+fi
+
+# Check Rust
+if command -v cargo &> /dev/null; then
+    echo "Rust: $(cargo --version)"
+else
+    echo "Rust: NOT INSTALLED"
+    exit 1
+fi
+
+# Check Python
+if command -v python3 &> /dev/null; then
+    echo "Python: $(python3 --version)"
+else
+    echo "Python: NOT INSTALLED"
+    exit 1
+fi
+
+# Try creating userfaultfd
+echo "Testing userfaultfd creation..."
+python3 -c "
+import os
+import ctypes
+libc = ctypes.CDLL('libc.so.6')
+# Try userfaultfd syscall
+result = libc.syscall(323, 0)  # SYS_userfaultfd on x86_64
+if result >= 0:
+    os.close(result)
+    print('userfaultfd creation: SUCCESS')
+else:
+    print('userfaultfd creation: FAILED (errno:', ctypes.get_errno(), ')')
+    exit(1)
+"
+
+echo "=== All Checks Passed ==="
+```
+
+---
+
+## Security Considerations
+
+### Runner Isolation
+
+The self-hosted runner should:
+
+1. **Run on dedicated hardware** - Not shared with production workloads
+2. **Use ephemeral workers** - Clean up after each job
+3. **Limit network access** - Only allow required GitHub API endpoints
+4. **Monitor for abuse** - Log all job executions
+
+### Capability Justification
+
+| Capability           | Why Needed                                              | Risk Mitigation                    |
+| -------------------- | ------------------------------------------------------- | ---------------------------------- |
+| `CAP_SYS_PTRACE`     | TLS exploration via `arch_prctl`, process memory access | Runner runs only trusted Tach code |
+| `SYS_ADMIN`          | PID namespace creation                                  | Optional, enhances isolation       |
+| `seccomp=unconfined` | Allow userfaultfd syscall                               | Runner is isolated, not exposed    |
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue                  | Cause                           | Solution                     |
+| ---------------------- | ------------------------------- | ---------------------------- |
+| `EPERM` on userfaultfd | `vm.unprivileged_userfaultfd=0` | Run sysctl command           |
+| `EPERM` on ptrace      | Missing `CAP_SYS_PTRACE`        | Add capability to container  |
+| Test hangs             | Missing SIGSTOP handling        | Ensure test timeout is set   |
+| Landlock `ENOSYS`      | Kernel < 5.13                   | Upgrade kernel or skip tests |
+
+### Debugging
+
+```bash
+# Check userfaultfd availability
+cat /proc/sys/vm/unprivileged_userfaultfd
+
+# Check capabilities
+capsh --print
+
+# Check seccomp profile
+cat /proc/self/status | grep Seccomp
+
+# Check Landlock
+ls -la /sys/kernel/security/landlock/
+```
+
+---
+
+## Cloud Provider Options
+
+### AWS EC2
+
+Recommended instance type: `t3.medium` or larger
+
+```bash
+# User data script
+#!/bin/bash
+sysctl -w vm.unprivileged_userfaultfd=1
+echo "vm.unprivileged_userfaultfd=1" >> /etc/sysctl.conf
+```
+
+### Google Cloud Compute
+
+```bash
+# Startup script
+#!/bin/bash
+sysctl -w vm.unprivileged_userfaultfd=1
+```
+
+### Azure VM
+
+Use Ubuntu 22.04 LTS image with Standard_B2s or larger.
+
+---
+
+## References
+
+- [GitHub Self-Hosted Runners](https://docs.github.com/en/actions/hosting-your-own-runners)
+- [userfaultfd(2) man page](https://man7.org/linux/man-pages/man2/userfaultfd.2.html)
+- [Landlock Documentation](https://docs.kernel.org/security/landlock.html)
+- [Docker Security Options](https://docs.docker.com/engine/reference/run/#security-configuration)
+
+---
+
+_"The Iron Dome requires an iron foundation."_
+
+_Project Tach CI Infrastructure Standard_
+
+
+---
+
+
+# Architecture Decision Records
+
+
+# Rust 2024 Edition Migration Analysis
+
+> **Status**: Decision Document
+> **Date**: 2026-01-04
+> **Author**: Project Tach Development Team
+> **Rust Version**: 1.85.0+ required for Edition 2024
+
+---
+
+## Executive Summary
+
+Rust 2024 Edition was stabilized with Rust 1.85.0 (February 20, 2025). This document analyzes whether tach-core should migrate from Edition 2021 to Edition 2024, covering the pros, cons, breaking changes, and impact on our codebase.
+
+**Recommendation**: Migrate to Edition 2024 after addressing the `static mut` references issue. The edition brings safety improvements that align with our security-first philosophy.
+
+---
+
+## What is a Rust Edition?
+
+Rust editions are released every three years (2015, 2018, 2021, 2024) and allow the language to evolve without breaking existing code. Key points:
+
+- Editions are opt-in via `Cargo.toml`
+- Different editions can interoperate (crates can depend on crates using different editions)
+- `cargo fix --edition` automates most migrations
+- Editions only affect how the compiler parses code, not runtime behavior
+
+---
+
+## Rust 2024 Edition Changes
+
+### Language Changes
+
+| Change                                         | Impact on tach-core                                                    | Severity |
+| ---------------------------------------------- | ---------------------------------------------------------------------- | -------- |
+| **RPIT Lifetime Capture Rules**                | Low - We don't heavily use `impl Trait` returns with complex lifetimes | Minor    |
+| **Disallow `static mut` references**           | **HIGH** - We have `static mut` in allocator code                      | Breaking |
+| **`unsafe extern` blocks required**            | Medium - Our FFI code needs updates                                    | Moderate |
+| **`unsafe` attributes (`#[no_mangle]`, etc.)** | Medium - Requires `#[unsafe(no_mangle)]`                               | Moderate |
+| **`gen` keyword reserved**                     | None - We don't use `gen` as an identifier                             | None     |
+| **Match ergonomics refinements**               | Low - Minor pattern matching changes                                   | Minor    |
+| **`if let` temporary scope changes**           | Low - May affect some patterns                                         | Minor    |
+| **Tail expression temporary scope**            | Low - Affects temporary lifetimes                                      | Minor    |
+
+### Tooling Changes
+
+| Change                                      | Impact   | Notes                                  |
+| ------------------------------------------- | -------- | -------------------------------------- |
+| **Rustfmt Style Edition**                   | Low      | Formatting can be pinned to 2021 style |
+| **Cargo: Reject unused `default-features`** | Low      | May need Cargo.toml cleanup            |
+| **Rustdoc: Combined doctests**              | Positive | Faster doc test execution              |
+
+### Standard Library Changes
+
+| Change                                | Impact | Notes                                       |
+| ------------------------------------- | ------ | ------------------------------------------- |
+| **`std::env::set_var` is now unsafe** | None   | We don't modify env vars in unsafe contexts |
+| **Prelude additions**                 | None   | New items in prelude                        |
+
+---
+
+## Analysis for tach-core
+
+### Breaking Changes We Must Address
+
+#### 1. `static mut` References (Critical)
+
+In Edition 2024, references to `static mut` are denied by default. This affects our codebase in:
+
+**Current problematic pattern:**
+
+```rust
+// This is now an error in Edition 2024
+static mut COUNTER: u32 = 0;
+
+unsafe {
+    COUNTER += 1;  // Error: creating reference to mutable static
+}
+```
+
+**Solution options:**
+
+1. Use `std::sync::atomic` types (preferred for simple counters)
+2. Use `std::sync::Mutex` or `OnceLock`
+3. Use `std::ptr::addr_of_mut!` for raw pointer access
+
+**Our current usage**: We already follow best practices with `AtomicBool`, `Mutex<T>`, and `OnceLock` in most places. A grep for `static mut` will identify any remaining instances.
+
+#### 2. `unsafe extern` Blocks
+
+All `extern` blocks must now be marked `unsafe`:
+
+**Before (2021):**
+
+```rust
+extern "C" {
+    fn some_ffi_function();
+}
+```
+
+**After (2024):**
+
+```rust
+unsafe extern "C" {
+    fn some_ffi_function();
+}
+```
+
+**Impact**: Our PyO3 FFI code may need updates.
+
+#### 3. Unsafe Attributes
+
+Attributes like `#[no_mangle]` and `#[link_section]` must use `#[unsafe(...)]` syntax:
+
+**Before (2021):**
+
+```rust
+#[no_mangle]
+pub extern "C" fn my_function() {}
+```
+
+**After (2024):**
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "C" fn my_function() {}
+```
+
+---
+
+## Pros of Migration
+
+### 1. Safety Improvements
+
+- **`static mut` denial**: Eliminates a class of undefined behavior that we've already been avoiding
+- **`unsafe extern` clarity**: Makes FFI safety boundaries explicit
+- **Unsafe attributes**: Documents that certain attributes have safety implications
+
+### 2. Better Lifetime Semantics
+
+- **RPIT lifetime capture**: More intuitive behavior for `impl Trait` return types
+- **Consistent rules**: `async fn` and `-> impl Trait` now behave consistently
+
+### 3. Future-Proofing
+
+- **`gen` keyword**: Ready for generator syntax when stabilized
+- **Match ergonomics**: Aligns with future pattern matching improvements
+- **Ecosystem alignment**: Libraries will start requiring 2024 edition
+
+### 4. Tooling Improvements
+
+- **Rustfmt style editions**: Independent formatting evolution
+- **Faster doctests**: Combined doctest execution
+- **Better error messages**: Improved diagnostics
+
+---
+
+## Cons of Migration
+
+### 1. Breaking Changes Require Code Updates
+
+- Must address `static mut` references
+- Must update `extern` blocks
+- Must update unsafe attributes
+
+### 2. MSRV Bump
+
+- Requires Rust 1.85.0+
+- May exclude users on older toolchains
+- CI must use 1.85.0+
+
+### 3. Potential Hidden Issues
+
+- Lifetime capture changes may cause subtle breaks in edge cases
+- Match ergonomics changes may require pattern updates
+
+### 4. Formatting Changes
+
+- If using default rustfmt style, code will be reformatted
+- Can mitigate with `style_edition = "2021"` in rustfmt.toml
+
+---
+
+## Migration Steps
+
+### Pre-Migration Checklist
+
+```bash
+# 1. Ensure Rust 1.85.0+
+rustup update stable
+rustc --version  # Should show 1.85.0 or later
+
+# 2. Check for static mut usage
+grep -r "static mut" src/
+
+# 3. Check for extern blocks
+grep -r 'extern "C"' src/
+
+# 4. Check for unsafe attributes
+grep -r "#\[no_mangle\]" src/
+grep -r "#\[link_section\]" src/
+```
+
+### Migration Process
+
+```bash
+# 1. Enable 2024 compatibility lints (while still on 2021)
+# Add to lib.rs or main.rs:
+# #![warn(rust_2024_compatibility)]
+
+# 2. Fix all warnings
+
+# 3. Run cargo fix
+cargo fix --edition
+
+# 4. Update Cargo.toml
+# edition = "2024"
+
+# 5. (Optional) Pin rustfmt style
+# Add to rustfmt.toml:
+# style_edition = "2021"
+
+# 6. Run tests
+cargo test --all
+
+# 7. Verify no regressions
+cargo clippy --all-targets
+```
+
+---
+
+## Recommendation
+
+### Should tach-core Migrate?
+
+**Yes, but not immediately.**
+
+**Rationale:**
+
+1. **Safety alignment**: Edition 2024's safety improvements (static mut denial, unsafe extern) align with our security-first philosophy
+2. **Future-proofing**: The ecosystem will move to 2024; early adoption prevents technical debt
+3. **Clean codebase**: We already follow most best practices; migration should be minimal
+
+### Recommended Timeline
+
+| Phase       | Action                                | When  |
+| ----------- | ------------------------------------- | ----- |
+| **Phase 1** | Audit codebase for breaking patterns  | 0.1.x |
+| **Phase 2** | Enable `rust_2024_compatibility` lint | 0.1.x |
+| **Phase 3** | Fix all compatibility warnings        | 0.2.x |
+| **Phase 4** | Migrate to Edition 2024               | 0.2.0 |
+
+### Pre-Requisites
+
+Before migrating:
+
+1. Ensure all `static mut` uses are converted to safe alternatives
+2. Update all `extern` blocks with `unsafe` keyword
+3. Update all unsafe attributes to `#[unsafe(...)]` syntax
+4. Verify all tests pass with compatibility lints enabled
+
+---
+
+## Impact on Development Velocity
+
+### Positive Impacts
+
+- Better compiler errors reduce debugging time
+- Consistent lifetime rules reduce cognitive overhead
+- Alignment with Rust community best practices
+
+### Negative Impacts
+
+- One-time migration effort (~1-2 hours for tach-core)
+- Potential for subtle bugs if lifetime changes aren't understood
+
+### Net Impact
+
+**Neutral to slightly positive**. The one-time migration cost is low, and the ongoing benefits of clearer safety boundaries and better tooling will accelerate development.
+
+---
+
+## References
+
+- [Rust 1.85.0 Release Announcement](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0/)
+- [Rust 2024 Edition Guide](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
+- [RFC 3498: RPIT Lifetime Capture Rules](https://rust-lang.github.io/rfcs/3498-lifetime-capture-rules-2024.html)
+- [Static Mut References Edition Guide](https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html)
+- [Updating a Large Codebase to Rust 2024](https://codeandbitters.com/rust-2024-upgrade/)
+
+---
+
+_"Safety is not an optional feature."_
+
+_Project Tach - Rust Edition Migration Analysis_
+
+
+---
+
+
 # Reference Documentation
 
 
@@ -7122,6 +8681,293 @@ When reporting issues, include:
 - [Development](development.md) - Build and test commands
 - [Sandbox](architecture/sandbox.md) - Security architecture
 - [Snapshot](architecture/snapshot.md) - Memory snapshot details
+
+
+---
+
+
+# WSL2 Setup Guide for tach-core
+
+This guide documents WSL2-specific limitations and workarounds for running tach-core.
+
+## Quick Diagnosis
+
+Run this to check your system's feature availability:
+
+```bash
+# Check userfaultfd
+cat /proc/sys/vm/unprivileged_userfaultfd
+# 0 = disabled (needs fix), 1 = enabled
+
+# Check Landlock
+cat /sys/kernel/security/landlock/abi_version
+# Should show version number, "No such file" = not loaded
+
+# Check kernel config
+zcat /proc/config.gz | grep -E "USERFAULTFD|LANDLOCK|SECCOMP"
+```
+
+Or run the built-in diagnostics:
+
+```bash
+./target/debug/tach-core self-test
+```
+
+## Feature Status in WSL2
+
+| Feature     | Purpose            | Typical WSL2 Status                  | Impact if Missing                  |
+| ----------- | ------------------ | ------------------------------------ | ---------------------------------- |
+| userfaultfd | Memory snapshots   | Compiled in, but disabled by default | Falls back to fork-server (slower) |
+| Landlock    | Filesystem sandbox | Compiled in, but LSM not loaded      | No filesystem isolation            |
+| Seccomp     | Syscall filtering  | Works                                | N/A                                |
+| Namespaces  | Process isolation  | Works                                | N/A                                |
+| OverlayFS   | Test isolation     | Works on ext4, issues on /mnt/c/     | Use native Linux paths             |
+
+## Workarounds
+
+### 1. Enable userfaultfd (Highest Priority)
+
+userfaultfd enables memory snapshots for sub-millisecond test isolation reset.
+
+#### Option A: Temporary (until WSL restart)
+
+```bash
+sudo sysctl -w vm.unprivileged_userfaultfd=1
+```
+
+#### Option B: Persistent via .wslconfig
+
+Create or edit `C:\Users\<YourUsername>\.wslconfig` on Windows:
+
+```ini
+[wsl2]
+kernelCommandLine = sysctl.vm.unprivileged_userfaultfd=1
+```
+
+Then restart WSL from PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+#### Option C: Startup script
+
+Add to `~/.bashrc` or create `/etc/profile.d/tach.sh`:
+
+```bash
+if [ -f /proc/sys/vm/unprivileged_userfaultfd ]; then
+    current=$(cat /proc/sys/vm/unprivileged_userfaultfd)
+    if [ "$current" = "0" ]; then
+        sudo sysctl -w vm.unprivileged_userfaultfd=1 >/dev/null 2>&1
+    fi
+fi
+```
+
+### 2. Enable Landlock LSM
+
+Landlock provides filesystem sandboxing. Microsoft's WSL2 kernel has it compiled in but doesn't load it by default.
+
+#### Option A: Add LSM to kernel command line
+
+Edit `C:\Users\<YourUsername>\.wslconfig`:
+
+```ini
+[wsl2]
+kernelCommandLine = lsm=landlock,lockdown,yama,integrity,apparmor,bpf sysctl.vm.unprivileged_userfaultfd=1
+```
+
+Restart WSL:
+
+```powershell
+wsl --shutdown
+```
+
+#### Option B: Build custom WSL2 kernel
+
+For full control, build a custom kernel:
+
+```bash
+# Clone Microsoft's kernel source
+git clone --depth 1 https://github.com/microsoft/WSL2-Linux-Kernel.git
+cd WSL2-Linux-Kernel
+
+# Use Microsoft's config as base
+cp Microsoft/config-wsl .config
+
+# Enable Landlock in menuconfig
+make menuconfig
+# Navigate to: Security options -> Landlock support
+# Ensure it's set to [*] (built-in) and in LSM stack
+
+# Build
+make -j$(nproc) bzImage
+
+# Copy to Windows-accessible location
+cp arch/x86/boot/bzImage /mnt/c/Users/<YourUsername>/wsl-kernel
+```
+
+Then edit `.wslconfig`:
+
+```ini
+[wsl2]
+kernel=C:\\Users\\<YourUsername>\\wsl-kernel\\bzImage
+kernelCommandLine = lsm=landlock,lockdown,yama,integrity,apparmor,bpf sysctl.vm.unprivileged_userfaultfd=1
+```
+
+### 3. Filesystem Considerations
+
+#### Use Native ext4 Paths
+
+WSL2 performance is much better on the native ext4 filesystem:
+
+```bash
+# Good - native ext4
+/home/username/dev/project
+
+# Bad - Windows filesystem via 9P (slow, OverlayFS issues)
+/mnt/c/Users/username/projects
+```
+
+If your project is on `/mnt/c/`, consider moving it:
+
+```bash
+mv /mnt/c/Users/username/project ~/dev/
+```
+
+### 4. Docker Alternative
+
+Run tach-core inside a Docker container with elevated privileges:
+
+```bash
+docker run -it --privileged \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ubuntu:24.04 bash
+
+# Inside container, kernel features work normally
+apt update && apt install -y python3 python3-pip
+pip install pytest
+# ... build and run tach-core
+```
+
+### 5. Accept Graceful Degradation
+
+tach-core is designed to handle missing features gracefully:
+
+- **Without userfaultfd**: Uses fork-server pattern (no snapshots, slower but works)
+- **Without Landlock**: Logs warning, continues without filesystem sandbox
+- **Without Seccomp**: Only affects safe workers (toxic workers bypass it anyway)
+
+Use `--no-isolation` flag to explicitly disable sandboxing:
+
+```bash
+./target/debug/tach-core --no-isolation tests/
+```
+
+## Complete .wslconfig Template
+
+Create `C:\Users\<YourUsername>\.wslconfig`:
+
+```ini
+[wsl2]
+# Enable userfaultfd for memory snapshots
+# Enable Landlock LSM for filesystem sandboxing
+kernelCommandLine = lsm=landlock,lockdown,yama,integrity,apparmor,bpf sysctl.vm.unprivileged_userfaultfd=1
+
+# Optional: Limit memory/CPU if needed
+# memory=8GB
+# processors=4
+
+# Optional: Custom kernel path (if you built one)
+# kernel=C:\\Users\\<YourUsername>\\wsl-kernel\\bzImage
+```
+
+After creating/editing, restart WSL:
+
+```powershell
+wsl --shutdown
+```
+
+## Verification Script
+
+Save as `~/verify-tach-wsl2.sh`:
+
+```bash
+#!/bin/bash
+echo "=== tach-core WSL2 Feature Check ==="
+echo ""
+
+# userfaultfd
+uffd=$(cat /proc/sys/vm/unprivileged_userfaultfd 2>/dev/null)
+if [ "$uffd" = "1" ]; then
+    echo "[OK] userfaultfd: enabled"
+else
+    echo "[!!] userfaultfd: DISABLED (run: sudo sysctl -w vm.unprivileged_userfaultfd=1)"
+fi
+
+# Landlock
+ll_ver=$(cat /sys/kernel/security/landlock/abi_version 2>/dev/null)
+if [ -n "$ll_ver" ]; then
+    echo "[OK] Landlock: ABI v$ll_ver"
+else
+    echo "[!!] Landlock: NOT LOADED (add lsm= to .wslconfig kernelCommandLine)"
+fi
+
+# Seccomp
+if grep -q "CONFIG_SECCOMP=y" /proc/config.gz 2>/dev/null; then
+    echo "[OK] Seccomp: enabled"
+else
+    echo "[??] Seccomp: unknown"
+fi
+
+# Filesystem
+if [[ "$(pwd)" == /mnt/* ]]; then
+    echo "[!!] Filesystem: Windows path (slow) - consider moving to ~/dev/"
+else
+    echo "[OK] Filesystem: native ext4"
+fi
+
+echo ""
+echo "Run './target/debug/tach-core self-test' for full diagnostics"
+```
+
+## Troubleshooting
+
+### "EPERM on userfaultfd"
+
+userfaultfd is disabled. Fix:
+
+```bash
+sudo sysctl -w vm.unprivileged_userfaultfd=1
+```
+
+### "Landlock not available"
+
+LSM not loaded. Add to `.wslconfig` kernelCommandLine or accept degraded mode.
+
+### Tests hang or timeout
+
+Possible causes:
+
+- Project on `/mnt/c/` (slow 9P filesystem)
+- Insufficient memory allocated to WSL2
+- Docker Desktop consuming resources
+
+### Build fails with PyO3 errors
+
+Ensure Python is accessible:
+
+```bash
+export PYO3_PYTHON=$(which python3)
+cargo build
+```
+
+## References
+
+- [Microsoft WSL2 Kernel Source](https://github.com/microsoft/WSL2-Linux-Kernel)
+- [WSL Configuration Options](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)
+- [Landlock Documentation](https://docs.kernel.org/userspace-api/landlock.html)
+- [userfaultfd Documentation](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)
 
 
 ---

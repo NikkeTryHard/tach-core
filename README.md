@@ -191,28 +191,37 @@ flowchart TB
 
 Detailed technical documentation for each subsystem:
 
-| Document                                           | Description                                     |
-| :------------------------------------------------- | :---------------------------------------------- |
-| **Architecture**                                   |                                                 |
-| [Overview](docs/architecture/overview.md)          | System architecture and component interactions  |
-| [Discovery Engine](docs/architecture/discovery.md) | AST-based test discovery with rustpython-parser |
-| [Zero-Copy Loader](docs/architecture/loader.md)    | Bytecode compilation and injection              |
-| [Toxicity Analysis](docs/architecture/toxicity.md) | Module toxicity detection and propagation       |
-| [Physics Engine](docs/architecture/snapshot.md)    | userfaultfd memory snapshots                    |
-| [Zygote Lifecycle](docs/architecture/zygote.md)    | Process management and worker spawning          |
-| [Iron Dome](docs/architecture/sandbox.md)          | Landlock and Seccomp security                   |
-| [Isolation](docs/architecture/isolation.md)        | Namespaces and OverlayFS                        |
-| [Coverage System](docs/architecture/coverage.md)   | PEP 669 ring buffer coverage                    |
-| [Fixture Resolver](docs/architecture/resolver.md)  | Fixture discovery and resolution                |
-| [Allocator](docs/architecture/allocator.md)        | Jemalloc integration                            |
-| [IPC Protocol](docs/architecture/protocol.md)      | Binary protocol and message format              |
-| [Scheduler](docs/architecture/scheduler.md)        | Test scheduling and dispatch                    |
-| [Reporter](docs/architecture/reporter.md)          | Output formatting and progress                  |
-| **Reference**                                      |                                                 |
-| [Configuration](docs/configuration.md)             | CLI, pyproject.toml, environment variables      |
-| [Development](docs/development.md)                 | Build, test, project structure                  |
-| [Troubleshooting](docs/troubleshooting.md)         | Common issues and debug commands                |
-| [API Reference](docs/api-reference.md)             | FFI functions and data structures               |
+| Document                                                                | Description                                     |
+| :---------------------------------------------------------------------- | :---------------------------------------------- |
+| **Architecture**                                                        |                                                 |
+| [Overview](docs/architecture/overview.md)                               | System architecture and component interactions  |
+| [Discovery Engine](docs/architecture/discovery.md)                      | AST-based test discovery with rustpython-parser |
+| [Zero-Copy Loader](docs/architecture/loader.md)                         | Bytecode compilation and injection              |
+| [Toxicity Analysis](docs/architecture/toxicity.md)                      | Module toxicity detection and propagation       |
+| [Physics Engine](docs/architecture/snapshot.md)                         | userfaultfd memory snapshots                    |
+| [Zygote Lifecycle](docs/architecture/zygote.md)                         | Process management and worker spawning          |
+| [Iron Dome](docs/architecture/sandbox.md)                               | Landlock and Seccomp security                   |
+| [Isolation](docs/architecture/isolation.md)                             | Namespaces and OverlayFS                        |
+| [Coverage System](docs/architecture/coverage.md)                        | PEP 669 ring buffer coverage                    |
+| [Fixture Resolver](docs/architecture/resolver.md)                       | Fixture discovery and resolution                |
+| [Allocator](docs/architecture/allocator.md)                             | Jemalloc integration                            |
+| [IPC Protocol](docs/architecture/protocol.md)                           | Binary protocol and message format              |
+| [Scheduler](docs/architecture/scheduler.md)                             | Test scheduling and dispatch                    |
+| [Reporter](docs/architecture/reporter.md)                               | Output formatting and progress                  |
+| [TTY Debugger](docs/architecture/debugger.md)                           | Interactive debugging via breakpoint()          |
+| [Restoration Physics](docs/architecture/internal-architecture.md)       | Memory restoration invariants                   |
+| **Security**                                                            |                                                 |
+| [EPERM Doctrine](docs/security/sandbox-enforcement.md)                  | Kernel-level security validation                |
+| **Operations**                                                          |                                                 |
+| [CI Runner Setup](docs/ci/self-hosted-runner.md)                        | Self-hosted runner configuration                |
+| [WSL2 Setup](docs/wsl2-setup.md)                                        | Platform-specific setup for WSL2                |
+| **Reference**                                                           |                                                 |
+| [Configuration](docs/configuration.md)                                  | CLI, pyproject.toml, environment variables      |
+| [Development](docs/development.md)                                      | Build, test, project structure                  |
+| [Troubleshooting](docs/troubleshooting.md)                              | Common issues and debug commands                |
+| [API Reference](docs/api-reference.md)                                  | FFI functions and data structures               |
+| **Decisions**                                                           |                                                 |
+| [ADR: Rust 2024 Edition](docs/decisions/rust-2024-edition-migration.md) | Edition migration rationale                     |
 
 ---
 

@@ -37,6 +37,36 @@ for f in "$DOCS_DIR"/architecture/*.md; do
     echo "- [$title](#$anchor)" >> "$OUTPUT"
 done
 
+# Generate TOC - Security
+echo "" >> "$OUTPUT"
+echo "### Security" >> "$OUTPUT"
+for f in "$DOCS_DIR"/security/*.md; do
+    [ -f "$f" ] || continue
+    title=$(head -1 "$f" | sed 's/^# //')
+    anchor=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    echo "- [$title](#$anchor)" >> "$OUTPUT"
+done
+
+# Generate TOC - Operations
+echo "" >> "$OUTPUT"
+echo "### Operations" >> "$OUTPUT"
+for f in "$DOCS_DIR"/ci/*.md; do
+    [ -f "$f" ] || continue
+    title=$(head -1 "$f" | sed 's/^# //')
+    anchor=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    echo "- [$title](#$anchor)" >> "$OUTPUT"
+done
+
+# Generate TOC - Decisions
+echo "" >> "$OUTPUT"
+echo "### Decisions" >> "$OUTPUT"
+for f in "$DOCS_DIR"/decisions/*.md; do
+    [ -f "$f" ] || continue
+    title=$(head -1 "$f" | sed 's/^# //')
+    anchor=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    echo "- [$title](#$anchor)" >> "$OUTPUT"
+done
+
 echo "" >> "$OUTPUT"
 echo "### Reference" >> "$OUTPUT"
 for f in "$DOCS_DIR"/*.md; do
@@ -61,6 +91,48 @@ for f in "$DOCS_DIR"/architecture/*.md; do
     name=$(basename "$f" .md)
     # Skip old phase docs
     [[ "$name" == phase* ]] && continue
+    echo "" >> "$OUTPUT"
+    cat "$f" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "---" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+done
+
+# Append security docs
+echo "" >> "$OUTPUT"
+echo "# Security Documentation" >> "$OUTPUT"
+echo "" >> "$OUTPUT"
+for f in "$DOCS_DIR"/security/*.md; do
+    [ -f "$f" ] || continue
+    echo "" >> "$OUTPUT"
+    cat "$f" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "---" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+done
+
+# Append operations docs
+echo "" >> "$OUTPUT"
+echo "# Operations Documentation" >> "$OUTPUT"
+echo "" >> "$OUTPUT"
+for f in "$DOCS_DIR"/ci/*.md; do
+    [ -f "$f" ] || continue
+    echo "" >> "$OUTPUT"
+    cat "$f" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "---" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+done
+
+# Append decision records
+echo "" >> "$OUTPUT"
+echo "# Architecture Decision Records" >> "$OUTPUT"
+echo "" >> "$OUTPUT"
+for f in "$DOCS_DIR"/decisions/*.md; do
+    [ -f "$f" ] || continue
     echo "" >> "$OUTPUT"
     cat "$f" >> "$OUTPUT"
     echo "" >> "$OUTPUT"

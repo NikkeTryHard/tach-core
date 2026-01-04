@@ -248,7 +248,7 @@ def _emit_vital_type_warning(
     msg = f"[CRITICAL] Vital type degraded: {fqn}\n  Context: {context}\n  Category: {vital_info.category.value}\n  Reason: {vital_info.reason}\n"
 
     if vital_info.requires_fd_handover:
-        msg += "  Solution: Use FD Teleporter (SCM_RIGHTS) to pass file descriptor\n  See: docs/internal-architecture.md#scm-rights-handover\n"
+        msg += "  Solution: Use FD Teleporter (SCM_RIGHTS) to pass file descriptor\n  See: docs/architecture/internal-architecture.md#scm-rights-handover\n"
     else:
         msg += "  Solution: Recreate resource in worker process\n  This type cannot be transferred; fixture must be re-evaluated\n"
 

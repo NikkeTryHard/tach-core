@@ -46,6 +46,14 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      - id: build-docs
+        name: build full documentation
+        description: Regenerate FULL_DOCUMENTATION.md from source docs
+        entry: ./scripts/build-docs.sh
+        language: script
+        files: ^docs/.*\.md$
+        pass_filenames: false
+
   # Python hooks (for gauntlet tests)
   - repo: https://github.com/psf/black
     rev: 24.10.0
@@ -70,5 +78,5 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: weekly
-  skip: [cargo-fmt, cargo-clippy, cargo-test] # Skip Rust hooks in CI (handled by dedicated jobs)
+  skip: [cargo-fmt, cargo-clippy, cargo-test, build-docs] # Skip Rust hooks in CI (handled by dedicated jobs)
   submodules: false
