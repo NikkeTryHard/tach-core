@@ -147,8 +147,8 @@ proptest! {
             debug_socket_path: String::new(),
         };
 
-        let serialized = bincode::serialize(&payload).expect("Failed to serialize");
-        let deserialized: TestPayload = bincode::deserialize(&serialized).expect("Failed to deserialize");
+        let serialized = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).expect("Failed to serialize");
+        let (deserialized, _): (TestPayload, usize) = bincode::serde::decode_from_slice(&serialized, bincode::config::standard()).expect("Failed to deserialize");
 
         prop_assert_eq!(deserialized.test_id, test_id);
         prop_assert_eq!(deserialized.file_path, file_path);
@@ -175,8 +175,8 @@ proptest! {
             message: message.clone(),
         };
 
-        let serialized = bincode::serialize(&result).expect("Failed to serialize");
-        let deserialized: TestResult = bincode::deserialize(&serialized).expect("Failed to deserialize");
+        let serialized = bincode::serde::encode_to_vec(&result, bincode::config::standard()).expect("Failed to serialize");
+        let (deserialized, _): (TestResult, usize) = bincode::serde::decode_from_slice(&serialized, bincode::config::standard()).expect("Failed to deserialize");
 
         prop_assert_eq!(deserialized.test_id, test_id);
         prop_assert_eq!(deserialized.status, status);

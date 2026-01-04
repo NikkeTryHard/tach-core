@@ -367,8 +367,11 @@ fn worker_loop(socket: UnixStream) {
                     break;
                 }
 
-                let payload: TestPayload = match bincode::deserialize(&payload_buf) {
-                    Ok(p) => p,
+                let payload: TestPayload = match bincode::serde::decode_from_slice(
+                    &payload_buf,
+                    bincode::config::standard(),
+                ) {
+                    Ok((p, _)) => p,
                     Err(e) => {
                         eprintln!("[worker] Deserialize error: {}", e);
                         break;
@@ -621,8 +624,11 @@ except Exception as e:
                 let mut payload_buf = vec![0u8; len];
                 cmd_socket.read_exact(&mut payload_buf)?;
 
-                let payload: TestPayload = match bincode::deserialize(&payload_buf) {
-                    Ok(p) => p,
+                let payload: TestPayload = match bincode::serde::decode_from_slice(
+                    &payload_buf,
+                    bincode::config::standard(),
+                ) {
+                    Ok((p, _)) => p,
                     Err(e) => {
                         eprintln!("[zygote] Deserialize error: {}", e);
                         continue;

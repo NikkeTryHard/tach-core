@@ -218,7 +218,10 @@ impl Scheduler {
             let mut result_buf = vec![0u8; len];
 
             if socket.read_exact(&mut result_buf).is_ok() {
-                if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+                if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+                    &result_buf,
+                    bincode::config::standard(),
+                ) {
                     // Get and remove worker
                     let (test_name, slot) = {
                         let mut workers = self
@@ -281,7 +284,7 @@ impl Scheduler {
             is_toxic: test.is_toxic,
         };
 
-        let payload_bytes = bincode::serialize(&payload)?;
+        let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())?;
         let len = payload_bytes.len() as u32;
 
         self.cmd_socket.write_all(&[CMD_FORK])?;
@@ -316,7 +319,10 @@ impl Scheduler {
             let mut result_buf = vec![0u8; len];
 
             if socket.read_exact(&mut result_buf).is_ok() {
-                if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+                if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+                    &result_buf,
+                    bincode::config::standard(),
+                ) {
                     // Get and remove worker
                     let (test_name, slot) = {
                         let mut workers = self

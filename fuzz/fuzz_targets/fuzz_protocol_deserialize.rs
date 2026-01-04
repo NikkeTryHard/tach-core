@@ -10,15 +10,15 @@ use tach_core::protocol::{TestPayload, TestResult};
 
 fuzz_target!(|data: &[u8]| {
     // Try to deserialize as TestPayload - should not panic
-    let _: Result<TestPayload, _> = bincode::deserialize(data);
+    let _: Result<(TestPayload, usize), _> = bincode::serde::decode_from_slice(data, bincode::config::standard());
 
     // Try to deserialize as TestResult - should not panic
-    let _: Result<TestResult, _> = bincode::deserialize(data);
+    let _: Result<(TestResult, usize), _> = bincode::serde::decode_from_slice(data, bincode::config::standard());
 
     // If we have enough data, try specific patterns
     if data.len() >= 4 {
         // Try deserializing just the first 4 bytes as u32 (test_id)
-        let _: Result<u32, _> = bincode::deserialize(&data[..4]);
+        let _: Result<(u32, usize), _> = bincode::serde::decode_from_slice(&data[..4], bincode::config::standard());
     }
 
     // Verify that valid serialized data can be deserialized
@@ -35,8 +35,8 @@ fuzz_target!(|data: &[u8]| {
             is_toxic: false,
         };
 
-        let serialized = bincode::serialize(&test_payload).unwrap();
-        let deserialized: TestPayload = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serde::encode_to_vec(&test_payload, bincode::config::standard()).unwrap();
+        let (deserialized, _): (TestPayload, usize) = bincode::serde::decode_from_slice(&serialized, bincode::config::standard()).unwrap();
         assert_eq!(deserialized.test_id, 1);
     }
 });

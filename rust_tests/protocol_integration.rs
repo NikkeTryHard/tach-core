@@ -87,7 +87,9 @@ fn test_roundtrip_test_payload() {
 
     // Decode
     let payload_bytes = &encoded[4..]; // Skip length prefix
-    let decoded: TestPayload = bincode::deserialize(payload_bytes).expect("Should deserialize");
+    let (decoded, _): (TestPayload, usize) =
+        bincode::serde::decode_from_slice(payload_bytes, bincode::config::standard())
+            .expect("Should deserialize");
 
     assert_eq!(decoded.test_id, original.test_id);
     assert_eq!(decoded.file_path, original.file_path);
@@ -110,7 +112,9 @@ fn test_roundtrip_test_result() {
 
     // Decode
     let payload_bytes = &encoded[4..];
-    let decoded: TestResult = bincode::deserialize(payload_bytes).expect("Should deserialize");
+    let (decoded, _): (TestResult, usize) =
+        bincode::serde::decode_from_slice(payload_bytes, bincode::config::standard())
+            .expect("Should deserialize");
 
     assert_eq!(decoded.test_id, original.test_id);
     assert_eq!(decoded.status, original.status);
@@ -171,6 +175,7 @@ fn test_async_payload() {
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");
-    let decoded: TestPayload = bincode::deserialize(&encoded[4..]).unwrap();
+    let (decoded, _): (TestPayload, usize) =
+        bincode::serde::decode_from_slice(&encoded[4..], bincode::config::standard()).unwrap();
     assert!(decoded.is_async, "Async flag should be preserved");
 }
