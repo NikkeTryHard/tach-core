@@ -40,6 +40,14 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "deps(actions)"
+    groups:
+      # Group minor/patch updates together to reduce PR noise
+      actions-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Python dependencies (if any are added in the future)
   - package-ecosystem: "pip"
