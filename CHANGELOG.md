@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Roadmap to 1.0.0
+### Roadmap to 1.0.0 and Beyond
 
 ```mermaid
 gantt
-    title Tach Roadmap (2026-2028)
+    title Tach Roadmap (2026-2030)
     dateFormat YYYY-MM
     axisFormat %Y-%m
 
@@ -20,337 +20,1198 @@ gantt
 
     section Plugin Ecosystem
     0.2.x Plugin Shim     :active, v02, 2026-03, 2026-06
+    0.3.x Database        :v03, 2026-06, 2026-08
 
     section Enterprise
-    0.3.x Database        :v03, 2026-06, 2026-08
     0.4.x Fixtures        :v04, 2026-08, 2026-10
+    0.5.x DX              :v05, 2026-10, 2026-12
 
     section Polish
-    0.5.x DX              :v05, 2026-10, 2026-12
     0.6.x Config          :v06, 2026-12, 2027-02
+    0.7.x Performance     :v07, 2027-02, 2027-04
 
-    section Optimization
-    0.7.x Performance     :v07, 2027-02, 2027-05
-    0.8.x CI/CD           :v08, 2027-05, 2027-08
+    section CI/CD
+    0.8.x CI Integration  :v08, 2027-04, 2027-06
+    0.9.x Stability       :v09, 2027-06, 2027-08
 
-    section Stabilization
-    0.9.x Stability       :v09, 2027-08, 2027-11
-    0.10.x Beta           :v10, 2027-11, 2028-02
+    section Beta
+    0.10.x Beta 1         :v10, 2027-08, 2027-10
+    0.11.x Beta 2         :v11, 2027-10, 2027-12
 
     section Release
-    1.0.0 Production      :milestone, 2028-02, 0d
+    1.0.0 Production      :milestone, m1, 2028-01, 0d
+
+    section Post-1.0
+    1.1.x Maintenance     :v12, 2028-01, 2028-04
+    1.2.x Features        :v13, 2028-04, 2028-07
+
+    section Future
+    0.12.x-0.20.x         :v14, 2028-07, 2030-01
 ```
 
 ---
 
-### 0.1.x - Foundation (Current)
+## 0.1.x - Foundation (Current)
 
-Alpha stabilization, documentation, and minor improvements.
+> **Focus**: Alpha stabilization, documentation, error handling improvements, and minor bug fixes.
+> **Timeline**: January 2026 - March 2026
 
-#### 0.1.1 - Documentation & Polish
+The 0.1.x series focuses on solidifying the alpha release, improving documentation, and fixing edge cases discovered during initial usage. No major new features are planned - the goal is stability and usability.
 
-- [ ] Improve error messages for common failures
-- [ ] Add examples directory with sample projects
-- [ ] Write quick-start tutorial
-- [ ] Fix edge cases in AST discovery
-- [ ] Improve CLI help text
+### 0.1.1 - Documentation and Polish
 
-#### 0.1.2 - Test Stability
+**Target**: Better onboarding experience for new users.
 
-- [ ] Handle more pytest assertion patterns
-- [ ] Better stack trace formatting
-- [ ] Fix timeout edge cases
-- [ ] Improve worker cleanup on crash
+#### Documentation
 
-#### 0.1.3 - Error Handling
+- [ ] Create `examples/` directory with sample projects
+  - [ ] `examples/simple/` - Basic test suite with fixtures
+  - [ ] `examples/django/` - Django project with database tests
+  - [ ] `examples/async/` - Async test patterns
+  - [ ] `examples/parametrized/` - Complex parametrization examples
+  - [ ] `examples/markers/` - Custom markers and filtering
+  - [ ] `examples/conftest/` - Nested conftest patterns
+- [ ] Write quick-start tutorial in `docs/quickstart.md`
+  - [ ] Installation instructions for common distros
+  - [ ] First test run walkthrough
+  - [ ] Comparison with pytest workflow
+  - [ ] Migration guide from pytest
+- [ ] Add inline code comments for complex algorithms
+  - [ ] Toxicity propagation in `discovery/analysis.rs`
+  - [ ] Fixture resolution in `discovery/resolver.rs`
+  - [ ] Snapshot mechanics in `isolation/snapshot.rs`
+  - [ ] Seccomp filter generation in `isolation/sandbox.rs`
 
-- [ ] Categorize errors (user error vs system error)
-- [ ] Add error codes for machine parsing
-- [ ] Improve suggestions for common failures
+#### CLI Improvements
+
+- [ ] Improve `--help` text with examples for each flag
+- [ ] Add `tach --version --verbose` for detailed system info
+- [ ] Better error messages when Python environment is misconfigured
+- [ ] Add shell completion scripts (bash, zsh, fish)
+- [ ] Add `--dry-run` flag to show what would be executed
+- [ ] Add `--collect-only` as alias for `list` command
+
+#### Bug Fixes
+
+- [ ] Fix edge cases in AST discovery for decorated test functions
+- [ ] Handle `conftest.py` files in nested directories correctly
+- [ ] Fix path resolution for symlinked test directories
+- [ ] Handle tests with very long names gracefully
+- [ ] Fix progress bar rendering on narrow terminals
+
+### 0.1.2 - Test Compatibility
+
+**Target**: Better compatibility with existing pytest test patterns.
+
+#### Assertion Handling
+
+- [ ] Support `pytest.raises()` context manager pattern
+- [ ] Handle `pytest.warns()` for warning assertions
+- [ ] Improve `assert` statement introspection for better failure messages
+- [ ] Support `pytest.approx()` for floating point comparisons
+- [ ] Support `pytest.fail()` and `pytest.skip()` functions
+- [ ] Handle `pytest.xfail()` expected failures
+- [ ] Support `pytest.importorskip()` for optional dependencies
+
+#### Stack Trace Improvements
+
+- [ ] Format tracebacks in pytest-compatible style
+- [ ] Show relevant local variables in failure output
+- [ ] Truncate long values intelligently (dicts, lists)
+- [ ] Highlight the failing assertion line
+- [ ] Support `--tb=short`, `--tb=long`, `--tb=line`, `--tb=native`
+- [ ] Color-code different parts of tracebacks
+- [ ] Show source context around failures
+
+#### Timeout Handling
+
+- [ ] Fix race condition in worker timeout detection
+- [ ] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
+- [ ] Improve cleanup when test times out mid-execution
+- [ ] Handle tests that spawn threads which outlive the test
+- [ ] Add global timeout configuration in pyproject.toml
+- [ ] Support timeout callback hooks
+
+#### Worker Lifecycle
+
+- [ ] Improve worker cleanup on SIGTERM/SIGKILL
+- [ ] Fix orphan process detection on abnormal exit
+- [ ] Add worker health checks between test batches
+- [ ] Handle worker crash during fixture setup
+- [ ] Implement worker recycling for long test sessions
+- [ ] Add worker memory usage monitoring
+
+### 0.1.3 - Error Handling and Diagnostics
+
+**Target**: Make failures easier to understand and fix.
+
+#### Error Categorization
+
+- [ ] Categorize errors into user errors vs system errors
+  - [ ] User errors: test failures, import errors, fixture errors
+  - [ ] System errors: kernel issues, permission errors, OOM
+- [ ] Add error codes for machine-parseable output (E001, E002, etc.)
+- [ ] Create error reference documentation
+- [ ] Suggest fixes for common errors inline
+
+#### Diagnostic Mode
+
 - [ ] Add `--diagnose` flag for troubleshooting
+  - [ ] Check kernel capabilities (userfaultfd, landlock, seccomp)
+  - [ ] Verify Python environment (libpython, pytest installed)
+  - [ ] Test snapshot/restore cycle
+  - [ ] Measure baseline performance
+  - [ ] Check file descriptor limits
+  - [ ] Verify shared memory availability
+- [ ] Improve `tach self-test` output with remediation suggestions
+- [ ] Add `--debug` flag for verbose syscall logging
+- [ ] Add `--trace` flag for maximum verbosity
+
+#### Common Failure Suggestions
+
+- [ ] Detect and suggest fixes for common issues:
+  - [ ] Missing `pytest` in environment
+  - [ ] Incorrect `PYO3_PYTHON` path
+  - [ ] Insufficient kernel version
+  - [ ] Permission denied on userfaultfd
+  - [ ] Too many open files
+  - [ ] Shared memory exhaustion
+  - [ ] Docker/container restrictions
+
+### 0.1.4 - Dependency Updates
+
+**Target**: Update dependencies and prepare for 0.2.x.
+
+#### Rust Dependencies
+
+- [x] Evaluate and merge notify 8.x update (watch mode)
+- [ ] Update to Rust 2024 Edition (if issues resolved)
+- [ ] Audit and update minor dependency versions
+- [ ] Run `cargo audit` and fix any advisories
+- [ ] Update PyO3 to latest stable
+- [ ] Evaluate tokio updates
+- [ ] Update clap to latest
+
+#### Python Compatibility
+
+- [ ] Test against Python 3.14 beta (when available)
+- [ ] Verify Python 3.8 still works (MSRV)
+- [ ] Test with PyPy (experimental)
+- [ ] Document Python version compatibility matrix
 
 ---
 
-### 0.2.x - Plugin Compatibility
+## 0.2.x - Plugin Compatibility
 
-Shadow plugin shim for pytest ecosystem integration.
+> **Focus**: Shadow plugin shim for pytest ecosystem integration without full `pluggy` support.
+> **Timeline**: March 2026 - June 2026
 
-#### 0.2.0 - Hook Interception Core
+The 0.2.x series introduces a plugin compatibility layer that intercepts common pytest plugin hooks. This is NOT full `pluggy` support - instead, we implement targeted shims for the most popular plugins.
 
-- [ ] Implement hook interception framework
-- [ ] `pytest_runtest_setup` hook passthrough
-- [ ] `pytest_runtest_teardown` hook passthrough
-- [ ] Conftest.py hook discovery
-- [ ] Plugin registration system
+### 0.2.0 - Hook Interception Framework
 
-#### 0.2.1 - pytest-django Support
+**Target**: Core infrastructure for intercepting pytest hooks.
 
-- [ ] `@pytest.mark.django_db` marker handling
-- [ ] Django test client support
-- [ ] Transaction test case compatibility
-- [ ] Settings override support
+#### Hook System Architecture
 
-#### 0.2.2 - pytest-asyncio Support
+- [ ] Design hook interception architecture
+  - [ ] Hook registry for tracking available hooks
+  - [ ] Hook caller that invokes registered handlers
+  - [ ] Hook result aggregation (first-result, all-results)
+  - [ ] Hook wrapper specifications
+- [ ] Implement `conftest.py` discovery and loading
+  - [ ] Scan for `conftest.py` in test directories
+  - [ ] Parse hook function definitions
+  - [ ] Build hook dependency graph
+  - [ ] Handle conftest inheritance
 
-- [ ] `@pytest.mark.asyncio` marker handling
-- [ ] Event loop fixture support
-- [ ] Async test detection
-- [ ] Coroutine test execution
+#### Core Hook Support
 
-#### 0.2.3 - Common Plugins
+- [ ] `pytest_configure(config)` - Plugin configuration
+- [ ] `pytest_collection_modifyitems(items)` - Test collection modification
+- [ ] `pytest_runtest_setup(item)` - Pre-test setup
+- [ ] `pytest_runtest_teardown(item)` - Post-test teardown
+- [ ] `pytest_runtest_makereport(item, call)` - Result reporting
+- [ ] `pytest_sessionstart(session)` - Session initialization
+- [ ] `pytest_sessionfinish(session)` - Session cleanup
 
-- [ ] pytest-cov compatibility (defer to our coverage)
-- [ ] pytest-mock fixture support
-- [ ] pytest-env variable injection
-- [ ] pytest-timeout integration
+#### Plugin Registration
+
+- [ ] Detect installed pytest plugins via `pkg_resources`
+- [ ] Create plugin shim registry
+- [ ] Log warnings for unsupported plugins
+- [ ] Allow disabling specific plugins via config
+- [ ] Support plugin ordering/priority
+
+### 0.2.1 - pytest-django Support
+
+**Target**: First-class Django test support.
+
+#### Marker Support
+
+- [ ] `@pytest.mark.django_db` - Enable database access
+  - [ ] `transaction=True` - Use real transactions
+  - [ ] `reset_sequences=True` - Reset auto-increment
+  - [ ] `databases=['default', 'secondary']` - Multi-db
+- [ ] `@pytest.mark.urls('myapp.test_urls')` - URL override
+- [ ] `@pytest.mark.ignore_template_errors` - Template error handling
+
+#### Django Fixtures
+
+- [ ] `client` - Django test client
+- [ ] `rf` - Request factory
+- [ ] `admin_client` - Logged-in admin client
+- [ ] `admin_user` - Admin user instance
+- [ ] `django_user_model` - User model class
+- [ ] `django_username_field` - Username field name
+- [ ] `settings` - Settings override context manager
+- [ ] `live_server` - Live server URL
+- [ ] `db` - Database access fixture
+- [ ] `transactional_db` - Transactional database
+
+#### Database Handling
+
+- [ ] Hook into Django's transaction management
+- [ ] Preserve database connections across test resets
+- [ ] Handle database migrations in test database
+- [ ] Support `--reuse-db` flag for faster test runs
+- [ ] Support `--create-db` flag for fresh database
+- [ ] Handle multi-database configurations
+- [ ] Support database aliases
+
+### 0.2.2 - pytest-asyncio Support
+
+**Target**: Native async/await test support.
+
+#### Async Detection
+
+- [ ] Detect async test functions (`async def test_...`)
+- [ ] Detect async fixtures (`@pytest.fixture` on async functions)
+- [ ] Handle sync tests that use async fixtures
+- [ ] Support async context managers
+- [ ] Handle async generators
+
+#### Event Loop Management
+
+- [ ] Create event loop per test (default)
+- [ ] Support session-scoped event loop via marker
+- [ ] Properly cleanup event loop after test
+- [ ] Handle `asyncio.run()` calls within tests
+- [ ] Support custom event loop policies
+- [ ] Handle uvloop integration
+
+#### Marker Support
+
+- [ ] `@pytest.mark.asyncio` - Mark async tests
+- [ ] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
+- [ ] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
+- [ ] Automatic async test detection mode
+
+#### Coroutine Execution
+
+- [ ] Run async tests with proper timeout handling
+- [ ] Support `await` in async fixtures
+- [ ] Handle async context managers in fixtures
+- [ ] Proper cancellation on test timeout
+- [ ] Support gather/wait patterns
+- [ ] Handle TaskGroup cleanup
+
+### 0.2.3 - Additional Plugin Support
+
+**Target**: Support for commonly used pytest plugins.
+
+#### pytest-mock
+
+- [ ] `mocker` fixture providing `unittest.mock` wrappers
+- [ ] `mocker.patch()` context manager
+- [ ] `mocker.patch.object()` method
+- [ ] `mocker.patch.dict()` dictionary patching
+- [ ] `mocker.spy()` for call tracking
+- [ ] `mocker.stub()` for stub creation
+- [ ] Automatic mock cleanup after each test
+- [ ] Support `mocker.stopall()`
+
+#### pytest-env
+
+- [ ] Read `[pytest_env]` from `pyproject.toml`
+- [ ] Set environment variables before test collection
+- [ ] Support variable expansion (`${HOME}`)
+- [ ] Preserve original values for restoration
+- [ ] Support conditional env vars
+
+#### pytest-timeout
+
+- [ ] `@pytest.mark.timeout(30)` marker support
+- [ ] Global timeout via config
+- [ ] Timeout methods: signal, thread
+- [ ] Timeout callback for custom handling
+- [ ] Per-phase timeouts (setup, call, teardown)
+
+#### pytest-cov (Deferred)
+
+- [ ] Detect pytest-cov and warn about Tach's native coverage
+- [ ] Suggest using `--coverage` flag instead
+- [ ] Disable pytest-cov when Tach coverage is active
+- [ ] Support coverage configuration options
+
+#### pytest-xdist (Compatibility)
+
+- [ ] Detect pytest-xdist and warn about Tach's native parallelism
+- [ ] Support `-n` flag as alias for `--workers`
+- [ ] Ignore xdist-specific markers gracefully
+
+### 0.2.4 - Plugin Testing and Stabilization
+
+**Target**: Ensure plugin shims work correctly with real-world projects.
+
+#### Testing
+
+- [ ] Create plugin compatibility test suite
+- [ ] Test against popular open-source Django projects
+- [ ] Test against popular async projects (FastAPI, aiohttp)
+- [ ] Document plugin compatibility matrix
+- [ ] Create plugin integration tests
+
+#### Performance
+
+- [ ] Benchmark plugin overhead
+- [ ] Optimize hook dispatch path
+- [ ] Cache conftest.py parsing results
+- [ ] Lazy-load plugin shims
 
 ---
 
-### 0.3.x - Database Integration
+## 0.3.x - Database Integration
 
-Transaction rollback and connection handling for database-heavy projects.
+> **Focus**: Transaction rollback and connection handling for database-heavy test suites.
+> **Timeline**: June 2026 - August 2026
 
-#### 0.3.0 - Django Database
+The 0.3.x series focuses on database test isolation. The key insight is that database state cannot be restored via memory snapshots - we need to hook into the database driver level to rollback transactions.
 
-- [ ] Django transaction rollback via `transaction.atomic()`
-- [ ] Multi-database support
-- [ ] Database alias handling
-- [ ] Migration state preservation
+### 0.3.0 - Django Database Support
 
-#### 0.3.1 - SQLAlchemy Support
+**Target**: Django ORM transaction rollback.
 
-- [ ] SQLAlchemy session management
-- [ ] Scoped session handling
-- [ ] Engine connection pooling
-- [ ] Alembic migration awareness
+#### Transaction Management
 
-#### 0.3.2 - Connection Management
+- [ ] Hook into `django.db.transaction.atomic()`
+- [ ] Wrap each test in a savepoint
+- [ ] Rollback savepoint after test completion
+- [ ] Handle nested transactions correctly
+- [ ] Support `transaction.on_commit()` hooks
+- [ ] Handle transaction.non_atomic_requests
 
-- [ ] Connection pool preservation across test resets
-- [ ] Database FD handover via SCM_RIGHTS
-- [ ] Connection health checks
-- [ ] Graceful connection cleanup
+#### Multi-Database Support
+
+- [ ] Track all database aliases in use
+- [ ] Apply transaction wrapping to all databases
+- [ ] Handle cross-database queries
+- [ ] Support database routers
+- [ ] Handle read replicas
+
+#### Connection Preservation
+
+- [ ] Keep database connections alive across tests
+- [ ] Reset connection state without closing
+- [ ] Handle connection pool exhaustion
+- [ ] Reconnect on connection drop
+- [ ] Monitor connection health
+
+#### Migration Handling
+
+- [ ] Detect migration state at startup
+- [ ] Skip migration if test database exists and is current
+- [ ] Support `--create-db` flag to force recreation
+- [ ] Handle migration conflicts gracefully
+- [ ] Support migration squashing
+
+### 0.3.1 - SQLAlchemy Support
+
+**Target**: SQLAlchemy session management.
+
+#### Session Management
+
+- [ ] Hook into `Session.commit()` to prevent actual commits
+- [ ] Wrap sessions in nested transactions (savepoints)
+- [ ] Handle `Session.rollback()` within tests
+- [ ] Support scoped session patterns
+- [ ] Handle session-per-request patterns
+
+#### Engine Configuration
+
+- [ ] Detect SQLAlchemy engine configuration
+- [ ] Apply connection pooling optimizations
+- [ ] Handle multiple engines (read replicas, etc.)
+- [ ] Support async SQLAlchemy (asyncpg, aiosqlite)
+- [ ] Handle engine disposal
+
+#### Alembic Integration
+
+- [ ] Detect Alembic migration configuration
+- [ ] Verify migration state matches expected
+- [ ] Support running migrations before tests
+- [ ] Handle migration downgrade on test database
+- [ ] Support migration branching
+
+### 0.3.2 - Connection Management
+
+**Target**: Advanced connection pool handling.
+
+#### Connection Pool Preservation
+
+- [ ] Keep connection pools alive across worker restarts
+- [ ] Implement FD handover via SCM_RIGHTS
+- [ ] Handle pool size limits correctly
+- [ ] Monitor connection health
+- [ ] Support connection aging
+
+#### Database FD Handover
+
+- [ ] Capture database connection file descriptors
+- [ ] Pass FDs to worker processes via Unix sockets
+- [ ] Reconstruct connection objects from FDs
+- [ ] Handle SSL connections specially
+- [ ] Support connection metadata transfer
+
+#### Health Checks
+
+- [ ] Verify connection validity before test
+- [ ] Detect stale connections
+- [ ] Reconnect automatically on failure
+- [ ] Log connection pool statistics
+- [ ] Emit metrics for monitoring
+
+### 0.3.3 - Additional Database Support
+
+**Target**: Support for other database systems.
+
+#### PostgreSQL Specific
+
+- [ ] Support PostgreSQL savepoints natively
+- [ ] Handle advisory locks
+- [ ] Support LISTEN/NOTIFY cleanup
+- [ ] Handle temp tables correctly
+- [ ] Support PostgreSQL-specific types
+- [ ] Handle pg_dump/pg_restore for fixtures
+
+#### MySQL/MariaDB Specific
+
+- [ ] Support MySQL savepoints
+- [ ] Handle MySQL-specific locking
+- [ ] Support MySQL 8.0+ features
+- [ ] Handle character set issues
+- [ ] Support MariaDB extensions
+
+#### SQLite Specific
+
+- [ ] In-memory database optimization
+- [ ] File-based database snapshotting
+- [ ] Handle WAL mode correctly
+- [ ] Support shared cache mode
+- [ ] Handle SQLite concurrent access
+
+#### MongoDB (Experimental)
+
+- [ ] Hook into PyMongo sessions
+- [ ] Transaction support (requires replica set)
+- [ ] Collection cleanup approach for non-transactional
+- [ ] Document limitations
+- [ ] Support Motor (async MongoDB)
+
+#### Redis (Experimental)
+
+- [ ] Support Redis transactions
+- [ ] Handle Redis pub/sub cleanup
+- [ ] Support Redis Cluster
+- [ ] Handle connection pooling
 
 ---
 
-### 0.4.x - Fixture Lifecycle
+## 0.4.x - Fixture Lifecycle
 
-Proper handling of session and module-scoped fixtures.
+> **Focus**: Proper handling of session-scoped and module-scoped fixtures.
+> **Timeline**: August 2026 - October 2026
 
-#### 0.4.0 - Session Fixtures
+The 0.4.x series addresses one of the biggest gaps in the current implementation: fixtures that should persist across multiple tests. Session-scoped fixtures in particular are tricky because they must survive worker restarts.
 
-- [ ] Session-scoped fixture caching (survive across all tests)
-- [ ] Fixture value serialization for cross-worker sharing
-- [ ] Session fixture finalization at end
-- [ ] Parallel session fixture initialization
+### 0.4.0 - Session-Scoped Fixtures
 
-#### 0.4.1 - Module Fixtures
+**Target**: Fixtures that persist for the entire test session.
 
-- [ ] Module-scoped fixture optimization
-- [ ] Module boundary detection
-- [ ] Fixture reuse within modules
-- [ ] Module fixture cleanup
+#### Session Fixture Caching
 
-#### 0.4.2 - Advanced Fixtures
+- [ ] Identify session-scoped fixtures at discovery time
+- [ ] Execute session fixtures before any tests run
+- [ ] Store fixture values in shared memory
+- [ ] Make values available to all workers
+- [ ] Handle fixture dependencies
 
-- [ ] Autouse fixture support
-- [ ] Fixture finalization ordering
-- [ ] Parametrized fixture handling
-- [ ] Fixture dependency graph visualization
+#### Serialization Strategy
+
+- [ ] Define serialization protocol for fixture values
+- [ ] Handle pickle-able objects directly
+- [ ] Support custom serializers for complex objects
+- [ ] Handle non-serializable fixtures (connections, etc.)
+- [ ] Support cloudpickle for lambda functions
+
+#### Finalization
+
+- [ ] Track session fixture finalizers
+- [ ] Run finalizers after all tests complete
+- [ ] Handle finalizer errors gracefully
+- [ ] Support async finalizers
+- [ ] Ensure finalizer ordering
+
+### 0.4.1 - Module-Scoped Fixtures
+
+**Target**: Fixtures that persist for a single module.
+
+#### Module Boundary Detection
+
+- [ ] Group tests by module at scheduling time
+- [ ] Track module transitions during execution
+- [ ] Trigger fixture finalization on module change
+- [ ] Handle module re-entry
+
+#### Fixture Lifecycle
+
+- [ ] Setup module fixtures before first test in module
+- [ ] Cache fixture values during module execution
+- [ ] Teardown fixtures when leaving module
+- [ ] Handle module import errors gracefully
+- [ ] Support fixture reuse within module
+
+#### Optimization
+
+- [ ] Batch tests from same module to same worker
+- [ ] Minimize fixture setup/teardown overhead
+- [ ] Share module fixtures between workers when safe
+- [ ] Prefetch module fixtures
+
+### 0.4.2 - Class-Scoped Fixtures
+
+**Target**: Fixtures that persist for a test class.
+
+#### Class Boundary Detection
+
+- [ ] Group tests by class at scheduling time
+- [ ] Track class transitions during execution
+- [ ] Handle class inheritance correctly
+- [ ] Support nested test classes
+
+#### Fixture Lifecycle
+
+- [ ] Setup class fixtures before first test in class
+- [ ] Cache fixture values during class execution
+- [ ] Teardown fixtures when leaving class
+- [ ] Handle setup_class/teardown_class methods
+
+### 0.4.3 - Advanced Fixture Features
+
+**Target**: Complete fixture compatibility with pytest.
+
+#### Autouse Fixtures
+
+- [ ] Detect `@pytest.fixture(autouse=True)`
+- [ ] Automatically apply to matching tests
+- [ ] Respect fixture scope for autouse
+- [ ] Handle autouse in conftest.py
+- [ ] Support conditional autouse
+
+#### Fixture Finalization Order
+
+- [ ] Build fixture dependency graph
+- [ ] Teardown in reverse dependency order
+- [ ] Handle circular dependencies
+- [ ] Support `yield` fixtures correctly
+- [ ] Handle generator fixtures
+
+#### Parametrized Fixtures
+
+- [ ] Support `@pytest.fixture(params=[...])`
+- [ ] Generate test variants for each param
+- [ ] Handle fixture param ids
+- [ ] Support indirect parametrization
+- [ ] Support fixture param marks
+
+#### Fixture Visualization
+
+- [ ] Add `--fixtures` flag to show available fixtures
+- [ ] Add `--fixture-graph` to visualize dependencies
+- [ ] Show fixture scope and autouse status
+- [ ] Indicate where fixtures are defined
+- [ ] Export fixture graph as DOT/Mermaid
 
 ---
 
-### 0.5.x - Developer Experience
+## 0.5.x - Developer Experience
 
-Better error messages, debugging, and developer tools.
+> **Focus**: Better error messages, debugging tools, and developer ergonomics.
+> **Timeline**: October 2026 - December 2026
 
-#### 0.5.0 - Enhanced Tracebacks
+The 0.5.x series focuses on making Tach a joy to use. Better error messages, powerful debugging tools, and smoother integration with development workflows.
 
-- [ ] pytest-style traceback formatting
-- [ ] Local variable display in failures
-- [ ] Assertion introspection
-- [ ] Diff display for comparison failures
+### 0.5.0 - Enhanced Tracebacks
 
-#### 0.5.1 - Debug Mode
+**Target**: pytest-quality error output.
 
-- [ ] Verbose syscall logging (`--debug`)
-- [ ] Worker lifecycle visualization
-- [ ] Memory snapshot timing breakdown
-- [ ] Performance profiling output
+#### Traceback Formatting
 
-#### 0.5.2 - Interactive Debugging
+- [ ] Implement pytest-style short tracebacks
+- [ ] Show only relevant frames (hide internal frames)
+- [ ] Highlight the assertion line
+- [ ] Support `--tb=short`, `--tb=long`, `--tb=native`
+- [ ] Support `--tb=line` for one-line summaries
+- [ ] Support `--tb=no` to disable tracebacks
 
-- [ ] `--pdb` support for interactive debugging
-- [ ] Breakpoint detection (`breakpoint()`)
-- [ ] Post-mortem debugging on failure
-- [ ] Remote debugger attachment
+#### Local Variable Display
+
+- [ ] Capture local variables at assertion failure
+- [ ] Display variable values inline with traceback
+- [ ] Truncate large values intelligently
+- [ ] Support `--showlocals` flag
+- [ ] Color-code variable types
+
+#### Assertion Introspection
+
+- [ ] Parse assertion expressions
+- [ ] Show sub-expression values
+- [ ] Support comparison operators (`==`, `!=`, `<`, etc.)
+- [ ] Handle complex expressions (`assert x in y`)
+- [ ] Support `assert` with messages
+
+#### Diff Display
+
+- [ ] Show diffs for string comparisons
+- [ ] Show diffs for dict comparisons
+- [ ] Show diffs for list comparisons
+- [ ] Color-code additions/deletions
+- [ ] Support unified diff format
+
+### 0.5.1 - Debug Mode
+
+**Target**: Deep visibility into Tach internals.
+
+#### Verbose Logging
+
+- [ ] `--debug` flag for detailed logging
+- [ ] Log syscall activity (userfaultfd, fork, etc.)
+- [ ] Log worker lifecycle events
+- [ ] Log memory snapshot timing
+- [ ] Log IPC message flow
+
+#### Worker Visualization
+
+- [ ] Show worker status in real-time
+- [ ] Display which test each worker is running
+- [ ] Show queue depth and scheduling decisions
+- [ ] Indicate safe vs toxic workers
+- [ ] Show worker memory usage
+
+#### Performance Profiling
+
+- [ ] Measure time in discovery, execution, reporting
+- [ ] Show per-test timing breakdown
+- [ ] Identify slow fixture setup
+- [ ] Profile memory snapshot overhead
+- [ ] Generate flamegraphs
+
+### 0.5.2 - Interactive Debugging
+
+**Target**: Seamless debugger integration.
+
+#### pdb Support
+
+- [ ] `--pdb` flag to drop into debugger on failure
+- [ ] Detect `breakpoint()` calls in tests
+- [ ] Disable worker isolation when debugging
+- [ ] Support `--pdb-first` for first failure only
+- [ ] Support custom debuggers (ipdb, pudb)
+
+#### Post-Mortem Debugging
+
+- [ ] Capture exception state for post-mortem
+- [ ] Support `pytest.set_trace()` equivalent
+- [ ] Handle debugger in forked workers
+- [ ] Serialize debugger context if needed
+
+#### IDE Integration
+
+- [ ] Document VS Code launch configurations
+- [ ] Document PyCharm run configurations
+- [ ] Support remote debugging
+- [ ] Handle debugger attach to workers
+- [ ] Support DAP (Debug Adapter Protocol)
+
+### 0.5.3 - Output Customization
+
+**Target**: Flexible output formatting.
+
+#### Output Formats
+
+- [ ] Support `--color=auto/always/never`
+- [ ] Support `--no-header` for minimal output
+- [ ] Support `--quiet` for summary only
+- [ ] Support `--verbose` levels (-v, -vv, -vvv)
+- [ ] Support custom output templates
+
+#### Progress Display
+
+- [ ] Support different progress styles (bar, dots, verbose)
+- [ ] Support `--no-progress` for CI
+- [ ] Show ETA for test completion
+- [ ] Show test rate (tests/second)
 
 ---
 
-### 0.6.x - Configuration
+## 0.6.x - Configuration
 
-Complete configuration support.
+> **Focus**: Complete configuration system with pyproject.toml support.
+> **Timeline**: December 2026 - February 2027
 
-#### 0.6.0 - pyproject.toml Schema
+The 0.6.x series implements a full configuration system. Currently Tach has limited configuration - this series adds comprehensive pyproject.toml support.
 
-- [ ] Full `[tool.tach]` schema definition
-- [ ] JSON schema for IDE completion
-- [ ] Configuration validation
-- [ ] Default value documentation
+### 0.6.0 - pyproject.toml Schema
 
-#### 0.6.1 - Test Configuration
+**Target**: Full configuration via pyproject.toml.
 
-- [ ] Per-test timeout configuration
-- [ ] Per-directory settings
-- [ ] Marker-based configuration
-- [ ] Test exclusion patterns
+#### Schema Definition
 
-#### 0.6.2 - Execution Configuration
+- [ ] Define complete `[tool.tach]` schema
+- [ ] Document all configuration options
+- [ ] Provide JSON schema for IDE completion
+- [ ] Validate configuration on startup
+- [ ] Support schema versioning
 
-- [ ] Test ordering options (random, dependency-based)
-- [ ] Environment variable presets
-- [ ] Worker count configuration
-- [ ] Isolation mode selection
+#### Core Options
+
+```toml
+[tool.tach]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+norecursedirs = [".git", "node_modules", ".venv"]
+```
+
+#### Execution Options
+
+```toml
+[tool.tach.execution]
+workers = "auto"  # or integer
+timeout = 60
+exitfirst = false
+maxfail = 0
+```
+
+### 0.6.1 - Test Configuration
+
+**Target**: Fine-grained test behavior configuration.
+
+#### Per-Test Timeout
+
+- [ ] Support timeout in markers
+- [ ] Support timeout in config by pattern
+- [ ] Override global timeout per-test
+- [ ] Handle timeout inheritance
+
+#### Directory-Specific Settings
+
+- [ ] Support `tach.toml` in subdirectories
+- [ ] Merge settings from parent directories
+- [ ] Override parent settings locally
+- [ ] Document precedence rules
+
+#### Marker-Based Configuration
+
+- [ ] Configure behavior based on markers
+- [ ] Set default markers via config
+- [ ] Filter tests by marker expression
+- [ ] Support custom marker definitions
+
+### 0.6.2 - Execution Configuration
+
+**Target**: Control test execution behavior.
+
+#### Test Ordering
+
+- [ ] Random order: `--random-order`
+- [ ] Dependency order: respect `@pytest.mark.dependency`
+- [ ] Duration order: fastest first
+- [ ] Reverse order: `--reverse`
+- [ ] Alphabetical order
+
+#### Environment Variables
+
+- [ ] Define env vars in config
+- [ ] Support env var files (`.env`)
+- [ ] Expand variables in values
+- [ ] Protect sensitive values
+- [ ] Support per-environment configs
+
+#### Isolation Modes
+
+- [ ] Full isolation (default)
+- [ ] Relaxed isolation (faster, less safe)
+- [ ] No isolation (`--no-isolation`)
+- [ ] Per-test isolation override
+
+### 0.6.3 - Configuration Profiles
+
+**Target**: Support different configurations for different scenarios.
+
+#### Profile System
+
+- [ ] Define named profiles in config
+- [ ] Switch profiles via `--profile` flag
+- [ ] Support profile inheritance
+- [ ] Document common profile patterns
+
+#### Environment Detection
+
+- [ ] Auto-detect CI environment
+- [ ] Apply CI-specific defaults
+- [ ] Support environment-based profiles
+- [ ] Handle Docker/container detection
 
 ---
 
-### 0.7.x - Performance
+## 0.7.x - Performance
 
-Memory and parallelism optimizations.
+> **Focus**: Memory optimization, adaptive scheduling, and parallelism improvements.
+> **Timeline**: February 2027 - April 2027
 
-#### 0.7.0 - Memory Optimization
+The 0.7.x series focuses on performance at scale. As test suites grow to thousands of tests, we need smarter scheduling and better memory management.
 
-- [ ] Memory usage profiling
-- [ ] Snapshot size reduction
-- [ ] Lazy snapshot regions
-- [ ] Memory pressure handling
+### 0.7.0 - Memory Optimization
 
-#### 0.7.1 - Adaptive Scheduling
+**Target**: Reduce memory footprint and improve snapshot efficiency.
 
-- [ ] Adaptive batch sizing based on test duration
-- [ ] Test duration prediction
-- [ ] Hot/cold test classification
-- [ ] Load balancing improvements
+#### Memory Profiling
 
-#### 0.7.2 - Lazy Loading
+- [ ] Add `--memory-profile` flag
+- [ ] Track memory usage per test
+- [ ] Identify memory leaks
+- [ ] Report peak memory usage
+- [ ] Generate memory reports
 
-- [ ] Lazy module loading for large codebases
-- [ ] Import graph analysis
-- [ ] Deferred bytecode compilation
-- [ ] Memory-mapped code objects
+#### Snapshot Optimization
 
-#### 0.7.3 - Parallel Discovery
+- [ ] Reduce snapshot size via compression
+- [ ] Implement incremental snapshots
+- [ ] Skip unchanged memory regions
+- [ ] Use copy-on-write more effectively
+- [ ] Optimize page table handling
 
-- [ ] Parallel discovery with rayon
-- [ ] Incremental discovery caching
-- [ ] File change detection
-- [ ] Discovery result caching
+#### Memory Pressure Handling
+
+- [ ] Detect low memory conditions
+- [ ] Reduce worker count under pressure
+- [ ] Trigger garbage collection proactively
+- [ ] Fail gracefully on OOM
+- [ ] Support memory limits
+
+### 0.7.1 - Adaptive Scheduling
+
+**Target**: Smart test scheduling based on historical data.
+
+#### Duration Prediction
+
+- [ ] Track test durations over time
+- [ ] Store duration data in cache file
+- [ ] Predict duration for new tests
+- [ ] Balance worker load based on predictions
+- [ ] Handle duration variance
+
+#### Hot/Cold Classification
+
+- [ ] Identify frequently-run tests
+- [ ] Prioritize cold tests for early execution
+- [ ] Cache compilation for hot tests
+- [ ] Optimize discovery for hot paths
+
+#### Load Balancing
+
+- [ ] Distribute tests evenly by predicted duration
+- [ ] Handle stragglers (tests slower than predicted)
+- [ ] Support test stealing between workers
+- [ ] Minimize total wall-clock time
+
+### 0.7.2 - Lazy Loading
+
+**Target**: Reduce startup time for large codebases.
+
+#### Lazy Module Loading
+
+- [ ] Don't import modules until needed
+- [ ] Load test modules on-demand
+- [ ] Share loaded modules between workers
+- [ ] Support preloading via config
+
+#### Import Graph Analysis
+
+- [ ] Build module dependency graph
+- [ ] Identify shared dependencies
+- [ ] Optimize import order
+- [ ] Detect circular imports
+
+#### Deferred Compilation
+
+- [ ] Compile bytecode lazily
+- [ ] Cache compiled bytecode
+- [ ] Use mmap for bytecode files
+- [ ] Share bytecode between workers
+
+### 0.7.3 - Parallel Discovery
+
+**Target**: Speed up test collection for large codebases.
+
+#### Rayon Integration
+
+- [ ] Parallelize file scanning
+- [ ] Parse test files in parallel
+- [ ] Merge discovery results efficiently
+- [ ] Handle discovery errors in parallel context
+
+#### Incremental Discovery
+
+- [ ] Cache discovery results
+- [ ] Detect file changes via mtime/hash
+- [ ] Only re-discover changed files
+- [ ] Support `--cache-clear` to reset
 
 ---
 
-### 0.8.x - CI/CD Integration
+## 0.8.x - CI/CD Integration
 
-First-class CI/CD support.
+> **Focus**: First-class CI/CD support with templates and integrations.
+> **Timeline**: April 2027 - June 2027
 
-#### 0.8.0 - GitHub Actions
+The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better reporting, CI platform integrations, and artifact handling.
 
-- [ ] GitHub Actions workflow templates
-- [ ] Artifact upload integration
-- [ ] PR comment integration
+### 0.8.0 - GitHub Actions
+
+**Target**: Seamless GitHub Actions integration.
+
+#### Workflow Templates
+
+- [ ] Basic workflow template
+- [ ] Matrix build template (multiple Python versions)
+- [ ] Coverage workflow template
+- [ ] Release workflow template
+- [ ] Caching workflow template
+
+#### GitHub Integration
+
+- [ ] PR comment with test summary
 - [ ] Status check reporting
+- [ ] Annotation for test failures
+- [ ] Problem matcher for error highlighting
+- [ ] SARIF output for security findings
 
-#### 0.8.1 - Other CI Platforms
+### 0.8.1 - Other CI Platforms
 
-- [ ] GitLab CI configuration examples
+**Target**: Support for major CI platforms.
+
+#### GitLab CI
+
+- [ ] `.gitlab-ci.yml` templates
+- [ ] GitLab JUnit integration
+- [ ] Coverage badge support
+- [ ] GitLab Pages for reports
+
+#### Other Platforms
+
 - [ ] CircleCI orb
-- [ ] Jenkins pipeline support
-- [ ] Azure DevOps integration
+- [ ] Jenkins pipeline library
+- [ ] Azure DevOps tasks
+- [ ] Travis CI examples
+- [ ] Buildkite plugin
+- [ ] Drone CI examples
 
-#### 0.8.2 - Reporting Improvements
+### 0.8.2 - Reporting Improvements
 
-- [ ] JUnit XML improvements (test properties, attachments)
-- [ ] HTML report generation
-- [ ] Test duration trending
-- [ ] Flaky test detection
+**Target**: Better test result reporting.
 
-#### 0.8.3 - Coverage Formats
+#### JUnit XML Enhancements
 
-- [ ] Coverage format options (Cobertura, LCOV, JSON)
-- [ ] Coverage diff reporting
-- [ ] Coverage thresholds
-- [ ] Codecov/Coveralls integration
+- [ ] Add test properties to JUnit XML
+- [ ] Support file attachments
+- [ ] Include timing information
+- [ ] Support test categories
+- [ ] Handle multi-file output
+
+#### HTML Reports
+
+- [ ] Generate standalone HTML reports
+- [ ] Include failure details and tracebacks
+- [ ] Show test duration charts
+- [ ] Support filtering and search
+- [ ] Export as static site
+
+#### Flaky Test Detection
+
+- [ ] Track test pass/fail history
+- [ ] Identify tests with inconsistent results
+- [ ] Report flakiness percentage
+- [ ] Suggest potential causes
+- [ ] Support auto-retry for flaky tests
+
+### 0.8.3 - Coverage Reporting
+
+**Target**: Complete coverage workflow.
+
+#### Coverage Formats
+
+- [ ] Cobertura XML (default)
+- [ ] LCOV format
+- [ ] JSON format
+- [ ] HTML report
+- [ ] SonarQube format
+
+#### Coverage Features
+
+- [ ] Coverage diff (new code only)
+- [ ] Coverage thresholds (fail if below)
+- [ ] Branch coverage
+- [ ] Missing lines report
+- [ ] Coverage trending
 
 ---
 
-### 0.9.x - Stability
+## 0.9.x - Stability
 
-Production hardening and edge case handling.
+> **Focus**: Production hardening, crash recovery, and resource management.
+> **Timeline**: June 2027 - August 2027
 
-#### 0.9.0 - Crash Recovery
+The 0.9.x series hardens Tach for production use. Crash recovery, resource cleanup, and stress testing ensure reliability.
 
-- [ ] Crash recovery and orphan process cleanup
-- [ ] Automatic worker restart
-- [ ] State recovery after crash
-- [ ] Graceful degradation on errors
+### 0.9.0 - Crash Recovery
 
-#### 0.9.1 - Signal Handling
+**Target**: Graceful handling of crashes and errors.
 
-- [ ] Signal handling improvements
-- [ ] SIGTERM graceful shutdown
-- [ ] SIGINT handling (Ctrl+C)
-- [ ] Child process signal forwarding
+#### Process Cleanup
 
-#### 0.9.2 - Resource Management
+- [ ] Detect and kill orphan workers
+- [ ] Clean up shared memory on crash
+- [ ] Handle SIGKILL correctly
+- [ ] Recover from supervisor crash
+- [ ] Clean up temp files
 
-- [ ] Memory leak detection and prevention
-- [ ] File descriptor leak prevention
-- [ ] Resource limit enforcement
-- [ ] OOM handling
+#### State Recovery
 
-#### 0.9.3 - Stress Testing
+- [ ] Save test progress periodically
+- [ ] Resume from last known state
+- [ ] Report partial results on crash
+- [ ] Support `--resume` flag
+- [ ] Handle interrupted runs
 
-- [ ] Stress testing under load
-- [ ] Long-running test suite support
-- [ ] Resource exhaustion handling
-- [ ] Chaos testing support
+### 0.9.1 - Signal Handling
+
+**Target**: Proper signal handling throughout.
+
+#### Signal Support
+
+- [ ] SIGINT (Ctrl+C) - Graceful shutdown
+- [ ] SIGTERM - Clean exit
+- [ ] SIGHUP - Reload configuration
+- [ ] SIGQUIT - Dump stack traces
+- [ ] SIGUSR1 - Status dump
+
+#### Child Signal Handling
+
+- [ ] Forward signals to workers
+- [ ] Handle worker signal death
+- [ ] Timeout on worker shutdown
+- [ ] Force kill unresponsive workers
+
+### 0.9.2 - Resource Management
+
+**Target**: Prevent resource leaks.
+
+#### Leak Detection
+
+- [ ] Track file descriptor usage
+- [ ] Detect FD leaks
+- [ ] Track memory allocations
+- [ ] Detect memory leaks
+- [ ] Track thread creation
+
+#### Resource Limits
+
+- [ ] Enforce FD limits per worker
+- [ ] Enforce memory limits
+- [ ] Enforce CPU time limits
+- [ ] Report resource violations
+- [ ] Support cgroups integration
+
+### 0.9.3 - Stress Testing
+
+**Target**: Verify stability under load.
+
+#### Test Scenarios
+
+- [ ] Large test suites (10k+ tests)
+- [ ] Long-running tests (hours)
+- [ ] High parallelism (100+ workers)
+- [ ] Memory pressure scenarios
+- [ ] Network failure scenarios
 
 ---
 
-### 0.10.x - Beta
+## 0.10.x - Beta 1
 
-Feature freeze and release preparation.
+> **Focus**: Feature freeze and stabilization.
+> **Timeline**: August 2027 - October 2027
 
-#### 0.10.0 - Beta 1
+### 0.10.0 - Beta 1 Release
 
 - [ ] Feature freeze
 - [ ] API stability review
-- [ ] Documentation complete
+- [ ] Complete documentation
 - [ ] Migration guide draft
+- [ ] Public beta announcement
 
-#### 0.10.1 - Beta 2
+### 0.10.1 - Beta 1 Fixes
 
 - [ ] Bug fixes from beta 1 feedback
 - [ ] Performance regression testing
 - [ ] Compatibility testing
 - [ ] Security audit
 
-#### 0.10.2 - Release Candidate 1
+---
+
+## 0.11.x - Beta 2
+
+> **Focus**: Final polish before 1.0.
+> **Timeline**: October 2027 - December 2027
+
+### 0.11.0 - Beta 2 Release
+
+- [ ] Address beta 1 feedback
+- [ ] Final API changes
+- [ ] Documentation updates
+- [ ] Performance optimization
+
+### 0.11.1 - Release Candidate 1
 
 - [ ] Final bug fixes
 - [ ] Release notes
 - [ ] Upgrade path testing
-- [ ] Community feedback integration
+- [ ] Community feedback
 
-#### 0.10.3 - Release Candidate 2
+### 0.11.2 - Release Candidate 2
 
-- [ ] Critical bug fixes only
-- [ ] Final documentation review
+- [ ] Critical fixes only
+- [ ] Final documentation
 - [ ] Package verification
 - [ ] Release preparation
 
 ---
 
-### 1.0.0 - Production Ready
+## 1.0.0 - Production Ready
+
+> **Target**: January 2028
 
 Stable release with API guarantees.
 
@@ -358,9 +1219,265 @@ Stable release with API guarantees.
 - [ ] API stability commitment (SemVer)
 - [ ] Migration guide from pytest
 - [ ] Long-term support policy
-- [ ] Battle-tested on real-world projects
 - [ ] Performance benchmarks published
 - [ ] Security best practices documented
+- [ ] Battle-tested on real-world projects
+
+---
+
+## 1.1.x - Post-1.0 Maintenance
+
+> **Focus**: Maintenance and minor improvements.
+> **Timeline**: January 2028 - April 2028
+
+### 1.1.0 - First Maintenance Release
+
+- [ ] Bug fixes from 1.0.0 feedback
+- [ ] Minor performance improvements
+- [ ] Documentation updates
+- [ ] Dependency updates
+
+### 1.1.1 - Patch Release
+
+- [ ] Critical bug fixes
+- [ ] Security patches
+
+---
+
+## 1.2.x - Post-1.0 Features
+
+> **Focus**: New features that didn't make 1.0.
+> **Timeline**: April 2028 - July 2028
+
+### 1.2.0 - Feature Release
+
+- [ ] Features deferred from 1.0
+- [ ] Community-requested features
+- [ ] Plugin ecosystem improvements
+- [ ] Additional database support
+
+---
+
+## 0.12.x - Remote Execution (Future)
+
+> **Focus**: Distributed test execution across multiple machines.
+> **Timeline**: 2028
+
+### 0.12.0 - Remote Workers
+
+**Target**: Run tests on remote machines.
+
+#### Remote Protocol
+
+- [ ] Define remote worker protocol
+- [ ] Support SSH-based workers
+- [ ] Support container-based workers
+- [ ] Handle network failures gracefully
+
+#### Result Aggregation
+
+- [ ] Collect results from remote workers
+- [ ] Merge coverage data
+- [ ] Handle partial failures
+- [ ] Support result streaming
+
+---
+
+## 0.13.x - Test Sharding (Future)
+
+> **Focus**: Intelligent test partitioning for CI.
+> **Timeline**: 2028
+
+### 0.13.0 - Sharding Support
+
+**Target**: Split tests across CI jobs.
+
+#### Shard Configuration
+
+- [ ] Support `--shard N/M` syntax
+- [ ] Intelligent shard balancing
+- [ ] Deterministic sharding
+- [ ] Shard-aware coverage merging
+
+#### CI Integration
+
+- [ ] GitHub Actions matrix sharding
+- [ ] GitLab CI parallel jobs
+- [ ] CircleCI parallelism
+- [ ] Jenkins parallel stages
+
+---
+
+## 0.14.x - Visual Testing (Future)
+
+> **Focus**: Screenshot and visual regression testing.
+> **Timeline**: 2028
+
+### 0.14.0 - Visual Snapshots
+
+**Target**: Support visual testing workflows.
+
+#### Screenshot Support
+
+- [ ] Capture browser screenshots
+- [ ] Compare against baselines
+- [ ] Generate visual diffs
+- [ ] Support multiple viewports
+
+#### Integration
+
+- [ ] Playwright integration
+- [ ] Selenium integration
+- [ ] Percy/Applitools compatibility
+- [ ] Visual report generation
+
+---
+
+## 0.15.x - AI-Powered Testing (Future)
+
+> **Focus**: Machine learning for test optimization.
+> **Timeline**: 2029
+
+### 0.15.0 - Intelligent Test Selection
+
+**Target**: Use ML to select relevant tests.
+
+#### Test Impact Analysis
+
+- [ ] Track code-to-test relationships
+- [ ] Predict test failures
+- [ ] Skip unaffected tests
+- [ ] Learn from CI history
+
+#### Flaky Test Handling
+
+- [ ] Automatically detect flaky tests
+- [ ] Suggest fixes for flakiness
+- [ ] Quarantine flaky tests
+- [ ] Track flakiness over time
+
+---
+
+## 0.16.x - Mutation Testing (Future)
+
+> **Focus**: Validate test quality via mutations.
+> **Timeline**: 2029
+
+### 0.16.0 - Mutation Support
+
+**Target**: Find weak spots in test coverage.
+
+#### Mutation Operators
+
+- [ ] Arithmetic operator mutations
+- [ ] Comparison operator mutations
+- [ ] Boolean mutations
+- [ ] Statement deletion
+
+#### Analysis
+
+- [ ] Calculate mutation score
+- [ ] Identify surviving mutants
+- [ ] Suggest test improvements
+- [ ] Incremental mutation testing
+
+---
+
+## 0.17.x - Property-Based Testing (Future)
+
+> **Focus**: Integration with Hypothesis.
+> **Timeline**: 2029
+
+### 0.17.0 - Hypothesis Integration
+
+**Target**: First-class property-based testing support.
+
+#### Hypothesis Support
+
+- [ ] Native Hypothesis strategy support
+- [ ] Shrinking integration
+- [ ] Database persistence
+- [ ] Example replay
+
+#### Performance
+
+- [ ] Parallel property testing
+- [ ] Smart example generation
+- [ ] Coverage-guided fuzzing
+
+---
+
+## 0.18.x - Contract Testing (Future)
+
+> **Focus**: API contract validation.
+> **Timeline**: 2029
+
+### 0.18.0 - Contract Support
+
+**Target**: Validate API contracts in tests.
+
+#### Contract Formats
+
+- [ ] OpenAPI/Swagger support
+- [ ] GraphQL schema support
+- [ ] Pact compatibility
+- [ ] AsyncAPI support
+
+#### Validation
+
+- [ ] Request/response validation
+- [ ] Schema evolution detection
+- [ ] Breaking change detection
+
+---
+
+## 0.19.x - Performance Testing (Future)
+
+> **Focus**: Built-in performance benchmarking.
+> **Timeline**: 2030
+
+### 0.19.0 - Benchmarking
+
+**Target**: Integrate performance testing.
+
+#### Benchmark Support
+
+- [ ] Benchmark marker `@pytest.mark.benchmark`
+- [ ] Statistical analysis
+- [ ] Regression detection
+- [ ] Comparison reports
+
+#### Metrics
+
+- [ ] Execution time
+- [ ] Memory usage
+- [ ] CPU usage
+- [ ] Custom metrics
+
+---
+
+## 0.20.x - Observability (Future)
+
+> **Focus**: Deep integration with observability tools.
+> **Timeline**: 2030
+
+### 0.20.0 - Telemetry
+
+**Target**: Export test data to observability platforms.
+
+#### OpenTelemetry
+
+- [ ] Trace test execution
+- [ ] Export spans to backends
+- [ ] Correlate with production traces
+- [ ] Custom span attributes
+
+#### Metrics
+
+- [ ] Prometheus metrics export
+- [ ] Grafana dashboards
+- [ ] Alert integration
+- [ ] SLO tracking
 
 ---
 
