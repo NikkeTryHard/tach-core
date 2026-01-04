@@ -115,9 +115,11 @@ def test_long_filename_handling():
     base_path = "a" * 200
     filenames = [f"{base_path}/test_{i}.py" for i in range(100)]
 
-    for filename in filenames:
+    for i, filename in enumerate(filenames):
         # Simulate filename processing
-        assert len(filename) == 200 + len("/test_0.py") + (len(str(100)) - 1)
+        # Length = 200 (base) + len("/test_") + len(str(i)) + len(".py")
+        expected_len = 200 + len("/test_") + len(str(i)) + len(".py")
+        assert len(filename) == expected_len, f"Filename {i} has wrong length"
         truncated = filename[:240] if len(filename) > 240 else filename
         assert len(truncated) <= 240
 
