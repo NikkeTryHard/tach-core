@@ -9,52 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Roadmap to 1.0.0 and Beyond
 
-```mermaid
-gantt
-    title Tach Roadmap (2026-2030)
-    dateFormat YYYY-MM
-    axisFormat %Y-%m
-
-    section Foundation
-    0.1.x Alpha           :done, v01, 2026-01, 2026-03
-
-    section Plugin Ecosystem
-    0.2.x Plugin Shim     :active, v02, 2026-03, 2026-06
-    0.3.x Database        :v03, 2026-06, 2026-08
-
-    section Enterprise
-    0.4.x Fixtures        :v04, 2026-08, 2026-10
-    0.5.x DX              :v05, 2026-10, 2026-12
-
-    section Polish
-    0.6.x Config          :v06, 2026-12, 2027-02
-    0.7.x Performance     :v07, 2027-02, 2027-04
-
-    section CI/CD
-    0.8.x CI Integration  :v08, 2027-04, 2027-06
-    0.9.x Stability       :v09, 2027-06, 2027-08
-
-    section Beta
-    0.10.x Beta 1         :v10, 2027-08, 2027-10
-    0.11.x Beta 2         :v11, 2027-10, 2027-12
-
-    section Release
-    1.0.0 Production      :milestone, m1, 2028-01, 0d
-
-    section Post-1.0
-    1.1.x Maintenance     :v12, 2028-01, 2028-04
-    1.2.x Features        :v13, 2028-04, 2028-07
-
-    section Future
-    0.12.x-0.20.x         :v14, 2028-07, 2030-01
-```
-
 ---
 
 ## 0.1.x - Foundation (Current)
 
 > **Focus**: Alpha stabilization, documentation, error handling improvements, and minor bug fixes.
-> **Timeline**: January 2026 - March 2026
 
 The 0.1.x series focuses on solidifying the alpha release, improving documentation, and fixing edge cases discovered during initial usage. No major new features are planned - the goal is stability and usability.
 
@@ -204,7 +163,6 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 ## 0.2.x - Plugin Compatibility
 
 > **Focus**: Shadow plugin shim for pytest ecosystem integration without full `pluggy` support.
-> **Timeline**: March 2026 - June 2026
 
 The 0.2.x series introduces a plugin compatibility layer that intercepts common pytest plugin hooks. This is NOT full `pluggy` support - instead, we implement targeted shims for the most popular plugins.
 
@@ -384,7 +342,6 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 ## 0.3.x - Database Integration
 
 > **Focus**: Transaction rollback and connection handling for database-heavy test suites.
-> **Timeline**: June 2026 - August 2026
 
 The 0.3.x series focuses on database test isolation. The key insight is that database state cannot be restored via memory snapshots - we need to hook into the database driver level to rollback transactions.
 
@@ -530,7 +487,6 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 ## 0.4.x - Fixture Lifecycle
 
 > **Focus**: Proper handling of session-scoped and module-scoped fixtures.
-> **Timeline**: August 2026 - October 2026
 
 The 0.4.x series addresses one of the biggest gaps in the current implementation: fixtures that should persist across multiple tests. Session-scoped fixtures in particular are tricky because they must survive worker restarts.
 
@@ -647,7 +603,6 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 ## 0.5.x - Developer Experience
 
 > **Focus**: Better error messages, debugging tools, and developer ergonomics.
-> **Timeline**: October 2026 - December 2026
 
 The 0.5.x series focuses on making Tach a joy to use. Better error messages, powerful debugging tools, and smoother integration with development workflows.
 
@@ -767,7 +722,6 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 ## 0.6.x - Configuration
 
 > **Focus**: Complete configuration system with pyproject.toml support.
-> **Timeline**: December 2026 - February 2027
 
 The 0.6.x series implements a full configuration system. Currently Tach has limited configuration - this series adds comprehensive pyproject.toml support.
 
@@ -879,7 +833,6 @@ maxfail = 0
 ## 0.7.x - Performance
 
 > **Focus**: Memory optimization, adaptive scheduling, and parallelism improvements.
-> **Timeline**: February 2027 - April 2027
 
 The 0.7.x series focuses on performance at scale. As test suites grow to thousands of tests, we need smarter scheduling and better memory management.
 
@@ -985,7 +938,6 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 ## 0.8.x - CI/CD Integration
 
 > **Focus**: First-class CI/CD support with templates and integrations.
-> **Timeline**: April 2027 - June 2027
 
 The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better reporting, CI platform integrations, and artifact handling.
 
@@ -1082,7 +1034,6 @@ The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better rep
 ## 0.9.x - Stability
 
 > **Focus**: Production hardening, crash recovery, and resource management.
-> **Timeline**: June 2027 - August 2027
 
 The 0.9.x series hardens Tach for production use. Crash recovery, resource cleanup, and stress testing ensure reliability.
 
@@ -1162,7 +1113,6 @@ The 0.9.x series hardens Tach for production use. Crash recovery, resource clean
 ## 0.10.x - Beta 1
 
 > **Focus**: Feature freeze and stabilization.
-> **Timeline**: August 2027 - October 2027
 
 ### 0.10.0 - Beta 1 Release
 
@@ -1184,7 +1134,6 @@ The 0.9.x series hardens Tach for production use. Crash recovery, resource clean
 ## 0.11.x - Beta 2
 
 > **Focus**: Final polish before 1.0.
-> **Timeline**: October 2027 - December 2027
 
 ### 0.11.0 - Beta 2 Release
 
@@ -1211,8 +1160,6 @@ The 0.9.x series hardens Tach for production use. Crash recovery, resource clean
 
 ## 1.0.0 - Production Ready
 
-> **Target**: January 2028
-
 Stable release with API guarantees.
 
 - [ ] Complete user documentation
@@ -1228,7 +1175,6 @@ Stable release with API guarantees.
 ## 1.1.x - Post-1.0 Maintenance
 
 > **Focus**: Maintenance and minor improvements.
-> **Timeline**: January 2028 - April 2028
 
 ### 1.1.0 - First Maintenance Release
 
@@ -1247,7 +1193,6 @@ Stable release with API guarantees.
 ## 1.2.x - Post-1.0 Features
 
 > **Focus**: New features that didn't make 1.0.
-> **Timeline**: April 2028 - July 2028
 
 ### 1.2.0 - Feature Release
 
@@ -1261,7 +1206,6 @@ Stable release with API guarantees.
 ## 0.12.x - Remote Execution (Future)
 
 > **Focus**: Distributed test execution across multiple machines.
-> **Timeline**: 2028
 
 ### 0.12.0 - Remote Workers
 
@@ -1286,7 +1230,6 @@ Stable release with API guarantees.
 ## 0.13.x - Test Sharding (Future)
 
 > **Focus**: Intelligent test partitioning for CI.
-> **Timeline**: 2028
 
 ### 0.13.0 - Sharding Support
 
@@ -1311,7 +1254,6 @@ Stable release with API guarantees.
 ## 0.14.x - Visual Testing (Future)
 
 > **Focus**: Screenshot and visual regression testing.
-> **Timeline**: 2028
 
 ### 0.14.0 - Visual Snapshots
 
@@ -1336,7 +1278,6 @@ Stable release with API guarantees.
 ## 0.15.x - AI-Powered Testing (Future)
 
 > **Focus**: Machine learning for test optimization.
-> **Timeline**: 2029
 
 ### 0.15.0 - Intelligent Test Selection
 
@@ -1361,7 +1302,6 @@ Stable release with API guarantees.
 ## 0.16.x - Mutation Testing (Future)
 
 > **Focus**: Validate test quality via mutations.
-> **Timeline**: 2029
 
 ### 0.16.0 - Mutation Support
 
@@ -1386,7 +1326,6 @@ Stable release with API guarantees.
 ## 0.17.x - Property-Based Testing (Future)
 
 > **Focus**: Integration with Hypothesis.
-> **Timeline**: 2029
 
 ### 0.17.0 - Hypothesis Integration
 
@@ -1410,7 +1349,6 @@ Stable release with API guarantees.
 ## 0.18.x - Contract Testing (Future)
 
 > **Focus**: API contract validation.
-> **Timeline**: 2029
 
 ### 0.18.0 - Contract Support
 
@@ -1434,7 +1372,6 @@ Stable release with API guarantees.
 ## 0.19.x - Performance Testing (Future)
 
 > **Focus**: Built-in performance benchmarking.
-> **Timeline**: 2030
 
 ### 0.19.0 - Benchmarking
 
@@ -1459,7 +1396,6 @@ Stable release with API guarantees.
 ## 0.20.x - Observability (Future)
 
 > **Focus**: Deep integration with observability tools.
-> **Timeline**: 2030
 
 ### 0.20.0 - Telemetry
 
