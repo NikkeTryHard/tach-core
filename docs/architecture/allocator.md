@@ -226,9 +226,9 @@ This ensures Python's small-int cache and singletons (None, True, False) are inc
 
 ```toml
 [dependencies]
-tikv-jemallocator = { version = "0.5", features = ["stats"] }
-tikv-jemalloc-sys = "0.5"
-goblin = "0.7"
+tikv-jemallocator = "0.6"
+tikv-jemalloc-sys = { version = "0.6", features = ["stats"] }
+goblin = "0.10"
 ```
 
 ---

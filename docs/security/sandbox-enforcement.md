@@ -343,31 +343,11 @@ match apply_landlock(&project_root, 9999) {
 
 ---
 
-## Future Work: Phase 2
-
-### BSS/Heap Split-Brain Validation
-
-Verify that memory snapshots correctly restore:
-
-1. BSS segment (global variables, free lists)
-2. Heap segment (allocated objects)
-3. Cross-references between them (pointers from BSS to Heap)
-
-### TLS Restoration for Python 3.13
-
-Python 3.13's mimalloc stores allocator state in Thread Local Storage:
-
-1. Read `fs_base` via `arch_prctl(ARCH_GET_FS)`
-2. Identify and snapshot TLS segment
-3. Restore TLS on memory reset
-
----
-
 ## References
 
-- `rust_tests/sandbox_enforcement.rs` - All 15 Suicide Worker tests
+- `rust_tests/sandbox_enforcement.rs` - Suicide Worker tests
 - `src/isolation/sandbox.rs` - Landlock and Seccomp implementation
-- `docs/GLASS_HOUSE_REMEDIATION_PLAN.md` - Full remediation roadmap
+- `docs/architecture/sandbox.md` - Sandbox architecture documentation
 - Linux Kernel Documentation: [Seccomp](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html)
 - Linux Kernel Documentation: [Landlock](https://www.kernel.org/doc/html/latest/security/landlock.html)
 

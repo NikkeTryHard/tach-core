@@ -319,16 +319,16 @@ flowchart TB
 
 ## Unit Tests
 
-The isolation module includes 15 unit tests verifiable without root privileges.
+The isolation module includes unit tests verifiable without root privileges.
 
 ### Test Categories
 
-| Category              | Tests | Description                              |
-| :-------------------- | :---- | :--------------------------------------- |
-| Worker Base Directory | 3     | Path format, large IDs, absolute paths   |
-| Overlay Options       | 5     | Format validation, no spaces, uniqueness |
-| TACH_NO_ISOLATION     | 5     | Environment variable behavior            |
-| Path Components       | 2     | Subdirectory consistency                 |
+| Category              | Description                              |
+| :-------------------- | :--------------------------------------- |
+| Worker Base Directory | Path format, large IDs, absolute paths   |
+| Overlay Options       | Format validation, no spaces, uniqueness |
+| TACH_NO_ISOLATION     | Environment variable behavior            |
+| Path Components       | Subdirectory consistency                 |
 
 ### Running Tests
 

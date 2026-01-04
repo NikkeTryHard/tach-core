@@ -319,12 +319,12 @@ Tach implements comprehensive security hardening across all subsystems:
 
 ### Memory Safety
 
-| Fix                             | Description                                                                        |
-| :------------------------------ | :--------------------------------------------------------------------------------- |
-| **Static Mut Elimination**      | Replaced `static mut` with `OnceLock`/`Mutex` for thread-safe global state         |
-| **Dangling Pointer Prevention** | Fixed CString lifetime issues in FFI calls to prevent use-after-free               |
-| **TOCTOU Race Fix**             | Lock-free CAS loop in ring buffer prevents race conditions                         |
-| **Mutex Poisoning Recovery**    | All 37 mutex locks use `unwrap_or_else(\|e\| e.into_inner())` for crash resilience |
+| Fix                             | Description                                                                     |
+| :------------------------------ | :------------------------------------------------------------------------------ |
+| **Static Mut Elimination**      | Replaced `static mut` with `OnceLock`/`Mutex` for thread-safe global state      |
+| **Dangling Pointer Prevention** | Fixed CString lifetime issues in FFI calls to prevent use-after-free            |
+| **TOCTOU Race Fix**             | Lock-free CAS loop in ring buffer prevents race conditions                      |
+| **Mutex Poisoning Recovery**    | All mutex locks use `unwrap_or_else(\|e\| e.into_inner())` for crash resilience |
 
 ### Syscall Security
 
@@ -344,11 +344,11 @@ Tach implements comprehensive security hardening across all subsystems:
 
 ### Test Coverage
 
-Added 50+ regression tests across critical subsystems:
+Regression tests added across critical subsystems:
 
-- `namespace.rs`: 15 tests for path logic, overlay options, isolation bypass
-- `logcapture.rs`: 20 tests for memfd operations, read/clear, fd lifecycle
-- `scheduler.rs`: 15 tests for queue separation, priority dispatch, slot calculation
+- `namespace.rs`: Path logic, overlay options, isolation bypass
+- `logcapture.rs`: memfd operations, read/clear, fd lifecycle
+- `scheduler.rs`: Queue separation, priority dispatch, slot calculation
 
 ---
 
@@ -360,64 +360,32 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Development
 
-### Prerequisites
-
 ```bash
-# Install Rust toolchain with components
+# Setup
+python -m venv .venv && source .venv/bin/activate && pip install pytest
 rustup component add rustfmt clippy
 
-# Create Python virtual environment
-python -m venv .venv
-source .venv/bin/activate
-pip install pytest
+# Build
+export PYO3_PYTHON=$(which python)
+cargo build --release
+
+# Test
+cargo test --lib           # Unit tests
+cargo test --test '*'      # Integration tests
+
+# Lint
+cargo fmt --check && cargo clippy -- -D warnings
 ```
 
 ### Pre-commit Hooks
 
-This project uses the [pre-commit](https://pre-commit.com/) framework for automated code quality checks.
+This project uses [pre-commit](https://pre-commit.com/) for automated code quality checks:
 
 ```bash
-# Install pre-commit
-pip install pre-commit
-
-# Install hooks (run once after cloning)
-pre-commit install
-
-# Run hooks manually on all files
-pre-commit run --all-files
+pip install pre-commit && pre-commit install
 ```
 
-The hooks automatically run on every commit:
-
-- **cargo fmt**: Format Rust code
-- **cargo clippy**: Lint with warnings as errors
-- **cargo test --lib**: Run unit tests
-- **trailing-whitespace**: Remove trailing whitespace
-- **end-of-file-fixer**: Ensure files end with newline
-- **check-yaml/toml**: Validate config files
-
-### Building
-
-```bash
-export PYO3_PYTHON=$(which python)
-cargo build --release
-```
-
-### Testing
-
-```bash
-# Run all tests
-cargo test
-
-# Run only library tests
-cargo test --lib
-
-# Run integration tests
-cargo test --test '*'
-
-# Run with coverage
-cargo llvm-cov --all-features --workspace
-```
+See [Development Guide](docs/development.md) for complete build commands, testing details, and project structure.
 
 ---
 

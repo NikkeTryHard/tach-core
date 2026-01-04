@@ -274,9 +274,9 @@ This ensures Python's small-int cache and singletons (None, True, False) are inc
 
 ```toml
 [dependencies]
-tikv-jemallocator = { version = "0.5", features = ["stats"] }
-tikv-jemalloc-sys = "0.5"
-goblin = "0.7"
+tikv-jemallocator = "0.6"
+tikv-jemalloc-sys = { version = "0.6", features = ["stats"] }
+goblin = "0.10"
 ```
 
 ---
@@ -1412,8 +1412,6 @@ See [Toxicity Analysis](toxicity.md) for details.
 
 # Internal Architecture: The Physics of Restoration
 
-> **Status**: Physics-Complete (v0.8.0-alpha)
-> **Author**: Project Tach Development Team
 > **Purpose**: Define restoration invariants and document allocator-specific state locations
 
 ---
@@ -1873,14 +1871,14 @@ sequenceDiagram
     Note over W: Page restored from golden
 ```
 
-### Performance Optimization (PLANNED for 0.9.0)
+### Performance Optimization (PLANNED)
 
 1. **Lazy TLS capture**: Only snapshot TLS offsets that contain heap pointers
 2. **COW optimization**: Use `userfaultfd(UFFD_FEATURE_MINOR_HUGETLBFS)` for huge pages
 3. **Batched restoration**: Group page faults for reduced syscall overhead
 4. **Syscall batching**: Explore vectorized `process_vm_writev` for TLS + Stack
 
-### Multi-Version Support (PLANNED for 0.9.0)
+### Multi-Version Support (PLANNED)
 
 1. **Detect Python version** at runtime
 2. **Load appropriate offset registry** for that version
@@ -2230,16 +2228,16 @@ flowchart TB
 
 ## Unit Tests
 
-The isolation module includes 15 unit tests verifiable without root privileges.
+The isolation module includes unit tests verifiable without root privileges.
 
 ### Test Categories
 
-| Category              | Tests | Description                              |
-| :-------------------- | :---- | :--------------------------------------- |
-| Worker Base Directory | 3     | Path format, large IDs, absolute paths   |
-| Overlay Options       | 5     | Format validation, no spaces, uniqueness |
-| TACH_NO_ISOLATION     | 5     | Environment variable behavior            |
-| Path Components       | 2     | Subdirectory consistency                 |
+| Category              | Description                              |
+| :-------------------- | :--------------------------------------- |
+| Worker Base Directory | Path format, large IDs, absolute paths   |
+| Overlay Options       | Format validation, no spaces, uniqueness |
+| TACH_NO_ISOLATION     | Environment variable behavior            |
+| Path Components       | Subdirectory consistency                 |
 
 ### Running Tests
 
@@ -6108,31 +6106,11 @@ match apply_landlock(&project_root, 9999) {
 
 ---
 
-## Future Work: Phase 2
-
-### BSS/Heap Split-Brain Validation
-
-Verify that memory snapshots correctly restore:
-
-1. BSS segment (global variables, free lists)
-2. Heap segment (allocated objects)
-3. Cross-references between them (pointers from BSS to Heap)
-
-### TLS Restoration for Python 3.13
-
-Python 3.13's mimalloc stores allocator state in Thread Local Storage:
-
-1. Read `fs_base` via `arch_prctl(ARCH_GET_FS)`
-2. Identify and snapshot TLS segment
-3. Restore TLS on memory reset
-
----
-
 ## References
 
-- `rust_tests/sandbox_enforcement.rs` - All 15 Suicide Worker tests
+- `rust_tests/sandbox_enforcement.rs` - Suicide Worker tests
 - `src/isolation/sandbox.rs` - Landlock and Seccomp implementation
-- `docs/GLASS_HOUSE_REMEDIATION_PLAN.md` - Full remediation roadmap
+- `docs/architecture/sandbox.md` - Sandbox architecture documentation
 - Linux Kernel Documentation: [Seccomp](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html)
 - Linux Kernel Documentation: [Landlock](https://www.kernel.org/doc/html/latest/security/landlock.html)
 
@@ -7440,6 +7418,7 @@ end_of_record
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Protocol](architecture/protocol.md) - IPC protocol details
 - [Coverage](architecture/coverage.md) - Coverage implementation
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
@@ -7770,6 +7749,7 @@ test:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Development](development.md) - Build and test commands
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details
@@ -7873,12 +7853,11 @@ sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo
 ### Python Gauntlet Tests
 
 ```bash
-pytest tests/gauntlet_phase1/ -v    # Discovery
-pytest tests/gauntlet_phase2/ -v    # Zygote
-pytest tests/gauntlet_phase5/ -v    # Hot reload
-pytest tests/gauntlet_phase5_1/ -v  # Coverage
-pytest tests/gauntlet_phase5_2/ -v  # Sandbox
-pytest tests/gauntlet_phase5_4/ -v  # Allocator
+pytest tests/gauntlet/ -v          # General gauntlet tests
+pytest tests/gauntlet_db/ -v       # Database integration
+pytest tests/gauntlet_numpy/ -v    # NumPy compatibility
+pytest tests/gauntlet_coverage/ -v # Coverage tests
+pytest tests/gauntlet_phase*/ -v   # All phase tests
 ```
 
 **Jemalloc tests** (disabled by default for WSL2 stability):
@@ -8088,6 +8067,7 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Architecture Overview](architecture/overview.md)
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)
@@ -8677,6 +8657,7 @@ When reporting issues, include:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Configuration](configuration.md) - CLI and config options
 - [Development](development.md) - Build and test commands
 - [Sandbox](architecture/sandbox.md) - Security architecture

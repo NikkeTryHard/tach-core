@@ -319,6 +319,7 @@ test:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Development](development.md) - Build and test commands
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details

@@ -93,12 +93,11 @@ sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo
 ### Python Gauntlet Tests
 
 ```bash
-pytest tests/gauntlet_phase1/ -v    # Discovery
-pytest tests/gauntlet_phase2/ -v    # Zygote
-pytest tests/gauntlet_phase5/ -v    # Hot reload
-pytest tests/gauntlet_phase5_1/ -v  # Coverage
-pytest tests/gauntlet_phase5_2/ -v  # Sandbox
-pytest tests/gauntlet_phase5_4/ -v  # Allocator
+pytest tests/gauntlet/ -v          # General gauntlet tests
+pytest tests/gauntlet_db/ -v       # Database integration
+pytest tests/gauntlet_numpy/ -v    # NumPy compatibility
+pytest tests/gauntlet_coverage/ -v # Coverage tests
+pytest tests/gauntlet_phase*/ -v   # All phase tests
 ```
 
 **Jemalloc tests** (disabled by default for WSL2 stability):
@@ -308,6 +307,7 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Architecture Overview](architecture/overview.md)
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)

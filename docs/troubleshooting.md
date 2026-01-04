@@ -578,6 +578,7 @@ When reporting issues, include:
 
 ## Related Documentation
 
+- [README](../README.md) - Project overview and quick start
 - [Configuration](configuration.md) - CLI and config options
 - [Development](development.md) - Build and test commands
 - [Sandbox](architecture/sandbox.md) - Security architecture
