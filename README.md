@@ -4,12 +4,15 @@
 
 **A Snapshot-Hypervisor for Python Tests**
 
+[![Version](https://img.shields.io/badge/Version-0.1.0_Alpha-red)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)](https://www.python.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green?logo=linux)](https://kernel.org/)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
 
 _Replace pytest's execution model with microsecond-scale memory snapshots._
+
+> **Alpha Release**: APIs may change. Not recommended for production use. See [CHANGELOG.md](CHANGELOG.md) for roadmap.
 
 </div>
 

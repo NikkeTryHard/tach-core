@@ -5,24 +5,126 @@ All notable changes to Project Tach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-01-03
+## [Unreleased]
 
-### Gold Release
+### Roadmap to 1.0.0
 
-This is the first stable release of Tach - the Hypervisor-Accelerated Python Test Runner.
+```mermaid
+gantt
+    title Tach Roadmap
+    dateFormat YYYY-MM
+    section Core
+    0.1 Alpha (Current)     :done, 2026-01, 2026-01
+    0.2 Plugin Shim         :active, 2026-01, 2026-02
+    0.3 Database            :2026-02, 2026-03
+    0.4 Fixtures            :2026-03, 2026-04
+    section Polish
+    0.5 DX                  :2026-04, 2026-05
+    0.6 Config              :2026-05, 2026-06
+    0.7 Performance         :2026-06, 2026-07
+    section Release
+    0.8 CI/CD               :2026-07, 2026-08
+    0.9 Stability           :2026-08, 2026-09
+    1.0 Production          :milestone, 2026-09, 0d
+```
+
+#### 0.2.0 - Plugin Compatibility
+
+Shadow plugin shim for pytest ecosystem integration.
+
+- [ ] Hook interception for `pytest_runtest_setup`/`pytest_runtest_teardown`
+- [ ] Effect capture for pytest-django, pytest-asyncio
+- [ ] Marker handling (`@pytest.mark.django_db`, `@pytest.mark.asyncio`)
+- [ ] Conftest.py hook passthrough
+
+#### 0.3.0 - Database Integration
+
+Transaction rollback and connection handling for database-heavy projects.
+
+- [ ] Django transaction rollback via `transaction.atomic()`
+- [ ] SQLAlchemy session management
+- [ ] Connection pool preservation across test resets
+- [ ] Database FD handover via SCM_RIGHTS
+
+#### 0.4.0 - Fixture Lifecycle
+
+Proper handling of session and module-scoped fixtures.
+
+- [ ] Session-scoped fixture caching (survive across all tests)
+- [ ] Module-scoped fixture optimization
+- [ ] Fixture finalization ordering
+- [ ] Autouse fixture support
+
+#### 0.5.0 - Developer Experience
+
+Better error messages, debugging, and developer tools.
+
+- [ ] Enhanced traceback formatting (pytest-style)
+- [ ] Debug mode with verbose syscall logging
+- [ ] Failure analysis and suggestions
+- [ ] `--pdb` support for interactive debugging
+
+#### 0.6.0 - Configuration
+
+Complete configuration support.
+
+- [ ] Full `[tool.tach]` pyproject.toml schema
+- [ ] Per-test timeout configuration
+- [ ] Test ordering options (random, dependency-based)
+- [ ] Environment variable presets
+
+#### 0.7.0 - Performance
+
+Memory and parallelism optimizations.
+
+- [ ] Memory usage profiling and optimization
+- [ ] Adaptive batch sizing based on test duration
+- [ ] Lazy module loading for large codebases
+- [ ] Parallel discovery with rayon
+
+#### 0.8.0 - CI/CD Integration
+
+First-class CI/CD support.
+
+- [ ] GitHub Actions workflow templates
+- [ ] GitLab CI configuration examples
+- [ ] JUnit XML improvements (test properties, attachments)
+- [ ] Coverage format options (Cobertura, LCOV, JSON)
+
+#### 0.9.0 - Stability
+
+Production hardening and edge case handling.
+
+- [ ] Crash recovery and orphan process cleanup
+- [ ] Signal handling improvements
+- [ ] Memory leak detection and prevention
+- [ ] Stress testing under load
+
+#### 1.0.0 - Production Ready
+
+Stable release with API guarantees.
+
+- [ ] Complete user documentation
+- [ ] API stability commitment
+- [ ] Migration guide from pytest
+- [ ] Battle-tested on real-world projects
+
+---
+
+## [0.1.0] - 2026-01-04
+
+### Initial Alpha Release
+
+This is the first public release of Tach - a Hypervisor-Accelerated Python Test Runner.
+
+> **Note**: This is an alpha release. APIs may change. Not recommended for production use.
 
 ### Highlights
 
-- **Complete Restoration Physics Engine**: Bit-perfect snapshot/restore of Python interpreter state
-- **Zero-Copy Test Execution**: Workers inherit pre-initialized Python via fork, no startup overhead
+- **Restoration Physics Engine**: Bit-perfect snapshot/restore of Python interpreter state
+- **Zero-Copy Test Execution**: Workers inherit pre-initialized Python via fork
 - **Iron Dome Sandbox**: Landlock + Seccomp hardening with graceful kernel degradation
-- **pytest Compatibility**: Drop-in replacement with identical command-line arguments
-
-### What's New
-
-- **Time Saved Metric**: Shows estimated time saved vs cold-start execution
-- **Pre-commit Hook**: Local CI checks before push
-- **Codebase Cleanup**: Removed internal phase nomenclature, now uses semantic versioning
+- **pytest-Compatible CLI**: Drop-in command-line interface
 
 ### Core Features
 
@@ -45,7 +147,7 @@ This is the first stable release of Tach - the Hypervisor-Accelerated Python Tes
 - TLS (Thread-Local Storage) capture and restore
 - BSS/Heap split-brain prevention
 - Stack restoration via ptrace
-- Self-calibrating mimalloc offset discovery
+- Self-calibrating mimalloc offset discovery (Python 3.13+)
 
 #### Sandbox (Iron Dome)
 
@@ -102,27 +204,34 @@ Options:
 
 Run `tach self-test` to verify system compatibility.
 
+### Known Limitations
+
+- No pytest plugin support yet (planned for 0.2.0)
+- No database transaction rollback (planned for 0.3.0)
+- Session-scoped fixtures not fully cached (planned for 0.4.0)
+- Linux only (no Windows/macOS support)
+
 ---
 
 ## Development History
 
-> The following documents the internal development phases that led to v1.0.0.
-> This history is preserved for roadmap and architectural reference.
+> The following documents internal development milestones.
+> These were not public releases.
 
-### Pre-1.0 Development Phases
+### Internal Milestones
 
-| Version | Internal Name | Key Deliverables                           |
-| ------- | ------------- | ------------------------------------------ |
-| 0.1.x   | Discovery     | AST-based test discovery, static analysis  |
-| 0.2.x   | Zygote        | Process initialization, fork-based cloning |
-| 0.3.x   | Snapshot      | userfaultfd memory snapshots               |
-| 0.4.x   | Workers       | Worker pool, IPC, result collection        |
-| 0.5.1   | Coverage      | Zero-overhead bytecode coverage            |
-| 0.5.2   | Iron Dome     | Landlock + Seccomp sandbox hardening       |
-| 0.5.3   | Hot Reload    | sys.modules cleanup for test isolation     |
-| 0.5.4   | Allocator     | jemalloc integration                       |
-| 0.8.x   | Restoration   | TLS capture, BSS/Heap sync, stack restore  |
-| 0.9.x   | CLI           | pytest-compatible command line interface   |
+| Milestone   | Focus Area      | Key Deliverables                           |
+| ----------- | --------------- | ------------------------------------------ |
+| Discovery   | Test Discovery  | AST-based scanning, fixture resolution     |
+| Zygote      | Process Model   | Fork-server pattern, worker pool           |
+| Snapshot    | Memory          | userfaultfd snapshots, MADV_DONTNEED       |
+| Workers     | Execution       | Scheduler, IPC protocol, result collection |
+| Coverage    | Instrumentation | PEP 669, ring buffers, memfd               |
+| Iron Dome   | Security        | Landlock, Seccomp, graceful degradation    |
+| Hot Reload  | Isolation       | sys.modules cleanup, import reset          |
+| Allocator   | Memory          | jemalloc, tcache flush                     |
+| Restoration | TLS             | fs_base capture, mimalloc calibration      |
+| CLI         | Interface       | pytest-compatible arguments                |
 
 ### Key Technical Learnings
 
@@ -135,63 +244,9 @@ Run `tach self-test` to verify system compatibility.
 
 ---
 
-## Pre-Release Versions
+## Version History
 
-### [0.9.0-beta] - 2026-01-03
+> v1.0.0 was prematurely tagged and has been retracted. The first official release is v0.1.0.
 
-#### pytest Compatibility Layer
-
-- pytest-xdist compatible `-n WORKERS`
-- Test selection: `-k EXPRESSION` for keyword filtering
-- Marker filtering: `-m MARKERS` for pytest markers
-- Fail-fast: `-x` / `--exitfirst` and `--maxfail=N`
-- Verbosity controls and quiet mode
-- Coverage flags: `--coverage`, `--cov PATH`
-
-#### FD Teleporter
-
-- `FdTeleportRequest` struct for batch FD transfers
-- SCM_RIGHTS transmission for file descriptor handover
-- Ghost Close prevention via `mem::forget()`
-
-### [0.8.5-alpha] - 2026-01-03
-
-#### Vital Types Registry
-
-- Detection for non-serializable fixtures (sockets, DB connections)
-- CRITICAL warnings when vital types are degraded
-
-#### Jitter Benchmark
-
-- P99 latency histogram over 10K cycles
-- Nanosecond precision timing
-- DTV counter verification
-
-### [0.8.0-alpha] - 2026-01-03
-
-#### Restoration Physics Engine
-
-- TLS capture/restore for Thread-Local Storage preservation
-- Dynamic TLS boundary detection from `/proc/pid/maps`
-- Self-calibrating offset discovery for mimalloc (Python 3.13+)
-- Unified `SnapshotManager` with UFFD handling
-- BSS/Heap split-brain prevention
-
-#### Iron Dome Sandbox
-
-- Landlock filesystem sandboxing
-- Seccomp syscall filtering
-- Safe/toxic worker differentiation
-
-#### Testing
-
-- Ghost Hunt: 1000-cycle RSS stability test
-- BSS/Heap split-brain validation
-- Calibration integration tests
-
----
-
-[1.0.0]: https://github.com/NikkeTryHard/tach-core/releases/tag/v1.0.0
-[0.9.0-beta]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.9.0-beta
-[0.8.5-alpha]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.8.5-alpha
-[0.8.0-alpha]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.8.0-alpha
+[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.1.0
