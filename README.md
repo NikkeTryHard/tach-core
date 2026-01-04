@@ -37,17 +37,20 @@ Traditional test runners suffer from three fundamental performance bottlenecks:
 ```mermaid
 flowchart LR
     subgraph Traditional["TRADITIONAL (pytest-xdist)"]
+        direction TB
         T1[Fork] --> T2[Import] --> T3[Run Test] --> T4[Exit]
         T5[Fork] --> T6[Import] --> T7[Run Test] --> T8[Exit]
     end
 
     subgraph Tach["TACH HYPERVISOR"]
+        direction TB
         Z1[Initialize Once] --> Z2[Snapshot]
-        Z2 --> Z3[Run Test 1]
-        Z3 --> Z4[Reset 50us]
-        Z4 --> Z5[Run Test 2]
-        Z5 --> Z6[Reset 50us]
-        Z6 --> Z7[Run Test N...]
+        Z2 --> W1 & W2 & WN
+        subgraph Workers["Parallel Workers"]
+            W1["Worker 1:<br/>Run → Reset → Run..."]
+            W2["Worker 2:<br/>Run → Reset → Run..."]
+            WN["Worker N:<br/>Run → Reset → Run..."]
+        end
     end
 ```
 
