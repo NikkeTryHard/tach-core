@@ -1,0 +1,77 @@
+# Labeler configuration for auto-labeling PRs
+# https://github.com/actions/labeler
+
+# Rust code changes
+rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/**/*.rs"
+          - "Cargo.toml"
+          - "Cargo.lock"
+
+# Documentation changes
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**/*"
+          - "*.md"
+          - "README.md"
+
+# CI/CD changes
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**/*"
+          - ".pre-commit-config.yaml"
+
+# Test changes
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/**/*"
+          - "src/**/*test*.rs"
+
+# Python harness changes
+python:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.py"
+          - "pyproject.toml"
+          - "requirements*.txt"
+
+# Security-related changes
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/isolation/**/*"
+          - "deny.toml"
+
+# Core module changes
+core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/core/**/*"
+
+# Discovery module changes
+discovery:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/discovery/**/*"
+
+# Execution module changes
+execution:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/execution/**/*"
+
+# Isolation module changes
+isolation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/isolation/**/*"
+
+# Reporting module changes
+reporting:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/reporting/**/*"
