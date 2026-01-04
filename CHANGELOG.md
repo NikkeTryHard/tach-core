@@ -11,103 +11,356 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ```mermaid
 gantt
-    title Tach Roadmap
+    title Tach Roadmap (2026-2028)
     dateFormat YYYY-MM
-    section Core
-    0.1 Alpha (Current)     :done, 2026-01, 2026-01
-    0.2 Plugin Shim         :active, 2026-01, 2026-02
-    0.3 Database            :2026-02, 2026-03
-    0.4 Fixtures            :2026-03, 2026-04
+    axisFormat %Y-%m
+
+    section Foundation
+    0.1.x Alpha           :done, v01, 2026-01, 2026-03
+
+    section Plugin Ecosystem
+    0.2.x Plugin Shim     :active, v02, 2026-03, 2026-06
+
+    section Enterprise
+    0.3.x Database        :v03, 2026-06, 2026-08
+    0.4.x Fixtures        :v04, 2026-08, 2026-10
+
     section Polish
-    0.5 DX                  :2026-04, 2026-05
-    0.6 Config              :2026-05, 2026-06
-    0.7 Performance         :2026-06, 2026-07
+    0.5.x DX              :v05, 2026-10, 2026-12
+    0.6.x Config          :v06, 2026-12, 2027-02
+
+    section Optimization
+    0.7.x Performance     :v07, 2027-02, 2027-05
+    0.8.x CI/CD           :v08, 2027-05, 2027-08
+
+    section Stabilization
+    0.9.x Stability       :v09, 2027-08, 2027-11
+    0.10.x Beta           :v10, 2027-11, 2028-02
+
     section Release
-    0.8 CI/CD               :2026-07, 2026-08
-    0.9 Stability           :2026-08, 2026-09
-    1.0 Production          :milestone, 2026-09, 0d
+    1.0.0 Production      :milestone, 2028-02, 0d
 ```
 
-#### 0.2.0 - Plugin Compatibility
+---
+
+### 0.1.x - Foundation (Current)
+
+Alpha stabilization, documentation, and minor improvements.
+
+#### 0.1.1 - Documentation & Polish
+
+- [ ] Improve error messages for common failures
+- [ ] Add examples directory with sample projects
+- [ ] Write quick-start tutorial
+- [ ] Fix edge cases in AST discovery
+- [ ] Improve CLI help text
+
+#### 0.1.2 - Test Stability
+
+- [ ] Handle more pytest assertion patterns
+- [ ] Better stack trace formatting
+- [ ] Fix timeout edge cases
+- [ ] Improve worker cleanup on crash
+
+#### 0.1.3 - Error Handling
+
+- [ ] Categorize errors (user error vs system error)
+- [ ] Add error codes for machine parsing
+- [ ] Improve suggestions for common failures
+- [ ] Add `--diagnose` flag for troubleshooting
+
+---
+
+### 0.2.x - Plugin Compatibility
 
 Shadow plugin shim for pytest ecosystem integration.
 
-- [ ] Hook interception for `pytest_runtest_setup`/`pytest_runtest_teardown`
-- [ ] Effect capture for pytest-django, pytest-asyncio
-- [ ] Marker handling (`@pytest.mark.django_db`, `@pytest.mark.asyncio`)
-- [ ] Conftest.py hook passthrough
+#### 0.2.0 - Hook Interception Core
 
-#### 0.3.0 - Database Integration
+- [ ] Implement hook interception framework
+- [ ] `pytest_runtest_setup` hook passthrough
+- [ ] `pytest_runtest_teardown` hook passthrough
+- [ ] Conftest.py hook discovery
+- [ ] Plugin registration system
+
+#### 0.2.1 - pytest-django Support
+
+- [ ] `@pytest.mark.django_db` marker handling
+- [ ] Django test client support
+- [ ] Transaction test case compatibility
+- [ ] Settings override support
+
+#### 0.2.2 - pytest-asyncio Support
+
+- [ ] `@pytest.mark.asyncio` marker handling
+- [ ] Event loop fixture support
+- [ ] Async test detection
+- [ ] Coroutine test execution
+
+#### 0.2.3 - Common Plugins
+
+- [ ] pytest-cov compatibility (defer to our coverage)
+- [ ] pytest-mock fixture support
+- [ ] pytest-env variable injection
+- [ ] pytest-timeout integration
+
+---
+
+### 0.3.x - Database Integration
 
 Transaction rollback and connection handling for database-heavy projects.
 
+#### 0.3.0 - Django Database
+
 - [ ] Django transaction rollback via `transaction.atomic()`
+- [ ] Multi-database support
+- [ ] Database alias handling
+- [ ] Migration state preservation
+
+#### 0.3.1 - SQLAlchemy Support
+
 - [ ] SQLAlchemy session management
+- [ ] Scoped session handling
+- [ ] Engine connection pooling
+- [ ] Alembic migration awareness
+
+#### 0.3.2 - Connection Management
+
 - [ ] Connection pool preservation across test resets
 - [ ] Database FD handover via SCM_RIGHTS
+- [ ] Connection health checks
+- [ ] Graceful connection cleanup
 
-#### 0.4.0 - Fixture Lifecycle
+---
+
+### 0.4.x - Fixture Lifecycle
 
 Proper handling of session and module-scoped fixtures.
 
-- [ ] Session-scoped fixture caching (survive across all tests)
-- [ ] Module-scoped fixture optimization
-- [ ] Fixture finalization ordering
-- [ ] Autouse fixture support
+#### 0.4.0 - Session Fixtures
 
-#### 0.5.0 - Developer Experience
+- [ ] Session-scoped fixture caching (survive across all tests)
+- [ ] Fixture value serialization for cross-worker sharing
+- [ ] Session fixture finalization at end
+- [ ] Parallel session fixture initialization
+
+#### 0.4.1 - Module Fixtures
+
+- [ ] Module-scoped fixture optimization
+- [ ] Module boundary detection
+- [ ] Fixture reuse within modules
+- [ ] Module fixture cleanup
+
+#### 0.4.2 - Advanced Fixtures
+
+- [ ] Autouse fixture support
+- [ ] Fixture finalization ordering
+- [ ] Parametrized fixture handling
+- [ ] Fixture dependency graph visualization
+
+---
+
+### 0.5.x - Developer Experience
 
 Better error messages, debugging, and developer tools.
 
-- [ ] Enhanced traceback formatting (pytest-style)
-- [ ] Debug mode with verbose syscall logging
-- [ ] Failure analysis and suggestions
-- [ ] `--pdb` support for interactive debugging
+#### 0.5.0 - Enhanced Tracebacks
 
-#### 0.6.0 - Configuration
+- [ ] pytest-style traceback formatting
+- [ ] Local variable display in failures
+- [ ] Assertion introspection
+- [ ] Diff display for comparison failures
+
+#### 0.5.1 - Debug Mode
+
+- [ ] Verbose syscall logging (`--debug`)
+- [ ] Worker lifecycle visualization
+- [ ] Memory snapshot timing breakdown
+- [ ] Performance profiling output
+
+#### 0.5.2 - Interactive Debugging
+
+- [ ] `--pdb` support for interactive debugging
+- [ ] Breakpoint detection (`breakpoint()`)
+- [ ] Post-mortem debugging on failure
+- [ ] Remote debugger attachment
+
+---
+
+### 0.6.x - Configuration
 
 Complete configuration support.
 
-- [ ] Full `[tool.tach]` pyproject.toml schema
+#### 0.6.0 - pyproject.toml Schema
+
+- [ ] Full `[tool.tach]` schema definition
+- [ ] JSON schema for IDE completion
+- [ ] Configuration validation
+- [ ] Default value documentation
+
+#### 0.6.1 - Test Configuration
+
 - [ ] Per-test timeout configuration
+- [ ] Per-directory settings
+- [ ] Marker-based configuration
+- [ ] Test exclusion patterns
+
+#### 0.6.2 - Execution Configuration
+
 - [ ] Test ordering options (random, dependency-based)
 - [ ] Environment variable presets
+- [ ] Worker count configuration
+- [ ] Isolation mode selection
 
-#### 0.7.0 - Performance
+---
+
+### 0.7.x - Performance
 
 Memory and parallelism optimizations.
 
-- [ ] Memory usage profiling and optimization
-- [ ] Adaptive batch sizing based on test duration
-- [ ] Lazy module loading for large codebases
-- [ ] Parallel discovery with rayon
+#### 0.7.0 - Memory Optimization
 
-#### 0.8.0 - CI/CD Integration
+- [ ] Memory usage profiling
+- [ ] Snapshot size reduction
+- [ ] Lazy snapshot regions
+- [ ] Memory pressure handling
+
+#### 0.7.1 - Adaptive Scheduling
+
+- [ ] Adaptive batch sizing based on test duration
+- [ ] Test duration prediction
+- [ ] Hot/cold test classification
+- [ ] Load balancing improvements
+
+#### 0.7.2 - Lazy Loading
+
+- [ ] Lazy module loading for large codebases
+- [ ] Import graph analysis
+- [ ] Deferred bytecode compilation
+- [ ] Memory-mapped code objects
+
+#### 0.7.3 - Parallel Discovery
+
+- [ ] Parallel discovery with rayon
+- [ ] Incremental discovery caching
+- [ ] File change detection
+- [ ] Discovery result caching
+
+---
+
+### 0.8.x - CI/CD Integration
 
 First-class CI/CD support.
 
-- [ ] GitHub Actions workflow templates
-- [ ] GitLab CI configuration examples
-- [ ] JUnit XML improvements (test properties, attachments)
-- [ ] Coverage format options (Cobertura, LCOV, JSON)
+#### 0.8.0 - GitHub Actions
 
-#### 0.9.0 - Stability
+- [ ] GitHub Actions workflow templates
+- [ ] Artifact upload integration
+- [ ] PR comment integration
+- [ ] Status check reporting
+
+#### 0.8.1 - Other CI Platforms
+
+- [ ] GitLab CI configuration examples
+- [ ] CircleCI orb
+- [ ] Jenkins pipeline support
+- [ ] Azure DevOps integration
+
+#### 0.8.2 - Reporting Improvements
+
+- [ ] JUnit XML improvements (test properties, attachments)
+- [ ] HTML report generation
+- [ ] Test duration trending
+- [ ] Flaky test detection
+
+#### 0.8.3 - Coverage Formats
+
+- [ ] Coverage format options (Cobertura, LCOV, JSON)
+- [ ] Coverage diff reporting
+- [ ] Coverage thresholds
+- [ ] Codecov/Coveralls integration
+
+---
+
+### 0.9.x - Stability
 
 Production hardening and edge case handling.
 
-- [ ] Crash recovery and orphan process cleanup
-- [ ] Signal handling improvements
-- [ ] Memory leak detection and prevention
-- [ ] Stress testing under load
+#### 0.9.0 - Crash Recovery
 
-#### 1.0.0 - Production Ready
+- [ ] Crash recovery and orphan process cleanup
+- [ ] Automatic worker restart
+- [ ] State recovery after crash
+- [ ] Graceful degradation on errors
+
+#### 0.9.1 - Signal Handling
+
+- [ ] Signal handling improvements
+- [ ] SIGTERM graceful shutdown
+- [ ] SIGINT handling (Ctrl+C)
+- [ ] Child process signal forwarding
+
+#### 0.9.2 - Resource Management
+
+- [ ] Memory leak detection and prevention
+- [ ] File descriptor leak prevention
+- [ ] Resource limit enforcement
+- [ ] OOM handling
+
+#### 0.9.3 - Stress Testing
+
+- [ ] Stress testing under load
+- [ ] Long-running test suite support
+- [ ] Resource exhaustion handling
+- [ ] Chaos testing support
+
+---
+
+### 0.10.x - Beta
+
+Feature freeze and release preparation.
+
+#### 0.10.0 - Beta 1
+
+- [ ] Feature freeze
+- [ ] API stability review
+- [ ] Documentation complete
+- [ ] Migration guide draft
+
+#### 0.10.1 - Beta 2
+
+- [ ] Bug fixes from beta 1 feedback
+- [ ] Performance regression testing
+- [ ] Compatibility testing
+- [ ] Security audit
+
+#### 0.10.2 - Release Candidate 1
+
+- [ ] Final bug fixes
+- [ ] Release notes
+- [ ] Upgrade path testing
+- [ ] Community feedback integration
+
+#### 0.10.3 - Release Candidate 2
+
+- [ ] Critical bug fixes only
+- [ ] Final documentation review
+- [ ] Package verification
+- [ ] Release preparation
+
+---
+
+### 1.0.0 - Production Ready
 
 Stable release with API guarantees.
 
 - [ ] Complete user documentation
-- [ ] API stability commitment
+- [ ] API stability commitment (SemVer)
 - [ ] Migration guide from pytest
+- [ ] Long-term support policy
 - [ ] Battle-tested on real-world projects
+- [ ] Performance benchmarks published
+- [ ] Security best practices documented
 
 ---
 
