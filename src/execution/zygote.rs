@@ -367,8 +367,11 @@ fn worker_loop(socket: UnixStream) {
                     break;
                 }
 
-                let payload: TestPayload = match bincode::deserialize(&payload_buf) {
-                    Ok(p) => p,
+                let payload: TestPayload = match bincode::serde::decode_from_slice(
+                    &payload_buf,
+                    bincode::config::standard(),
+                ) {
+                    Ok((p, _)) => p,
                     Err(e) => {
                         eprintln!("[worker] Deserialize error: {}", e);
                         break;
@@ -621,8 +624,11 @@ except Exception as e:
                 let mut payload_buf = vec![0u8; len];
                 cmd_socket.read_exact(&mut payload_buf)?;
 
-                let payload: TestPayload = match bincode::deserialize(&payload_buf) {
-                    Ok(p) => p,
+                let payload: TestPayload = match bincode::serde::decode_from_slice(
+                    &payload_buf,
+                    bincode::config::standard(),
+                ) {
+                    Ok((p, _)) => p,
                     Err(e) => {
                         eprintln!("[zygote] Deserialize error: {}", e);
                         continue;
@@ -1592,9 +1598,11 @@ mod tests {
             is_toxic: false,
         };
 
-        let encoded = bincode::serialize(&original).expect("Serialization should succeed");
-        let decoded: TestPayload =
-            bincode::deserialize(&encoded).expect("Deserialization should succeed");
+        let encoded = bincode::serde::encode_to_vec(&original, bincode::config::standard())
+            .expect("Serialization should succeed");
+        let (decoded, _): (TestPayload, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("Deserialization should succeed");
 
         assert_eq!(decoded.test_id, original.test_id);
         assert_eq!(decoded.file_path, original.file_path);
@@ -1630,8 +1638,9 @@ mod tests {
             is_toxic: true,
         };
 
-        let encoded = bincode::serialize(&payload).unwrap();
-        let decoded: TestPayload = bincode::deserialize(&encoded).unwrap();
+        let encoded = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
+        let (decoded, _): (TestPayload, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
 
         assert_eq!(decoded.fixtures.len(), 2);
         assert_eq!(decoded.fixtures[0].name, "fixture1");
@@ -1662,8 +1671,9 @@ mod tests {
         assert_eq!(len, encoded.len() - 4, "Length prefix should be correct");
 
         // Should be able to deserialize
-        let decoded: TestResult =
-            bincode::deserialize(&encoded[4..]).expect("Deserialization should succeed");
+        let (decoded, _): (TestResult, _) =
+            bincode::serde::decode_from_slice(&encoded[4..], bincode::config::standard())
+                .expect("Deserialization should succeed");
         assert_eq!(decoded.test_id, 999);
         assert_eq!(decoded.status, STATUS_PASS);
         assert_eq!(decoded.message, "Test passed successfully");

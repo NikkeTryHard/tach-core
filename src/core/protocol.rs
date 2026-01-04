@@ -134,8 +134,10 @@ fn truncate_message(msg: String) -> String {
 }
 
 /// Encode a struct to bincode bytes with length prefix
-pub fn encode_with_length<T: Serialize>(value: &T) -> Result<Vec<u8>, bincode::Error> {
-    let payload = bincode::serialize(value)?;
+pub fn encode_with_length<T: serde::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
     let mut result = Vec::with_capacity(4 + payload.len());
     result.extend_from_slice(&len.to_le_bytes());
@@ -259,7 +261,8 @@ mod tests {
         assert_eq!(len, encoded.len() - 4);
 
         // Verify we can deserialize the payload correctly
-        let decoded: TestPayload = bincode::deserialize(&encoded[4..]).unwrap();
+        let (decoded, _): (TestPayload, usize) =
+            bincode::serde::decode_from_slice(&encoded[4..], bincode::config::standard()).unwrap();
         assert_eq!(decoded.test_id, 42);
         assert_eq!(decoded.file_path, "tests/test_foo.py");
         assert_eq!(decoded.test_name, "test_bar");

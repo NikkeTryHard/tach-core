@@ -179,14 +179,18 @@ fn test_toxicity_survives_serialization_roundtrip() {
     };
 
     // Serialize using bincode (same as scheduler.rs)
-    let toxic_bytes = bincode::serialize(&toxic_payload).expect("Serialization should succeed");
-    let safe_bytes = bincode::serialize(&safe_payload).expect("Serialization should succeed");
+    let toxic_bytes = bincode::serde::encode_to_vec(&toxic_payload, bincode::config::standard())
+        .expect("Serialization should succeed");
+    let safe_bytes = bincode::serde::encode_to_vec(&safe_payload, bincode::config::standard())
+        .expect("Serialization should succeed");
 
     // Deserialize (same as zygote.rs would do)
-    let toxic_decoded: TestPayload =
-        bincode::deserialize(&toxic_bytes).expect("Deserialization should succeed");
-    let safe_decoded: TestPayload =
-        bincode::deserialize(&safe_bytes).expect("Deserialization should succeed");
+    let (toxic_decoded, _): (TestPayload, usize) =
+        bincode::serde::decode_from_slice(&toxic_bytes, bincode::config::standard())
+            .expect("Deserialization should succeed");
+    let (safe_decoded, _): (TestPayload, usize) =
+        bincode::serde::decode_from_slice(&safe_bytes, bincode::config::standard())
+            .expect("Deserialization should succeed");
 
     // CRITICAL ASSERTIONS: is_toxic must survive the round-trip
     assert!(
@@ -284,8 +288,9 @@ def test_network_stuff():
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)
-    let bytes = bincode::serialize(&payload).unwrap();
-    let decoded: TestPayload = bincode::deserialize(&bytes).unwrap();
+    let bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
+    let (decoded, _): (TestPayload, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
 
     // Step 7: FINAL VERIFICATION
     assert!(
