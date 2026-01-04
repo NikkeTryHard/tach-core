@@ -184,25 +184,37 @@ graph TD
 
 ### Implementation
 
+The `propagate` method is an internal helper called by `build()`:
+
 ```rust
 impl ToxicityGraph {
-    pub fn propagate(&mut self) {
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for edge in self.graph.edge_indices() {
-                let (from, to) = self.graph.edge_endpoints(edge).unwrap();
-                let to_toxic = self.graph[to].is_toxic;
-                let from_node = &mut self.graph[from];
+    /// Private method - called internally by build()
+    fn propagate(&mut self) {
+        loop {
+            let mut changed = false;
 
-                if to_toxic && !from_node.is_toxic {
-                    from_node.is_toxic = true;
-                    from_node.reasons.push(format!(
-                        "Imports toxic module '{}'",
-                        self.graph[to].name
-                    ));
+            // Collect edges to avoid borrow issues
+            let edges: Vec<(NodeIndex, NodeIndex)> = self
+                .graph
+                .edge_indices()
+                .filter_map(|e| self.graph.edge_endpoints(e))
+                .collect();
+
+            for (from_idx, to_idx) in edges {
+                let to_toxic = self.graph[to_idx].is_toxic;
+                let to_name = self.graph[to_idx].name.clone();
+
+                if to_toxic && !self.graph[from_idx].is_toxic {
+                    self.graph[from_idx].is_toxic = true;
+                    self.graph[from_idx]
+                        .reasons
+                        .push(format!("Imports toxic module '{}'", to_name));
                     changed = true;
                 }
+            }
+
+            if !changed {
+                break;
             }
         }
     }
@@ -275,16 +287,35 @@ This is conservative but safe.
 Analyzes a single Python file for local toxicity.
 
 ```rust
-pub fn analyze_file(path: &Path) -> Result<ToxicityReport>
+pub fn analyze_file(source: &str, path: &Path) -> ToxicityReport
 ```
+
+| Parameter | Description                                |
+| :-------- | :----------------------------------------- |
+| `source`  | Python source code as a string             |
+| `path`    | Path to the file (used for error messages) |
+
+Returns a `ToxicityReport` directly (not wrapped in Result).
 
 ### ToxicityGraph::build
 
 Constructs the dependency graph from all project files.
 
 ```rust
-pub fn build(modules: &[TestModule]) -> ToxicityGraph
+pub fn build(paths: &[PathBuf], project_root: &Path) -> Self
 ```
+
+| Parameter      | Description                               |
+| :------------- | :---------------------------------------- |
+| `paths`        | List of Python file paths to analyze      |
+| `project_root` | Root directory for module name resolution |
+
+This method:
+
+1. Indexes all files (path to module name)
+2. Analyzes each file for local toxicity
+3. Builds import edges
+4. Propagates toxicity transitively
 
 ### ToxicityGraph::is_toxic
 

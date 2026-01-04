@@ -10,8 +10,8 @@ Tach supports multiple output formats:
 
 1. **ProgressReporter** - Interactive progress bar for terminals
 2. **DotsReporter** - Simple dots for CI environments
-3. **JsonReporter** - NDJSON for IDE integration
-4. **JunitReporter** - JUnit XML for CI systems
+3. **HumanReporter** - Simple human-readable text output
+4. **JsonReporter** - NDJSON for IDE integration
 
 ```mermaid
 flowchart TB
@@ -24,6 +24,7 @@ flowchart TB
         Progress["ProgressReporter"]
         Dots["DotsReporter"]
         JSON["JsonReporter"]
+        Human["HumanReporter"]
     end
 
     TTY -->|Yes| CI
@@ -38,11 +39,42 @@ flowchart TB
 
 ```rust
 pub trait Reporter {
-    fn on_run_start(&mut self, total: usize);
-    fn on_test_started(&mut self, test: &RunnableTest);
-    fn on_test_finished(&mut self, result: &TestResult);
-    fn on_run_finished(&mut self, results: &[TestResult]);
+    /// Called at start of test run
+    fn on_run_start(&mut self, count: usize);
+
+    /// Called when a test begins execution
+    fn on_test_start(&mut self, id: &str, file: &str);
+
+    /// Called when a test completes
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>);
+
+    /// Called at end of test run
+    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64);
+
+    /// Called on fatal error
+    fn on_error(&mut self, message: &str);
 }
+```
+
+### Status Strings
+
+The reporter uses simple string literals for status values:
+
+- `"pass"` - Test passed
+- `"fail"` - Test failed
+- `"skip"` - Test skipped
+
+---
+
+## HumanReporter
+
+Simple human-readable output to stderr. Example:
+
+```
+[tach] Running 100 tests...
+  test_foo.py::test_example ... PASS (12ms)
+  test_foo.py::test_another ... FAIL (8ms)
+[tach] 98 passed, 1 failed, 1 skipped in 2.50s
 ```
 
 ---
@@ -55,33 +87,52 @@ Interactive progress bar using `indicatif`.
 
 ```
 Running tests...
-[=========>          ] 45/100  P:40 F:3 S:2
+[=>          ] 45/100  P:40 F:3 S:2
 ```
 
 ### Implementation
 
 ```rust
+/// Record of a test failure for summary display
+struct FailureRecord {
+    id: String,
+    message: String,
+}
+
 pub struct ProgressReporter {
     bar: ProgressBar,
     passed: usize,
     failed: usize,
     skipped: usize,
-    failures: Vec<TestResult>,
+    failures: Vec<FailureRecord>,
+    total: usize,
 }
 
 impl ProgressReporter {
     pub fn new() -> Self {
         let bar = ProgressBar::new(0);
-        bar.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n[{bar:40}] {pos}/{len}  P:{passed} F:{failed} S:{skipped}")
-            .unwrap());
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("=>-"),
+        );
+
         Self {
             bar,
             passed: 0,
             failed: 0,
             skipped: 0,
             failures: Vec::new(),
+            total: 0,
         }
+    }
+
+    /// Check if we should use progress bar (interactive terminal)
+    pub fn should_use_progress_bar() -> bool {
+        atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
     }
 }
 ```
@@ -91,19 +142,36 @@ impl ProgressReporter {
 Failures are buffered and displayed at the end:
 
 ```rust
-fn on_run_finished(&mut self, _results: &[TestResult]) {
+fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
     self.bar.finish_and_clear();
 
+    // Print failure details
     if !self.failures.is_empty() {
-        eprintln!("\n=== FAILURES ===\n");
+        eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
         for failure in &self.failures {
-            eprintln!("FAILED: {}", failure.test_name);
-            eprintln!("{}\n", failure.message);
+            eprintln!("\n{}", failure.id);
+            eprintln!("{}", "-".repeat(failure.id.len().min(70)));
+            // Limit failure message to 20 lines
+            for line in failure.message.lines().take(20) {
+                eprintln!("{}", line);
+            }
         }
+        eprintln!("{}", "=".repeat(70));
     }
 
-    eprintln!("\n{} passed, {} failed, {} skipped",
-        self.passed, self.failed, self.skipped);
+    // Print summary with colors
+    let duration_secs = duration_ms as f64 / 1000.0;
+    if failed > 0 {
+        eprintln!(
+            "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+            passed, failed, skipped, duration_secs
+        );
+    } else {
+        eprintln!(
+            "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+            passed, failed, skipped, duration_secs
+        );
+    }
 }
 ```
 
@@ -116,37 +184,60 @@ Simple dots output for CI environments.
 ### Output Format
 
 ```
-....F..s....F.....
+....F..s.....F.....
 ```
 
 - `.` = passed
 - `F` = failed
 - `s` = skipped
+- `?` = unknown status
 
 ### Implementation
 
 ```rust
 pub struct DotsReporter {
-    failures: Vec<TestResult>,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    failures: Vec<FailureRecord>,
+    column: usize,
 }
 
 impl Reporter for DotsReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
-        let char = match result.status {
-            STATUS_PASS => '.',
-            STATUS_FAIL | STATUS_ERROR => 'F',
-            STATUS_SKIP => 's',
-            STATUS_CRASH => 'C',
-            _ => '?',
-        };
-        eprint!("{}", char);
-
-        if result.status == STATUS_FAIL || result.status == STATUS_ERROR {
-            self.failures.push(result.clone());
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        _duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        match status {
+            "pass" => {
+                self.passed += 1;
+                self.print_char('.');
+            }
+            "fail" => {
+                self.failed += 1;
+                self.print_char('F');
+                // Buffer failure for summary
+                self.failures.push(FailureRecord {
+                    id: id.to_string(),
+                    message: message.unwrap_or("").to_string(),
+                });
+            }
+            "skip" => {
+                self.skipped += 1;
+                self.print_char('s');
+            }
+            _ => {
+                self.print_char('?');
+            }
         }
     }
 }
 ```
+
+The DotsReporter wraps output at 80 columns for readability.
 
 ---
 
@@ -157,8 +248,35 @@ NDJSON output for IDE integration.
 ### Output Format
 
 ```json
-{"event":"test_started","test":"test_example.py::test_foo"}
-{"event":"test_finished","test":"test_example.py::test_foo","status":"pass","duration_ms":12}
+{"event":"run_start","count":100}
+{"event":"test_start","id":"test_example.py::test_foo","file":"test_example.py"}
+{"event":"test_finished","id":"test_example.py::test_foo","status":"pass","duration_ms":12}
+{"event":"run_finished","passed":98,"failed":1,"skipped":1,"duration_ms":2500}
+```
+
+### MachineEvent Enum
+
+```rust
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum MachineEvent<'a> {
+    RunStart { count: usize },
+    TestStart { id: &'a str, file: &'a str },
+    TestFinished {
+        id: &'a str,
+        status: &'a str,
+        duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<&'a str>,
+    },
+    RunFinished {
+        passed: usize,
+        failed: usize,
+        skipped: usize,
+        duration_ms: u64,
+    },
+    Error { message: &'a str },
+}
 ```
 
 ### Implementation
@@ -167,15 +285,22 @@ NDJSON output for IDE integration.
 pub struct JsonReporter;
 
 impl Reporter for JsonReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
-        let event = json!({
-            "event": "test_finished",
-            "test": result.test_name,
-            "status": status_to_string(result.status),
-            "duration_ms": result.duration_ns / 1_000_000,
-            "message": result.message,
-        });
-        println!("{}", event);
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        let event = MachineEvent::TestFinished {
+            id,
+            status,
+            duration_ms,
+            message,
+        };
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 }
 ```
@@ -183,42 +308,6 @@ impl Reporter for JsonReporter {
 ### Stdout Purity
 
 JsonReporter writes to **stdout** while other output goes to **stderr**, ensuring clean JSON parsing.
-
----
-
-## JunitReporter
-
-JUnit XML for CI systems.
-
-### Output Format
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites>
-  <testsuite name="tach" tests="100" failures="3" errors="0" skipped="2">
-    <testcase name="test_foo" classname="test_example" time="0.012"/>
-    <testcase name="test_bar" classname="test_example" time="0.008">
-      <failure message="AssertionError">...</failure>
-    </testcase>
-  </testsuite>
-</testsuites>
-```
-
-### Implementation
-
-```rust
-pub struct JunitReporter {
-    output_path: PathBuf,
-    results: Vec<TestResult>,
-}
-
-impl Reporter for JunitReporter {
-    fn on_run_finished(&mut self, results: &[TestResult]) {
-        let xml = generate_junit_xml(results);
-        std::fs::write(&self.output_path, xml).unwrap();
-    }
-}
-```
 
 ---
 
@@ -231,10 +320,16 @@ pub struct MultiReporter {
     reporters: Vec<Box<dyn Reporter>>,
 }
 
+impl MultiReporter {
+    pub fn new(reporters: Vec<Box<dyn Reporter>>) -> Self {
+        Self { reporters }
+    }
+}
+
 impl Reporter for MultiReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>) {
         for reporter in &mut self.reporters {
-            reporter.on_test_finished(result);
+            reporter.on_test_finished(id, status, duration_ms, message);
         }
     }
 }
@@ -243,9 +338,11 @@ impl Reporter for MultiReporter {
 ### Usage
 
 ```rust
-let mut reporters = MultiReporter::new();
-reporters.add(Box::new(ProgressReporter::new()));
-reporters.add(Box::new(JunitReporter::new("results.xml")));
+let reporters: Vec<Box<dyn Reporter>> = vec![
+    Box::new(ProgressReporter::new()),
+    Box::new(JsonReporter),
+];
+let mut multi = MultiReporter::new(reporters);
 ```
 
 ---
@@ -269,17 +366,25 @@ pub fn should_use_progress_bar() -> bool {
 
 ## Color Output
 
+The reporters use raw ANSI escape codes for terminal colors:
+
 ```rust
-fn format_status(status: u8) -> ColoredString {
-    match status {
-        STATUS_PASS => "PASS".green(),
-        STATUS_FAIL => "FAIL".red(),
-        STATUS_SKIP => "SKIP".yellow(),
-        STATUS_CRASH => "CRASH".red().bold(),
-        _ => "???".normal(),
-    }
-}
+// Red for failures
+eprintln!("\x1b[31m{} passed, {} failed, {} skipped\x1b[0m", passed, failed, skipped);
+
+// Green for success
+eprintln!("\x1b[32m{} passed, {} failed, {} skipped\x1b[0m", passed, failed, skipped);
+
+// Cyan for informational messages
+eprintln!("\x1b[36m(Saved {:.1}s of initialization overhead)\x1b[0m", saved_secs);
 ```
+
+ANSI color codes used:
+
+- `\x1b[31m` - Red (failures)
+- `\x1b[32m` - Green (success)
+- `\x1b[36m` - Cyan (info)
+- `\x1b[0m` - Reset
 
 ---
 
@@ -287,19 +392,13 @@ fn format_status(status: u8) -> ColoredString {
 
 ```rust
 // In main.rs
-let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
-
-if cli.format == "json" {
-    reporters.push(Box::new(JsonReporter::new()));
-} else if should_use_progress_bar() {
-    reporters.push(Box::new(ProgressReporter::new()));
+let reporters: Vec<Box<dyn Reporter>> = if cli.format == "json" {
+    vec![Box::new(JsonReporter)]
+} else if ProgressReporter::should_use_progress_bar() {
+    vec![Box::new(ProgressReporter::new())]
 } else {
-    reporters.push(Box::new(DotsReporter::new()));
-}
-
-if let Some(path) = &cli.junit_xml {
-    reporters.push(Box::new(JunitReporter::new(path)));
-}
+    vec![Box::new(DotsReporter::new())]
+};
 
 let mut multi = MultiReporter::new(reporters);
 scheduler.run(&mut multi)?;

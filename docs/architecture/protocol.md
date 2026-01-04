@@ -132,30 +132,37 @@ All structured messages use length-prefixed framing:
 ### Encoding
 
 ```rust
-pub fn encode_with_length<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let payload = bincode::serialize(value)?;
+/// Encode a struct to bincode bytes with length prefix
+pub fn encode_with_length<T: serde::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
-
-    let mut buf = Vec::with_capacity(4 + payload.len());
-    buf.extend_from_slice(&len.to_le_bytes());
-    buf.extend_from_slice(&payload);
-    Ok(buf)
+    let mut result = Vec::with_capacity(4 + payload.len());
+    result.extend_from_slice(&len.to_le_bytes());
+    result.extend_from_slice(&payload);
+    Ok(result)
 }
 ```
 
 ### Decoding
 
-```rust
-pub fn decode_with_length<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_le_bytes(len_buf) as usize;
+Decoding is performed inline where needed using `bincode::serde::decode_from_slice`:
 
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
-    Ok(bincode::deserialize(&payload)?)
-}
+```rust
+// Read length prefix
+let mut len_buf = [0u8; 4];
+reader.read_exact(&mut len_buf)?;
+let len = u32::from_le_bytes(len_buf) as usize;
+
+// Read payload and decode
+let mut payload = vec![0u8; len];
+reader.read_exact(&mut payload)?;
+let (decoded, _): (T, usize) =
+    bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
 ```
+
+> **Note:** There is no `decode_with_length` helper function in the codebase. Decoding is done inline at call sites.
 
 ---
 
@@ -246,13 +253,12 @@ pub fn recv_fd(sock: &UnixStream) -> Result<(i32, OwnedFd)> {
 Result messages are truncated to prevent buffer overflow:
 
 ```rust
-const MAX_MESSAGE_LEN: usize = 4096;
-
-fn truncate_message(msg: &str) -> String {
-    if msg.len() <= MAX_MESSAGE_LEN {
-        msg.to_string()
+fn truncate_message(msg: String) -> String {
+    const MAX_LEN: usize = 4096;
+    if msg.len() > MAX_LEN {
+        format!("{}... [truncated]", &msg[..MAX_LEN])
     } else {
-        format!("{}... (truncated)", &msg[..MAX_MESSAGE_LEN - 20])
+        msg
     }
 }
 ```
@@ -266,8 +272,17 @@ The scheduler uses read timeouts for crash detection:
 ```rust
 sock.set_read_timeout(Some(Duration::from_secs(5)))?;
 
-match decode_with_length::<TestResult>(&mut sock) {
-    Ok(result) => handle_result(result),
+// Read length-prefixed message with timeout
+let mut len_buf = [0u8; 4];
+match sock.read_exact(&mut len_buf) {
+    Ok(_) => {
+        let len = u32::from_le_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        sock.read_exact(&mut payload)?;
+        let (result, _): (TestResult, usize) =
+            bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
+        handle_result(result);
+    }
     Err(e) if e.kind() == ErrorKind::TimedOut => {
         mark_worker_crashed(worker_id);
     }

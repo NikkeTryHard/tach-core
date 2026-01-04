@@ -234,8 +234,24 @@ tach-core .
 # Run specific file
 tach-core tests/test_example.py
 
+# Parallel execution with 4 workers
+tach-core -n 4 .
+
+# Filter tests by keyword or marker
+tach-core -k "network" .
+tach-core -m "not slow" .
+
+# Fail fast - stop on first failure
+tach-core -x .
+
+# Verbose output
+tach-core -v .
+
 # List tests without running
 tach-core list .
+
+# Self-test kernel support
+tach-core self-test
 
 # Enable coverage
 tach-core --coverage .
@@ -252,6 +268,8 @@ tach-core --no-isolation .
 # Watch mode
 tach-core --watch .
 ```
+
+See [Configuration Reference](docs/configuration.md) for all CLI flags and options.
 
 ---
 

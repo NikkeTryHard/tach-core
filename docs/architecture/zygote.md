@@ -49,9 +49,9 @@ flowchart TB
 Represents a persistent worker in the pool.
 
 ```rust
-pub struct WorkerHandle {
-    pub pid: i32,
-    pub socket: UnixStream,
+struct WorkerHandle {
+    pid: i32,
+    socket: UnixStream,
 }
 ```
 
@@ -61,8 +61,8 @@ pub struct WorkerHandle {
 // Pool of idle workers ready for reuse
 static IDLE_WORKERS: Mutex<Vec<WorkerHandle>> = Mutex::new(Vec::new());
 
-// Cached memory regions for self-reset
-static RESET_REGIONS: Mutex<Vec<MemoryRegion>> = Mutex::new(Vec::new());
+// Cached memory regions for self-reset (start_address, length)
+static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
 // Whether snapshot mode is active
 static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -259,12 +259,12 @@ def post_fork_init():
 ### Step 6: Snapshot Handshake
 
 ```python
-def init_snapshot_mode(supervisor_sock):
+def init_snapshot_mode(sock_path):
     # Create userfaultfd
     # Send to supervisor via SCM_RIGHTS
     # SIGSTOP (supervisor captures golden state)
     # Resume on SIGCONT
-    return tach_rust.init_snapshot_mode(supervisor_sock)
+    return tach_rust.init_snapshot_mode(sock_path)
 ```
 
 ---
@@ -313,32 +313,56 @@ Toxic workers exit immediately after the test. The Zygote spawns a replacement.
 
 ## FFI Functions
 
-### init_snapshot_mode
+The `tach_rust` module is injected into Python's `sys.modules` by `inject_tach_rust_module()` and exposes 14 functions organized into 5 categories:
 
-Initializes userfaultfd handshake.
+### Snapshot Mode
 
-```rust
-#[pyfunction]
-fn init_snapshot_mode(supervisor_sock: &str) -> bool
-```
+Core functions for memory snapshotting and reset.
 
-### reset_memory
+| Function             | Signature                                                  | Description                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init_snapshot_mode` | `fn init_snapshot_mode(sock_path: &str) -> PyResult<bool>` | Creates userfaultfd, sends to Supervisor via SCM_RIGHTS, caches memory regions, quiesces jemalloc, then SIGSTOP for snapshot capture. Returns true if snapshotting enabled, false if fallback. |
+| `reset_memory`       | `fn reset_memory() -> PyResult<()>`                        | The "Seppuku" pattern - calls `madvise(MADV_DONTNEED)` on cached regions to trigger UFFD faults for golden page restoration.                                                                   |
+| `cleanup_modules`    | `fn cleanup_modules() -> PyResult<()>`                     | Delegates to `tach_harness.cleanup_test_modules()` to remove test-imported modules from `sys.modules`.                                                                                         |
 
-Triggers the Seppuku pattern.
+### Jemalloc Allocator Control
 
-```rust
-#[pyfunction]
-fn reset_memory() -> PyResult<()>
-```
+Functions for managing the jemalloc allocator state before snapshot.
 
-### cleanup_modules
+| Function            | Signature                                     | Description                                                                                                                                 |
+| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quiesce_allocator` | `fn py_quiesce_allocator() -> PyResult<()>`   | Flushes thread-local caches (`thread.tcache.flush`) and synchronizes allocator metadata (`epoch`) to ensure heap is in snapshot-safe state. |
+| `verify_jemalloc`   | `fn py_verify_jemalloc() -> PyResult<String>` | Verifies that jemalloc is the active allocator. Returns version string or error.                                                            |
 
-Removes test-imported modules.
+### Zero-Overhead Coverage (PEP 669)
 
-```rust
-#[pyfunction]
-fn cleanup_modules() -> PyResult<()>
-```
+Functions for `sys.monitoring` callbacks to record coverage data in ring buffers.
+
+| Function                | Signature                                                          | Description                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `record_line`           | `fn py_record_line(py: Python, code_id: u64, lineno: u32) -> bool` | Records a LINE event (code_id, lineno) to the ring buffer. Returns false if buffer full. Releases GIL before writing. |
+| `is_coverage_enabled`   | `fn py_is_coverage_enabled() -> bool`                              | Returns true if coverage collection is active.                                                                        |
+| `get_coverage_overflow` | `fn py_get_coverage_overflow() -> u64`                             | Returns count of dropped entries due to buffer full.                                                                  |
+
+### Coverage Resolution
+
+Functions for mapping code_id to filename.
+
+| Function               | Signature                                                           | Description                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `record_py_start`      | `fn py_record_py_start(py: Python, code_id: u64, filename: String)` | Registers code object on first function entry (PY_START event). Maps code_id to filename. Releases GIL before work. |
+| `get_mapping_overflow` | `fn py_get_mapping_overflow() -> u64`                               | Returns count of dropped mappings due to buffer full.                                                               |
+
+### Zero-Copy Loader
+
+Functions for the bytecode registry (Request Model).
+
+| Function            | Signature                                                                                      | Description                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `get_module`        | `fn get_module(name: &str) -> Option<Vec<u8>>`                                                 | Returns pre-compiled bytecode for a module from the registry.                                                |
+| `get_module_path`   | `fn get_module_path(name: &str) -> Option<String>`                                             | Returns the source file path for a module.                                                                   |
+| `is_module_package` | `fn is_module_package(name: &str) -> Option<bool>`                                             | Returns whether the module is a package.                                                                     |
+| `load_module`       | `fn load_module(py: Python, name: &str, source_path: &str, bytecode: &[u8]) -> PyResult<bool>` | Deserializes bytecode via `PyMarshal_ReadObjectFromString` and executes via `PyImport_ExecCodeModuleObject`. |
 
 ---
 

@@ -332,7 +332,7 @@ match apply_landlock(&project_root, 9999) {
     Ok(SandboxStatus::NotEnforced) => {
         eprintln!("[sandbox] WARNING: Landlock not supported, continuing without");
     }
-    Ok(SandboxStatus::Enforced) => {
+    Ok(SandboxStatus::FullyEnforced) => {
         eprintln!("[sandbox] Landlock enforced");
     }
     Err(e) => {

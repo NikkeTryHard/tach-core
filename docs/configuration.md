@@ -22,48 +22,88 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 ### Commands
 
-| Command | Description                           |
-| :------ | :------------------------------------ |
-| `test`  | Run tests (default)                   |
-| `list`  | List discovered tests without running |
+| Command     | Description                                   |
+| :---------- | :-------------------------------------------- |
+| `test`      | Run tests (default)                           |
+| `list`      | List discovered tests without running         |
+| `self-test` | Run self-diagnostics to verify kernel support |
+| `version`   | Show version and build information            |
 
 ### Options
 
-| Flag                 | Description                         | Default |
-| :------------------- | :---------------------------------- | :------ |
-| `--format <FORMAT>`  | Output format: `human` or `json`    | `human` |
-| `--junit-xml <PATH>` | Generate JUnit XML report           | -       |
-| `--coverage`         | Enable PEP 669 coverage collection  | false   |
-| `--no-isolation`     | Disable namespace/sandbox isolation | false   |
-| `--watch`, `-w`      | Re-run tests on file changes        | false   |
-| `[PATH]`             | Test path (file or directory)       | `.`     |
+#### Parallel Execution
+
+| Flag                | Description                                       | Default |
+| :------------------ | :------------------------------------------------ | :------ |
+| `-n, --workers <N>` | Number of parallel workers (`auto` for CPU count) | `auto`  |
+
+#### Test Selection
+
+| Flag                      | Description                             | Default |
+| :------------------------ | :-------------------------------------- | :------ |
+| `-k, --keyword <EXPR>`    | Run tests matching substring expression | -       |
+| `-m, --markers <MARKERS>` | Run tests matching marker expression    | -       |
+| `[PATH]`                  | Test path (file or directory)           | `.`     |
+
+#### Execution Control
+
+| Flag              | Description                       | Default |
+| :---------------- | :-------------------------------- | :------ |
+| `-x, --exitfirst` | Exit on first failure (fail fast) | false   |
+| `--maxfail <N>`   | Exit after N failures             | -       |
+| `--watch`, `-w`   | Re-run tests on file changes      | false   |
+
+#### Output Control
+
+| Flag                | Description                        | Default |
+| :------------------ | :--------------------------------- | :------ |
+| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`) | normal  |
+| `-q, --quiet`       | Decrease verbosity (quiet mode)    | false   |
+| `--format <FORMAT>` | Output format: `human` or `json`   | `human` |
+| `--durations <N>`   | Show timing for slowest N tests    | -       |
+
+#### Coverage
+
+| Flag           | Description                                       | Default |
+| :------------- | :------------------------------------------------ | :------ |
+| `--coverage`   | Enable PEP 669 coverage collection                | false   |
+| `--cov <PATH>` | Source directories for coverage (can be repeated) | -       |
+
+#### Reporting
+
+| Flag                 | Description               | Default |
+| :------------------- | :------------------------ | :------ |
+| `--junit-xml <PATH>` | Generate JUnit XML report | -       |
+
+#### Tach-Specific Options
+
+| Flag             | Description                                        | Default |
+| :--------------- | :------------------------------------------------- | :------ |
+| `--no-isolation` | Disable namespace/sandbox isolation                | false   |
+| `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
+
+#### Passthrough Arguments
+
+| Flag           | Description                            |
+| :------------- | :------------------------------------- |
+| `-- <ARGS>...` | Extra arguments to pass to pytest shim |
 
 ### Examples
 
 ```bash
-# Run all tests
-tach-core .
-
-# Run specific file
-tach-core tests/test_auth.py
-
-# List tests without running
-tach-core list .
-
-# Enable coverage
-tach-core --coverage .
-
-# JSON output for IDE integration
-tach-core --format json .
-
-# Generate JUnit XML
-tach-core --junit-xml results.xml .
-
-# Development mode (no sandbox)
-tach-core --no-isolation .
-
-# Watch mode
-tach-core --watch .
+tach-core .                          # Run all tests
+tach-core tests/test_auth.py         # Run specific file
+tach-core -n 4 .                     # 4 parallel workers
+tach-core -k "network" .             # Filter by keyword
+tach-core -m "not slow" .            # Filter by marker
+tach-core -x .                       # Fail fast
+tach-core -v .                       # Verbose output
+tach-core --coverage .               # Enable coverage
+tach-core --format json .            # JSON output (IDE)
+tach-core --junit-xml results.xml .  # JUnit XML report
+tach-core --watch .                  # Watch mode
+tach-core list .                     # List tests only
+tach-core self-test                  # Verify kernel support
 ```
 
 ---
@@ -72,6 +112,7 @@ tach-core --watch .
 
 | Variable               | Description                       | Default |
 | :--------------------- | :-------------------------------- | :------ |
+| `TACH_WORKERS`         | Number of parallel workers        | `auto`  |
 | `TACH_FORMAT`          | Output format (`human` or `json`) | `human` |
 | `TACH_JUNIT_XML`       | Path to JUnit XML output          | -       |
 | `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   | -       |
@@ -85,6 +126,9 @@ tach-core --watch .
 ### Examples
 
 ```bash
+# Set number of parallel workers
+TACH_WORKERS=4 tach-core .
+
 # Enable coverage via environment
 TACH_COVERAGE=1 tach-core .
 

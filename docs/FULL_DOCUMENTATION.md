@@ -545,7 +545,7 @@ sequenceDiagram
 
 - **PY_START:** Registers `code_id -> filename` once per function.
 - **LINE:** Records `(code_id, lineno)` for every line executed.
-- **GIL Discipline:** All FFI functions (`record_line`, `record_py_start`) release the GIL using `py.allow_threads` before shared memory access.
+- **GIL Discipline:** All FFI functions (`record_line`, `record_py_start`) release the GIL using `py.detach()` before shared memory access.
 
 ---
 
@@ -2508,7 +2508,7 @@ fn load_module(
     py: Python,
     name: &str,
     source_path: &str,
-    bytecode: Vec<u8>,
+    bytecode: &[u8],
 ) -> PyResult<bool>
 ```
 
@@ -3202,30 +3202,37 @@ All structured messages use length-prefixed framing:
 ### Encoding
 
 ```rust
-pub fn encode_with_length<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let payload = bincode::serialize(value)?;
+/// Encode a struct to bincode bytes with length prefix
+pub fn encode_with_length<T: serde::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
-
-    let mut buf = Vec::with_capacity(4 + payload.len());
-    buf.extend_from_slice(&len.to_le_bytes());
-    buf.extend_from_slice(&payload);
-    Ok(buf)
+    let mut result = Vec::with_capacity(4 + payload.len());
+    result.extend_from_slice(&len.to_le_bytes());
+    result.extend_from_slice(&payload);
+    Ok(result)
 }
 ```
 
 ### Decoding
 
-```rust
-pub fn decode_with_length<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_le_bytes(len_buf) as usize;
+Decoding is performed inline where needed using `bincode::serde::decode_from_slice`:
 
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
-    Ok(bincode::deserialize(&payload)?)
-}
+```rust
+// Read length prefix
+let mut len_buf = [0u8; 4];
+reader.read_exact(&mut len_buf)?;
+let len = u32::from_le_bytes(len_buf) as usize;
+
+// Read payload and decode
+let mut payload = vec![0u8; len];
+reader.read_exact(&mut payload)?;
+let (decoded, _): (T, usize) =
+    bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
 ```
+
+> **Note:** There is no `decode_with_length` helper function in the codebase. Decoding is done inline at call sites.
 
 ---
 
@@ -3316,13 +3323,12 @@ pub fn recv_fd(sock: &UnixStream) -> Result<(i32, OwnedFd)> {
 Result messages are truncated to prevent buffer overflow:
 
 ```rust
-const MAX_MESSAGE_LEN: usize = 4096;
-
-fn truncate_message(msg: &str) -> String {
-    if msg.len() <= MAX_MESSAGE_LEN {
-        msg.to_string()
+fn truncate_message(msg: String) -> String {
+    const MAX_LEN: usize = 4096;
+    if msg.len() > MAX_LEN {
+        format!("{}... [truncated]", &msg[..MAX_LEN])
     } else {
-        format!("{}... (truncated)", &msg[..MAX_MESSAGE_LEN - 20])
+        msg
     }
 }
 ```
@@ -3336,8 +3342,17 @@ The scheduler uses read timeouts for crash detection:
 ```rust
 sock.set_read_timeout(Some(Duration::from_secs(5)))?;
 
-match decode_with_length::<TestResult>(&mut sock) {
-    Ok(result) => handle_result(result),
+// Read length-prefixed message with timeout
+let mut len_buf = [0u8; 4];
+match sock.read_exact(&mut len_buf) {
+    Ok(_) => {
+        let len = u32::from_le_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        sock.read_exact(&mut payload)?;
+        let (result, _): (TestResult, usize) =
+            bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
+        handle_result(result);
+    }
     Err(e) if e.kind() == ErrorKind::TimedOut => {
         mark_worker_crashed(worker_id);
     }
@@ -3397,8 +3412,8 @@ Tach supports multiple output formats:
 
 1. **ProgressReporter** - Interactive progress bar for terminals
 2. **DotsReporter** - Simple dots for CI environments
-3. **JsonReporter** - NDJSON for IDE integration
-4. **JunitReporter** - JUnit XML for CI systems
+3. **HumanReporter** - Simple human-readable text output
+4. **JsonReporter** - NDJSON for IDE integration
 
 ```mermaid
 flowchart TB
@@ -3411,6 +3426,7 @@ flowchart TB
         Progress["ProgressReporter"]
         Dots["DotsReporter"]
         JSON["JsonReporter"]
+        Human["HumanReporter"]
     end
 
     TTY -->|Yes| CI
@@ -3425,11 +3441,42 @@ flowchart TB
 
 ```rust
 pub trait Reporter {
-    fn on_run_start(&mut self, total: usize);
-    fn on_test_started(&mut self, test: &RunnableTest);
-    fn on_test_finished(&mut self, result: &TestResult);
-    fn on_run_finished(&mut self, results: &[TestResult]);
+    /// Called at start of test run
+    fn on_run_start(&mut self, count: usize);
+
+    /// Called when a test begins execution
+    fn on_test_start(&mut self, id: &str, file: &str);
+
+    /// Called when a test completes
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>);
+
+    /// Called at end of test run
+    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64);
+
+    /// Called on fatal error
+    fn on_error(&mut self, message: &str);
 }
+```
+
+### Status Strings
+
+The reporter uses simple string literals for status values:
+
+- `"pass"` - Test passed
+- `"fail"` - Test failed
+- `"skip"` - Test skipped
+
+---
+
+## HumanReporter
+
+Simple human-readable output to stderr. Example:
+
+```
+[tach] Running 100 tests...
+  test_foo.py::test_example ... PASS (12ms)
+  test_foo.py::test_another ... FAIL (8ms)
+[tach] 98 passed, 1 failed, 1 skipped in 2.50s
 ```
 
 ---
@@ -3442,33 +3489,52 @@ Interactive progress bar using `indicatif`.
 
 ```
 Running tests...
-[=========>          ] 45/100  P:40 F:3 S:2
+[=>          ] 45/100  P:40 F:3 S:2
 ```
 
 ### Implementation
 
 ```rust
+/// Record of a test failure for summary display
+struct FailureRecord {
+    id: String,
+    message: String,
+}
+
 pub struct ProgressReporter {
     bar: ProgressBar,
     passed: usize,
     failed: usize,
     skipped: usize,
-    failures: Vec<TestResult>,
+    failures: Vec<FailureRecord>,
+    total: usize,
 }
 
 impl ProgressReporter {
     pub fn new() -> Self {
         let bar = ProgressBar::new(0);
-        bar.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n[{bar:40}] {pos}/{len}  P:{passed} F:{failed} S:{skipped}")
-            .unwrap());
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("=>-"),
+        );
+
         Self {
             bar,
             passed: 0,
             failed: 0,
             skipped: 0,
             failures: Vec::new(),
+            total: 0,
         }
+    }
+
+    /// Check if we should use progress bar (interactive terminal)
+    pub fn should_use_progress_bar() -> bool {
+        atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
     }
 }
 ```
@@ -3478,19 +3544,36 @@ impl ProgressReporter {
 Failures are buffered and displayed at the end:
 
 ```rust
-fn on_run_finished(&mut self, _results: &[TestResult]) {
+fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
     self.bar.finish_and_clear();
 
+    // Print failure details
     if !self.failures.is_empty() {
-        eprintln!("\n=== FAILURES ===\n");
+        eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
         for failure in &self.failures {
-            eprintln!("FAILED: {}", failure.test_name);
-            eprintln!("{}\n", failure.message);
+            eprintln!("\n{}", failure.id);
+            eprintln!("{}", "-".repeat(failure.id.len().min(70)));
+            // Limit failure message to 20 lines
+            for line in failure.message.lines().take(20) {
+                eprintln!("{}", line);
+            }
         }
+        eprintln!("{}", "=".repeat(70));
     }
 
-    eprintln!("\n{} passed, {} failed, {} skipped",
-        self.passed, self.failed, self.skipped);
+    // Print summary with colors
+    let duration_secs = duration_ms as f64 / 1000.0;
+    if failed > 0 {
+        eprintln!(
+            "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+            passed, failed, skipped, duration_secs
+        );
+    } else {
+        eprintln!(
+            "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+            passed, failed, skipped, duration_secs
+        );
+    }
 }
 ```
 
@@ -3503,37 +3586,60 @@ Simple dots output for CI environments.
 ### Output Format
 
 ```
-....F..s....F.....
+....F..s.....F.....
 ```
 
 - `.` = passed
 - `F` = failed
 - `s` = skipped
+- `?` = unknown status
 
 ### Implementation
 
 ```rust
 pub struct DotsReporter {
-    failures: Vec<TestResult>,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    failures: Vec<FailureRecord>,
+    column: usize,
 }
 
 impl Reporter for DotsReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
-        let char = match result.status {
-            STATUS_PASS => '.',
-            STATUS_FAIL | STATUS_ERROR => 'F',
-            STATUS_SKIP => 's',
-            STATUS_CRASH => 'C',
-            _ => '?',
-        };
-        eprint!("{}", char);
-
-        if result.status == STATUS_FAIL || result.status == STATUS_ERROR {
-            self.failures.push(result.clone());
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        _duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        match status {
+            "pass" => {
+                self.passed += 1;
+                self.print_char('.');
+            }
+            "fail" => {
+                self.failed += 1;
+                self.print_char('F');
+                // Buffer failure for summary
+                self.failures.push(FailureRecord {
+                    id: id.to_string(),
+                    message: message.unwrap_or("").to_string(),
+                });
+            }
+            "skip" => {
+                self.skipped += 1;
+                self.print_char('s');
+            }
+            _ => {
+                self.print_char('?');
+            }
         }
     }
 }
 ```
+
+The DotsReporter wraps output at 80 columns for readability.
 
 ---
 
@@ -3544,8 +3650,35 @@ NDJSON output for IDE integration.
 ### Output Format
 
 ```json
-{"event":"test_started","test":"test_example.py::test_foo"}
-{"event":"test_finished","test":"test_example.py::test_foo","status":"pass","duration_ms":12}
+{"event":"run_start","count":100}
+{"event":"test_start","id":"test_example.py::test_foo","file":"test_example.py"}
+{"event":"test_finished","id":"test_example.py::test_foo","status":"pass","duration_ms":12}
+{"event":"run_finished","passed":98,"failed":1,"skipped":1,"duration_ms":2500}
+```
+
+### MachineEvent Enum
+
+```rust
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum MachineEvent<'a> {
+    RunStart { count: usize },
+    TestStart { id: &'a str, file: &'a str },
+    TestFinished {
+        id: &'a str,
+        status: &'a str,
+        duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<&'a str>,
+    },
+    RunFinished {
+        passed: usize,
+        failed: usize,
+        skipped: usize,
+        duration_ms: u64,
+    },
+    Error { message: &'a str },
+}
 ```
 
 ### Implementation
@@ -3554,15 +3687,22 @@ NDJSON output for IDE integration.
 pub struct JsonReporter;
 
 impl Reporter for JsonReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
-        let event = json!({
-            "event": "test_finished",
-            "test": result.test_name,
-            "status": status_to_string(result.status),
-            "duration_ms": result.duration_ns / 1_000_000,
-            "message": result.message,
-        });
-        println!("{}", event);
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        let event = MachineEvent::TestFinished {
+            id,
+            status,
+            duration_ms,
+            message,
+        };
+        if let Ok(json) = serde_json::to_string(&event) {
+            println!("{}", json);
+        }
     }
 }
 ```
@@ -3570,42 +3710,6 @@ impl Reporter for JsonReporter {
 ### Stdout Purity
 
 JsonReporter writes to **stdout** while other output goes to **stderr**, ensuring clean JSON parsing.
-
----
-
-## JunitReporter
-
-JUnit XML for CI systems.
-
-### Output Format
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites>
-  <testsuite name="tach" tests="100" failures="3" errors="0" skipped="2">
-    <testcase name="test_foo" classname="test_example" time="0.012"/>
-    <testcase name="test_bar" classname="test_example" time="0.008">
-      <failure message="AssertionError">...</failure>
-    </testcase>
-  </testsuite>
-</testsuites>
-```
-
-### Implementation
-
-```rust
-pub struct JunitReporter {
-    output_path: PathBuf,
-    results: Vec<TestResult>,
-}
-
-impl Reporter for JunitReporter {
-    fn on_run_finished(&mut self, results: &[TestResult]) {
-        let xml = generate_junit_xml(results);
-        std::fs::write(&self.output_path, xml).unwrap();
-    }
-}
-```
 
 ---
 
@@ -3618,10 +3722,16 @@ pub struct MultiReporter {
     reporters: Vec<Box<dyn Reporter>>,
 }
 
+impl MultiReporter {
+    pub fn new(reporters: Vec<Box<dyn Reporter>>) -> Self {
+        Self { reporters }
+    }
+}
+
 impl Reporter for MultiReporter {
-    fn on_test_finished(&mut self, result: &TestResult) {
+    fn on_test_finished(&mut self, id: &str, status: &str, duration_ms: u64, message: Option<&str>) {
         for reporter in &mut self.reporters {
-            reporter.on_test_finished(result);
+            reporter.on_test_finished(id, status, duration_ms, message);
         }
     }
 }
@@ -3630,9 +3740,11 @@ impl Reporter for MultiReporter {
 ### Usage
 
 ```rust
-let mut reporters = MultiReporter::new();
-reporters.add(Box::new(ProgressReporter::new()));
-reporters.add(Box::new(JunitReporter::new("results.xml")));
+let reporters: Vec<Box<dyn Reporter>> = vec![
+    Box::new(ProgressReporter::new()),
+    Box::new(JsonReporter),
+];
+let mut multi = MultiReporter::new(reporters);
 ```
 
 ---
@@ -3656,17 +3768,25 @@ pub fn should_use_progress_bar() -> bool {
 
 ## Color Output
 
+The reporters use raw ANSI escape codes for terminal colors:
+
 ```rust
-fn format_status(status: u8) -> ColoredString {
-    match status {
-        STATUS_PASS => "PASS".green(),
-        STATUS_FAIL => "FAIL".red(),
-        STATUS_SKIP => "SKIP".yellow(),
-        STATUS_CRASH => "CRASH".red().bold(),
-        _ => "???".normal(),
-    }
-}
+// Red for failures
+eprintln!("\x1b[31m{} passed, {} failed, {} skipped\x1b[0m", passed, failed, skipped);
+
+// Green for success
+eprintln!("\x1b[32m{} passed, {} failed, {} skipped\x1b[0m", passed, failed, skipped);
+
+// Cyan for informational messages
+eprintln!("\x1b[36m(Saved {:.1}s of initialization overhead)\x1b[0m", saved_secs);
 ```
+
+ANSI color codes used:
+
+- `\x1b[31m` - Red (failures)
+- `\x1b[32m` - Green (success)
+- `\x1b[36m` - Cyan (info)
+- `\x1b[0m` - Reset
 
 ---
 
@@ -3674,19 +3794,13 @@ fn format_status(status: u8) -> ColoredString {
 
 ```rust
 // In main.rs
-let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
-
-if cli.format == "json" {
-    reporters.push(Box::new(JsonReporter::new()));
-} else if should_use_progress_bar() {
-    reporters.push(Box::new(ProgressReporter::new()));
+let reporters: Vec<Box<dyn Reporter>> = if cli.format == "json" {
+    vec![Box::new(JsonReporter)]
+} else if ProgressReporter::should_use_progress_bar() {
+    vec![Box::new(ProgressReporter::new())]
 } else {
-    reporters.push(Box::new(DotsReporter::new()));
-}
-
-if let Some(path) = &cli.junit_xml {
-    reporters.push(Box::new(JunitReporter::new(path)));
-}
+    vec![Box::new(DotsReporter::new())]
+};
 
 let mut multi = MultiReporter::new(reporters);
 scheduler.run(&mut multi)?;
@@ -3749,17 +3863,17 @@ Central repository for all discovered fixtures.
 
 ```rust
 pub struct FixtureRegistry {
-    pub global: HashMap<String, FixtureDefinition>,
+    pub global: HashMap<String, (FixtureDefinition, PathBuf)>,
     pub local: HashMap<PathBuf, HashMap<String, FixtureDefinition>>,
     pub class_scoped: HashMap<(PathBuf, String), HashMap<String, FixtureDefinition>>,
 }
 ```
 
-| Field          | Description                          |
-| :------------- | :----------------------------------- |
-| `global`       | Fixtures from `conftest.py` files    |
-| `local`        | Module-level fixtures per file       |
-| `class_scoped` | Fixtures defined inside test classes |
+| Field          | Description                                          |
+| :------------- | :--------------------------------------------------- |
+| `global`       | Fixtures from `conftest.py` files (with source path) |
+| `local`        | Module-level fixtures per file                       |
+| `class_scoped` | Fixtures defined inside test classes                 |
 
 ### ResolvedFixture
 
@@ -3768,9 +3882,8 @@ A fixture that has been located and linked.
 ```rust
 pub struct ResolvedFixture {
     pub name: String,
-    pub scope: FixtureScope,
     pub source_file: PathBuf,
-    pub dependencies: Vec<String>,
+    pub scope: FixtureScope,
 }
 ```
 
@@ -3792,8 +3905,8 @@ pub struct RunnableTest {
 
 ```rust
 pub enum ResolutionError {
-    MissingFixture { name: String, test: String },
-    CyclicDependency { cycle: Vec<String> },
+    MissingFixture { test: String, fixture: String },
+    CyclicDependency { test: String, cycle: Vec<String> },
 }
 ```
 
@@ -3879,19 +3992,33 @@ These fixtures are provided by pytest at runtime and skipped during static resol
 
 ```rust
 const PYTEST_BUILTINS: &[&str] = &[
+    // Monkey-patching and environment
+    "monkeypatch",
+    // Temporary directories
     "tmp_path",
     "tmp_path_factory",
     "tmpdir",
     "tmpdir_factory",
-    "monkeypatch",
+    // Output capture
     "capsys",
     "capfd",
+    "capsysbinary",
+    "capfdbinary",
     "caplog",
+    // Fixture metadata
     "request",
-    "pytestconfig",
+    // Caching
     "cache",
+    // Recording
     "record_property",
     "record_testsuite_property",
+    "record_xml_attribute",
+    // Doctest
+    "doctest_namespace",
+    // Recwarn
+    "recwarn",
+    // Pytestconfig
+    "pytestconfig",
 ];
 ```
 
@@ -4001,8 +4128,8 @@ fn lookup_class_fixture(
 
 ```rust
 ResolutionError::MissingFixture {
-    name: "unknown_fixture".into(),
     test: "test_something".into(),
+    fixture: "unknown_fixture".into(),
 }
 ```
 
@@ -4010,6 +4137,7 @@ ResolutionError::MissingFixture {
 
 ```rust
 ResolutionError::CyclicDependency {
+    test: "test_something".into(),
     cycle: vec!["fixture_a", "fixture_b", "fixture_a"],
 }
 ```
@@ -4519,7 +4647,7 @@ fn get_stale_workers(&self, timeout: Duration) -> Vec<(u32, String, usize)> {
 fn dispatch_test(&mut self, test: &RunnableTest, test_id: u32, slot: usize) -> Result<()> {
     let log_fd = self.log_capture.lock().unwrap_or_else(|e| e.into_inner()).get_fd(slot).unwrap_or(-1);
     let payload = TestPayload { /* ... */ };
-    let payload_bytes = bincode::serialize(&payload)?;
+    let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())?;
     let len = payload_bytes.len() as u32;
 
     self.cmd_socket.write_all(&[CMD_FORK])?;
@@ -4547,7 +4675,10 @@ fn try_collect_result_for_reporter(&self) -> Option<(String, &'static str, u64, 
         let len = u32::from_le_bytes(len_buf) as usize;
         let mut result_buf = vec![0u8; len];
         if socket.read_exact(&mut result_buf).is_ok() {
-            if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+            if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+                &result_buf,
+                bincode::config::standard(),
+            ) {
                 // ... remove worker, clear logs, format for reporter
                 return Some((test_name, status, duration_ms, msg));
             }
@@ -4720,14 +4851,17 @@ pub struct WorkerSnapshot {
     pub uffd: Uffd,
     pub golden_pages: HashMap<usize, Vec<u8>>,
     pub regions: Vec<MemoryRegion>,
+    #[cfg(target_arch = "x86_64")]
+    pub tls_snapshot: Option<TlsSnapshot>,
 }
 ```
 
-| Field          | Description                            |
-| :------------- | :------------------------------------- |
-| `uffd`         | The userfaultfd object for this worker |
-| `golden_pages` | Map of page address to page data       |
-| `regions`      | Original memory regions                |
+| Field          | Description                                                  |
+| :------------- | :----------------------------------------------------------- |
+| `uffd`         | The userfaultfd object for this worker                       |
+| `golden_pages` | Map of page address to page data                             |
+| `regions`      | Original memory regions                                      |
+| `tls_snapshot` | TLS snapshot for Python 3.13+ mimalloc support (x86_64 only) |
 
 ### SnapshotManager
 
@@ -4736,9 +4870,17 @@ Central supervisor-side authority.
 ```rust
 pub struct SnapshotManager {
     pub available: bool,
-    pub workers: HashMap<i32, WorkerSnapshot>,
+    workers: HashMap<i32, WorkerSnapshot>,  // private field
+    #[cfg(target_arch = "x86_64")]
+    calibration: Option<TlsCalibration>,    // TLS calibration data
 }
 ```
+
+| Field         | Description                                             |
+| :------------ | :------------------------------------------------------ |
+| `available`   | Whether userfaultfd is available on this kernel         |
+| `workers`     | Per-worker snapshot state (private field)               |
+| `calibration` | TLS calibration data for mimalloc support (x86_64 only) |
 
 ### LibpythonInfo
 
@@ -4939,18 +5081,111 @@ fn handle_pending_faults(worker: &mut WorkerSnapshot) {
 
 ---
 
+## TLS Restoration System
+
+Python 3.13+ uses mimalloc instead of pymalloc. mimalloc stores critical heap pointers in Thread Local Storage (TLS). Without restoring TLS alongside memory, workers suffer from "Fractured Brain" syndrome where heap pointers point to stale data.
+
+### The Restoration Quadrant
+
+The complete memory restoration requires four components:
+
+```mermaid
+flowchart TB
+    subgraph Quadrant["RESTORATION QUADRANT"]
+        BSS["BSS Segment<br/>(Python globals)"]
+        Heap["Heap<br/>(Object allocations)"]
+        Stack["Stack<br/>(Local variables)"]
+        TCB["Thread Control Block<br/>(TLS + fs_base)"]
+    end
+
+    MADV["madvise(MADV_DONTNEED)"]
+    UFFD["userfaultfd lazy restore"]
+    TLS["TLS direct restore"]
+
+    MADV --> BSS & Heap & Stack
+    UFFD --> BSS & Heap & Stack
+    TLS --> TCB
+
+    style TCB fill:#f96,stroke:#333,stroke-width:2px
+```
+
+### TlsSnapshot
+
+```rust
+pub struct TlsSnapshot {
+    pub fs_base: usize,           // x86_64 fs_base register (TCB address)
+    pub tls_data: Vec<u8>,        // Captured TLS memory (dynamic size)
+    pub tls_region_start: usize,  // From /proc/pid/maps
+    pub tls_region_end: usize,
+}
+```
+
+### Key Functions (x86_64 only)
+
+```rust
+pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize>;
+pub fn set_fs_base_ptrace(pid: Pid, fs_base: usize) -> Result<()>;
+pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot>;
+pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()>;
+pub fn restore_vectorized(pid: Pid, regions: &[RestoreRegion]) -> Result<VectorizedRestoreResult>;
+```
+
+**Dynamic TLS Sizing**: Capture size from `/proc/pid/maps` boundaries, not fixed 12KB. Handles TensorFlow/PyTorch C-extensions with large Dynamic Thread Vectors.
+
+**Performance**: Expected 20-40% reduction in restoration time compared to individual restores.
+
+---
+
+## Full Reset Methods
+
+### reset_worker_full
+
+Complete worker reset with TLS restoration.
+
+```rust
+#[cfg(target_arch = "x86_64")]
+pub fn reset_worker_full(&self, pid: Pid) -> Result<()>;
+```
+
+**Sequence**:
+
+1. Invalidate memory pages via `process_madvise(MADV_DONTNEED)`
+2. Restore TLS block via `process_vm_writev`
+3. Restore fs_base register via `ptrace ARCH_SET_FS`
+4. Page faults restore heap/BSS via userfaultfd
+
+### reset_worker_full_vectorized
+
+Optimized version using batched writes.
+
+```rust
+#[cfg(target_arch = "x86_64")]
+pub fn reset_worker_full_vectorized(&self, pid: Pid) -> Result<VectorizedRestoreResult>;
+```
+
+**Sequence**:
+
+1. Invalidate memory pages via `process_madvise(MADV_DONTNEED)`
+2. Vectorized restore: TLS + critical regions in single syscall
+3. Restore fs_base register via ptrace
+4. Page faults restore remaining heap/BSS via userfaultfd
+
+---
+
 ## System Calls
 
 | System Call              | Purpose                                           |
 | :----------------------- | :------------------------------------------------ |
 | `userfaultfd`            | Create tracking object for lazy restoration       |
 | `process_vm_readv`       | Copy worker memory to supervisor without ptrace   |
+| `process_vm_writev`      | Write memory to worker (TLS restoration)          |
 | `madvise(MADV_DONTNEED)` | Drop pages, forcing re-fault on access            |
 | `ioctl(UFFDIO_REGISTER)` | Register memory regions for fault notification    |
 | `ioctl(UFFDIO_COPY)`     | Copy golden page back to worker                   |
 | `ioctl(UFFDIO_ZEROPAGE)` | Zero-fill new pages                               |
 | `pidfd_open`             | Get process file descriptor for remote operations |
 | `process_madvise`        | Remote memory invalidation (syscall 440)          |
+| `ptrace(ARCH_PRCTL)`     | Get/set fs_base register for TLS (x86_64)         |
 
 ---
 
@@ -4960,9 +5195,9 @@ The coverage ring buffer must survive memory resets:
 
 ```rust
 fn should_snapshot(region: &MemoryRegion) -> bool {
-    // Exclude coverage buffer
+    // Exclude coverage buffer and other tach-managed memfd regions
     if region.name.contains("tach_coverage") ||
-       region.name.contains("tach_mapping") {
+       region.name.contains("memfd:tach") {
         return false;
     }
     // ... other filters
@@ -5187,25 +5422,37 @@ graph TD
 
 ### Implementation
 
+The `propagate` method is an internal helper called by `build()`:
+
 ```rust
 impl ToxicityGraph {
-    pub fn propagate(&mut self) {
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for edge in self.graph.edge_indices() {
-                let (from, to) = self.graph.edge_endpoints(edge).unwrap();
-                let to_toxic = self.graph[to].is_toxic;
-                let from_node = &mut self.graph[from];
+    /// Private method - called internally by build()
+    fn propagate(&mut self) {
+        loop {
+            let mut changed = false;
 
-                if to_toxic && !from_node.is_toxic {
-                    from_node.is_toxic = true;
-                    from_node.reasons.push(format!(
-                        "Imports toxic module '{}'",
-                        self.graph[to].name
-                    ));
+            // Collect edges to avoid borrow issues
+            let edges: Vec<(NodeIndex, NodeIndex)> = self
+                .graph
+                .edge_indices()
+                .filter_map(|e| self.graph.edge_endpoints(e))
+                .collect();
+
+            for (from_idx, to_idx) in edges {
+                let to_toxic = self.graph[to_idx].is_toxic;
+                let to_name = self.graph[to_idx].name.clone();
+
+                if to_toxic && !self.graph[from_idx].is_toxic {
+                    self.graph[from_idx].is_toxic = true;
+                    self.graph[from_idx]
+                        .reasons
+                        .push(format!("Imports toxic module '{}'", to_name));
                     changed = true;
                 }
+            }
+
+            if !changed {
+                break;
             }
         }
     }
@@ -5278,16 +5525,35 @@ This is conservative but safe.
 Analyzes a single Python file for local toxicity.
 
 ```rust
-pub fn analyze_file(path: &Path) -> Result<ToxicityReport>
+pub fn analyze_file(source: &str, path: &Path) -> ToxicityReport
 ```
+
+| Parameter | Description                                |
+| :-------- | :----------------------------------------- |
+| `source`  | Python source code as a string             |
+| `path`    | Path to the file (used for error messages) |
+
+Returns a `ToxicityReport` directly (not wrapped in Result).
 
 ### ToxicityGraph::build
 
 Constructs the dependency graph from all project files.
 
 ```rust
-pub fn build(modules: &[TestModule]) -> ToxicityGraph
+pub fn build(paths: &[PathBuf], project_root: &Path) -> Self
 ```
+
+| Parameter      | Description                               |
+| :------------- | :---------------------------------------- |
+| `paths`        | List of Python file paths to analyze      |
+| `project_root` | Root directory for module name resolution |
+
+This method:
+
+1. Indexes all files (path to module name)
+2. Analyzes each file for local toxicity
+3. Builds import edges
+4. Propagates toxicity transitively
 
 ### ToxicityGraph::is_toxic
 
@@ -5374,9 +5640,9 @@ flowchart TB
 Represents a persistent worker in the pool.
 
 ```rust
-pub struct WorkerHandle {
-    pub pid: i32,
-    pub socket: UnixStream,
+struct WorkerHandle {
+    pid: i32,
+    socket: UnixStream,
 }
 ```
 
@@ -5386,8 +5652,8 @@ pub struct WorkerHandle {
 // Pool of idle workers ready for reuse
 static IDLE_WORKERS: Mutex<Vec<WorkerHandle>> = Mutex::new(Vec::new());
 
-// Cached memory regions for self-reset
-static RESET_REGIONS: Mutex<Vec<MemoryRegion>> = Mutex::new(Vec::new());
+// Cached memory regions for self-reset (start_address, length)
+static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
 // Whether snapshot mode is active
 static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -5584,12 +5850,12 @@ def post_fork_init():
 ### Step 6: Snapshot Handshake
 
 ```python
-def init_snapshot_mode(supervisor_sock):
+def init_snapshot_mode(sock_path):
     # Create userfaultfd
     # Send to supervisor via SCM_RIGHTS
     # SIGSTOP (supervisor captures golden state)
     # Resume on SIGCONT
-    return tach_rust.init_snapshot_mode(supervisor_sock)
+    return tach_rust.init_snapshot_mode(sock_path)
 ```
 
 ---
@@ -5638,32 +5904,56 @@ Toxic workers exit immediately after the test. The Zygote spawns a replacement.
 
 ## FFI Functions
 
-### init_snapshot_mode
+The `tach_rust` module is injected into Python's `sys.modules` by `inject_tach_rust_module()` and exposes 14 functions organized into 5 categories:
 
-Initializes userfaultfd handshake.
+### Snapshot Mode
 
-```rust
-#[pyfunction]
-fn init_snapshot_mode(supervisor_sock: &str) -> bool
-```
+Core functions for memory snapshotting and reset.
 
-### reset_memory
+| Function             | Signature                                                  | Description                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init_snapshot_mode` | `fn init_snapshot_mode(sock_path: &str) -> PyResult<bool>` | Creates userfaultfd, sends to Supervisor via SCM_RIGHTS, caches memory regions, quiesces jemalloc, then SIGSTOP for snapshot capture. Returns true if snapshotting enabled, false if fallback. |
+| `reset_memory`       | `fn reset_memory() -> PyResult<()>`                        | The "Seppuku" pattern - calls `madvise(MADV_DONTNEED)` on cached regions to trigger UFFD faults for golden page restoration.                                                                   |
+| `cleanup_modules`    | `fn cleanup_modules() -> PyResult<()>`                     | Delegates to `tach_harness.cleanup_test_modules()` to remove test-imported modules from `sys.modules`.                                                                                         |
 
-Triggers the Seppuku pattern.
+### Jemalloc Allocator Control
 
-```rust
-#[pyfunction]
-fn reset_memory() -> PyResult<()>
-```
+Functions for managing the jemalloc allocator state before snapshot.
 
-### cleanup_modules
+| Function            | Signature                                     | Description                                                                                                                                 |
+| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quiesce_allocator` | `fn py_quiesce_allocator() -> PyResult<()>`   | Flushes thread-local caches (`thread.tcache.flush`) and synchronizes allocator metadata (`epoch`) to ensure heap is in snapshot-safe state. |
+| `verify_jemalloc`   | `fn py_verify_jemalloc() -> PyResult<String>` | Verifies that jemalloc is the active allocator. Returns version string or error.                                                            |
 
-Removes test-imported modules.
+### Zero-Overhead Coverage (PEP 669)
 
-```rust
-#[pyfunction]
-fn cleanup_modules() -> PyResult<()>
-```
+Functions for `sys.monitoring` callbacks to record coverage data in ring buffers.
+
+| Function                | Signature                                                          | Description                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `record_line`           | `fn py_record_line(py: Python, code_id: u64, lineno: u32) -> bool` | Records a LINE event (code_id, lineno) to the ring buffer. Returns false if buffer full. Releases GIL before writing. |
+| `is_coverage_enabled`   | `fn py_is_coverage_enabled() -> bool`                              | Returns true if coverage collection is active.                                                                        |
+| `get_coverage_overflow` | `fn py_get_coverage_overflow() -> u64`                             | Returns count of dropped entries due to buffer full.                                                                  |
+
+### Coverage Resolution
+
+Functions for mapping code_id to filename.
+
+| Function               | Signature                                                           | Description                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `record_py_start`      | `fn py_record_py_start(py: Python, code_id: u64, filename: String)` | Registers code object on first function entry (PY_START event). Maps code_id to filename. Releases GIL before work. |
+| `get_mapping_overflow` | `fn py_get_mapping_overflow() -> u64`                               | Returns count of dropped mappings due to buffer full.                                                               |
+
+### Zero-Copy Loader
+
+Functions for the bytecode registry (Request Model).
+
+| Function            | Signature                                                                                      | Description                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `get_module`        | `fn get_module(name: &str) -> Option<Vec<u8>>`                                                 | Returns pre-compiled bytecode for a module from the registry.                                                |
+| `get_module_path`   | `fn get_module_path(name: &str) -> Option<String>`                                             | Returns the source file path for a module.                                                                   |
+| `is_module_package` | `fn is_module_package(name: &str) -> Option<bool>`                                             | Returns whether the module is a package.                                                                     |
+| `load_module`       | `fn load_module(py: Python, name: &str, source_path: &str, bytecode: &[u8]) -> PyResult<bool>` | Deserializes bytecode via `PyMarshal_ReadObjectFromString` and executes via `PyImport_ExecCodeModuleObject`. |
 
 ---
 
@@ -6095,7 +6385,7 @@ match apply_landlock(&project_root, 9999) {
     Ok(SandboxStatus::NotEnforced) => {
         eprintln!("[sandbox] WARNING: Landlock not supported, continuing without");
     }
-    Ok(SandboxStatus::Enforced) => {
+    Ok(SandboxStatus::FullyEnforced) => {
         eprintln!("[sandbox] Landlock enforced");
     }
     Err(e) => {
@@ -7452,48 +7742,88 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 ### Commands
 
-| Command | Description                           |
-| :------ | :------------------------------------ |
-| `test`  | Run tests (default)                   |
-| `list`  | List discovered tests without running |
+| Command     | Description                                   |
+| :---------- | :-------------------------------------------- |
+| `test`      | Run tests (default)                           |
+| `list`      | List discovered tests without running         |
+| `self-test` | Run self-diagnostics to verify kernel support |
+| `version`   | Show version and build information            |
 
 ### Options
 
-| Flag                 | Description                         | Default |
-| :------------------- | :---------------------------------- | :------ |
-| `--format <FORMAT>`  | Output format: `human` or `json`    | `human` |
-| `--junit-xml <PATH>` | Generate JUnit XML report           | -       |
-| `--coverage`         | Enable PEP 669 coverage collection  | false   |
-| `--no-isolation`     | Disable namespace/sandbox isolation | false   |
-| `--watch`, `-w`      | Re-run tests on file changes        | false   |
-| `[PATH]`             | Test path (file or directory)       | `.`     |
+#### Parallel Execution
+
+| Flag                | Description                                       | Default |
+| :------------------ | :------------------------------------------------ | :------ |
+| `-n, --workers <N>` | Number of parallel workers (`auto` for CPU count) | `auto`  |
+
+#### Test Selection
+
+| Flag                      | Description                             | Default |
+| :------------------------ | :-------------------------------------- | :------ |
+| `-k, --keyword <EXPR>`    | Run tests matching substring expression | -       |
+| `-m, --markers <MARKERS>` | Run tests matching marker expression    | -       |
+| `[PATH]`                  | Test path (file or directory)           | `.`     |
+
+#### Execution Control
+
+| Flag              | Description                       | Default |
+| :---------------- | :-------------------------------- | :------ |
+| `-x, --exitfirst` | Exit on first failure (fail fast) | false   |
+| `--maxfail <N>`   | Exit after N failures             | -       |
+| `--watch`, `-w`   | Re-run tests on file changes      | false   |
+
+#### Output Control
+
+| Flag                | Description                        | Default |
+| :------------------ | :--------------------------------- | :------ |
+| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`) | normal  |
+| `-q, --quiet`       | Decrease verbosity (quiet mode)    | false   |
+| `--format <FORMAT>` | Output format: `human` or `json`   | `human` |
+| `--durations <N>`   | Show timing for slowest N tests    | -       |
+
+#### Coverage
+
+| Flag           | Description                                       | Default |
+| :------------- | :------------------------------------------------ | :------ |
+| `--coverage`   | Enable PEP 669 coverage collection                | false   |
+| `--cov <PATH>` | Source directories for coverage (can be repeated) | -       |
+
+#### Reporting
+
+| Flag                 | Description               | Default |
+| :------------------- | :------------------------ | :------ |
+| `--junit-xml <PATH>` | Generate JUnit XML report | -       |
+
+#### Tach-Specific Options
+
+| Flag             | Description                                        | Default |
+| :--------------- | :------------------------------------------------- | :------ |
+| `--no-isolation` | Disable namespace/sandbox isolation                | false   |
+| `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
+
+#### Passthrough Arguments
+
+| Flag           | Description                            |
+| :------------- | :------------------------------------- |
+| `-- <ARGS>...` | Extra arguments to pass to pytest shim |
 
 ### Examples
 
 ```bash
-# Run all tests
-tach-core .
-
-# Run specific file
-tach-core tests/test_auth.py
-
-# List tests without running
-tach-core list .
-
-# Enable coverage
-tach-core --coverage .
-
-# JSON output for IDE integration
-tach-core --format json .
-
-# Generate JUnit XML
-tach-core --junit-xml results.xml .
-
-# Development mode (no sandbox)
-tach-core --no-isolation .
-
-# Watch mode
-tach-core --watch .
+tach-core .                          # Run all tests
+tach-core tests/test_auth.py         # Run specific file
+tach-core -n 4 .                     # 4 parallel workers
+tach-core -k "network" .             # Filter by keyword
+tach-core -m "not slow" .            # Filter by marker
+tach-core -x .                       # Fail fast
+tach-core -v .                       # Verbose output
+tach-core --coverage .               # Enable coverage
+tach-core --format json .            # JSON output (IDE)
+tach-core --junit-xml results.xml .  # JUnit XML report
+tach-core --watch .                  # Watch mode
+tach-core list .                     # List tests only
+tach-core self-test                  # Verify kernel support
 ```
 
 ---
@@ -7502,6 +7832,7 @@ tach-core --watch .
 
 | Variable               | Description                       | Default |
 | :--------------------- | :-------------------------------- | :------ |
+| `TACH_WORKERS`         | Number of parallel workers        | `auto`  |
 | `TACH_FORMAT`          | Output format (`human` or `json`) | `human` |
 | `TACH_JUNIT_XML`       | Path to JUnit XML output          | -       |
 | `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   | -       |
@@ -7515,6 +7846,9 @@ tach-core --watch .
 ### Examples
 
 ```bash
+# Set number of parallel workers
+TACH_WORKERS=4 tach-core .
+
 # Enable coverage via environment
 TACH_COVERAGE=1 tach-core .
 

@@ -169,7 +169,7 @@ fn get_stale_workers(&self, timeout: Duration) -> Vec<(u32, String, usize)> {
 fn dispatch_test(&mut self, test: &RunnableTest, test_id: u32, slot: usize) -> Result<()> {
     let log_fd = self.log_capture.lock().unwrap_or_else(|e| e.into_inner()).get_fd(slot).unwrap_or(-1);
     let payload = TestPayload { /* ... */ };
-    let payload_bytes = bincode::serialize(&payload)?;
+    let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())?;
     let len = payload_bytes.len() as u32;
 
     self.cmd_socket.write_all(&[CMD_FORK])?;
@@ -197,7 +197,10 @@ fn try_collect_result_for_reporter(&self) -> Option<(String, &'static str, u64, 
         let len = u32::from_le_bytes(len_buf) as usize;
         let mut result_buf = vec![0u8; len];
         if socket.read_exact(&mut result_buf).is_ok() {
-            if let Ok(result) = bincode::deserialize::<TestResult>(&result_buf) {
+            if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+                &result_buf,
+                bincode::config::standard(),
+            ) {
                 // ... remove worker, clear logs, format for reporter
                 return Some((test_name, status, duration_ms, msg));
             }

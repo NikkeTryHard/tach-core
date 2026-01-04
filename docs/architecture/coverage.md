@@ -252,7 +252,7 @@ sequenceDiagram
 
 - **PY_START:** Registers `code_id -> filename` once per function.
 - **LINE:** Records `(code_id, lineno)` for every line executed.
-- **GIL Discipline:** All FFI functions (`record_line`, `record_py_start`) release the GIL using `py.allow_threads` before shared memory access.
+- **GIL Discipline:** All FFI functions (`record_line`, `record_py_start`) release the GIL using `py.detach()` before shared memory access.
 
 ---
 

@@ -44,17 +44,17 @@ Central repository for all discovered fixtures.
 
 ```rust
 pub struct FixtureRegistry {
-    pub global: HashMap<String, FixtureDefinition>,
+    pub global: HashMap<String, (FixtureDefinition, PathBuf)>,
     pub local: HashMap<PathBuf, HashMap<String, FixtureDefinition>>,
     pub class_scoped: HashMap<(PathBuf, String), HashMap<String, FixtureDefinition>>,
 }
 ```
 
-| Field          | Description                          |
-| :------------- | :----------------------------------- |
-| `global`       | Fixtures from `conftest.py` files    |
-| `local`        | Module-level fixtures per file       |
-| `class_scoped` | Fixtures defined inside test classes |
+| Field          | Description                                          |
+| :------------- | :--------------------------------------------------- |
+| `global`       | Fixtures from `conftest.py` files (with source path) |
+| `local`        | Module-level fixtures per file                       |
+| `class_scoped` | Fixtures defined inside test classes                 |
 
 ### ResolvedFixture
 
@@ -63,9 +63,8 @@ A fixture that has been located and linked.
 ```rust
 pub struct ResolvedFixture {
     pub name: String,
-    pub scope: FixtureScope,
     pub source_file: PathBuf,
-    pub dependencies: Vec<String>,
+    pub scope: FixtureScope,
 }
 ```
 
@@ -87,8 +86,8 @@ pub struct RunnableTest {
 
 ```rust
 pub enum ResolutionError {
-    MissingFixture { name: String, test: String },
-    CyclicDependency { cycle: Vec<String> },
+    MissingFixture { test: String, fixture: String },
+    CyclicDependency { test: String, cycle: Vec<String> },
 }
 ```
 
@@ -174,19 +173,33 @@ These fixtures are provided by pytest at runtime and skipped during static resol
 
 ```rust
 const PYTEST_BUILTINS: &[&str] = &[
+    // Monkey-patching and environment
+    "monkeypatch",
+    // Temporary directories
     "tmp_path",
     "tmp_path_factory",
     "tmpdir",
     "tmpdir_factory",
-    "monkeypatch",
+    // Output capture
     "capsys",
     "capfd",
+    "capsysbinary",
+    "capfdbinary",
     "caplog",
+    // Fixture metadata
     "request",
-    "pytestconfig",
+    // Caching
     "cache",
+    // Recording
     "record_property",
     "record_testsuite_property",
+    "record_xml_attribute",
+    // Doctest
+    "doctest_namespace",
+    // Recwarn
+    "recwarn",
+    // Pytestconfig
+    "pytestconfig",
 ];
 ```
 
@@ -296,8 +309,8 @@ fn lookup_class_fixture(
 
 ```rust
 ResolutionError::MissingFixture {
-    name: "unknown_fixture".into(),
     test: "test_something".into(),
+    fixture: "unknown_fixture".into(),
 }
 ```
 
@@ -305,6 +318,7 @@ ResolutionError::MissingFixture {
 
 ```rust
 ResolutionError::CyclicDependency {
+    test: "test_something".into(),
     cycle: vec!["fixture_a", "fixture_b", "fixture_a"],
 }
 ```

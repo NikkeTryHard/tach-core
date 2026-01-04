@@ -247,7 +247,7 @@ fn load_module(
     py: Python,
     name: &str,
     source_path: &str,
-    bytecode: Vec<u8>,
+    bytecode: &[u8],
 ) -> PyResult<bool>
 ```
 

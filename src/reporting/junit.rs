@@ -74,6 +74,8 @@ struct TestCase {
     time: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure: Option<Failure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped: Option<Skipped>,
 }
 
 #[derive(Serialize)]
@@ -83,6 +85,10 @@ struct Failure {
     #[serde(rename = "$text")]
     body: String,
 }
+
+/// Empty struct that serializes to <skipped/> element
+#[derive(Serialize)]
+struct Skipped {}
 
 // =============================================================================
 // JunitReporter
@@ -134,15 +140,22 @@ impl Reporter for JunitReporter {
             .replace(".py", "");
         let name = parts.get(1).unwrap_or(&id).to_string();
 
-        let failure = if status != "pass" {
-            let raw_msg = message.unwrap_or("Test failed");
-            let clean_msg = strip_ansi_codes(raw_msg);
-            Some(Failure {
-                message: "Test failed".to_string(),
-                body: clean_msg,
-            })
-        } else {
-            None
+        // Determine failure and skipped based on status
+        let (failure, skipped) = match status {
+            "pass" => (None, None),
+            "skip" => (None, Some(Skipped {})),
+            _ => {
+                // "fail" or any other status is treated as failure
+                let raw_msg = message.unwrap_or("Test failed");
+                let clean_msg = strip_ansi_codes(raw_msg);
+                (
+                    Some(Failure {
+                        message: "Test failed".to_string(),
+                        body: clean_msg,
+                    }),
+                    None,
+                )
+            }
         };
 
         self.cases.push(TestCase {
@@ -150,6 +163,7 @@ impl Reporter for JunitReporter {
             classname,
             time: duration_ms as f64 / 1000.0,
             failure,
+            skipped,
         });
     }
 
@@ -327,5 +341,39 @@ mod tests {
         reporter.on_run_start(0);
         assert!(reporter.cases.is_empty());
         assert!(reporter.error_message.is_none());
+    }
+
+    #[test]
+    fn test_junit_skipped_test() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished("test.py::test_skip", "skip", 5, None);
+
+        assert_eq!(reporter.cases.len(), 1);
+        assert!(reporter.cases[0].failure.is_none());
+        assert!(reporter.cases[0].skipped.is_some());
+    }
+
+    #[test]
+    fn test_junit_all_status_types() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(3);
+        reporter.on_test_finished("test.py::test_pass", "pass", 10, None);
+        reporter.on_test_finished("test.py::test_fail", "fail", 20, Some("assertion error"));
+        reporter.on_test_finished("test.py::test_skip", "skip", 5, None);
+
+        assert_eq!(reporter.cases.len(), 3);
+
+        // Pass: no failure, no skipped
+        assert!(reporter.cases[0].failure.is_none());
+        assert!(reporter.cases[0].skipped.is_none());
+
+        // Fail: failure present, no skipped
+        assert!(reporter.cases[1].failure.is_some());
+        assert!(reporter.cases[1].skipped.is_none());
+
+        // Skip: no failure, skipped present
+        assert!(reporter.cases[2].failure.is_none());
+        assert!(reporter.cases[2].skipped.is_some());
     }
 }
