@@ -149,3 +149,43 @@ path = "rust_tests/memory_invariant.rs"
 [[test]]
 name = "proptest_coverage"
 path = "rust_tests/proptest_coverage.rs"
+
+[[test]]
+name = "proptest_snapshot"
+path = "rust_tests/proptest_snapshot.rs"
+
+[[test]]
+name = "proptest_scheduler"
+path = "rust_tests/proptest_scheduler.rs"
+
+[[test]]
+name = "proptest_discovery"
+path = "rust_tests/proptest_discovery.rs"
+
+[[test]]
+name = "proptest_namespace"
+path = "rust_tests/proptest_namespace.rs"
+
+[[test]]
+name = "diagnostics_integration"
+path = "rust_tests/diagnostics_integration.rs"
+
+[[test]]
+name = "errors_integration"
+path = "rust_tests/errors_integration.rs"
+
+[[test]]
+name = "coverage_e2e"
+path = "rust_tests/coverage_e2e.rs"
+
+[[test]]
+name = "concurrent_stress"
+path = "rust_tests/concurrent_stress.rs"
+
+[[test]]
+name = "restoration_invariant"
+path = "rust_tests/restoration_invariant.rs"
+
+[[test]]
+name = "plugin_bridge_integration"
+path = "rust_tests/plugin_bridge_integration.rs"

@@ -641,4 +641,390 @@ mod tests {
         //
         // Full test requires integration test with actual fork
     }
+
+    // =========================================================================
+    // Additional Regression Prevention Tests (Phase 2)
+    // =========================================================================
+
+    #[test]
+    fn test_fd_teleport_request_empty() {
+        let req = FdTeleportRequest::batch(vec![], vec![], vec![]).unwrap();
+        assert!(req.is_empty());
+        assert_eq!(req.len(), 0);
+    }
+
+    #[test]
+    fn test_fd_teleport_request_single_same_fd() {
+        // Test when source and target FD are the same
+        let req = FdTeleportRequest::single(10, 10, "same_fd");
+        assert_eq!(req.fds[0], 10);
+        assert_eq!(req.target_fds[0], 10);
+    }
+
+    #[test]
+    fn test_fd_teleport_request_single_different_fd() {
+        // Test when source and target FD are different
+        let req = FdTeleportRequest::single(5, 100, "moved_fd");
+        assert_eq!(req.fds[0], 5);
+        assert_eq!(req.target_fds[0], 100);
+        assert_eq!(req.names[0], "moved_fd");
+    }
+
+    #[test]
+    fn test_fd_teleport_request_batch_max_size() {
+        // Test batch with exactly MAX_FDS_PER_MESSAGE
+        let fds: Vec<RawFd> = (0..MAX_FDS_PER_MESSAGE as i32).collect();
+        let targets: Vec<i32> = (100..100 + MAX_FDS_PER_MESSAGE as i32).collect();
+        let names: Vec<String> = (0..MAX_FDS_PER_MESSAGE)
+            .map(|i| format!("fd_{}", i))
+            .collect();
+
+        let result = FdTeleportRequest::batch(fds, targets, names);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), MAX_FDS_PER_MESSAGE);
+    }
+
+    #[test]
+    fn test_fd_teleport_request_batch_one_over_max() {
+        // Test batch with MAX_FDS_PER_MESSAGE + 1 (should fail)
+        let count = MAX_FDS_PER_MESSAGE + 1;
+        let fds: Vec<RawFd> = (0..count as i32).collect();
+        let targets: Vec<i32> = (100..100 + count as i32).collect();
+        let names: Vec<String> = (0..count).map(|i| format!("fd_{}", i)).collect();
+
+        let result = FdTeleportRequest::batch(fds, targets, names);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("too many FDs"));
+    }
+
+    #[test]
+    fn test_fd_teleport_request_negative_fds() {
+        // Negative FDs are technically valid in the request structure
+        // (validation happens at send/receive time)
+        let req = FdTeleportRequest::single(-1, -1, "negative");
+        assert_eq!(req.fds[0], -1);
+        assert_eq!(req.target_fds[0], -1);
+    }
+
+    #[test]
+    fn test_fd_teleport_request_names_preserved() {
+        // Test that names are properly stored
+        let req = FdTeleportRequest::single(5, 5, "special:fixture:db_connection");
+        assert_eq!(req.names[0], "special:fixture:db_connection");
+    }
+
+    #[test]
+    fn test_fd_teleport_request_unicode_name() {
+        // Test Unicode names
+        let req = FdTeleportRequest::single(5, 5, "套接字连接");
+        assert_eq!(req.names[0], "套接字连接");
+    }
+
+    #[test]
+    fn test_fd_teleport_request_empty_name() {
+        let req = FdTeleportRequest::single(5, 5, "");
+        assert_eq!(req.names[0], "");
+    }
+
+    #[test]
+    fn test_max_fds_per_message_constant() {
+        // Verify the constant is reasonable
+        assert_eq!(MAX_FDS_PER_MESSAGE, 16);
+        // Static assertions moved to const block
+        const _: () = {
+            assert!(MAX_FDS_PER_MESSAGE > 0);
+            assert!(MAX_FDS_PER_MESSAGE <= 1024); // Kernel SCM_MAX_FD is typically 253
+        };
+    }
+
+    #[test]
+    fn test_fd_adoption_result_structure() {
+        let result = FdAdoptionResult {
+            adopted_count: 3,
+            final_fds: vec![10, 11, 12],
+            errors: vec!["error1".to_string()],
+        };
+
+        assert_eq!(result.adopted_count, 3);
+        assert_eq!(result.final_fds.len(), 3);
+        assert_eq!(result.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_fd_adoption_result_empty() {
+        let result = FdAdoptionResult {
+            adopted_count: 0,
+            final_fds: vec![],
+            errors: vec![],
+        };
+
+        assert_eq!(result.adopted_count, 0);
+        assert!(result.final_fds.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_send_fds_empty_request() {
+        let (supervisor, _worker) = create_teleporter_socket_pair().unwrap();
+        let req = FdTeleportRequest::batch(vec![], vec![], vec![]).unwrap();
+
+        // Empty request should succeed immediately
+        let result = send_fds(&supervisor, &req);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_send_fds_too_many_fds_error() {
+        let (supervisor, _worker) = create_teleporter_socket_pair().unwrap();
+
+        // Create a request that exceeds the limit (bypassing batch validation)
+        let mut req = FdTeleportRequest::single(1, 1, "test");
+        for i in 2..=20 {
+            req.fds.push(i);
+            req.target_fds.push(i);
+            req.names.push(format!("fd_{}", i));
+        }
+
+        // send_fds should reject this
+        let result = send_fds(&supervisor, &req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_socket_pair_bidirectional() {
+        let (mut supervisor, mut worker) = create_teleporter_socket_pair().unwrap();
+
+        // Test supervisor -> worker
+        supervisor.write_all(b"to_worker").unwrap();
+        let mut buf = [0u8; 9];
+        worker.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"to_worker");
+
+        // Test worker -> supervisor
+        worker.write_all(b"to_super").unwrap();
+        let mut buf = [0u8; 8];
+        supervisor.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"to_super");
+    }
+
+    #[test]
+    fn test_dup2_to_closed_fd() {
+        // Create a valid source FD
+        let (sock, _) = UnixStream::pair().expect("socketpair failed");
+        let source_fd = sock.as_raw_fd();
+
+        // Use a high target FD that should be closed
+        let target_fd = 999;
+
+        // dup2 should work even if target is not open
+        let result = unsafe { libc::dup2(source_fd, target_fd) };
+        assert_eq!(result, target_fd);
+
+        // Verify the target is now valid
+        let flags = unsafe { libc::fcntl(target_fd, libc::F_GETFD) };
+        assert!(flags >= 0, "Target FD should be valid after dup2");
+
+        // Clean up
+        unsafe {
+            libc::close(target_fd);
+        }
+    }
+
+    #[test]
+    fn test_dup2_invalid_source_fails() {
+        // Use an invalid source FD
+        let invalid_fd = 9999;
+        let target_fd = 200;
+
+        // dup2 with invalid source should fail
+        let result = unsafe { libc::dup2(invalid_fd, target_fd) };
+        assert_eq!(result, -1);
+
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        assert_eq!(errno, Some(libc::EBADF));
+    }
+
+    #[test]
+    fn test_dup2_negative_target() {
+        // Create a valid source FD
+        let (sock, _) = UnixStream::pair().expect("socketpair failed");
+        let source_fd = sock.as_raw_fd();
+
+        // Negative target should fail
+        let result = unsafe { libc::dup2(source_fd, -1) };
+        assert_eq!(result, -1);
+
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        assert_eq!(errno, Some(libc::EBADF));
+    }
+
+    #[test]
+    fn test_forget_sent_fd() {
+        use std::os::fd::FromRawFd;
+
+        // Create an FD via dup
+        let (sock, _) = UnixStream::pair().expect("socketpair failed");
+        let original_fd = sock.as_raw_fd();
+
+        // dup to create a new FD we can forget
+        let duped_fd = unsafe { libc::dup(original_fd) };
+        assert!(duped_fd >= 0);
+
+        // Wrap it in OwnedFd
+        let owned_fd = unsafe { OwnedFd::from_raw_fd(duped_fd) };
+
+        // Verify FD is valid before forget
+        let flags = unsafe { libc::fcntl(duped_fd, libc::F_GETFD) };
+        assert!(flags >= 0, "FD should be valid before forget");
+
+        // Call forget_sent_fd (this intentionally leaks)
+        forget_sent_fd(owned_fd);
+
+        // FD should STILL be valid (not closed by Drop)
+        let flags_after = unsafe { libc::fcntl(duped_fd, libc::F_GETFD) };
+        assert!(
+            flags_after >= 0,
+            "FD should still be valid after forget (not closed)"
+        );
+
+        // Clean up manually since we leaked it
+        unsafe {
+            libc::close(duped_fd);
+        }
+    }
+
+    #[test]
+    fn test_fd_teleport_request_clone() {
+        let req = FdTeleportRequest::single(5, 10, "original");
+        let cloned = req.clone();
+
+        assert_eq!(cloned.fds, req.fds);
+        assert_eq!(cloned.target_fds, req.target_fds);
+        assert_eq!(cloned.names, req.names);
+    }
+
+    #[test]
+    fn test_fd_teleport_request_debug() {
+        let req = FdTeleportRequest::single(5, 10, "debug_test");
+        let debug_str = format!("{:?}", req);
+
+        assert!(debug_str.contains("FdTeleportRequest"));
+        assert!(debug_str.contains("5"));
+        assert!(debug_str.contains("10"));
+    }
+
+    #[test]
+    fn test_fd_adoption_result_debug() {
+        let result = FdAdoptionResult {
+            adopted_count: 1,
+            final_fds: vec![10],
+            errors: vec![],
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("FdAdoptionResult"));
+        assert!(debug_str.contains("adopted_count"));
+    }
+
+    #[test]
+    fn test_socket_pair_fd_validity() {
+        let (supervisor, worker) = create_teleporter_socket_pair().unwrap();
+
+        let sup_fd = supervisor.as_raw_fd();
+        let worker_fd = worker.as_raw_fd();
+
+        // Both FDs should be valid
+        assert!(sup_fd >= 0);
+        assert!(worker_fd >= 0);
+
+        // FDs should be different
+        assert_ne!(sup_fd, worker_fd);
+
+        // Verify with fcntl
+        let sup_flags = unsafe { libc::fcntl(sup_fd, libc::F_GETFD) };
+        let worker_flags = unsafe { libc::fcntl(worker_fd, libc::F_GETFD) };
+
+        assert!(sup_flags >= 0, "Supervisor FD should be valid");
+        assert!(worker_flags >= 0, "Worker FD should be valid");
+    }
+
+    #[test]
+    fn test_multiple_socket_pairs() {
+        // Create multiple socket pairs to verify no FD collision
+        let mut pairs = Vec::new();
+        for _ in 0..10 {
+            let pair = create_teleporter_socket_pair().unwrap();
+            pairs.push(pair);
+        }
+
+        // All FDs should be unique
+        let mut all_fds = Vec::new();
+        for (sup, worker) in &pairs {
+            all_fds.push(sup.as_raw_fd());
+            all_fds.push(worker.as_raw_fd());
+        }
+
+        let mut unique_fds = all_fds.clone();
+        unique_fds.sort();
+        unique_fds.dedup();
+
+        assert_eq!(all_fds.len(), unique_fds.len(), "All FDs should be unique");
+    }
+
+    #[test]
+    fn test_batch_lengths_error_messages() {
+        // Test various mismatched length combinations
+        let cases = vec![
+            (vec![1, 2], vec![1], vec!["a".into()]),
+            (vec![1], vec![1, 2], vec!["a".into()]),
+            (vec![1], vec![1], vec!["a".into(), "b".into()]),
+            (
+                vec![1, 2, 3],
+                vec![1, 2],
+                vec!["a".into(), "b".into(), "c".into()],
+            ),
+        ];
+
+        for (fds, targets, names) in cases {
+            let result = FdTeleportRequest::batch(fds.clone(), targets.clone(), names.clone());
+            assert!(
+                result.is_err(),
+                "Should fail for fds={:?}, targets={:?}, names={:?}",
+                fds,
+                targets,
+                names
+            );
+            let err_msg = result.unwrap_err().to_string();
+            assert!(err_msg.contains("mismatched lengths"));
+        }
+    }
+
+    #[test]
+    fn test_dup2_overwrites_target() {
+        // Create two socket pairs to have distinct FDs
+        let (sock_a, _) = UnixStream::pair().expect("socketpair failed");
+        let (sock_b, _) = UnixStream::pair().expect("socketpair failed");
+
+        let fd_a = sock_a.as_raw_fd();
+        let fd_b = sock_b.as_raw_fd();
+
+        // Dup fd_a to a high target
+        let target = 500;
+        let result = unsafe { libc::dup2(fd_a, target) };
+        assert_eq!(result, target);
+
+        // Now dup fd_b to the same target - this should close the previous dup
+        let result2 = unsafe { libc::dup2(fd_b, target) };
+        assert_eq!(result2, target);
+
+        // Target should still be valid
+        let flags = unsafe { libc::fcntl(target, libc::F_GETFD) };
+        assert!(flags >= 0);
+
+        // Clean up
+        unsafe {
+            libc::close(target);
+        }
+    }
 }

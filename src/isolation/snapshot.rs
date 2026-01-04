@@ -2302,4 +2302,209 @@ mod tests {
         // the structure exists via the API
         assert!(mgr.worker_pids().is_empty(), "No workers initially");
     }
+
+    // =========================================================================
+    // Additional Edge Case Tests (Phase 2 Regression Prevention)
+    // =========================================================================
+
+    #[test]
+    fn test_memory_region_struct_fields() {
+        let region = MemoryRegion {
+            start: 0x7f0000000000,
+            end: 0x7f0000001000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "test_region".to_string(),
+        };
+
+        assert_eq!(region.start, 0x7f0000000000);
+        assert_eq!(region.end, 0x7f0000001000);
+        assert_eq!(region.len, 0x1000);
+        assert_eq!(region.perms, "rw-p");
+        assert_eq!(region.name, "test_region");
+    }
+
+    #[test]
+    fn test_memory_region_len_calculation() {
+        let region = MemoryRegion {
+            start: 0x1000,
+            end: 0x5000,
+            len: 0x4000,
+            perms: "rw-p".to_string(),
+            name: "".to_string(),
+        };
+
+        assert_eq!(region.len, region.end - region.start);
+    }
+
+    #[test]
+    fn test_region_filtering_shared_excluded() {
+        // Shared mappings (like coverage buffer) should be excluded
+        let shared = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "rw-s".to_string(), // 's' = shared
+            name: "".to_string(),
+        };
+        assert!(
+            !shared.should_snapshot(),
+            "Shared mappings should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_region_filtering_vvar_excluded() {
+        let vvar = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "r--p".to_string(),
+            name: "[vvar]".to_string(),
+        };
+        assert!(!vvar.should_snapshot(), "vvar should be excluded");
+    }
+
+    #[test]
+    fn test_region_is_stack_false_for_non_stack() {
+        let heap = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "[heap]".to_string(),
+        };
+        assert!(!heap.is_stack(), "Heap should not be identified as stack");
+
+        let anon = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "".to_string(),
+        };
+        assert!(
+            !anon.is_stack(),
+            "Anonymous region should not be identified as stack"
+        );
+    }
+
+    #[test]
+    fn test_aligned_segment_zero_length() {
+        // Edge case: same start and end address
+        let seg = AlignedSegment::new(0x1000, 0x1000, "zero");
+        // After alignment, this should still have some size
+        // since end is rounded up
+        assert_eq!(seg.start, 0x1000);
+        assert_eq!(seg.end, 0x1000);
+        assert_eq!(seg.len(), 0);
+        assert_eq!(seg.page_count(), 0);
+    }
+
+    #[test]
+    fn test_aligned_segment_single_byte() {
+        // Edge case: single byte spans page boundaries
+        let seg = AlignedSegment::new(0x1fff, 0x2001, "tiny");
+        assert_eq!(seg.start, 0x1000); // Aligned down
+        assert_eq!(seg.end, 0x3000); // Aligned up
+        assert_eq!(seg.page_count(), 2);
+    }
+
+    #[test]
+    fn test_aligned_segment_page_count_large() {
+        let seg = AlignedSegment::new(0x1000, 0x11000, "16_pages");
+        assert_eq!(seg.page_count(), 16);
+    }
+
+    #[test]
+    fn test_merge_segments_all_overlapping() {
+        // All segments overlap into one
+        let segments = vec![
+            AlignedSegment::new(0x1000, 0x3000, "a"),
+            AlignedSegment::new(0x1500, 0x2500, "b"),
+            AlignedSegment::new(0x2000, 0x4000, "c"),
+            AlignedSegment::new(0x3500, 0x5000, "d"),
+        ];
+        let merged = merge_segments(segments);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0x1000);
+        assert_eq!(merged[0].end, 0x5000);
+    }
+
+    #[test]
+    fn test_parse_maps_filters_permissions() {
+        let pid = Pid::from_raw(std::process::id() as i32);
+        let regions = parse_memory_maps(pid).expect("Failed to parse maps");
+
+        // Verify we can find regions with different permissions
+        let has_readonly = regions
+            .iter()
+            .any(|r| r.perms.contains("r-") && !r.perms.contains('w'));
+        let has_writable = regions.iter().any(|r| r.perms.contains('w'));
+
+        assert!(has_writable, "Should have writable regions");
+        // Note: readonly regions may or may not exist depending on system state
+        eprintln!("Has read-only regions: {}", has_readonly);
+        eprintln!("Has writable regions: {}", has_writable);
+    }
+
+    #[test]
+    fn test_page_size_constant() {
+        assert_eq!(PAGE_SIZE, 4096);
+        assert_eq!(PAGE_SIZE, 0x1000);
+    }
+
+    #[test]
+    fn test_tls_snapshot_empty_data() {
+        let snapshot = TlsSnapshot {
+            fs_base: 0x7f1234560000,
+            tls_data: vec![],
+            tls_region_start: 0x7f1234550000,
+            tls_region_end: 0x7f1234550000,
+        };
+
+        assert!(snapshot.tls_data.is_empty());
+        assert_eq!(snapshot.tls_region_end - snapshot.tls_region_start, 0);
+    }
+
+    #[test]
+    fn test_region_filtering_memfd_mapping_excluded() {
+        // All memfd mappings for tach should be excluded
+        let mapping_memfd = MemoryRegion {
+            start: 0xf000,
+            end: 0x10000,
+            len: 0x1000,
+            perms: "rw-s".to_string(),
+            name: "/memfd:tach_mapping (deleted)".to_string(),
+        };
+        assert!(
+            !mapping_memfd.should_snapshot(),
+            "tach_mapping memfd must be excluded"
+        );
+    }
+
+    #[test]
+    fn test_aligned_segment_description_preserved() {
+        let seg = AlignedSegment::new(0x1000, 0x2000, "my_description");
+        assert_eq!(seg.description, "my_description");
+    }
+
+    #[test]
+    fn test_merge_preserves_all_descriptions() {
+        let a = AlignedSegment::new(0x1000, 0x2000, "first");
+        let b = AlignedSegment::new(0x1500, 0x2500, "second");
+
+        let merged = a.merge(&b);
+
+        // Merged description should contain both original descriptions
+        assert!(
+            merged.description.contains("first"),
+            "Should contain 'first'"
+        );
+        assert!(
+            merged.description.contains("second"),
+            "Should contain 'second'"
+        );
+    }
 }
