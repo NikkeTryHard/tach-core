@@ -1327,4 +1327,421 @@ mod tests {
         assert_eq!(states[0], State::Idle);
         assert_eq!(states[3], State::Exiting);
     }
+
+    // =========================================================================
+    // Additional Regression Prevention Tests (Phase 2)
+    // =========================================================================
+
+    #[test]
+    fn test_protocol_constants() {
+        // Verify protocol constants have expected values
+        // These are critical for IPC protocol correctness
+        use crate::protocol::{CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY, MSG_WORKER_READY};
+
+        // Commands must be distinct from each other
+        assert_ne!(CMD_EXIT, CMD_FORK);
+        assert_ne!(CMD_EXIT, CMD_RUN_TEST);
+        assert_ne!(CMD_FORK, CMD_RUN_TEST);
+
+        // Messages must be distinct
+        assert_ne!(MSG_READY, MSG_WORKER_READY);
+
+        // Commands must be distinct from messages
+        assert_ne!(CMD_EXIT, MSG_READY);
+        assert_ne!(CMD_EXIT, MSG_WORKER_READY);
+    }
+
+    #[test]
+    fn test_protocol_constants_non_zero() {
+        // Commands and messages should be checked for correct values
+        use crate::protocol::{CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY, MSG_WORKER_READY};
+
+        // CMD_EXIT is 0x00 by design (termination signal)
+        assert_eq!(CMD_EXIT, 0x00, "CMD_EXIT should be 0x00");
+
+        // Other commands should be non-zero
+        assert_ne!(CMD_FORK, 0);
+        assert_ne!(CMD_RUN_TEST, 0);
+
+        // Messages should be non-zero
+        assert_ne!(MSG_READY, 0);
+        assert_ne!(MSG_WORKER_READY, 0);
+    }
+
+    #[test]
+    fn test_socket_pair_creation() {
+        // Test that UnixStream::pair works correctly for our IPC needs
+        let result = UnixStream::pair();
+        assert!(result.is_ok(), "Socket pair creation should succeed");
+
+        let (sock1, sock2) = result.unwrap();
+
+        // Both sockets should have valid file descriptors
+        assert!(sock1.as_raw_fd() >= 0, "First socket should have valid fd");
+        assert!(sock2.as_raw_fd() >= 0, "Second socket should have valid fd");
+
+        // File descriptors should be different
+        assert_ne!(
+            sock1.as_raw_fd(),
+            sock2.as_raw_fd(),
+            "Socket FDs should be different"
+        );
+    }
+
+    #[test]
+    fn test_socket_pair_bidirectional() {
+        // Test that socket pair supports bidirectional communication
+        let (mut sock1, mut sock2) = UnixStream::pair().unwrap();
+
+        // Send from sock1 to sock2
+        let msg1 = b"hello";
+        sock1.write_all(msg1).unwrap();
+
+        let mut buf1 = [0u8; 5];
+        sock2.read_exact(&mut buf1).unwrap();
+        assert_eq!(&buf1, msg1);
+
+        // Send from sock2 to sock1
+        let msg2 = b"world";
+        sock2.write_all(msg2).unwrap();
+
+        let mut buf2 = [0u8; 5];
+        sock1.read_exact(&mut buf2).unwrap();
+        assert_eq!(&buf2, msg2);
+    }
+
+    #[test]
+    fn test_worker_handle_structure() {
+        // Test WorkerHandle can hold socket correctly
+        let (sock1, _sock2) = UnixStream::pair().unwrap();
+        let test_pid = 54321;
+
+        let handle = WorkerHandle {
+            pid: test_pid,
+            socket: sock1,
+        };
+
+        assert_eq!(handle.pid, test_pid);
+        assert!(handle.socket.as_raw_fd() >= 0);
+    }
+
+    #[test]
+    fn test_reset_regions_modification() {
+        // Test that RESET_REGIONS can be modified safely
+        let test_regions = vec![(0x1000usize, 0x1000usize), (0x2000usize, 0x2000usize)];
+
+        {
+            let mut regions = RESET_REGIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let original_len = regions.len();
+
+            // Add test regions
+            for region in &test_regions {
+                regions.push(*region);
+            }
+
+            assert_eq!(
+                regions.len(),
+                original_len + test_regions.len(),
+                "Regions should be added"
+            );
+
+            // Remove the test regions
+            for _ in 0..test_regions.len() {
+                regions.pop();
+            }
+
+            assert_eq!(
+                regions.len(),
+                original_len,
+                "Regions should be restored to original"
+            );
+        }
+    }
+
+    #[test]
+    fn test_snapshot_enabled_atomic_operations() {
+        // Test atomic operations on SNAPSHOT_ENABLED
+        let original = SNAPSHOT_ENABLED.load(Ordering::SeqCst);
+
+        // Test store/load
+        SNAPSHOT_ENABLED.store(true, Ordering::SeqCst);
+        assert!(SNAPSHOT_ENABLED.load(Ordering::SeqCst));
+
+        SNAPSHOT_ENABLED.store(false, Ordering::SeqCst);
+        assert!(!SNAPSHOT_ENABLED.load(Ordering::SeqCst));
+
+        // Restore original value
+        SNAPSHOT_ENABLED.store(original, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_snapshot_enabled_compare_exchange() {
+        // Test compare_exchange for lock-free programming patterns
+        let original = SNAPSHOT_ENABLED.load(Ordering::SeqCst);
+
+        // Set to known state
+        SNAPSHOT_ENABLED.store(false, Ordering::SeqCst);
+
+        // Compare and exchange: should succeed
+        let result =
+            SNAPSHOT_ENABLED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        assert!(result.is_ok(), "CAS should succeed when values match");
+        assert!(
+            SNAPSHOT_ENABLED.load(Ordering::SeqCst),
+            "Should be true now"
+        );
+
+        // Compare and exchange: should fail (current is true, expecting false)
+        let result =
+            SNAPSHOT_ENABLED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        assert!(result.is_err(), "CAS should fail when values don't match");
+
+        // Restore original value
+        SNAPSHOT_ENABLED.store(original, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_idle_workers_multiple() {
+        // Test pool with multiple workers
+        // Clear pool first
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+
+        // Add multiple workers
+        let pids = [111, 222, 333];
+        for &pid in &pids {
+            let (sock, _) = UnixStream::pair().unwrap();
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(WorkerHandle { pid, socket: sock });
+        }
+
+        // Verify count
+        assert_eq!(
+            IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).len(),
+            3,
+            "Should have 3 workers"
+        );
+
+        // Pop in LIFO order
+        let w1 = IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .unwrap();
+        assert_eq!(w1.pid, 333, "Last in should be first out");
+
+        let w2 = IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .unwrap();
+        assert_eq!(w2.pid, 222);
+
+        let w3 = IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .unwrap();
+        assert_eq!(w3.pid, 111);
+
+        // Pool should be empty
+        assert!(IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
+    }
+
+    #[test]
+    fn test_worker_loop_interleaved_toxic() {
+        // Test with interleaved safe and toxic tests
+        let payloads = vec![
+            (1, false), // Safe - reset
+            (2, false), // Safe - reset
+            (3, true),  // Toxic - exit
+            (4, false), // Never reached
+        ];
+
+        let mut processed = 0;
+        let mut reset_count = 0;
+
+        for (_test_id, is_toxic) in payloads {
+            processed += 1;
+            let action = decide_worker_action(is_toxic);
+
+            match action {
+                WorkerAction::Reset => reset_count += 1,
+                WorkerAction::Exit => break,
+            }
+        }
+
+        assert_eq!(processed, 3, "Should process 3 tests before exit");
+        assert_eq!(reset_count, 2, "Should have 2 resets (safe tests)");
+    }
+
+    #[test]
+    fn test_payload_serialization_roundtrip() {
+        // Test that TestPayload can be serialized and deserialized
+        use crate::protocol::TestPayload;
+
+        let original = TestPayload {
+            test_id: 12345,
+            file_path: "tests/test_example.py".to_string(),
+            test_name: "TestClass::test_method".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+        };
+
+        let encoded = bincode::serde::encode_to_vec(&original, bincode::config::standard())
+            .expect("Serialization should succeed");
+        let (decoded, _): (TestPayload, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("Deserialization should succeed");
+
+        assert_eq!(decoded.test_id, original.test_id);
+        assert_eq!(decoded.file_path, original.file_path);
+        assert_eq!(decoded.test_name, original.test_name);
+        assert_eq!(decoded.is_toxic, original.is_toxic);
+        assert_eq!(decoded.is_async, original.is_async);
+    }
+
+    #[test]
+    fn test_payload_with_fixtures() {
+        // Test TestPayload with fixtures
+        use crate::protocol::{FixtureInfo, TestPayload};
+
+        let fixtures = vec![
+            FixtureInfo {
+                name: "fixture1".to_string(),
+                scope: "function".to_string(),
+            },
+            FixtureInfo {
+                name: "fixture2".to_string(),
+                scope: "module".to_string(),
+            },
+        ];
+
+        let payload = TestPayload {
+            test_id: 1,
+            file_path: "test.py".to_string(),
+            test_name: "test_func".to_string(),
+            is_async: true,
+            fixtures: fixtures.clone(),
+            log_fd: 5,
+            debug_socket_path: "/tmp/debug.sock".to_string(),
+            is_toxic: true,
+        };
+
+        let encoded = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
+        let (decoded, _): (TestPayload, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+
+        assert_eq!(decoded.fixtures.len(), 2);
+        assert_eq!(decoded.fixtures[0].name, "fixture1");
+        assert_eq!(decoded.fixtures[1].scope, "module");
+        assert_eq!(decoded.log_fd, 5);
+        assert_eq!(decoded.debug_socket_path, "/tmp/debug.sock");
+        assert!(decoded.is_async);
+    }
+
+    #[test]
+    fn test_result_encoding() {
+        // Test that TestResult can be encoded with length prefix
+        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+
+        let result = TestResult {
+            test_id: 999,
+            status: STATUS_PASS,
+            duration_ns: 1_234_567,
+            message: "Test passed successfully".to_string(),
+        };
+
+        let encoded = encode_with_length(&result).expect("Encoding should succeed");
+
+        // First 4 bytes should be the length
+        let len = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+
+        // Length should match remaining bytes
+        assert_eq!(len, encoded.len() - 4, "Length prefix should be correct");
+
+        // Should be able to deserialize
+        let (decoded, _): (TestResult, _) =
+            bincode::serde::decode_from_slice(&encoded[4..], bincode::config::standard())
+                .expect("Deserialization should succeed");
+        assert_eq!(decoded.test_id, 999);
+        assert_eq!(decoded.status, STATUS_PASS);
+        assert_eq!(decoded.message, "Test passed successfully");
+    }
+
+    #[test]
+    fn test_worker_pool_drain() {
+        // Test draining the worker pool (as done in CMD_EXIT handler)
+        // Clear and populate pool
+        IDLE_WORKERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+
+        for pid in [100, 200, 300] {
+            let (sock, _) = UnixStream::pair().unwrap();
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(WorkerHandle { pid, socket: sock });
+        }
+
+        // Drain the pool (similar to CMD_EXIT handler)
+        let drained = std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
+
+        assert_eq!(drained.len(), 3, "Should drain 3 workers");
+        assert!(
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty(),
+            "Pool should be empty after drain"
+        );
+
+        // Verify drained workers
+        let pids: Vec<i32> = drained.iter().map(|w| w.pid).collect();
+        assert!(pids.contains(&100));
+        assert!(pids.contains(&200));
+        assert!(pids.contains(&300));
+    }
+
+    #[test]
+    fn test_worker_loop_empty_payloads() {
+        // Test behavior with no payloads (immediate exit)
+        let payloads: Vec<(u32, bool)> = vec![];
+        let mut processed = 0;
+
+        for (_test_id, is_toxic) in payloads {
+            processed += 1;
+            if decide_worker_action(is_toxic) == WorkerAction::Exit {
+                break;
+            }
+        }
+
+        assert_eq!(processed, 0, "Should process 0 tests");
+    }
+
+    #[test]
+    fn test_socket_try_clone() {
+        // Test that socket can be cloned for parallel operations
+        let (sock1, _sock2) = UnixStream::pair().unwrap();
+
+        let cloned = sock1.try_clone();
+        assert!(cloned.is_ok(), "Socket clone should succeed");
+
+        let cloned_sock = cloned.unwrap();
+        // Both should have valid but different FDs (after dup)
+        assert!(cloned_sock.as_raw_fd() >= 0);
+        // Note: cloned FD may or may not equal original depending on system state
+    }
 }

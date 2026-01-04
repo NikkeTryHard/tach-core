@@ -484,4 +484,160 @@ mod tests {
         let flags = unsafe { libc::fcntl(fd_to_check, libc::F_GETFD) };
         assert_eq!(flags, -1, "fd should be closed after drop");
     }
+
+    // =========================================================================
+    // Additional Edge Case Tests (Phase 2 Regression Prevention)
+    // =========================================================================
+
+    #[test]
+    fn test_logcapture_large_slot_count() {
+        // Test creating many slots
+        let capture = LogCapture::new(32).expect("Failed to create LogCapture with 32 slots");
+        assert_eq!(capture.slot_count(), 32);
+
+        // Verify all slots have valid fds
+        for slot in 0..32 {
+            let fd = capture.get_fd(slot);
+            assert!(fd.is_some(), "Slot {} should exist", slot);
+            assert!(fd.unwrap() >= 0, "Slot {} should have valid fd", slot);
+        }
+    }
+
+    #[test]
+    fn test_read_and_clear_large_content() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write a large message (approaching buffer limit but not exceeding)
+        let test_message: String = "X".repeat(65536); // 64KB
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(
+                fd,
+                test_message.as_ptr() as *const libc::c_void,
+                test_message.len(),
+            );
+        }
+
+        let content = capture.read_and_clear(0).unwrap();
+        assert_eq!(content.len(), test_message.len());
+        assert_eq!(content, test_message);
+    }
+
+    #[test]
+    fn test_read_and_clear_binary_content() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write binary content (non-UTF8)
+        let binary_data: [u8; 8] = [0xFF, 0xFE, 0x00, 0x01, 0x80, 0x90, 0xA0, 0xB0];
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(
+                fd,
+                binary_data.as_ptr() as *const libc::c_void,
+                binary_data.len(),
+            );
+        }
+
+        // read_to_string may produce replacement characters for invalid UTF-8
+        let result = capture.read_and_clear(0);
+        assert!(result.is_ok(), "Should handle binary content gracefully");
+    }
+
+    #[test]
+    fn test_create_memfd_with_special_chars_in_name() {
+        // Test that special characters in name work
+        let fd = create_memfd("test-with-dashes_and_underscores").unwrap();
+        assert!(fd >= 0);
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[test]
+    fn test_create_memfd_with_numbers_in_name() {
+        let fd = create_memfd("log_12345_test").unwrap();
+        assert!(fd >= 0);
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[test]
+    fn test_memfd_seek_operations() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write at position 0
+        let msg = "hello";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(fd, msg.as_ptr() as *const libc::c_void, msg.len());
+        }
+
+        // Verify position after write
+        let pos = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
+        assert_eq!(pos as usize, msg.len());
+
+        // Seek back to start
+        let pos = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+        assert_eq!(pos, 0);
+    }
+
+    #[test]
+    fn test_multiple_slots_independent() {
+        let capture = LogCapture::new(3).unwrap();
+
+        // Write different content to each slot
+        let messages = ["slot0 content", "slot1 content", "slot2 content"];
+        for (slot, msg) in messages.iter().enumerate() {
+            let fd = capture.get_fd(slot).unwrap();
+            unsafe {
+                libc::lseek(fd, 0, libc::SEEK_SET);
+                libc::write(fd, msg.as_ptr() as *const libc::c_void, msg.len());
+            }
+        }
+
+        // Verify each slot has its own content
+        for (slot, expected) in messages.iter().enumerate() {
+            let content = capture.read_and_clear(slot).unwrap();
+            assert_eq!(
+                &content, *expected,
+                "Slot {} should have correct content",
+                slot
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_and_clear_clears_buffer_completely() {
+        let capture = LogCapture::new(1).unwrap();
+        let fd = capture.get_fd(0).unwrap();
+
+        // Write content
+        let msg = "test content";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(fd, msg.as_ptr() as *const libc::c_void, msg.len());
+        }
+
+        // Read and clear
+        let _ = capture.read_and_clear(0).unwrap();
+
+        // Write new content at position 0
+        let new_msg = "new";
+        unsafe {
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            libc::write(fd, new_msg.as_ptr() as *const libc::c_void, new_msg.len());
+        }
+
+        // Should only see new content, not old content remnants
+        let content = capture.read_and_clear(0).unwrap();
+        assert_eq!(content, new_msg, "Buffer should be completely cleared");
+        assert!(
+            !content.contains("test"),
+            "Old content should not be present"
+        );
+    }
 }

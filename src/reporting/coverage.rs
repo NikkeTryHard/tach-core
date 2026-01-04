@@ -1745,4 +1745,533 @@ mod tests {
         let available = write_idx.wrapping_sub(read_idx);
         assert!(available <= buffer.capacity as u64);
     }
+
+    // =========================================================================
+    // Phase 2: Additional Regression Prevention Tests
+    // =========================================================================
+
+    #[test]
+    fn test_coverage_entry_default() {
+        let entry = CoverageEntry::default();
+        assert_eq!(entry.code_id, 0);
+        assert_eq!(entry.lineno, 0);
+        assert_eq!(entry.flags, 0);
+    }
+
+    #[test]
+    fn test_coverage_entry_line_preserves_all_bits() {
+        // Test with max values to ensure no bit truncation
+        let entry = CoverageEntry::line(u64::MAX, u32::MAX);
+        assert_eq!(entry.code_id, u64::MAX);
+        assert_eq!(entry.lineno, u32::MAX);
+        assert_eq!(entry.flags, 0x01);
+    }
+
+    #[test]
+    fn test_coverage_entry_clone() {
+        let entry = CoverageEntry::line(0x1234, 42);
+        let cloned = entry;
+        assert_eq!(cloned.code_id, entry.code_id);
+        assert_eq!(cloned.lineno, entry.lineno);
+        assert_eq!(cloned.flags, entry.flags);
+    }
+
+    #[test]
+    fn test_ring_buffer_header_is_full() {
+        let buffer = CoverageRingBuffer::new(4).expect("Failed to create buffer");
+
+        // Initially not full
+        assert!(!buffer.header().is_full());
+
+        // Fill it
+        for i in 0..4 {
+            buffer.write(CoverageEntry::line(i, 0));
+        }
+
+        // Now full
+        assert!(buffer.header().is_full());
+
+        // Drain one
+        let mut entries = Vec::new();
+        buffer.drain(&mut entries, 1);
+
+        // Not full anymore
+        assert!(!buffer.header().is_full());
+    }
+
+    #[test]
+    fn test_ring_buffer_header_available() {
+        let buffer = CoverageRingBuffer::new(8).expect("Failed to create buffer");
+
+        // Initially 0 available
+        assert_eq!(buffer.header().available(), 0);
+
+        // Write 5 entries
+        for i in 0..5 {
+            buffer.write(CoverageEntry::line(i, 0));
+        }
+        assert_eq!(buffer.header().available(), 5);
+
+        // Drain 3
+        let mut entries = Vec::new();
+        buffer.drain(&mut entries, 3);
+        assert_eq!(buffer.header().available(), 2);
+    }
+
+    #[test]
+    fn test_ring_buffer_base_addr_and_size() {
+        let buffer = CoverageRingBuffer::new(1024).expect("Failed to create buffer");
+
+        // base_addr should be non-zero
+        assert!(buffer.base_addr() > 0);
+
+        // region_size should match expected calculation
+        let expected_size = HEADER_SIZE + (1024 * ENTRY_SIZE);
+        assert_eq!(buffer.region_size(), expected_size);
+    }
+
+    #[test]
+    fn test_ring_buffer_fd_valid() {
+        let buffer = CoverageRingBuffer::new(64).expect("Failed to create buffer");
+
+        // fd should be valid (non-negative)
+        assert!(buffer.fd() >= 0);
+    }
+
+    #[test]
+    fn test_ring_buffer_capacity_one() {
+        // Edge case: capacity of 1
+        let buffer = CoverageRingBuffer::new(1).expect("Failed to create buffer");
+
+        // Write one entry
+        assert!(buffer.write(CoverageEntry::line(1, 1)));
+
+        // Buffer should be full
+        assert!(buffer.header().is_full());
+
+        // Second write should overflow
+        assert!(!buffer.write(CoverageEntry::line(2, 2)));
+        assert_eq!(buffer.overflow_count(), 1);
+
+        // Drain and verify
+        let mut entries = Vec::new();
+        let count = buffer.drain(&mut entries, 10);
+        assert_eq!(count, 1);
+        assert_eq!(entries[0].code_id, 1);
+    }
+
+    #[test]
+    fn test_ring_buffer_drain_partial() {
+        let buffer = CoverageRingBuffer::new(16).expect("Failed to create buffer");
+
+        // Write 10 entries
+        for i in 0..10 {
+            buffer.write(CoverageEntry::line(i, i as u32));
+        }
+
+        // Drain only 3
+        let mut entries = Vec::new();
+        let count = buffer.drain(&mut entries, 3);
+        assert_eq!(count, 3);
+        assert_eq!(entries.len(), 3);
+
+        // 7 should remain
+        assert_eq!(buffer.header().available(), 7);
+
+        // Drain rest
+        let count = buffer.drain(&mut entries, 100);
+        assert_eq!(count, 7);
+        assert_eq!(entries.len(), 10);
+    }
+
+    #[test]
+    fn test_ring_buffer_drain_empty() {
+        let buffer = CoverageRingBuffer::new(8).expect("Failed to create buffer");
+
+        // Drain from empty buffer
+        let mut entries = Vec::new();
+        let count = buffer.drain(&mut entries, 100);
+        assert_eq!(count, 0);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_mapping_entry_default() {
+        let entry = MappingEntry::default();
+        assert_eq!(entry.code_id, 0);
+        assert_eq!(entry.filename_len, 0);
+        assert_eq!(entry.filename(), "");
+    }
+
+    #[test]
+    fn test_mapping_entry_single_char() {
+        let entry = MappingEntry::new(0x1, "a");
+        assert_eq!(entry.filename_len, 1);
+        assert_eq!(entry.filename(), "a");
+    }
+
+    #[test]
+    fn test_mapping_entry_unicode_short() {
+        // Short unicode filename
+        let filename = "测试文件.py";
+        let entry = MappingEntry::new(0x2, filename);
+        assert_eq!(entry.filename(), filename);
+    }
+
+    #[test]
+    fn test_mapping_entry_unicode_exact_boundary() {
+        // Create a filename that is exactly at the 240 byte boundary with unicode
+        // Each Chinese character is 3 bytes, so 80 chars = 240 bytes
+        let filename: String = (0..80).map(|_| '中').collect();
+        assert_eq!(filename.len(), 240);
+
+        let entry = MappingEntry::new(0x3, &filename);
+        assert_eq!(entry.filename_len, 240);
+        assert_eq!(entry.filename(), filename);
+    }
+
+    #[test]
+    fn test_mapping_buffer_drain_empty() {
+        let buffer = MappingRingBuffer::new(8).expect("Failed to create buffer");
+
+        let mut entries = Vec::new();
+        let count = buffer.drain(&mut entries, 100);
+        assert_eq!(count, 0);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_mapping_buffer_capacity_one() {
+        let buffer = MappingRingBuffer::new(1).expect("Failed to create buffer");
+
+        // Write one entry
+        let entry = MappingEntry::new(1, "test.py");
+        assert!(buffer.write(entry));
+
+        // Buffer should be full
+        assert!(buffer.header().is_full());
+
+        // Second write should overflow
+        let entry2 = MappingEntry::new(2, "test2.py");
+        assert!(!buffer.write(entry2));
+        assert_eq!(buffer.overflow_count(), 1);
+    }
+
+    // =========================================================================
+    // LCOV/JSON Output Tests
+    // =========================================================================
+
+    #[test]
+    fn test_write_lcov_empty_data() {
+        let data = CoverageData::new();
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_empty.lcov");
+
+        let result = write_lcov(&data, &path);
+        assert!(result.is_ok());
+
+        // File should exist but be empty
+        let content = std::fs::read_to_string(&path).expect("Failed to read file");
+        assert!(content.is_empty());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_lcov_single_file() {
+        let mut data = CoverageData::new();
+        data.insert(("test.py".to_string(), 10), 5);
+        data.insert(("test.py".to_string(), 11), 3);
+        data.insert(("test.py".to_string(), 12), 0);
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_single.lcov");
+
+        let result = write_lcov(&data, &path);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&path).expect("Failed to read file");
+
+        // Verify LCOV format
+        assert!(content.contains("SF:test.py"));
+        assert!(content.contains("DA:10,5"));
+        assert!(content.contains("DA:11,3"));
+        assert!(content.contains("DA:12,0"));
+        assert!(content.contains("LF:3"));
+        assert!(content.contains("LH:2")); // 2 lines hit (10 and 11)
+        assert!(content.contains("end_of_record"));
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_lcov_multiple_files() {
+        let mut data = CoverageData::new();
+        data.insert(("a.py".to_string(), 1), 1);
+        data.insert(("b.py".to_string(), 1), 1);
+        data.insert(("z.py".to_string(), 1), 1);
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_multi.lcov");
+
+        let result = write_lcov(&data, &path);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&path).expect("Failed to read file");
+
+        // Files should be sorted alphabetically
+        let a_pos = content.find("SF:a.py").unwrap();
+        let b_pos = content.find("SF:b.py").unwrap();
+        let z_pos = content.find("SF:z.py").unwrap();
+
+        assert!(a_pos < b_pos);
+        assert!(b_pos < z_pos);
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_json_empty_data() {
+        let data = CoverageData::new();
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_empty.json");
+
+        let result = write_json(&data, &path);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&path).expect("Failed to read file");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("Invalid JSON");
+
+        assert!(parsed["files"].as_object().unwrap().is_empty());
+        assert_eq!(parsed["totals"]["lines_found"], 0);
+        assert_eq!(parsed["totals"]["lines_hit"], 0);
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_json_with_data() {
+        let mut data = CoverageData::new();
+        data.insert(("test.py".to_string(), 10), 5);
+        data.insert(("test.py".to_string(), 11), 0);
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_data.json");
+
+        let result = write_json(&data, &path);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&path).expect("Failed to read file");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("Invalid JSON");
+
+        assert!(parsed["files"]["test.py"].is_object());
+        assert_eq!(parsed["files"]["test.py"]["lines"]["10"], 5);
+        assert_eq!(parsed["files"]["test.py"]["lines"]["11"], 0);
+        assert_eq!(parsed["files"]["test.py"]["lines_found"], 2);
+        assert_eq!(parsed["files"]["test.py"]["lines_hit"], 1);
+        assert_eq!(parsed["totals"]["lines_found"], 2);
+        assert_eq!(parsed["totals"]["lines_hit"], 1);
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_coverage_report_lcov_extension() {
+        let data = CoverageData::new();
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test.lcov");
+
+        let result = write_coverage_report(&data, &path, None);
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_coverage_report_json_extension() {
+        let data = CoverageData::new();
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test.json");
+
+        let result = write_coverage_report(&data, &path, None);
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_write_coverage_report_explicit_format() {
+        let data = CoverageData::new();
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test.txt");
+
+        // Force LCOV format
+        let result = write_coverage_report(&data, &path, Some("lcov"));
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // =========================================================================
+    // CoverageAggregator Tests
+    // =========================================================================
+
+    #[test]
+    fn test_coverage_aggregator_new() {
+        let aggregator = CoverageAggregator::new();
+        assert_eq!(aggregator.covered_lines(), 0);
+        assert_eq!(aggregator.total_hits(), 0);
+    }
+
+    #[test]
+    fn test_coverage_aggregator_register_code() {
+        let aggregator = CoverageAggregator::new();
+        aggregator.register_code(0x1234, "/test/file.py".to_string());
+
+        // Can't directly verify, but should not panic
+    }
+
+    #[test]
+    fn test_coverage_aggregator_get_data_empty() {
+        let aggregator = CoverageAggregator::new();
+        let data = aggregator.get_data();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_coverage_aggregator_default() {
+        let aggregator = CoverageAggregator::default();
+        assert_eq!(aggregator.covered_lines(), 0);
+    }
+
+    // =========================================================================
+    // Extreme Stress Tests
+    // =========================================================================
+
+    #[test]
+    fn test_ring_buffer_rapid_write_drain_cycles() {
+        let buffer = CoverageRingBuffer::new(8).expect("Failed to create buffer");
+
+        // Rapid cycles of fill and drain
+        for cycle in 0..100 {
+            // Fill
+            for i in 0..8 {
+                let entry = CoverageEntry::line((cycle * 8 + i) as u64, i as u32);
+                assert!(
+                    buffer.write(entry),
+                    "Write failed at cycle {} entry {}",
+                    cycle,
+                    i
+                );
+            }
+
+            // Drain all
+            let mut entries = Vec::new();
+            let count = buffer.drain(&mut entries, 8);
+            assert_eq!(count, 8, "Drain failed at cycle {}", cycle);
+        }
+
+        // Buffer should be empty and consistent
+        assert_eq!(buffer.header().available(), 0);
+        assert_eq!(buffer.overflow_count(), 0);
+    }
+
+    #[test]
+    fn test_ring_buffer_high_contention_stress() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        // Purpose: Verify buffer doesn't crash or corrupt under high write contention
+        // Note: The drain function is designed for a SINGLE reader (the aggregator thread)
+        // So we only use one drainer here, but multiple writers
+        let buffer = Arc::new(CoverageRingBuffer::new(64).expect("Failed to create buffer"));
+        let num_writers = 8;
+        let duration = Duration::from_millis(50);
+
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        // Spawn writer threads - these compete for slots
+        let writer_handles: Vec<_> = (0..num_writers)
+            .map(|id| {
+                let buffer = Arc::clone(&buffer);
+                let running = Arc::clone(&running);
+                thread::spawn(move || {
+                    let mut count = 0u64;
+                    while running.load(std::sync::atomic::Ordering::Relaxed) {
+                        let entry =
+                            CoverageEntry::line(id as u64 * 1_000_000 + count, count as u32);
+                        let _ = buffer.write(entry);
+                        count += 1;
+                    }
+                    count
+                })
+            })
+            .collect();
+
+        // Single drainer thread (as designed)
+        let drainer_running = Arc::clone(&running);
+        let drainer_buffer = Arc::clone(&buffer);
+        let drainer_handle = thread::spawn(move || {
+            let mut entries = Vec::new();
+            let mut total = 0u64;
+            while drainer_running.load(std::sync::atomic::Ordering::Relaxed) {
+                let count = drainer_buffer.drain(&mut entries, 32);
+                total += count as u64;
+                entries.clear();
+                thread::yield_now();
+            }
+            total
+        });
+
+        // Let them run concurrently
+        thread::sleep(duration);
+        running.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        // Wait for all writers
+        let mut total_writes = 0u64;
+        for h in writer_handles {
+            total_writes += h.join().expect("Writer thread panicked");
+        }
+
+        // Wait for drainer
+        let drainer_total = drainer_handle.join().expect("Drainer thread panicked");
+
+        // Drain remaining entries
+        let mut final_entries = Vec::new();
+        let remaining = buffer.drain(&mut final_entries, 10000);
+
+        // Verify buffer is in a consistent state
+        let header = buffer.header();
+        let write_idx = header.write_idx.load(Ordering::Acquire);
+        let read_idx = header.read_idx.load(Ordering::Acquire);
+
+        // write_idx >= read_idx is the fundamental invariant
+        assert!(
+            write_idx >= read_idx,
+            "Buffer corrupted: write_idx={} < read_idx={}",
+            write_idx,
+            read_idx
+        );
+
+        // Buffer should be empty after final drain
+        assert_eq!(
+            buffer.header().available(),
+            0,
+            "Buffer not empty: {} entries remaining",
+            buffer.header().available()
+        );
+
+        // Some work was done
+        assert!(total_writes > 0, "No writes occurred");
+        assert!(drainer_total + remaining as u64 > 0, "No drains occurred");
+    }
 }

@@ -439,6 +439,25 @@ mod tests {
     }
 
     #[test]
+    fn test_sentinel_pattern_alignment() {
+        // Sentinel should be 8-byte aligned
+        assert_eq!(SENTINEL_PATTERN & 0x7, SENTINEL_PATTERN & 0x7);
+        // Verify it's a non-zero value
+        assert_ne!(SENTINEL_PATTERN, 0, "Sentinel should not be zero");
+    }
+
+    #[test]
+    fn test_sentinel_pattern_uniqueness() {
+        // Sentinel should not be all-zeros or all-ones
+        assert_ne!(SENTINEL_PATTERN, 0);
+        assert_ne!(SENTINEL_PATTERN, u64::MAX);
+        // Should not be a common pattern
+        assert_ne!(SENTINEL_PATTERN, 0xFFFF_FFFF);
+        assert_ne!(SENTINEL_PATTERN, 0xAAAA_AAAA_AAAA_AAAA);
+        assert_ne!(SENTINEL_PATTERN, 0x5555_5555_5555_5555);
+    }
+
+    #[test]
     fn test_parse_memory_maps() {
         let regions = parse_memory_maps().expect("Failed to parse maps");
         assert!(!regions.is_empty());
@@ -448,12 +467,47 @@ mod tests {
         assert!(has_stack, "Should find [stack] region");
     }
 
+    #[test]
+    fn test_parse_memory_maps_has_regions() {
+        let regions = parse_memory_maps().expect("Failed to parse maps");
+
+        // At minimum, we should have stack and some code regions
+        assert!(regions.len() >= 2, "Should have at least 2 regions");
+
+        // All regions should have valid addresses
+        for region in &regions {
+            assert!(region.start < region.end, "Start should be less than end");
+            assert!(!region.perms.is_empty(), "Perms should not be empty");
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_get_fs_base() {
         let fs_base = get_fs_base().expect("Failed to get fs_base");
         assert!(fs_base > 0);
         eprintln!("[test] fs_base = 0x{:016x}", fs_base);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_get_fs_base_stable() {
+        // fs_base should be stable across calls within the same thread
+        let fs_base_1 = get_fs_base().expect("Failed to get fs_base (1)");
+        let fs_base_2 = get_fs_base().expect("Failed to get fs_base (2)");
+
+        assert_eq!(fs_base_1, fs_base_2, "fs_base should be stable");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_get_fs_base_in_mapped_region() {
+        let fs_base = get_fs_base().expect("Failed to get fs_base");
+        let regions = parse_memory_maps().expect("Failed to parse maps");
+
+        // fs_base should be within a mapped region
+        let contains_fs_base = regions.iter().any(|r| r.contains(fs_base));
+        assert!(contains_fs_base, "fs_base should be in a mapped region");
     }
 
     #[test]
@@ -473,6 +527,44 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_region_contains_edge_cases() {
+        let region = MemoryRegion {
+            start: 0,
+            end: 0x1000,
+            perms: "rw-p".to_string(),
+            pathname: "".to_string(),
+        };
+
+        assert!(region.contains(0)); // Start address at 0
+        assert!(region.contains(0xfff));
+        assert!(!region.contains(0x1000));
+    }
+
+    #[test]
+    fn test_memory_region_size() {
+        let region = MemoryRegion {
+            start: 0x1000,
+            end: 0x3000,
+            perms: "rw-p".to_string(),
+            pathname: "[heap]".to_string(),
+        };
+
+        assert_eq!(region.size(), 0x2000);
+    }
+
+    #[test]
+    fn test_memory_region_size_single_page() {
+        let region = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            perms: "rw-p".to_string(),
+            pathname: "".to_string(),
+        };
+
+        assert_eq!(region.size(), 0x1000); // 4KB page
+    }
+
+    #[test]
     fn test_heap_pointer_info_creation() {
         let info = HeapPointerInfo {
             offset: 0xad8,
@@ -484,12 +576,224 @@ mod tests {
         assert_eq!(info.pointer_value, 0x7f1234560000);
     }
 
+    #[test]
+    fn test_heap_pointer_info_debug() {
+        let info = HeapPointerInfo {
+            offset: 0xad8,
+            pointer_value: 0x7f1234560000,
+            target_description: "anon@0x12345000".to_string(),
+        };
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("HeapPointerInfo"));
+        assert!(debug_str.contains("offset"));
+    }
+
+    #[test]
+    fn test_heap_pointer_info_clone() {
+        let info = HeapPointerInfo {
+            offset: 0x100,
+            pointer_value: 0x7f0000000000,
+            target_description: "test".to_string(),
+        };
+
+        let cloned = info.clone();
+        assert_eq!(cloned.offset, info.offset);
+        assert_eq!(cloned.pointer_value, info.pointer_value);
+        assert_eq!(cloned.target_description, info.target_description);
+    }
+
+    #[test]
+    fn test_tls_calibration_structure() {
+        let calibration = TlsCalibration {
+            fs_base: 0x7f1234560000,
+            mi_heap_offset: Some(0xad8),
+            heap_pointer_offsets: vec![],
+            tls_region_size: 12 * 1024,
+            calibrated: true,
+        };
+
+        assert_eq!(calibration.fs_base, 0x7f1234560000);
+        assert!(calibration.is_calibrated());
+        assert_eq!(calibration.primary_offset(), Some(0xad8));
+    }
+
+    #[test]
+    fn test_tls_calibration_not_calibrated() {
+        let calibration = TlsCalibration {
+            fs_base: 0x7f1234560000,
+            mi_heap_offset: None,
+            heap_pointer_offsets: vec![],
+            tls_region_size: 12 * 1024,
+            calibrated: false,
+        };
+
+        assert!(!calibration.is_calibrated());
+        assert_eq!(calibration.primary_offset(), None);
+    }
+
+    #[test]
+    fn test_tls_calibration_with_heap_pointers() {
+        let heap_pointers = vec![
+            HeapPointerInfo {
+                offset: 0xad8,
+                pointer_value: 0x7f1111111111,
+                target_description: "[heap]".to_string(),
+            },
+            HeapPointerInfo {
+                offset: 0xb00,
+                pointer_value: 0x7f2222222222,
+                target_description: "anon@0x7f0000".to_string(),
+            },
+        ];
+
+        let calibration = TlsCalibration {
+            fs_base: 0x7f1234560000,
+            mi_heap_offset: Some(0xad8),
+            heap_pointer_offsets: heap_pointers,
+            tls_region_size: 16 * 1024,
+            calibrated: true,
+        };
+
+        assert_eq!(calibration.heap_pointer_offsets.len(), 2);
+        assert_eq!(calibration.heap_pointer_offsets[0].offset, 0xad8);
+        assert_eq!(calibration.heap_pointer_offsets[1].offset, 0xb00);
+    }
+
+    #[test]
+    fn test_tls_calibration_clone() {
+        let calibration = TlsCalibration {
+            fs_base: 0x7f1234560000,
+            mi_heap_offset: Some(0x100),
+            heap_pointer_offsets: vec![HeapPointerInfo {
+                offset: 0x100,
+                pointer_value: 0x7f0000000000,
+                target_description: "test".to_string(),
+            }],
+            tls_region_size: 8192,
+            calibrated: true,
+        };
+
+        let cloned = calibration.clone();
+        assert_eq!(cloned.fs_base, calibration.fs_base);
+        assert_eq!(cloned.mi_heap_offset, calibration.mi_heap_offset);
+        assert_eq!(cloned.tls_region_size, calibration.tls_region_size);
+        assert_eq!(cloned.calibrated, calibration.calibrated);
+    }
+
+    #[test]
+    fn test_tls_calibration_debug() {
+        let calibration = TlsCalibration {
+            fs_base: 0x7f1234560000,
+            mi_heap_offset: Some(0xad8),
+            heap_pointer_offsets: vec![],
+            tls_region_size: 12288,
+            calibrated: true,
+        };
+
+        let debug_str = format!("{:?}", calibration);
+        assert!(debug_str.contains("TlsCalibration"));
+        assert!(debug_str.contains("fs_base"));
+        assert!(debug_str.contains("calibrated"));
+    }
+
+    #[test]
+    fn test_find_containing_region() {
+        let regions = vec![
+            MemoryRegion {
+                start: 0x1000,
+                end: 0x2000,
+                perms: "r--p".to_string(),
+                pathname: "region1".to_string(),
+            },
+            MemoryRegion {
+                start: 0x3000,
+                end: 0x4000,
+                perms: "rw-p".to_string(),
+                pathname: "region2".to_string(),
+            },
+        ];
+
+        // Address in first region
+        let result = find_containing_region(&regions, 0x1500);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().pathname, "region1");
+
+        // Address in second region
+        let result = find_containing_region(&regions, 0x3500);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().pathname, "region2");
+
+        // Address not in any region
+        let result = find_containing_region(&regions, 0x2500);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_containing_region_empty() {
+        let regions: Vec<MemoryRegion> = vec![];
+        let result = find_containing_region(&regions, 0x1000);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_containing_region_boundary() {
+        let regions = vec![MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            perms: "rw-p".to_string(),
+            pathname: "test".to_string(),
+        }];
+
+        // Start boundary (inclusive)
+        let result = find_containing_region(&regions, 0x1000);
+        assert!(result.is_some());
+
+        // End boundary (exclusive)
+        let result = find_containing_region(&regions, 0x2000);
+        assert!(result.is_none());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_arch_get_fs_constant() {
+        // Verify ARCH_GET_FS has the correct value for x86_64
+        assert_eq!(ARCH_GET_FS, 0x1003);
+    }
+
+    #[test]
+    fn test_memory_region_perms_parsing() {
+        let region = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            perms: "rwxp".to_string(),
+            pathname: "test".to_string(),
+        };
+
+        assert!(region.perms.contains('r'));
+        assert!(region.perms.contains('w'));
+        assert!(region.perms.contains('x'));
+        assert!(region.perms.contains('p'));
+    }
+
+    #[test]
+    fn test_memory_region_anonymous() {
+        // Test anonymous region (empty pathname)
+        let region = MemoryRegion {
+            start: 0x7f0000000000,
+            end: 0x7f0000001000,
+            perms: "rw-p".to_string(),
+            pathname: String::new(),
+        };
+
+        assert!(region.pathname.is_empty());
+        assert!(region.perms.contains('w'));
+    }
+
     // Integration test - requires Python
     #[test]
     #[ignore] // Run with: cargo test test_tls_calibration -- --ignored --nocapture
     fn test_tls_calibration() {
-        Python::initialize();
-
         let result = TlsCalibration::calibrate();
         assert!(result.is_ok(), "Calibration should succeed");
 

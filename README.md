@@ -346,6 +346,69 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
+## Development
+
+### Prerequisites
+
+```bash
+# Install Rust toolchain with components
+rustup component add rustfmt clippy
+
+# Create Python virtual environment
+python -m venv .venv
+source .venv/bin/activate
+pip install pytest
+```
+
+### Pre-commit Hooks
+
+This project uses the [pre-commit](https://pre-commit.com/) framework for automated code quality checks.
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install hooks (run once after cloning)
+pre-commit install
+
+# Run hooks manually on all files
+pre-commit run --all-files
+```
+
+The hooks automatically run on every commit:
+
+- **cargo fmt**: Format Rust code
+- **cargo clippy**: Lint with warnings as errors
+- **cargo test --lib**: Run unit tests
+- **trailing-whitespace**: Remove trailing whitespace
+- **end-of-file-fixer**: Ensure files end with newline
+- **check-yaml/toml**: Validate config files
+
+### Building
+
+```bash
+export PYO3_PYTHON=$(which python)
+cargo build --release
+```
+
+### Testing
+
+```bash
+# Run all tests
+cargo test
+
+# Run only library tests
+cargo test --lib
+
+# Run integration tests
+cargo test --test '*'
+
+# Run with coverage
+cargo llvm-cov --all-features --workspace
+```
+
+---
+
 <div align="center">
 
 **Built with Rust for performance and reliability.**
