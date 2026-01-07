@@ -213,3 +213,34 @@ class TestApproxEdgeCases:
         """Test with scientific notation."""
         assert 1.23e-5 == approx(1.23e-5)
         assert 1.23e10 == approx(1.23e10)
+
+    def test_f_infinity_values(self):
+        """Test approx with infinity values."""
+        # Positive infinity should equal positive infinity
+        assert float("inf") == approx(float("inf"))
+        # Negative infinity should equal negative infinity
+        assert float("-inf") == approx(float("-inf"))
+        # Positive infinity should not equal negative infinity
+        result = float("inf") == approx(float("-inf"))
+        assert result is False
+        # Negative infinity should not equal positive infinity
+        result = float("-inf") == approx(float("inf"))
+        assert result is False
+        # Infinity should not equal finite values
+        result = float("inf") == approx(1e308)
+        assert result is False
+        result = 1e308 == approx(float("inf"))
+        assert result is False
+
+    def test_g_nan_values(self):
+        """Test approx with NaN values."""
+        # NaN should never equal NaN (IEEE 754 semantics)
+        result = float("nan") == approx(float("nan"))
+        assert result is False
+        # NaN should not equal any finite value
+        result = float("nan") == approx(0.0)
+        assert result is False
+        result = 0.0 == approx(float("nan"))
+        assert result is False
+        result = float("nan") == approx(1.0)
+        assert result is False

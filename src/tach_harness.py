@@ -14,6 +14,7 @@ import inspect
 import socket
 import pdb
 import re
+import math
 import warnings as warnings_module
 import _pytest.runner
 import _pytest.main
@@ -321,6 +322,18 @@ class approx:
             return all(approx(e, self.rel, self.abs) == a for e, a in zip(self.expected, actual))
 
         # Single value comparison
+        # Handle special float values first
+        try:
+            # NaN is never equal to anything (including itself) - IEEE 754 semantics
+            if math.isnan(self.expected) or math.isnan(actual):
+                return False
+            # Infinity requires exact comparison (inf == inf, -inf == -inf, inf != -inf)
+            if math.isinf(self.expected) or math.isinf(actual):
+                return self.expected == actual
+        except TypeError:
+            # Non-numeric types that don't support isnan/isinf - continue to normal comparison
+            pass
+
         try:
             # Use built-in abs function (not self.abs)
             expected_abs = __builtins__["abs"](self.expected) if isinstance(__builtins__, dict) else abs(self.expected)
@@ -418,15 +431,13 @@ def _parse_version(version_str: str) -> Tuple:
         _parse_version("1.2.3") -> (1, 2, 3)
         _parse_version("1.2.3a1") -> (1, 2, 3, 'a1')
     """
-    import re as re_module
-
     # Split on dots
     parts = version_str.strip().split(".")
     result = []
 
     for part in parts:
         # Try to extract numeric prefix
-        match = re_module.match(r"^(\d+)(.*)?$", part)
+        match = re.match(r"^(\d+)(.*)?$", part)
         if match:
             result.append(int(match.group(1)))
             if match.group(2):
