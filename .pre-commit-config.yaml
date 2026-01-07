@@ -46,6 +46,14 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      - id: cargo-test-full
+        name: cargo test (full)
+        description: Run full test suite including integration tests
+        entry: bash -c 'cargo test --lib && cargo test --test "*"'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: build-docs
         name: build full documentation
         description: Regenerate FULL_DOCUMENTATION.md from source docs
@@ -78,5 +86,5 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: weekly
-  skip: [cargo-fmt, cargo-clippy, cargo-test, build-docs] # Skip Rust hooks in CI (handled by dedicated jobs)
+  skip: [cargo-fmt, cargo-clippy, cargo-test, cargo-test-full, build-docs] # Skip Rust hooks in CI (handled locally)
   submodules: false
