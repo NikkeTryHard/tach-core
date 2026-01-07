@@ -20,12 +20,15 @@ Thresholds:
 
 import json
 import os
+import re
 import resource
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+import pytest
 
 
 # Directory containing this test file
@@ -114,7 +117,6 @@ def run_tach_with_perf(test_dir: str, no_isolation: bool = True) -> PerfMeasurem
     test_count = 0
     output = result.stdout + result.stderr
     # Look for patterns like "Ran 5 tests" or "5 passed"
-    import re
 
     match = re.search(r"(\d+)\s+(?:tests?|passed|failed|error)", output, re.I)
     if match:
@@ -209,9 +211,6 @@ TEST_SUITES = [
 # =============================================================================
 # Test Classes
 # =============================================================================
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

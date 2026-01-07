@@ -464,7 +464,6 @@ class TestGoldenOutputs:
         if not TACH_BINARY.exists():
             raise RuntimeError(f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build")
 
-    @pytest.mark.flaky(reruns=2, reason="Parallel output ordering can vary between runs")
     def test_gauntlet_stdout(self):
         """Test stdout output for gauntlet tests."""
         returncode, stdout, stderr = run_tach("tests/gauntlet")
@@ -478,7 +477,6 @@ class TestGoldenOutputs:
             output_type="stdout",
         )
 
-    @pytest.mark.flaky(reruns=2, reason="Parallel output ordering can vary between runs")
     def test_gauntlet_db_stdout(self):
         """Test stdout output for gauntlet_db tests."""
         returncode, stdout, stderr = run_tach("tests/gauntlet_db")
@@ -491,7 +489,6 @@ class TestGoldenOutputs:
             output_type="stdout",
         )
 
-    @pytest.mark.flaky(reruns=2, reason="Parallel output ordering can vary between runs")
     def test_gauntlet_numpy_stdout(self):
         """Test stdout output for gauntlet_numpy tests."""
         returncode, stdout, stderr = run_tach("tests/gauntlet_numpy")
