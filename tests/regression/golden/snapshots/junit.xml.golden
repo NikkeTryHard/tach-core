@@ -1,0 +1,640 @@
+<testsuites><testsuites><testcase name="test_fs_destruction" classname="test_fs_destruction" time="{DURATION}"><failure message="Test failed">def test_fs_destruction():
+        """Attempt hostile operations - should be blocked by Iron Dome."""
+        errors = []
+    
+        # 1. Try to write to /etc/passwd - MUST FAIL (RO filesystem)
+        try:
+            with open("/etc/passwd", "a") as f:
+                f.write("\n# TACH_TEST_MARKER\n")
+            errors.append("ERROR: /etc/passwd was writable!")
+        except OSError as e:
+            # Expected: "Read-only file system" or "Permission denied"
+            print(f"GOOD: /etc/passwd protected: {e}")
+    
+        # 2. Write to /tmp - MUST SUCCEED (overlay)
+        try:
+            with open("/tmp/survivor.txt", "w") as f:
+                f.write("I survived the gauntlet!")
+            print("GOOD: /tmp is writable")
+        except OSError as e:
+            errors.append(f"ERROR: /tmp not writable: {e}")
+    
+        # 3. Write to CWD (project root) - MUST SUCCEED (overlay)
+        try:
+            with open("test_output.txt", "w") as f:
+                f.write("CWD is writable!")
+            print("GOOD: CWD is writable")
+            os.remove("test_output.txt")
+        except OSError as e:
+            errors.append(f"ERROR: CWD not writable: {e}")
+    
+        # Report all errors
+        if errors:
+            for err in errors:
+                print(err)
+&gt;           assert False, "\n".join(errors)
+E           AssertionError: ERROR: CWD not writable: [Errno 13] Permission denied: 'test_output.txt'
+E           assert False
+
+tests/gauntlet/test_fs_destruction.py:48: AssertionError</failure></testcase><testcase name="test_log_flood" classname="test_log_flood" time="{DURATION}"/><testcase name="test_normal_after_crash_2" classname="test_normal_after_crash_2" time="{DURATION}"/><testcase name="test_normal_after_crash" classname="test_normal_after_crash" time="{DURATION}"/><testcase name="test_segfault" classname="test_segfault" time="{DURATION}"><failure message="Test failed">def test_segfault():
+        """Kill self with SIGSEGV (segmentation fault)."""
+        os.kill(os.getpid(), signal.SIGSEGV)
+        # Never reached
+&gt;       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:15: AssertionError</failure></testcase><testcase name="test_port_00" classname="test_port_00" time="{DURATION}"><failure message="Test failed">def test_port_00():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_01" classname="test_port_01" time="{DURATION}"><failure message="Test failed">def test_port_01():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:27: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_02" classname="test_port_02" time="{DURATION}"><failure message="Test failed">def test_port_02():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_03" classname="test_port_03" time="{DURATION}"><failure message="Test failed">def test_port_03():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:35: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_04" classname="test_port_04" time="{DURATION}"><failure message="Test failed">def test_port_04():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:39: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_05" classname="test_port_05" time="{DURATION}"><failure message="Test failed">def test_port_05():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:43: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_06" classname="test_port_06" time="{DURATION}"><failure message="Test failed">def test_port_06():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_07" classname="test_port_07" time="{DURATION}"><failure message="Test failed">def test_port_07():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:51: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_08" classname="test_port_08" time="{DURATION}"><failure message="Test failed">def test_port_08():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_09" classname="test_port_09" time="{DURATION}"><failure message="Test failed">def test_port_09():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_10" classname="test_port_10" time="{DURATION}"><failure message="Test failed">def test_port_10():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_11" classname="test_port_11" time="{DURATION}"><failure message="Test failed">def test_port_11():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_12" classname="test_port_12" time="{DURATION}"><failure message="Test failed">def test_port_12():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_13" classname="test_port_13" time="{DURATION}"><failure message="Test failed">def test_port_13():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_14" classname="test_port_14" time="{DURATION}"><failure message="Test failed">def test_port_14():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_15" classname="test_port_15" time="{DURATION}"><failure message="Test failed">def test_port_15():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:83: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_16" classname="test_port_16" time="{DURATION}"><failure message="Test failed">def test_port_16():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_17" classname="test_port_17" time="{DURATION}"><failure message="Test failed">def test_port_17():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_18" classname="test_port_18" time="{DURATION}"><failure message="Test failed">def test_port_18():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_19" classname="test_port_19" time="{DURATION}"><failure message="Test failed">def test_port_19():
+&gt;       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:99: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
+family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+&gt;       _socket.socket.__init__(self, family, type, proto, fileno)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_sigabrt" classname="test_sigabrt" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase><testcase name="test_sigbus" classname="test_sigbus" time="{DURATION}"><failure message="Test failed">def test_sigbus():
+        """Kill self with SIGBUS (bus error - invalid memory access)."""
+        os.kill(os.getpid(), signal.SIGBUS)
+        # Never reached
+&gt;       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:36: AssertionError</failure></testcase><testcase name="test_sigkill" classname="test_sigkill" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase><testcase name="test_sigterm" classname="test_sigterm" time="{DURATION}"><failure message="Test failed">def test_sigterm():
+        """Kill self with SIGTERM (graceful termination request)."""
+        os.kill(os.getpid(), signal.SIGTERM)
+        # Never reached
+&gt;       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:50: AssertionError</failure></testcase><testcase name="test_symlink_escape_prevention" classname="test_symlink_escape_prevention" time="{DURATION}"/><testcase name="test_proc_self_protection" classname="test_proc_self_protection" time="{DURATION}"/><testcase name="test_etc_readonly" classname="test_etc_readonly" time="{DURATION}"/><testcase name="test_usr_readonly" classname="test_usr_readonly" time="{DURATION}"/><testcase name="test_large_file_creation" classname="test_large_file_creation" time="{DURATION}"/><testcase name="test_deep_import_chain" classname="test_deep_import_chain" time="{DURATION}"/><testcase name="test_memory_allocation_burst" classname="test_memory_allocation_burst" time="{DURATION}"/><testcase name="test_exception_flood" classname="test_exception_flood" time="{DURATION}"/><testcase name="test_rapid_modification_marker" classname="test_rapid_modification_marker" time="{DURATION}"/><testcase name="test_sigfpe" classname="test_sigfpe" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase></testsuite></testsuites>

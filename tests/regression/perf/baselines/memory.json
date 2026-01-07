@@ -1,0 +1,22 @@
+{
+  "gauntlet": {
+    "memory_kb": 80064,
+    "recorded_at": "2026-01-07T09:35:02Z",
+    "test_count": 1312
+  },
+  "gauntlet_coverage": {
+    "memory_kb": 80064,
+    "recorded_at": "2026-01-07T09:35:05Z",
+    "test_count": 1312
+  },
+  "gauntlet_db": {
+    "memory_kb": 80064,
+    "recorded_at": "2026-01-07T09:35:03Z",
+    "test_count": 1312
+  },
+  "gauntlet_numpy": {
+    "memory_kb": 80064,
+    "recorded_at": "2026-01-07T09:35:04Z",
+    "test_count": 1312
+  }
+}

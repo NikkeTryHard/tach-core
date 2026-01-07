@@ -1,0 +1,744 @@
+STDOUT:
+
+STDERR:
+[allocator] jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified as active allocator
+[supervisor] Jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified - Hypervisor allocator ready
+[supervisor] Scanning {PROJECT_ROOT}...
+[supervisor] Discovered 1312 tests, 8 fixtures in {DURATION} (toxic: 14, safe: 107)
+[loader] WARN: Failed to compile {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Compilation failed for {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Traceback (most recent call last):
+  {FILE_LINE}, in compile
+    code = loader.source_to_code(source_bytes, dfile or file,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1059, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  {FILE_LINE}, in compile
+    raise py_exc
+py_compile.PyCompileError:   {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+
+[loader] Compiled 120 of 121 files
+[supervisor] Compiled 120 of 121 modules for zero-copy loading in {DURATION}
+[supervisor] Resolved 1310 tests (2 errors)
+  ⚠ test_missing_dep - missing: non_existent_fixture
+  ⚠ test_with_cycle - cycle: ["fixture_a", "fixture_b", "fixture_a"]
+[supervisor] Selected 39 tests to run (filtered by path: {PROJECT_ROOT}/tests/gauntlet)
+[debugger] Listening on /tmp/tach_debug_{PID}.sock
+[supervisor] Created {N} log buffers (memfd)
+[config] Set env: TACH_DEBUG_MODE=true
+[config] Set env: TACH_PHASE3_VERIFIED=true
+[config] Set env: TACH_TEST_VAR=hello_from_pyproject
+[supervisor] Isolation disabled via TACH_NO_ISOLATION
+[supervisor] Snapshot mode enabled: /tmp/tach_run_{UUID}/uffd.sock
+[supervisor] Forking Zygote...
+[supervisor] Zygote PID: {PID}
+[zygote] Initializing Python...
+[zygote] Found venv: {PROJECT_ROOT}/.venv/lib/python3.12/site-packages
+[zygote] pytest loaded successfully
+[harness] init_session: {PROJECT_ROOT}/tests/gauntlet
+[harness] Pre-collected 39 tests
+[zygote] Python ready.
+[supervisor] Zygote is READY.
+
+[scheduler] Queue split: 39 safe (Hypervisor), 0 toxic (Isolation)
+[tach] Running 39 tests...
+
+atal Python error: Segmentation fault
+
+Current thread {ADDR} (most recent call first):
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {FILE_LINE} in <lambda>
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+atal Python error: Aborted
+
+Current thread {ADDR} (most recent call first):
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {FILE_LINE} in <lambda>
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+atal Python error: Bus error
+
+Current thread {ADDR} (most recent call first):
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {FILE_LINE} in <lambda>
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+atal Python error: Floating point exception
+
+Current thread {ADDR} (most recent call first):
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {FILE_LINE} in <lambda>
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+  {TRACEBACK_FRAME}
+[zygote] Worker {PID} crashed before sending result
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Worker {PID} crashed before sending result
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Worker {PID} crashed before sending result
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+{PROGRESS}
+
+============================== FAILURES ==============================
+
+test_segfault
+-------------
+def test_segfault():
+        """Kill self with SIGSEGV (segmentation fault)."""
+        os.kill(os.getpid(), signal.SIGSEGV)
+        # Never reached
+>       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:15: AssertionError
+
+test_sigbus
+-----------
+def test_sigbus():
+        """Kill self with SIGBUS (bus error - invalid memory access)."""
+        os.kill(os.getpid(), signal.SIGBUS)
+        # Never reached
+>       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:36: AssertionError
+
+test_sigterm
+------------
+def test_sigterm():
+        """Kill self with SIGTERM (graceful termination request)."""
+        os.kill(os.getpid(), signal.SIGTERM)
+        # Never reached
+>       assert False
+E       assert False
+
+tests/gauntlet/test_segfault.py:50: AssertionError
+
+test_port_05
+------------
+def test_port_05():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:43: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_04
+------------
+def test_port_04():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:39: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_01
+------------
+def test_port_01():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:27: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_02
+------------
+def test_port_02():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_00
+------------
+def test_port_00():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_07
+------------
+def test_port_07():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:51: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_06
+------------
+def test_port_06():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_08
+------------
+def test_port_08():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_03
+------------
+def test_port_03():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:35: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_09
+------------
+def test_port_09():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_10
+------------
+def test_port_10():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_11
+------------
+def test_port_11():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_12
+------------
+def test_port_12():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_13
+------------
+def test_port_13():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_14
+------------
+def test_port_14():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_15
+------------
+def test_port_15():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:83: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_16
+------------
+def test_port_16():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_17
+------------
+def test_port_17():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_18
+------------
+def test_port_18():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_port_19
+------------
+def test_port_19():
+>       _bind_port_8080()
+
+tests/gauntlet/test_port_storm.py:99: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically
+        if fileno is None:
+
+test_fs_destruction
+-------------------
+def test_fs_destruction():
+        """Attempt hostile operations - should be blocked by Iron Dome."""
+        errors = []
+    
+        # 1. Try to write to /etc/passwd - MUST FAIL (RO filesystem)
+        try:
+            with open("/etc/passwd", "a") as f:
+                f.write("\n# TACH_TEST_MARKER\n")
+            errors.append("ERROR: /etc/passwd was writable!")
+        except OSError as e:
+            # Expected: "Read-only file system" or "Permission denied"
+            print(f"GOOD: /etc/passwd protected: {e}")
+    
+        # 2. Write to /tmp - MUST SUCCEED (overlay)
+        try:
+            with open("/tmp/survivor.txt", "w") as f:
+                f.write("I survived the gauntlet!")
+            print("GOOD: /tmp is writable")
+        except OSError as e:
+            errors.append(f"ERROR: /tmp not writable: {e}")
+
+test_sigabrt
+------------
+CRASHED - no response
+
+test_sigkill
+------------
+CRASHED - no response
+
+test_sigfpe
+-----------
+CRASHED - no response
+======================================================================
+
+[tach] 12 passed, 27 failed, 0 skipped in {DURATION}
+[tach] (Saved {DURATION} of initialization overhead)
+[zygote] Received EXIT.
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Drained {N} idle workers
+[supervisor] Done.
+[tach] Cleanup: Resources released.
+
+RETURNCODE: 0

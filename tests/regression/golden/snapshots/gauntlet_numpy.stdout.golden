@@ -1,0 +1,251 @@
+STDOUT:
+
+STDERR:
+[allocator] jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified as active allocator
+[supervisor] Jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified - Hypervisor allocator ready
+[supervisor] Scanning {PROJECT_ROOT}...
+[supervisor] Discovered 1312 tests, 8 fixtures in {DURATION} (toxic: 14, safe: 107)
+[loader] WARN: Failed to compile {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Compilation failed for {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Traceback (most recent call last):
+  {FILE_LINE}, in compile
+    code = loader.source_to_code(source_bytes, dfile or file,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1059, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  {FILE_LINE}, in compile
+    raise py_exc
+py_compile.PyCompileError:   {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+
+[loader] Compiled 120 of 121 files
+[supervisor] Compiled 120 of 121 modules for zero-copy loading in {DURATION}
+[supervisor] Resolved 1310 tests (2 errors)
+  ⚠ test_missing_dep - missing: non_existent_fixture
+  ⚠ test_with_cycle - cycle: ["fixture_a", "fixture_b", "fixture_a"]
+[supervisor] Selected 26 tests to run (filtered by path: {PROJECT_ROOT}/tests/gauntlet_numpy)
+[debugger] Listening on /tmp/tach_debug_{PID}.sock
+[supervisor] Created {N} log buffers (memfd)
+[config] Set env: TACH_DEBUG_MODE=true
+[config] Set env: TACH_PHASE3_VERIFIED=true
+[config] Set env: TACH_TEST_VAR=hello_from_pyproject
+[supervisor] Isolation disabled via TACH_NO_ISOLATION
+[supervisor] Snapshot mode enabled: /tmp/tach_run_{UUID}/uffd.sock
+[supervisor] Forking Zygote...
+[supervisor] Zygote PID: {PID}
+[zygote] Initializing Python...
+[zygote] Found venv: {PROJECT_ROOT}/.venv/lib/python3.12/site-packages
+[zygote] pytest loaded successfully
+[harness] init_session: {PROJECT_ROOT}/tests/gauntlet_numpy
+[harness] Pre-collected 0 tests
+[zygote] Python ready.
+[supervisor] Zygote is READY.
+
+[scheduler] Queue split: 26 safe (Hypervisor), 0 toxic (Isolation)
+[tach] Running 26 tests...
+
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Reusing worker {PID} for test
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+{PROGRESS}
+
+============================== FAILURES ==============================
+
+test_a_simple_array_creation
+----------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_a_simple_array_creation
+Available: 0 items
+
+test_b_zeros_ones_empty
+-----------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_b_zeros_ones_empty
+Available: 0 items
+
+test_c_arange_linspace
+----------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_c_arange_linspace
+Available: 0 items
+
+test_d_large_allocation_1mb
+---------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_d_large_allocation_1mb
+Available: 0 items
+
+test_e_large_allocation_10mb
+----------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_e_large_allocation_10mb
+Available: 0 items
+
+test_f_large_2d_matrix
+----------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_f_large_2d_matrix
+Available: 0 items
+
+test_h_linear_algebra_operations
+--------------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_h_linear_algebra_operations
+Available: 0 items
+
+test_j_array_views
+------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_j_array_views
+Available: 0 items
+
+test_i_singular_value_decomposition
+-----------------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_i_singular_value_decomposition
+Available: 0 items
+
+test_k_strided_arrays
+---------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_k_strided_arrays
+Available: 0 items
+
+test_l_fancy_indexing
+---------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_l_fancy_indexing
+Available: 0 items
+
+test_g_matrix_multiplication
+----------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_g_matrix_multiplication
+Available: 0 items
+
+test_n_structured_arrays
+------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_n_structured_arrays
+Available: 0 items
+
+test_p_rng_independence
+-----------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_p_rng_independence
+Available: 0 items
+
+test_o_rng_reproducibility
+--------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_o_rng_reproducibility
+Available: 0 items
+
+test_q_fft_operations
+---------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_q_fft_operations
+Available: 0 items
+
+test_r_sorting_operations
+-------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_r_sorting_operations
+Available: 0 items
+
+test_m_various_dtypes
+---------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_m_various_dtypes
+Available: 0 items
+
+test_s_reduction_operations
+---------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_s_reduction_operations
+Available: 0 items
+
+test_t_empty_arrays
+-------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_t_empty_arrays
+Available: 0 items
+
+test_u_scalar_arrays
+--------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_u_scalar_arrays
+Available: 0 items
+
+test_v_broadcasting
+-------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_v_broadcasting
+Available: 0 items
+
+test_w_garbage_collection
+-------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_w_garbage_collection
+Available: 0 items
+
+test_x_reference_counting
+-------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_x_reference_counting
+Available: 0 items
+
+test_y_final_integrity_check
+----------------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_y_final_integrity_check
+Available: 0 items
+
+test_z_memory_report
+--------------------
+Test not found in Zygote session: tests/gauntlet_numpy/test_numpy_stress.py::test_z_memory_report
+Available: 0 items
+======================================================================
+
+[tach] 0 passed, 26 failed, 0 skipped in {DURATION}
+[tach] (Saved {DURATION} of initialization overhead)
+[zygote] Received EXIT.
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Drained {N} idle workers
+[supervisor] Done.
+[tach] Cleanup: Resources released.
+
+RETURNCODE: 0

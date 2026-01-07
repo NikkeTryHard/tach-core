@@ -1,0 +1,22 @@
+{
+  "gauntlet": {
+    "recorded_at": "2026-01-07T09:34:52Z",
+    "test_count": 1312,
+    "timing_ms": 6505.894071000512
+  },
+  "gauntlet_coverage": {
+    "recorded_at": "2026-01-07T09:34:56Z",
+    "test_count": 1312,
+    "timing_ms": 1045.4562200029613
+  },
+  "gauntlet_db": {
+    "recorded_at": "2026-01-07T09:34:53Z",
+    "test_count": 1312,
+    "timing_ms": 999.8625810039812
+  },
+  "gauntlet_numpy": {
+    "recorded_at": "2026-01-07T09:34:55Z",
+    "test_count": 1312,
+    "timing_ms": 1188.4057719944394
+  }
+}

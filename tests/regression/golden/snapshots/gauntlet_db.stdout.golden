@@ -1,0 +1,90 @@
+STDOUT:
+
+STDERR:
+[allocator] jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified as active allocator
+[supervisor] Jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified - Hypervisor allocator ready
+[supervisor] Scanning {PROJECT_ROOT}...
+[supervisor] Discovered 1312 tests, 8 fixtures in {DURATION} (toxic: 14, safe: 107)
+[loader] WARN: Failed to compile {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Compilation failed for {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Traceback (most recent call last):
+  {FILE_LINE}, in compile
+    code = loader.source_to_code(source_bytes, dfile or file,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1059, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  {FILE_LINE}, in compile
+    raise py_exc
+py_compile.PyCompileError:   {FILE_LINE}
+    def test_broken(:
+                    ^
+SyntaxError: invalid syntax
+
+
+[loader] Compiled 120 of 121 files
+[supervisor] Compiled 120 of 121 modules for zero-copy loading in {DURATION}
+[supervisor] Resolved 1310 tests (2 errors)
+  ⚠ test_missing_dep - missing: non_existent_fixture
+  ⚠ test_with_cycle - cycle: ["fixture_a", "fixture_b", "fixture_a"]
+[supervisor] Selected 12 tests to run (filtered by path: {PROJECT_ROOT}/tests/gauntlet_db)
+[debugger] Listening on /tmp/tach_debug_{PID}.sock
+[supervisor] Created {N} log buffers (memfd)
+[config] Set env: TACH_DEBUG_MODE=true
+[config] Set env: TACH_PHASE3_VERIFIED=true
+[config] Set env: TACH_TEST_VAR=hello_from_pyproject
+[supervisor] Isolation disabled via TACH_NO_ISOLATION
+[supervisor] Snapshot mode enabled: /tmp/tach_run_{UUID}/uffd.sock
+[supervisor] Forking Zygote...
+[supervisor] Zygote PID: {PID}
+[zygote] Initializing Python...
+[zygote] Found venv: {PROJECT_ROOT}/.venv/lib/python3.12/site-packages
+[zygote] pytest loaded successfully
+[harness] init_session: {PROJECT_ROOT}/tests/gauntlet_db
+[harness] Pre-collected 12 tests
+[zygote] Python ready.
+[supervisor] Zygote is READY.
+
+[scheduler] Queue split: 12 safe (Hypervisor), 0 toxic (Isolation)
+[tach] Running 12 tests...
+
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+[zygote] Worker {PID} ready, adding to pool
+{PROGRESS}
+
+[tach] 12 passed, 0 failed, 0 skipped in {DURATION}
+[tach] (Saved {DURATION} of initialization overhead)
+[zygote] Received EXIT.
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Sending EXIT to idle worker {PID}
+[zygote] Drained {N} idle workers
+[supervisor] Done.
+[tach] Cleanup: Resources released.
+
+RETURNCODE: 0

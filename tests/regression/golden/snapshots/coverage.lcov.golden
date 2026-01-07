@@ -1,0 +1,7 @@
+# Coverage file not generated
+# Return code: 0
+# Stderr: [allocator] jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified as active allocator
+[supervisor] Jemalloc 5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7 verified - Hypervisor allocator ready
+[supervisor] Scanning {PROJECT_ROOT}...
+[supervisor] Discovered 1312 tests, 8 fixtures in {DURATION} (toxic: 14, safe: 107)
+[loader] WARN: Failed to compile {PROJECT_ROOT}/tests/dummy_project/test_bad_syntax.py: Compilation failed for {HOME}/d
