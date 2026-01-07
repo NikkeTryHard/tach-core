@@ -72,8 +72,10 @@ fn is_builtin_fixture(name: &str) -> bool {
 
 /// Registry holding all discovered fixtures
 pub struct FixtureRegistry {
-    /// Global fixtures from conftest.py files
-    global: HashMap<String, (FixtureDefinition, PathBuf)>,
+    /// Conftest fixtures by directory path
+    /// Key: directory containing conftest.py
+    /// Value: fixture_name -> (fixture, conftest_path)
+    conftest: HashMap<PathBuf, HashMap<String, (FixtureDefinition, PathBuf)>>,
     /// Local fixtures per module (non-class-scoped only)
     local: HashMap<PathBuf, HashMap<String, FixtureDefinition>>,
     /// Class-scoped fixtures: (module_path, class_name) -> fixture_name -> fixture
@@ -83,7 +85,8 @@ pub struct FixtureRegistry {
 impl FixtureRegistry {
     /// Build registry from discovery results
     pub fn from_discovery(result: &DiscoveryResult) -> Self {
-        let mut global = HashMap::new();
+        let mut conftest: HashMap<PathBuf, HashMap<String, (FixtureDefinition, PathBuf)>> =
+            HashMap::new();
         let mut local = HashMap::new();
         let mut class_scoped: HashMap<(PathBuf, String), HashMap<String, FixtureDefinition>> =
             HashMap::new();
@@ -101,7 +104,16 @@ impl FixtureRegistry {
                         .or_default()
                         .insert(fixture.name.clone(), fixture.clone());
                 } else if is_conftest {
-                    global.insert(fixture.name.clone(), (fixture.clone(), module.path.clone()));
+                    // Get directory containing the conftest.py
+                    let conftest_dir = module
+                        .path
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_default();
+                    conftest
+                        .entry(conftest_dir)
+                        .or_default()
+                        .insert(fixture.name.clone(), (fixture.clone(), module.path.clone()));
                 } else {
                     module_fixtures.insert(fixture.name.clone(), fixture.clone());
                 }
@@ -113,13 +125,16 @@ impl FixtureRegistry {
         }
 
         Self {
-            global,
+            conftest,
             local,
             class_scoped,
         }
     }
 
-    /// Look up a fixture: class scope -> local scope -> global scope
+    /// Look up a fixture: class scope -> local scope -> conftest hierarchy
+    ///
+    /// For conftest fixtures, we walk up the directory tree to find the fixture,
+    /// starting from the test's directory. Inner conftest.py files take precedence.
     fn lookup(
         &self,
         name: &str,
@@ -145,8 +160,27 @@ impl FixtureRegistry {
                 return Some((fixture.clone(), module_path.clone()));
             }
         }
-        // Fall back to global scope
-        self.global.get(name).cloned()
+
+        // Walk up the directory tree to find conftest fixtures
+        // Start from the test file's directory
+        let mut current_dir = module_path.parent();
+        while let Some(dir) = current_dir {
+            if let Some(conftest_fixtures) = self.conftest.get(dir) {
+                if let Some((fixture, source)) = conftest_fixtures.get(name) {
+                    return Some((fixture.clone(), source.clone()));
+                }
+            }
+            current_dir = dir.parent();
+        }
+
+        // Also check root-level conftest (empty path for relative paths)
+        if let Some(conftest_fixtures) = self.conftest.get(&PathBuf::new()) {
+            if let Some((fixture, source)) = conftest_fixtures.get(name) {
+                return Some((fixture.clone(), source.clone()));
+            }
+        }
+
+        None
     }
 }
 
@@ -560,5 +594,134 @@ mod tests {
         // Only user fixture should be in resolved list (builtin is skipped)
         assert_eq!(runnable[0].fixtures.len(), 1);
         assert_eq!(runnable[0].fixtures[0].name, "db");
+    }
+
+    // =========================================================================
+    // Nested Conftest Inheritance Tests (Bug Fix 0.1.1-C)
+    // =========================================================================
+
+    #[test]
+    fn test_nested_conftest_inheritance() {
+        // Tests should see fixtures from parent conftest.py files
+        // Structure:
+        //   conftest.py        -> defines "root_fixture"
+        //   tests/
+        //     conftest.py      -> defines "tests_fixture"
+        //     subdir/
+        //       conftest.py    -> defines "subdir_fixture"
+        //       test_nested.py -> should see all three fixtures
+        let discovery = DiscoveryResult {
+            modules: vec![
+                // Root conftest.py
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("root_fixture", vec![])],
+                    is_toxic: false,
+                },
+                // tests/conftest.py
+                TestModule {
+                    path: PathBuf::from("tests/conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("tests_fixture", vec![])],
+                    is_toxic: false,
+                },
+                // tests/subdir/conftest.py
+                TestModule {
+                    path: PathBuf::from("tests/subdir/conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![make_fixture("subdir_fixture", vec![])],
+                    is_toxic: false,
+                },
+                // Test file that uses fixtures from all levels
+                TestModule {
+                    path: PathBuf::from("tests/subdir/test_nested.py"),
+                    tests: vec![make_test(
+                        "test_all_fixtures",
+                        vec!["root_fixture", "tests_fixture", "subdir_fixture"],
+                    )],
+                    fixtures: vec![],
+                    is_toxic: false,
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        // Should resolve all fixtures without errors
+        assert!(
+            errors.is_empty(),
+            "Should find all fixtures from parent conftest files: {:?}",
+            errors
+        );
+        assert_eq!(runnable.len(), 1);
+        assert_eq!(
+            runnable[0].fixtures.len(),
+            3,
+            "Should resolve 3 fixtures from nested conftest hierarchy"
+        );
+
+        let fixture_names: Vec<_> = runnable[0]
+            .fixtures
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert!(fixture_names.contains(&"root_fixture"));
+        assert!(fixture_names.contains(&"tests_fixture"));
+        assert!(fixture_names.contains(&"subdir_fixture"));
+    }
+
+    #[test]
+    fn test_nested_conftest_override() {
+        // Inner conftest.py should override fixtures with same name from outer conftest.py
+        let mut outer_db = make_fixture("db", vec!["connection"]);
+        let inner_db = make_fixture("db", vec![]); // Inner fixture has no deps
+
+        // Need to distinguish them
+        outer_db.scope = FixtureScope::Session; // Outer has session scope
+
+        let discovery = DiscoveryResult {
+            modules: vec![
+                // Outer conftest.py with db fixture (session scope, has deps)
+                TestModule {
+                    path: PathBuf::from("conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![outer_db, make_fixture("connection", vec![])],
+                    is_toxic: false,
+                },
+                // Inner conftest.py with db fixture (function scope, no deps)
+                TestModule {
+                    path: PathBuf::from("tests/conftest.py"),
+                    tests: vec![],
+                    fixtures: vec![inner_db],
+                    is_toxic: false,
+                },
+                // Test in inner directory should use inner fixture
+                TestModule {
+                    path: PathBuf::from("tests/test_override.py"),
+                    tests: vec![make_test("test_db", vec!["db"])],
+                    fixtures: vec![],
+                    is_toxic: false,
+                },
+            ],
+        };
+
+        let registry = FixtureRegistry::from_discovery(&discovery);
+        let resolver = Resolver::new(&registry);
+        let (runnable, errors) = resolver.resolve_all(&discovery);
+
+        assert!(errors.is_empty());
+        assert_eq!(runnable.len(), 1);
+        // Should only have 1 fixture (inner db, no transitive deps)
+        assert_eq!(
+            runnable[0].fixtures.len(),
+            1,
+            "Should use inner conftest fixture which has no dependencies"
+        );
+        assert_eq!(runnable[0].fixtures[0].name, "db");
+        // Inner fixture has function scope (default)
+        assert_eq!(runnable[0].fixtures[0].scope, FixtureScope::Function);
     }
 }

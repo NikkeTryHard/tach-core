@@ -132,16 +132,25 @@ pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
 
 /// Scan project for test files and parse them in parallel
 pub fn discover(root: &Path) -> Result<DiscoveryResult> {
-    let paths: Vec<PathBuf> = WalkBuilder::new(root)
+    // Canonicalize root path to resolve symlinks
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    let paths: Vec<PathBuf> = WalkBuilder::new(&canonical_root)
         .standard_filters(true)
+        .follow_links(true) // Follow symlinked directories
         .build()
         .filter_map(|e| e.ok())
         .filter(|e| is_test_file(e.path()))
         .map(|e| {
+            // Canonicalize paths to handle symlinks consistently
+            let canonical_path = e
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| e.path().to_path_buf());
             // Convert to relative path for pytest node_id compatibility
-            e.path()
-                .strip_prefix(root)
-                .unwrap_or(e.path())
+            canonical_path
+                .strip_prefix(&canonical_root)
+                .unwrap_or(&canonical_path)
                 .to_path_buf()
         })
         .collect();
@@ -928,5 +937,99 @@ def bare_fixture():
         let module = parse_source(source);
         assert_eq!(module.fixtures.len(), 1);
         assert_eq!(module.fixtures[0].name, "bare_fixture");
+    }
+
+    // =========================================================================
+    // Decorated Test Function Tests (Bug Fix 0.1.1-C)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_decorated_test_functions() {
+        let source = r#"
+import pytest
+
+@pytest.mark.slow
+def test_with_slow_marker():
+    pass
+
+@pytest.mark.skip(reason="not ready")
+def test_with_skip():
+    pass
+
+@custom_decorator
+def test_with_custom_decorator():
+    pass
+
+@decorator_one
+@decorator_two
+@decorator_three
+def test_with_decorator_chain():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(
+            module.tests.len(),
+            4,
+            "Should discover all 4 decorated tests"
+        );
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(
+            test_names.contains(&"test_with_slow_marker"),
+            "Should find @pytest.mark.slow decorated test"
+        );
+        assert!(
+            test_names.contains(&"test_with_skip"),
+            "Should find @pytest.mark.skip decorated test"
+        );
+        assert!(
+            test_names.contains(&"test_with_custom_decorator"),
+            "Should find custom decorated test"
+        );
+        assert!(
+            test_names.contains(&"test_with_decorator_chain"),
+            "Should find test with decorator chain"
+        );
+    }
+
+    #[test]
+    fn test_parse_decorated_async_test() {
+        let source = r#"
+import pytest
+
+@pytest.mark.asyncio
+async def test_async_with_marker():
+    await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test_async_with_marker");
+        assert!(module.tests[0].is_async);
+    }
+
+    #[test]
+    fn test_parse_decorated_test_in_class() {
+        let source = r#"
+import pytest
+
+class TestDecorated:
+    @pytest.mark.slow
+    def test_slow_method(self):
+        pass
+
+    @pytest.mark.parametrize("x", [1, 2, 3])
+    def test_parametrized(self, x):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(
+            module.tests.len(),
+            2,
+            "Should find both decorated class methods"
+        );
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"TestDecorated::test_slow_method"));
+        assert!(test_names.contains(&"TestDecorated::test_parametrized"));
     }
 }

@@ -15,6 +15,32 @@
 
 use serde::Serialize;
 
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Truncate a test ID to fit within the given maximum width.
+///
+/// If the ID is longer than max_width, it will be truncated with "..." prefix,
+/// showing the most relevant part (end of the path/test name).
+fn truncate_test_id(id: &str, max_width: usize) -> String {
+    if id.len() <= max_width {
+        id.to_string()
+    } else if max_width <= 3 {
+        "...".to_string()
+    } else {
+        // Show "..." followed by the last (max_width - 3) characters
+        format!("...{}", &id[id.len() - (max_width - 3)..])
+    }
+}
+
+/// Get the current terminal width, with a fallback default.
+fn get_terminal_width() -> usize {
+    terminal_size::terminal_size()
+        .map(|(w, _)| w.0 as usize)
+        .unwrap_or(80)
+}
+
 /// Machine-readable events for JSON output
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -118,7 +144,34 @@ impl Reporter for JsonReporter {
 }
 
 /// Human Reporter - outputs readable text to stderr
-pub struct HumanReporter;
+pub struct HumanReporter {
+    /// Maximum width for test names (based on terminal width)
+    max_name_width: usize,
+}
+
+impl HumanReporter {
+    /// Create a new human reporter with terminal width detection
+    pub fn new() -> Self {
+        // Get terminal width, default to 80 if not available
+        let term_width = terminal_size::terminal_size()
+            .map(|(w, _)| w.0 as usize)
+            .unwrap_or(80);
+        // Reserve space for "  " prefix, " ... " suffix, and result (20 chars)
+        let max_name_width = term_width.saturating_sub(30).max(20);
+        Self { max_name_width }
+    }
+
+    /// Truncate a test ID if it exceeds the maximum width
+    fn truncate_id(&self, id: &str) -> String {
+        truncate_test_id(id, self.max_name_width)
+    }
+}
+
+impl Default for HumanReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Reporter for HumanReporter {
     fn on_run_start(&mut self, count: usize) {
@@ -126,7 +179,8 @@ impl Reporter for HumanReporter {
     }
 
     fn on_test_start(&mut self, id: &str, _file: &str) {
-        eprint!("  {} ... ", id);
+        let display_id = self.truncate_id(id);
+        eprint!("  {} ... ", display_id);
     }
 
     fn on_test_finished(
@@ -137,9 +191,9 @@ impl Reporter for HumanReporter {
         message: Option<&str>,
     ) {
         match status {
-            "pass" => eprintln!("✓ ({}ms)", duration_ms),
+            "pass" => eprintln!("ok ({}ms)", duration_ms),
             "fail" => {
-                eprintln!("✗ ({}ms)", duration_ms);
+                eprintln!("FAILED ({}ms)", duration_ms);
                 if let Some(msg) = message {
                     // Indent failure message
                     for line in msg.lines().take(10) {
@@ -147,7 +201,7 @@ impl Reporter for HumanReporter {
                     }
                 }
             }
-            "skip" => eprintln!("⊘ skipped"),
+            "skip" => eprintln!("skipped"),
             _ => eprintln!("{}", status),
         }
     }
@@ -241,17 +295,47 @@ pub struct ProgressReporter {
     skipped: usize,
     failures: Vec<FailureRecord>,
     total: usize,
+    /// Maximum width for test IDs in messages
+    max_id_width: usize,
 }
 
 impl ProgressReporter {
-    /// Create a new progress reporter
+    /// Create a new progress reporter with terminal-responsive layout
     pub fn new() -> Self {
+        let term_width = get_terminal_width();
+
+        // Calculate responsive bar width:
+        // - Spinner + space: 2
+        // - [elapsed_precise]: 12 (HH:MM:SS.mmm in brackets)
+        // - Space: 1
+        // - [bar]: variable
+        // - Space: 1
+        // - pos/len: ~10
+        // - Space: 1
+        // - msg: ~20
+        // Total overhead: ~47 chars
+        let bar_width = if term_width < 60 {
+            // Very narrow: minimal bar
+            10
+        } else if term_width < 80 {
+            // Narrow: small bar
+            20
+        } else if term_width < 120 {
+            // Normal: medium bar
+            40
+        } else {
+            // Wide: larger bar
+            60
+        };
+
+        // Calculate max ID width for truncation (for messages)
+        let max_id_width = term_width.saturating_sub(50).max(20);
+
         let bar = ProgressBar::new(0);
+        let template = format!("{{spinner:.green}} [{{elapsed_precise}}] [{{bar:{}.cyan/blue}}] {{pos}}/{{len}} {{msg}}", bar_width);
         bar.set_style(
             ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-                )
+                .template(&template)
                 .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("=>-"),
         );
@@ -263,6 +347,7 @@ impl ProgressReporter {
             skipped: 0,
             failures: Vec::new(),
             total: 0,
+            max_id_width,
         }
     }
 
@@ -286,12 +371,8 @@ impl Reporter for ProgressReporter {
     }
 
     fn on_test_start(&mut self, id: &str, _file: &str) {
-        // Truncate long test IDs for display
-        let display_id = if id.len() > 50 {
-            format!("...{}", &id[id.len() - 47..])
-        } else {
-            id.to_string()
-        };
+        // Truncate long test IDs using instance's max width
+        let display_id = truncate_test_id(id, self.max_id_width);
         self.bar.set_message(display_id);
     }
 
@@ -613,7 +694,7 @@ mod tests {
     #[test]
     fn test_multi_reporter_creation() {
         let reporters: Vec<Box<dyn Reporter>> =
-            vec![Box::new(HumanReporter), Box::new(JsonReporter)];
+            vec![Box::new(HumanReporter::new()), Box::new(JsonReporter)];
         let _multi = MultiReporter::new(reporters);
         // Should compile and not panic
     }
@@ -704,5 +785,67 @@ mod tests {
         assert_eq!(reporter.skipped, 1);
         assert_eq!(reporter.failures.len(), 1);
         assert_eq!(reporter.failures[0].id, "test2");
+    }
+
+    // =========================================================================
+    // Truncation and Terminal Width Tests (Bug Fix 0.1.1-C)
+    // =========================================================================
+
+    #[test]
+    fn test_truncate_test_id_short() {
+        // Short IDs should not be truncated
+        let id = "test_simple";
+        assert_eq!(truncate_test_id(id, 50), "test_simple");
+    }
+
+    #[test]
+    fn test_truncate_test_id_long() {
+        // Long IDs should be truncated with "..." prefix
+        let id = "tests/very/long/path/to/test_module.py::TestClass::test_method";
+        let result = truncate_test_id(id, 30);
+        assert!(result.starts_with("..."), "Should start with ellipsis");
+        assert_eq!(result.len(), 30, "Should be exactly max_width");
+        assert!(result.ends_with("test_method"), "Should show end of ID");
+    }
+
+    #[test]
+    fn test_truncate_test_id_very_narrow() {
+        // Very narrow width should still work
+        let id = "test_something_very_long";
+        let result = truncate_test_id(id, 5);
+        assert_eq!(result, "...ng", "Should show only last 2 chars after ...");
+    }
+
+    #[test]
+    fn test_truncate_test_id_min_width() {
+        // Width <= 3 should just return "..."
+        let id = "test";
+        assert_eq!(truncate_test_id(id, 3), "...");
+        assert_eq!(truncate_test_id(id, 2), "...");
+    }
+
+    #[test]
+    fn test_truncate_test_id_exact_fit() {
+        // ID exactly at max_width should not be truncated
+        let id = "exactly_twenty_chars";
+        assert_eq!(id.len(), 20);
+        assert_eq!(truncate_test_id(id, 20), id);
+    }
+
+    #[test]
+    fn test_get_terminal_width() {
+        // Should return a reasonable value (or fallback)
+        let width = get_terminal_width();
+        assert!(width >= 20, "Terminal width should be at least 20");
+    }
+
+    #[test]
+    fn test_human_reporter_creation() {
+        // HumanReporter should create without panicking
+        let reporter = HumanReporter::new();
+        assert!(
+            reporter.max_name_width >= 20,
+            "Max name width should be reasonable"
+        );
     }
 }
