@@ -17,7 +17,6 @@ jobs:
         id: release
         with:
           release-type: rust
-          package-name: tach-core
 
       # Optional: Build and upload release artifacts when a release is created
       - uses: actions/checkout@v6
