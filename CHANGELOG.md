@@ -9,11 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Roadmap to 1.0.0 and Beyond
 
+> **Research Foundation**: This roadmap is informed by 12 research papers covering process cloning, memory snapshotting, fork safety, and test isolation. See [docs/research-investigation.md](docs/research-investigation.md) for complete analysis and [docs/research-reference.md](docs/research-reference.md) for paper-to-implementation mapping.
+
+#### Research-to-Implementation Mapping
+
+| Version | Research Phase    | Primary Paper                                    | Key Deliverable                                     |
+| ------- | ----------------- | ------------------------------------------------ | --------------------------------------------------- |
+| 0.1.x   | Static Discovery  | _Python Testing Engine Rust Breakthroughs_       | AST-based test discovery eliminating "Import Tax"   |
+| 0.2.x   | Plugin Isolation  | _Project Tach Compatibility Layer Blueprint_     | Shadow plugin shim with syscall interception        |
+| 0.3.x   | Database Safety   | _Fork Safety of Python C-Extensions_             | Transactional rollback, connection dispose pattern  |
+| 0.4.x   | Zygote Hierarchy  | _Forklift_, _Python Monorepo Zygote Tree Design_ | DAAC clustering for hierarchical pre-initialization |
+| 0.5.x   | Observability     | _Rust-CPython Execution Blueprint Research_      | PEP 669 low-impact monitoring integration           |
+| 0.6.x   | Zero-Copy Loading | _Zero-Copy Python Module Loading_                | mmap-based bytecode loading bypassing importlib     |
+| 0.7.x   | Memory Snapshots  | _Python Memory Snapshotting with Userfaultfd_    | userfaultfd + MADV_DONTNEED microsecond reset       |
+| 0.8.x+  | Cross-Platform    | _Cross-Platform Process Cloning Research_        | mach_vm_remap (macOS), NT Section Objects (Windows) |
+
+#### Research Verification Checklist
+
+Before 1.0.0, verify all critical research requirements are met:
+
+- [ ] **Allocator Quiesce**: Verify jemalloc `thread.tcache.flush` is called before snapshotting
+  > "By invoking this before taking the snapshot, the test runner ensures that the thread-local bins are empty" — _Python Memory Snapshotting with Userfaultfd_
+  > **External Ref**: [jemalloc.net/jemalloc.3.html](https://jemalloc.net/jemalloc.3.html) — mallctl API documentation
+- [ ] **Toxicity Detection**: Confirm static analysis catches all fork-unsafe patterns
+  > "identify 'toxic' or 'fork-unsafe' Python modules through static analysis of import graphs" — _Rust Static Analysis for Toxic Python Modules_
+  > **External Ref**: [POSIX fork() spec](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) — async-signal-safety requirements
+- [ ] **Namespace Isolation**: Verify CLONE_NEWNS + CLONE_NEWNET provide complete isolation
+  > "Namespaces provide complete, kernel-enforced isolation with acceptable overhead" — _Project Tach Compatibility Layer Blueprint_
+  > **External Ref**: [Landlock kernel docs](https://docs.kernel.org/userspace-api/landlock.html) — ABI version features
+- [ ] **Database Dispose**: Ensure connections are discarded in child processes
+  > "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
+- [ ] **TLS Restoration**: Verify mimalloc TLS state is correctly restored on Python 3.13+
+  > "mimalloc uses TLS for TLABs; fs*base must be tracked and restored" — \_Userfaultfd and CPython Allocator Interaction*
+  > **External Ref**: [mimalloc GitHub](https://github.com/microsoft/mimalloc) — thread-local allocation design
+- [ ] **GIL Management**: Verify PyO3 `py.detach()` is used during Rust-heavy operations
+  > **External Ref**: [PyO3 Parallelism Guide](https://pyo3.rs/main/parallelism) — GIL release patterns
+
 ---
 
 ## 0.1.x - Foundation (Current)
 
 > **Focus**: Alpha stabilization, documentation, error handling improvements, and minor bug fixes.
+>
+> **Research Foundation**: Implements the "Kineton" engine concept from _Python Testing Engine Rust Breakthroughs_.
+>
+> - "shifts the heavy lifting of static analysis, dependency graph resolution, and execution supervision out of the slow, interpreted Python runtime and into a high-performance, compiled substrate: Rust" — _Python Testing Engine Rust Breakthroughs_
 
 The 0.1.x series focuses on solidifying the alpha release, improving documentation, and fixing edge cases discovered during initial usage. No major new features are planned - the goal is stability and usability.
 
@@ -37,8 +77,10 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   - [ ] Migration guide from pytest
 - [ ] Add inline code comments for complex algorithms
   - [ ] Toxicity propagation in `discovery/analysis.rs`
+    > **Ref**: "Toxicity is contagious. If Module A imports Module B, and Module B opens a database connection, then importing Module A effectively opens a database connection" — _Python Monorepo Zygote Tree Design_
   - [ ] Fixture resolution in `discovery/resolver.rs`
   - [ ] Snapshot mechanics in `isolation/snapshot.rs`
+    > **Ref**: "The kernel iterates over the Page Table Entries corresponding to the address range. It clears the 'Present' bit, effectively unmapping the physical pages" — _Python Memory Snapshotting with Userfaultfd_
   - [ ] Seccomp filter generation in `isolation/sandbox.rs`
 
 #### CLI Improvements
@@ -48,11 +90,13 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [ ] Better error messages when Python environment is misconfigured
 - [ ] Add shell completion scripts (bash, zsh, fish)
 - [ ] Add `--dry-run` flag to show what would be executed
+  > **Ref**: "Kineton uses a Rust-based Abstract Syntax Tree (AST) parser to statically identify test entry points... discovery phase is decoupled from the runtime cost" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Add `--collect-only` as alias for `list` command
 
 #### Bug Fixes
 
 - [ ] Fix edge cases in AST discovery for decorated test functions
+  > **Ref**: "The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest **init**.py or namespace root" — _Python Monorepo Zygote Tree Design_
 - [ ] Handle `conftest.py` files in nested directories correctly
 - [ ] Fix path resolution for symlinked test directories
 - [ ] Handle tests with very long names gracefully
@@ -88,6 +132,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [ ] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
 - [ ] Improve cleanup when test times out mid-execution
 - [ ] Handle tests that spawn threads which outlive the test
+  > **Ref**: "If a background thread holds a mutex or lock at the precise nanosecond fork() is invoked, that lock is copied into the child process's memory in a 'locked' state" — _Fork Safety of Python C-Extensions_
 - [ ] Add global timeout configuration in pyproject.toml
 - [ ] Support timeout callback hooks
 
@@ -95,9 +140,11 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 - [ ] Improve worker cleanup on SIGTERM/SIGKILL
 - [ ] Fix orphan process detection on abnormal exit
+  > **Ref**: "All other threads in the process are instantly terminated in the child process, without executing any cleanup handlers or stack unwinding" — _Fork Safety of Python C-Extensions_
 - [ ] Add worker health checks between test batches
 - [ ] Handle worker crash during fixture setup
 - [ ] Implement worker recycling for long test sessions
+  > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
 - [ ] Add worker memory usage monitoring
 
 ### 0.1.3 - Error Handling and Diagnostics
@@ -117,8 +164,10 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 - [ ] Add `--diagnose` flag for troubleshooting
   - [ ] Check kernel capabilities (userfaultfd, landlock, seccomp)
+    > **Ref**: "The userfaultfd subsystem fundamentally alters the contract between the memory management unit (MMU) and the user-space application" — _Python Memory Snapshotting with Userfaultfd_
   - [ ] Verify Python environment (libpython, pytest installed)
   - [ ] Test snapshot/restore cycle
+    > **Ref**: "By 'snapshotting' the virtual memory state of a process and lazily restoring it upon access, engineers can achieve reset times measured in microseconds" — _Python Memory Snapshotting with Userfaultfd_
   - [ ] Measure baseline performance
   - [ ] Check file descriptor limits
   - [ ] Verify shared memory availability
@@ -132,10 +181,12 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   - [ ] Missing `pytest` in environment
   - [ ] Incorrect `PYO3_PYTHON` path
   - [ ] Insufficient kernel version
+    > **Ref**: "The Linux userfaultfd (UFFD) mechanism offers a compelling alternative: user-space demand paging" — _Userfaultfd and CPython Allocator Interaction_
   - [ ] Permission denied on userfaultfd
   - [ ] Too many open files
   - [ ] Shared memory exhaustion
   - [ ] Docker/container restrictions
+    > **Ref**: "The User namespace allows a non-root process to map its user ID to root (0) inside the namespace. This grants the process the capability to perform mount operations" — _Rust-Python Test Isolation Blueprint_
 
 ### 0.1.4 - Dependency Updates
 
@@ -150,6 +201,8 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [ ] Update PyO3 to latest stable
 - [ ] Evaluate tokio updates
 - [ ] Update clap to latest
+- [ ] Evaluate `seccompiler` crate as alternative to raw BPF
+  > **Ref**: [rust-vmm/seccompiler](https://github.com/rust-vmm/seccompiler) provides high-level seccomp-bpf used by Firecracker
 
 #### Python Compatibility
 
@@ -157,12 +210,19 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [ ] Verify Python 3.8 still works (MSRV)
 - [ ] Test with PyPy (experimental)
 - [ ] Document Python version compatibility matrix
+- [ ] Research PEP 703 (Free-Threading) implications for worker model
+  > **Ref**: [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) — No-GIL Python changes isolation assumptions
 
 ---
 
 ## 0.2.x - Plugin Compatibility
 
 > **Focus**: Shadow plugin shim for pytest ecosystem integration without full `pluggy` support.
+>
+> **Research Foundation**: Implements the "Matrix Layer" from _Project Tach Compatibility Layer Blueprint_ for syscall isolation.
+>
+> - "Isolation without overhead requires moving from userspace interception to kernel-level integration—combined with a pragmatic plugin shim that records and replays pytest internals" — _Project Tach Compatibility Layer Blueprint_
+> - "Every syscall that modifies global state is transparently isolated per-worker with <5% overhead" — _Project Tach Compatibility Layer Blueprint_
 
 The 0.2.x series introduces a plugin compatibility layer that intercepts common pytest plugin hooks. This is NOT full `pluggy` support - instead, we implement targeted shims for the most popular plugins.
 
@@ -173,6 +233,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Hook System Architecture
 
 - [ ] Design hook interception architecture
+  > **Ref**: "Most pytest plugins perform one of three actions: Metadata modification, Fixture setup, or Reporting. Only (1) and (2) must be captured" — _Project Tach Compatibility Layer Blueprint_
   - [ ] Hook registry for tracking available hooks
   - [ ] Hook caller that invokes registered handlers
   - [ ] Hook result aggregation (first-result, all-results)
@@ -187,6 +248,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 - [ ] `pytest_configure(config)` - Plugin configuration
 - [ ] `pytest_collection_modifyitems(items)` - Test collection modification
+  > **Ref**: "By recording effects in the parent and replaying them in the child, Tach avoids the need to re-run complex plugin logic in every worker" — _Project Tach Compatibility Layer Blueprint_
 - [ ] `pytest_runtest_setup(item)` - Pre-test setup
 - [ ] `pytest_runtest_teardown(item)` - Post-test teardown
 - [ ] `pytest_runtest_makereport(item, call)` - Result reporting
@@ -197,6 +259,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 - [ ] Detect installed pytest plugins via `pkg_resources`
 - [ ] Create plugin shim registry
+  > **Ref**: "The Tach supervisor creates a per-worker isolated namespace at clone time" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Log warnings for unsupported plugins
 - [ ] Allow disabling specific plugins via config
 - [ ] Support plugin ordering/priority
@@ -208,6 +271,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Marker Support
 
 - [ ] `@pytest.mark.django_db` - Enable database access
+  > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
   - [ ] `transaction=True` - Use real transactions
   - [ ] `reset_sequences=True` - Reset auto-increment
   - [ ] `databases=['default', 'secondary']` - Multi-db
@@ -230,7 +294,9 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Database Handling
 
 - [ ] Hook into Django's transaction management
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — \_Rust-Python Test Isolation Blueprint*
 - [ ] Preserve database connections across test resets
+  > **Ref**: "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] Handle database migrations in test database
 - [ ] Support `--reuse-db` flag for faster test runs
 - [ ] Support `--create-db` flag for fresh database
@@ -252,6 +318,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Event Loop Management
 
 - [ ] Create event loop per test (default)
+  > **Ref**: "To solve this, we employ tokio::task::LocalSet to pin interpreter-specific tasks to their originating thread" — _Rust-CPython Execution Blueprint Research_
 - [ ] Support session-scoped event loop via marker
 - [ ] Properly cleanup event loop after test
 - [ ] Handle `asyncio.run()` calls within tests
@@ -281,12 +348,14 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### pytest-mock
 
 - [ ] `mocker` fixture providing `unittest.mock` wrappers
+  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp*call for zero-overhead mocking" — \_Rust-CPython Execution Blueprint Research*
 - [ ] `mocker.patch()` context manager
 - [ ] `mocker.patch.object()` method
 - [ ] `mocker.patch.dict()` dictionary patching
 - [ ] `mocker.spy()` for call tracking
 - [ ] `mocker.stub()` for stub creation
 - [ ] Automatic mock cleanup after each test
+  > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
 - [ ] Support `mocker.stopall()`
 
 #### pytest-env
@@ -295,6 +364,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [ ] Set environment variables before test collection
 - [ ] Support variable expansion (`${HOME}`)
 - [ ] Preserve original values for restoration
+  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach*overlay/5/log.txt" — \_Project Tach Compatibility Layer Blueprint*
 - [ ] Support conditional env vars
 
 #### pytest-timeout
@@ -308,6 +378,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### pytest-cov (Deferred)
 
 - [ ] Detect pytest-cov and warn about Tach's native coverage
+  > **Ref**: "employs PEP 669 (Low-Impact Monitoring) to achieve observability with negligible overhead" — _Rust-CPython Execution Blueprint Research_
 - [ ] Suggest using `--coverage` flag instead
 - [ ] Disable pytest-cov when Tach coverage is active
 - [ ] Support coverage configuration options
@@ -315,6 +386,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### pytest-xdist (Compatibility)
 
 - [ ] Detect pytest-xdist and warn about Tach's native parallelism
+  > **Ref**: "Objects passed between orchestrator and worker processes must be serialized, a CPU-intensive operation that often negates the benefits of parallelism for short-running tests" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Support `-n` flag as alias for `--workers`
 - [ ] Ignore xdist-specific markers gracefully
 
@@ -342,6 +414,12 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 ## 0.3.x - Database Integration
 
 > **Focus**: Transaction rollback and connection handling for database-heavy test suites.
+>
+> **Research Foundation**: Addresses the "Fork-Safety Paradox" from _Fork Safety of Python C-Extensions_ and database isolation from _Rust-Python Test Isolation Blueprint_.
+>
+> - "The fundamental assumptions of fork()—specifically regarding memory isolation and state duplication—are incompatible with the complex internal threading pools, global state mutexes, and hardware contexts managed by modern C libraries" — _Fork Safety of Python C-Extensions_
+> - "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
+> - "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
 
 The 0.3.x series focuses on database test isolation. The key insight is that database state cannot be restored via memory snapshots - we need to hook into the database driver level to rollback transactions.
 
@@ -352,6 +430,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 #### Transaction Management
 
 - [ ] Hook into `django.db.transaction.atomic()`
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state" — \_Rust-Python Test Isolation Blueprint*
 - [ ] Wrap each test in a savepoint
 - [ ] Rollback savepoint after test completion
 - [ ] Handle nested transactions correctly
@@ -369,6 +448,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 #### Connection Preservation
 
 - [ ] Keep database connections alive across tests
+  > **Ref**: "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] Reset connection state without closing
 - [ ] Handle connection pool exhaustion
 - [ ] Reconnect on connection drop
@@ -389,6 +469,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 #### Session Management
 
 - [ ] Hook into `Session.commit()` to prevent actual commits
+  > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
 - [ ] Wrap sessions in nested transactions (savepoints)
 - [ ] Handle `Session.rollback()` within tests
 - [ ] Support scoped session patterns
@@ -401,6 +482,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 - [ ] Handle multiple engines (read replicas, etc.)
 - [ ] Support async SQLAlchemy (asyncpg, aiosqlite)
 - [ ] Handle engine disposal
+  > **Ref**: "For applications using database drivers, adopt the 'dispose pattern.' Ensure that any connection pool created in the parent is explicitly discarded" — _Fork Safety of Python C-Extensions_
 
 #### Alembic Integration
 
@@ -418,6 +500,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 
 - [ ] Keep connection pools alive across worker restarts
 - [ ] Implement FD handover via SCM_RIGHTS
+  > **Ref**: "Pass FDs to worker processes via Unix sockets. Reconstruct connection objects from FDs" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Handle pool size limits correctly
 - [ ] Monitor connection health
 - [ ] Support connection aging
@@ -428,6 +511,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 - [ ] Pass FDs to worker processes via Unix sockets
 - [ ] Reconstruct connection objects from FDs
 - [ ] Handle SSL connections specially
+  > **Ref**: "SSL error: decryption failed or bad record mac" — _Fork Safety of Python C-Extensions_
 - [ ] Support connection metadata transfer
 
 #### Health Checks
@@ -487,6 +571,12 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 ## 0.4.x - Fixture Lifecycle
 
 > **Focus**: Proper handling of session-scoped and module-scoped fixtures.
+>
+> **Research Foundation**: Implements "Hierarchical Zygote Trees" from _Forklift_ and _Python Monorepo Zygote Tree Design_ using DAAC clustering.
+>
+> - "By moving beyond the traditional single-zygote model to a tiered, hierarchical structure, the proposed system maximizes memory sharing via Copy-on-Write (CoW) mechanisms" — _Python Monorepo Zygote Tree Design_
+> - "The root node contains universally shared modules (e.g., os, sys). Child nodes branch off to specialize (e.g., a 'Data Science Zygote' adds numpy)" — _Python Monorepo Zygote Tree Design_
+> - "A novel 'Dependency-Aware Agglomerative Clustering' (DAAC) algorithm that synthesizes the dependency graph into an optimal initialization tree" — _Python Monorepo Zygote Tree Design_
 
 The 0.4.x series addresses one of the biggest gaps in the current implementation: fixtures that should persist across multiple tests. Session-scoped fixtures in particular are tricky because they must survive worker restarts.
 
@@ -497,8 +587,10 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Session Fixture Caching
 
 - [ ] Identify session-scoped fixtures at discovery time
+  > **Ref**: "The forked process receives the list of modules to add via a pipe. It imports them. This process becomes the 'DataScience Zygote'" — _Python Monorepo Zygote Tree Design_
 - [ ] Execute session fixtures before any tests run
 - [ ] Store fixture values in shared memory
+  > **Ref**: "This 'Zero-Copy' approach reduces the overhead of data transfer from O(N) (serialization) to O(1) (pointer passing)" — _Rust-Python Test Isolation Blueprint_
 - [ ] Make values available to all workers
 - [ ] Handle fixture dependencies
 
@@ -506,6 +598,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 
 - [ ] Define serialization protocol for fixture values
 - [ ] Handle pickle-able objects directly
+  > **Ref**: "Objects passed between orchestrator and worker processes must be serialized (pickled) and deserialized, a CPU-intensive operation" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Support custom serializers for complex objects
 - [ ] Handle non-serializable fixtures (connections, etc.)
 - [ ] Support cloudpickle for lambda functions
@@ -525,6 +618,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Module Boundary Detection
 
 - [ ] Group tests by module at scheduling time
+  > **Ref**: "In this model, zygotes are specialized at different levels of a dependency tree. A root zygote might hold the OS-level dependencies; a second-level zygote might import pandas and numpy" — _Rust Static Analysis for Toxic Python Modules_
 - [ ] Track module transitions during execution
 - [ ] Trigger fixture finalization on module change
 - [ ] Handle module re-entry
@@ -540,6 +634,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Optimization
 
 - [ ] Batch tests from same module to same worker
+  > **Ref**: "We define a Weight Vector W where W[j] corresponds to the estimated cost of module m*j. These weights are derived from heuristics or optional historical profiling data" — \_Python Monorepo Zygote Tree Design*
 - [ ] Minimize fixture setup/teardown overhead
 - [ ] Share module fixtures between workers when safe
 - [ ] Prefetch module fixtures
@@ -577,6 +672,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Fixture Finalization Order
 
 - [ ] Build fixture dependency graph
+  > **Ref**: "A novel 'Dependency-Aware Agglomerative Clustering' (DAAC) algorithm that synthesizes the dependency graph into an optimal initialization tree" — _Python Monorepo Zygote Tree Design_
 - [ ] Teardown in reverse dependency order
 - [ ] Handle circular dependencies
 - [ ] Support `yield` fixtures correctly
@@ -594,6 +690,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 
 - [ ] Add `--fixtures` flag to show available fixtures
 - [ ] Add `--fixture-graph` to visualize dependencies
+  > **Ref**: "The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest **init**.py or namespace root" — _Python Monorepo Zygote Tree Design_
 - [ ] Show fixture scope and autouse status
 - [ ] Indicate where fixtures are defined
 - [ ] Export fixture graph as DOT/Mermaid
@@ -603,6 +700,11 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 ## 0.5.x - Developer Experience
 
 > **Focus**: Better error messages, debugging tools, and developer ergonomics.
+>
+> **Research Foundation**: Integrates PEP 669 low-impact monitoring from _Rust-CPython Execution Blueprint Research_ for observability.
+>
+> - "employs PEP 669 (Low-Impact Monitoring) to achieve observability with negligible overhead" — _Rust-CPython Execution Blueprint Research_
+> - "the runner is a high-performance native binary—constructed in Rust—that acts as a hypervisor for the Python runtime" — _Rust-CPython Execution Blueprint Research_
 
 The 0.5.x series focuses on making Tach a joy to use. Better error messages, powerful debugging tools, and smoother integration with development workflows.
 
@@ -622,6 +724,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 #### Local Variable Display
 
 - [ ] Capture local variables at assertion failure
+  > **Ref**: "The evaluator inspects the f*code of the frame. It checks a high-performance Rust hash map to see if a mock has been registered" — \_Python Testing Engine Rust Breakthroughs*
 - [ ] Display variable values inline with traceback
 - [ ] Truncate large values intelligently
 - [ ] Support `--showlocals` flag
@@ -630,6 +733,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 #### Assertion Introspection
 
 - [ ] Parse assertion expressions
+  > **Ref**: "The AST visitor walks the tree of a function. It serializes the nodes into a byte stream, deliberately excluding: Docstrings, Type hints, and Formatting" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Show sub-expression values
 - [ ] Support comparison operators (`==`, `!=`, `<`, etc.)
 - [ ] Handle complex expressions (`assert x in y`)
@@ -651,6 +755,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 
 - [ ] `--debug` flag for detailed logging
 - [ ] Log syscall activity (userfaultfd, fork, etc.)
+  > **Ref**: "The userfaultfd subsystem fundamentally alters the contract between the memory management unit (MMU) and the user-space application" — _Python Memory Snapshotting with Userfaultfd_
 - [ ] Log worker lifecycle events
 - [ ] Log memory snapshot timing
 - [ ] Log IPC message flow
@@ -661,6 +766,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] Display which test each worker is running
 - [ ] Show queue depth and scheduling decisions
 - [ ] Indicate safe vs toxic workers
+  > **Ref**: "The result is a binary classification for every module in the monorepo: Safe or Toxic" — _Rust Static Analysis for Toxic Python Modules_
 - [ ] Show worker memory usage
 
 #### Performance Profiling
@@ -669,6 +775,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] Show per-test timing breakdown
 - [ ] Identify slow fixture setup
 - [ ] Profile memory snapshot overhead
+  > **Ref**: "If a 1GB heap is snapshotted, but the subsequent execution only touches 50KB, only those 50KB are physically copied and mapped" — _Python Memory Snapshotting with Userfaultfd_
 - [ ] Generate flamegraphs
 
 ### 0.5.2 - Interactive Debugging
@@ -680,6 +787,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] `--pdb` flag to drop into debugger on failure
 - [ ] Detect `breakpoint()` calls in tests
 - [ ] Disable worker isolation when debugging
+  > **Ref**: "The Supervisor sets the user's physical terminal to Raw Mode. It enters a loop where it reads bytes from the user's stdin and writes them directly to the worker's PTY master" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Support `--pdb-first` for first failure only
 - [ ] Support custom debuggers (ipdb, pudb)
 
@@ -722,6 +830,11 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 ## 0.6.x - Configuration
 
 > **Focus**: Complete configuration system with pyproject.toml support.
+>
+> **Research Foundation**: Enables "Zero-Copy" module loading configuration from _Zero-Copy Python Module Loading_.
+>
+> - "architecture treats the Python interpreter not as a standalone application that discovers code, but as an embedded execution engine that is fed pre-validated code objects" — _Zero-Copy Python Module Loading_
+> - "This approach effectively shifts the computational costs of I/O, parsing, and compilation from the critical path of the Python process startup to a pre-computation phase" — _Zero-Copy Python Module Loading_
 
 The 0.6.x series implements a full configuration system. Currently Tach has limited configuration - this series adds comprehensive pyproject.toml support.
 
@@ -732,6 +845,7 @@ The 0.6.x series implements a full configuration system. Currently Tach has limi
 #### Schema Definition
 
 - [ ] Define complete `[tool.tach]` schema
+  > **Ref**: "The Rust supervisor must pre-calculate the dependency graph of the modules and load them in Topological Order" — _Zero-Copy Python Module Loading_
 - [ ] Document all configuration options
 - [ ] Provide JSON schema for IDE completion
 - [ ] Validate configuration on startup
@@ -779,6 +893,7 @@ maxfail = 0
 #### Marker-Based Configuration
 
 - [ ] Configure behavior based on markers
+  > **Ref**: "The visitor flags a module as Tier 3 if it encounters: Network I/O, Concurrency, System Mutation, or Global Locks" — _Python Monorepo Zygote Tree Design_
 - [ ] Set default markers via config
 - [ ] Filter tests by marker expression
 - [ ] Support custom marker definitions
@@ -792,6 +907,7 @@ maxfail = 0
 - [ ] Random order: `--random-order`
 - [ ] Dependency order: respect `@pytest.mark.dependency`
 - [ ] Duration order: fastest first
+  > **Ref**: "We profile packages and give more weight to those with slow module imports. We implement priority by replacing the 1's in the binary calls matrix with the weight values" — _Forklift_
 - [ ] Reverse order: `--reverse`
 - [ ] Alphabetical order
 
@@ -806,6 +922,7 @@ maxfail = 0
 #### Isolation Modes
 
 - [ ] Full isolation (default)
+  > **Ref**: "Namespaces provide complete, kernel-enforced isolation with acceptable overhead. Every syscall is isolated at kernel level" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Relaxed isolation (faster, less safe)
 - [ ] No isolation (`--no-isolation`)
 - [ ] Per-test isolation override
@@ -833,6 +950,12 @@ maxfail = 0
 ## 0.7.x - Performance
 
 > **Focus**: Memory optimization, adaptive scheduling, and parallelism improvements.
+>
+> **Research Foundation**: Implements microsecond-scale memory reset using userfaultfd from _Python Memory Snapshotting with Userfaultfd_ and _Userfaultfd and CPython Allocator Interaction_.
+>
+> - "By 'snapshotting' the virtual memory state of a process and lazily restoring it upon access, engineers can achieve reset times measured in microseconds rather than milliseconds" — _Python Memory Snapshotting with Userfaultfd_
+> - "If a 1GB heap is snapshotted, but the subsequent execution only touches 50KB, only those 50KB are physically copied and mapped. This O(N) cost... is the primary driver of UFFD's performance advantage" — _Python Memory Snapshotting with Userfaultfd_
+> - "leverages jemalloc's manual cache flushing capabilities to establish a stable, high-performance test runner" — _Python Memory Snapshotting with Userfaultfd_
 
 The 0.7.x series focuses on performance at scale. As test suites grow to thousands of tests, we need smarter scheduling and better memory management.
 
@@ -852,8 +975,10 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 
 - [ ] Reduce snapshot size via compression
 - [ ] Implement incremental snapshots
+  > **Ref**: "The kernel iterates over the Page Table Entries corresponding to the address range. It clears the 'Present' bit, effectively unmapping the physical pages" — _Python Memory Snapshotting with Userfaultfd_
 - [ ] Skip unchanged memory regions
 - [ ] Use copy-on-write more effectively
+  > **Ref**: "workers inherit the parent's memory state without duplication, only copying physical pages when they are modified" — _Cross-Platform Process Cloning Research_
 - [ ] Optimize page table handling
 
 #### Memory Pressure Handling
@@ -861,6 +986,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 - [ ] Detect low memory conditions
 - [ ] Reduce worker count under pressure
 - [ ] Trigger garbage collection proactively
+  > **Ref**: "If a snapshot is taken while the GC is traversing the object graph and modifying gc*refs, a subsequent restore will leave the GC in an inconsistent state" — \_Userfaultfd and CPython Allocator Interaction*
 - [ ] Fail gracefully on OOM
 - [ ] Support memory limits
 
@@ -871,6 +997,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 #### Duration Prediction
 
 - [ ] Track test durations over time
+  > **Ref**: "The significant skew in package popularity indicates that relatively few zygotes could provide substantial benefit. The top 15 packages alone account for more than 50% of the files" — _Forklift_
 - [ ] Store duration data in cache file
 - [ ] Predict duration for new tests
 - [ ] Balance worker load based on predictions
@@ -897,6 +1024,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 #### Lazy Module Loading
 
 - [ ] Don't import modules until needed
+  > **Ref**: "To speed up restart, zygotes are created lazily upon first use. Zygotes may be evicted under memory pressure" — _Forklift_
 - [ ] Load test modules on-demand
 - [ ] Share loaded modules between workers
 - [ ] Support preloading via config
@@ -904,6 +1032,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 #### Import Graph Analysis
 
 - [ ] Build module dependency graph
+  > **Ref**: "Profiling data from large-scale deployments indicates that module initialization—specifically the parsing, compiling, and executing of top-level code in dependencies—accounts for 60% to 80% of cold start duration" — _Python Monorepo Zygote Tree Design_
 - [ ] Identify shared dependencies
 - [ ] Optimize import order
 - [ ] Detect circular imports
@@ -912,6 +1041,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 
 - [ ] Compile bytecode lazily
 - [ ] Cache compiled bytecode
+  > **Ref**: "The runner maintains a content-addressable store of compiled bytecode. When a file is modified, the runner invokes a compilation step to generate the binary blob for direct injection" — _Rust-CPython Execution Blueprint Research_
 - [ ] Use mmap for bytecode files
 - [ ] Share bytecode between workers
 
@@ -922,6 +1052,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 #### Rayon Integration
 
 - [ ] Parallelize file scanning
+  > **Ref**: "Rust, utilizing the rayon data parallelism library, can saturate all CPU cores to parse and analyze thousands of files per second" — _Rust Static Analysis for Toxic Python Modules_
 - [ ] Parse test files in parallel
 - [ ] Merge discovery results efficiently
 - [ ] Handle discovery errors in parallel context
@@ -933,11 +1064,43 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 - [ ] Only re-discover changed files
 - [ ] Support `--cache-clear` to reset
 
+### 0.7.4 - Advanced Snapshot Techniques (Research)
+
+**Target**: Investigate next-generation snapshot approaches from fuzzing research.
+
+#### Kernel Module Investigation
+
+- [ ] Evaluate AFL-Snapshot-LKM approach for kernel-level snapshots
+  > **Ref**: [AFL-Snapshot-LKM](https://github.com/AFLplusplus/AFL-Snapshot-LKM) achieves 20-360% speedup over fork-server
+- [ ] Assess kernel module licensing and distribution implications
+- [ ] Prototype kernel-assisted snapshot/restore cycle
+- [ ] Benchmark against userfaultfd approach
+
+#### LibAFL Integration Patterns
+
+- [ ] Study LibAFL snapshot executor architecture
+  > **Ref**: [LibAFL Book](https://aflplus.plus/libafl-book/) documents Rust fuzzing patterns
+- [ ] Evaluate executor abstraction for Tach isolation modes
+- [ ] Consider shared memory arena patterns from fuzzing
+
+#### Performance Targets
+
+| Technique       | Current Overhead | Target     |
+| --------------- | ---------------- | ---------- |
+| Fork server     | ~100-200 μs      | Baseline   |
+| userfaultfd     | ~10-50 μs        | **0.7.x**  |
+| Kernel snapshot | ~1-5 μs          | **Future** |
+
 ---
 
 ## 0.8.x - CI/CD Integration
 
 > **Focus**: First-class CI/CD support with templates and integrations.
+>
+> **Research Foundation**: Enables future cross-platform support per _Cross-Platform Process Cloning Research_.
+>
+> - "By leveraging undocumented kernel primitives—Mach virtual memory remapping on macOS and NT process cloning on Windows—it is theoretically possible to approximate the performance of Linux fork()" — _Cross-Platform Process Cloning Research_
+> - "The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach*vm_remap" — \_Cross-Platform Process Cloning Research*
 
 The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better reporting, CI platform integrations, and artifact handling.
 
@@ -1005,6 +1168,7 @@ The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better rep
 
 - [ ] Track test pass/fail history
 - [ ] Identify tests with inconsistent results
+  > **Ref**: "If the child process did not explicitly re-seed, both parent and child would generate identical sequences of 'random' numbers" — _Fork Safety of Python C-Extensions_
 - [ ] Report flakiness percentage
 - [ ] Suggest potential causes
 - [ ] Support auto-retry for flaky tests
@@ -1026,6 +1190,7 @@ The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better rep
 - [ ] Coverage diff (new code only)
 - [ ] Coverage thresholds (fail if below)
 - [ ] Branch coverage
+  > **Ref**: "employs PEP 669 (Low-Impact Monitoring) to achieve observability with negligible overhead" — _Rust-CPython Execution Blueprint Research_
 - [ ] Missing lines report
 - [ ] Coverage trending
 

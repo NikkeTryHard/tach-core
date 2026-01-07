@@ -673,3 +673,90 @@ For additional research on related open-source projects and libraries, see:
 | Fork server           | ~100-200 μs  | Current    |
 | userfaultfd snapshot  | ~10-50 μs    | **Target** |
 | Kernel snapshot (LKM) | ~1-5 μs      | Future     |
+
+---
+
+## Primary Sources and Prior Art
+
+The internal research papers synthesized in this document draw from the following real-world sources. These links provide traceable origins for the concepts and techniques discussed.
+
+### Zygote Pattern and Process Pre-Initialization
+
+| Source                      | URL                                                                                                                                                     | Relevance                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Android Zygote              | [source.android.com/docs/core/runtime](https://source.android.com/docs/core/runtime)                                                                    | Original zygote pattern for app spawning |
+| Chrome Multi-Process        | [chromium.org/developers/design-documents/multi-process-architecture](https://www.chromium.org/developers/design-documents/multi-process-architecture/) | Renderer process isolation model         |
+| Forklift Paper (USENIX ATC) | [usenix.org/conference/atc21/presentation/zhou-ao](https://www.usenix.org/conference/atc21/presentation/zhou-ao)                                        | Hierarchical zygote trees for serverless |
+| OpenLambda                  | [github.com/open-lambda/open-lambda](https://github.com/open-lambda/open-lambda)                                                                        | Reference implementation of Forklift     |
+
+### userfaultfd and Memory Snapshotting
+
+| Source                   | URL                                                                                                                                                                                       | Relevance                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Linux userfaultfd Docs   | [kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)                                                      | Kernel documentation         |
+| Firecracker Snapshotting | [github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshotting.md)                  | Production userfaultfd usage |
+| AWS Firecracker Blog     | [aws.amazon.com/blogs/opensource/firecracker-open-source-secure-fast-microvm-serverless](https://aws.amazon.com/blogs/opensource/firecracker-open-source-secure-fast-microvm-serverless/) | Design rationale             |
+| AFL-Snapshot-LKM         | [github.com/AFLplusplus/AFL-Snapshot-LKM](https://github.com/AFLplusplus/AFL-Snapshot-LKM)                                                                                                | Kernel-level snapshot module |
+
+### Fork Safety and Threading
+
+| Source                 | URL                                                                                                                                                            | Relevance               |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| POSIX.1-2017 fork()    | [pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html)                           | POSIX specification     |
+| Python multiprocessing | [docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods](https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods) | spawn vs fork guidance  |
+| glibc Manual (Threads) | [gnu.org/software/libc/manual/html_node/Threads-and-Fork.html](https://www.gnu.org/software/libc/manual/html_node/Threads-and-Fork.html)                       | Async-signal-safety     |
+| OpenBLAS Threading     | [github.com/OpenMathLib/OpenBLAS/wiki/Faq#multi-threaded](https://github.com/OpenMathLib/OpenBLAS/wiki/Faq#multi-threaded)                                     | BLAS thread pool issues |
+
+### Memory Allocators
+
+| Source           | URL                                                                                                                      | Relevance                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| jemalloc Manual  | [jemalloc.net/jemalloc.3.html](https://jemalloc.net/jemalloc.3.html)                                                     | tcache.flush, mallctl API   |
+| jemalloc GitHub  | [github.com/jemalloc/jemalloc](https://github.com/jemalloc/jemalloc)                                                     | Source code reference       |
+| mimalloc         | [github.com/microsoft/mimalloc](https://github.com/microsoft/mimalloc)                                                   | Alternative allocator       |
+| CPython pymalloc | [github.com/python/cpython/blob/main/Objects/obmalloc.c](https://github.com/python/cpython/blob/main/Objects/obmalloc.c) | Python's internal allocator |
+
+### Linux Sandboxing (Landlock, Seccomp)
+
+| Source                 | URL                                                                                                                                      | Relevance             |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| Landlock Kernel Docs   | [docs.kernel.org/userspace-api/landlock.html](https://docs.kernel.org/userspace-api/landlock.html)                                       | Official kernel docs  |
+| rust-landlock          | [github.com/landlock-lsm/rust-landlock](https://github.com/landlock-lsm/rust-landlock)                                                   | Rust bindings         |
+| Seccomp BPF            | [kernel.org/doc/html/latest/userspace-api/seccomp_filter.html](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html) | Kernel docs           |
+| seccompiler (rust-vmm) | [github.com/rust-vmm/seccompiler](https://github.com/rust-vmm/seccompiler)                                                               | Firecracker's seccomp |
+
+### Fuzzing and Snapshot Techniques
+
+| Source         | URL                                                                              | Relevance                 |
+| -------------- | -------------------------------------------------------------------------------- | ------------------------- |
+| AFL++          | [github.com/AFLplusplus/AFLplusplus](https://github.com/AFLplusplus/AFLplusplus) | Fork server pattern       |
+| LibAFL Book    | [aflplus.plus/libafl-book](https://aflplus.plus/libafl-book/)                    | Rust fuzzing framework    |
+| SnapFuzz Paper | [arxiv.org/abs/2201.04048](https://arxiv.org/abs/2201.04048)                     | Network fuzzing snapshots |
+
+### Python Embedding and FFI
+
+| Source                          | URL                                                           | Relevance                    |
+| ------------------------------- | ------------------------------------------------------------- | ---------------------------- |
+| PyO3 Guide                      | [pyo3.rs](https://pyo3.rs/)                                   | Rust-Python bindings         |
+| PEP 703 (Free-Threading)        | [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) | No-GIL Python                |
+| PEP 684 (Per-Interpreter GIL)   | [peps.python.org/pep-0684](https://peps.python.org/pep-0684/) | Sub-interpreter isolation    |
+| PEP 669 (Low-Impact Monitoring) | [peps.python.org/pep-0669](https://peps.python.org/pep-0669/) | Coverage with sys.monitoring |
+
+### Cross-Platform Process Cloning
+
+| Source                    | URL                                                                                                                                                                      | Relevance           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| Mach VM (XNU)             | [github.com/apple-oss-distributions/xnu](https://github.com/apple-oss-distributions/xnu)                                                                                 | macOS kernel source |
+| Windows Process Internals | [learn.microsoft.com/en-us/windows/win32/procthread/about-processes-and-threads](https://learn.microsoft.com/en-us/windows/win32/procthread/about-processes-and-threads) | NT process model    |
+| CRIU                      | [criu.org](https://criu.org/)                                                                                                                                            | Checkpoint/restore  |
+
+### Checkpoint/Restore Projects
+
+| Source      | URL                                                                              | Relevance                  |
+| ----------- | -------------------------------------------------------------------------------- | -------------------------- |
+| CRIU GitHub | [github.com/checkpoint-restore/criu](https://github.com/checkpoint-restore/criu) | Full process checkpointing |
+| DMTCP       | [github.com/dmtcp/dmtcp](https://github.com/dmtcp/dmtcp)                         | Userspace checkpointing    |
+
+---
+
+_These sources provide the theoretical and practical foundation for Project Tach's architecture. The internal research papers synthesize and adapt these concepts specifically for Python test execution._
