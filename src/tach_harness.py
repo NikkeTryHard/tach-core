@@ -226,6 +226,257 @@ class warns:
 
 
 # =============================================================================
+# PYTEST COMPATIBILITY: Exception Classes for Skip/XFail
+# =============================================================================
+
+
+class SkipException(Exception):
+    """Exception raised to skip a test.
+
+    This exception is caught by the test harness and converted to a skip result.
+    Compatible with pytest.skip() behavior.
+
+    Attributes:
+        reason: The reason for skipping the test.
+    """
+
+    def __init__(self, reason: str = ""):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class XFailException(Exception):
+    """Exception raised to mark a test as expected to fail.
+
+    This exception is caught by the test harness and treated as an expected failure.
+    Compatible with pytest.xfail() behavior.
+
+    Attributes:
+        reason: The reason for expecting the test to fail.
+    """
+
+    def __init__(self, reason: str = ""):
+        self.reason = reason
+        super().__init__(reason)
+
+
+# =============================================================================
+# PYTEST COMPATIBILITY: Approximate Floating Point Comparison
+# =============================================================================
+
+
+class approx:
+    """Approximate floating point comparison (compatible with pytest.approx).
+
+    This class enables comparisons between floating point numbers with tolerance
+    for small differences due to floating point representation errors.
+
+    The comparison uses both relative and absolute tolerances:
+    - A value is considered equal if it's within the greater of:
+      - rel * abs(expected) (relative tolerance)
+      - abs (absolute tolerance)
+
+    Example:
+        assert 0.1 + 0.2 == approx(0.3)
+        assert 100 == approx(105, rel=0.1)  # 10% tolerance
+        assert 1.0 == approx(1.005, abs=0.01)
+
+    Attributes:
+        expected: The expected value (float, list, or tuple).
+        rel: Relative tolerance (default 1e-6).
+        abs: Absolute tolerance (default 1e-12).
+    """
+
+    def __init__(
+        self,
+        expected,
+        rel: Optional[float] = None,
+        abs: Optional[float] = None,
+    ):
+        """Initialize the approx comparison.
+
+        Args:
+            expected: The expected value (float, list, or tuple).
+            rel: Relative tolerance. Defaults to 1e-6.
+            abs: Absolute tolerance. Defaults to 1e-12.
+        """
+        self.expected = expected
+        self.rel = rel if rel is not None else 1e-6
+        self.abs = abs if abs is not None else 1e-12
+
+    def __eq__(self, actual) -> bool:
+        """Compare actual value against expected with tolerance.
+
+        Args:
+            actual: The actual value to compare.
+
+        Returns:
+            True if values are approximately equal, False otherwise.
+        """
+        if isinstance(self.expected, (list, tuple)):
+            if not isinstance(actual, (list, tuple)):
+                return False
+            if len(self.expected) != len(actual):
+                return False
+            return all(approx(e, self.rel, self.abs) == a for e, a in zip(self.expected, actual))
+
+        # Single value comparison
+        try:
+            # Use built-in abs function (not self.abs)
+            expected_abs = __builtins__["abs"](self.expected) if isinstance(__builtins__, dict) else abs(self.expected)
+            diff = __builtins__["abs"](self.expected - actual) if isinstance(__builtins__, dict) else abs(self.expected - actual)
+        except (TypeError, KeyError):
+            # Fallback for edge cases
+            import builtins
+
+            expected_abs = builtins.abs(self.expected)
+            diff = builtins.abs(self.expected - actual)
+
+        tolerance = max(self.rel * expected_abs, self.abs)
+        return diff <= tolerance
+
+    def __repr__(self) -> str:
+        """Return string representation of the approx object."""
+        return f"approx({self.expected} +/- {self.rel * 100}%)"
+
+
+# =============================================================================
+# PYTEST COMPATIBILITY: fail, skip, xfail, importorskip
+# =============================================================================
+
+
+def fail(reason: str = "") -> None:
+    """Explicitly fail the test with an optional reason.
+
+    This function immediately fails the current test by raising an AssertionError.
+    Compatible with pytest.fail() behavior.
+
+    Args:
+        reason: The reason for the failure. Defaults to "Test failed".
+
+    Raises:
+        AssertionError: Always raised to fail the test.
+
+    Example:
+        if not some_condition:
+            fail("Condition was not met")
+    """
+    raise AssertionError(reason or "Test failed")
+
+
+def skip(reason: str = "") -> None:
+    """Skip the current test with an optional reason.
+
+    This function immediately skips the current test by raising a SkipException.
+    Compatible with pytest.skip() behavior.
+
+    Args:
+        reason: The reason for skipping the test.
+
+    Raises:
+        SkipException: Always raised to skip the test.
+
+    Example:
+        if sys.platform == "win32":
+            skip("This test only runs on Linux")
+    """
+    raise SkipException(reason)
+
+
+def xfail(reason: str = "") -> None:
+    """Mark the current test as expected to fail.
+
+    This function immediately marks the current test as an expected failure
+    by raising an XFailException. Compatible with pytest.xfail() behavior.
+
+    Args:
+        reason: The reason for expecting the test to fail.
+
+    Raises:
+        XFailException: Always raised to mark the test as expected to fail.
+
+    Example:
+        if bug_not_fixed():
+            xfail("Bug #123 not yet fixed")
+    """
+    raise XFailException(reason)
+
+
+def _parse_version(version_str: str) -> Tuple:
+    """Parse a version string into a comparable tuple.
+
+    Handles common version formats like "1.2.3", "1.2.3a1", "1.2.3.dev0".
+    Non-numeric parts are sorted after numeric parts.
+
+    Args:
+        version_str: Version string to parse.
+
+    Returns:
+        Tuple of version components for comparison.
+
+    Example:
+        _parse_version("1.2.3") -> (1, 2, 3)
+        _parse_version("1.2.3a1") -> (1, 2, 3, 'a1')
+    """
+    import re as re_module
+
+    # Split on dots
+    parts = version_str.strip().split(".")
+    result = []
+
+    for part in parts:
+        # Try to extract numeric prefix
+        match = re_module.match(r"^(\d+)(.*)?$", part)
+        if match:
+            result.append(int(match.group(1)))
+            if match.group(2):
+                result.append(match.group(2))
+        else:
+            result.append(part)
+
+    return tuple(result)
+
+
+def importorskip(modname: str, minversion: Optional[str] = None):
+    """Import and return a module, or skip the test if not available.
+
+    This function attempts to import the specified module. If the import fails
+    or the module version is below the required minimum, the test is skipped.
+    Compatible with pytest.importorskip() behavior.
+
+    Args:
+        modname: The name of the module to import.
+        minversion: Optional minimum version string. If provided, the module's
+            __version__ attribute is checked against this value.
+
+    Returns:
+        The imported module if successful.
+
+    Raises:
+        SkipException: If the module cannot be imported or version is too low.
+
+    Example:
+        numpy = importorskip("numpy")
+        pandas = importorskip("pandas", minversion="1.0.0")
+    """
+    import importlib
+
+    try:
+        mod = importlib.import_module(modname)
+    except ImportError:
+        skip(f"{modname} not available")
+        # The skip() call raises, but we add return for type checkers
+        return None  # pragma: no cover
+
+    if minversion is not None:
+        version = getattr(mod, "__version__", "0.0.0")
+        if _parse_version(version) < _parse_version(minversion):
+            skip(f"{modname} >= {minversion} required (found {version})")
+
+    return mod
+
+
+# =============================================================================
 # TTY Proxy: Interactive Debugging Support
 # =============================================================================
 
