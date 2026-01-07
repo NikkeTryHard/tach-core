@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
-      docs: ${{ steps.filter.outputs.docs }}
       ci: ${{ steps.filter.outputs.ci }}
     steps:
       - uses: actions/checkout@v6
@@ -38,10 +37,6 @@ jobs:
               - 'tests/**'
               - 'pyproject.toml'
               - '**/*.py'
-            docs:
-              - 'docs/**'
-              - '*.md'
-              - 'LICENSE'
             ci:
               - '.github/**'
               - 'deny.toml'

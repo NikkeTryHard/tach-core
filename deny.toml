@@ -33,16 +33,6 @@ multiple-versions = "warn"
 wildcards = "allow"
 highlight = "all"
 
-# Deny specific crates known to be problematic
-deny = [
-    # { name = "openssl" },  # Prefer rustls
-]
-
-# Skip duplicate version checks for these crates
-skip = [
-    # Common crates with multiple versions in dependency tree
-]
-
 [sources]
 unknown-registry = "deny"
 unknown-git = "warn"

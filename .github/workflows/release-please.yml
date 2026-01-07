@@ -27,6 +27,10 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        if: ${{ steps.release.outputs.release_created }}
+        uses: Swatinem/rust-cache@v2
+
       - name: Install Python
         if: ${{ steps.release.outputs.release_created }}
         uses: actions/setup-python@v5

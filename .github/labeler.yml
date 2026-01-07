@@ -15,7 +15,6 @@ documentation:
       - any-glob-to-any-file:
           - "docs/**/*"
           - "*.md"
-          - "README.md"
 
 # CI/CD changes
 ci:
