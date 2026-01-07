@@ -6,6 +6,13 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
+# Ignore unmaintained/unsound advisories for transitive dependencies
+# These are pulled in by rustpython-parser and other deps, not direct usage
+ignore = [
+    { id = "RUSTSEC-2021-0145", reason = "atty unsound on Windows only, we target Linux" },
+    { id = "RUSTSEC-2024-0375", reason = "atty unmaintained, transitive dep from rustpython" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, transitive dep from rustpython" },
+]
 
 [licenses]
 version = 2
