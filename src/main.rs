@@ -169,11 +169,23 @@ fn main() -> Result<()> {
             return handle_self_test_command();
         }
         Some(Commands::Version) => {
-            return handle_version_command();
+            return handle_version_command(cli.verbose > 0);
         }
         Some(Commands::Test) | None => {
             // Continue to test execution below
         }
+    }
+
+    // --- COLLECT-ONLY MODE (pytest compatibility) ---
+    // Alias for 'tach list' command
+    if cli.collect_only {
+        return handle_list_command(&cwd, is_json);
+    }
+
+    // --- DRY-RUN MODE ---
+    // Discover tests and show what would run without executing
+    if cli.dry_run {
+        return handle_dry_run_command(&cwd, is_json, &cli.path);
     }
 
     // --- WATCH MODE ---
@@ -396,7 +408,7 @@ fn handle_self_test_command() -> Result<()> {
 }
 
 /// Handle the `version` subcommand
-fn handle_version_command() -> Result<()> {
+fn handle_version_command(verbose: bool) -> Result<()> {
     eprintln!("tach {}", env!("CARGO_PKG_VERSION"));
     eprintln!("Hypervisor-Accelerated Python Test Runner");
     eprintln!();
@@ -428,6 +440,60 @@ fn handle_version_command() -> Result<()> {
         }
     }
 
+    // --- VERBOSE OUTPUT: Show capabilities ---
+    if verbose {
+        eprintln!();
+        eprintln!("Capabilities:");
+
+        // Check userfaultfd availability
+        let uffd_available = std::fs::read_to_string("/proc/sys/vm/unprivileged_userfaultfd")
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false);
+        eprintln!(
+            "  userfaultfd: {}",
+            if uffd_available {
+                "available"
+            } else {
+                "restricted (requires CAP_SYS_PTRACE)"
+            }
+        );
+
+        // Check Landlock ABI version based on kernel version
+        if let Ok(version_str) = std::fs::read_to_string("/proc/version") {
+            let parts: Vec<&str> = version_str.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let version_part = parts[2];
+                let version_nums: Vec<&str> = version_part.split('.').collect();
+                if version_nums.len() >= 2 {
+                    let major: u32 = version_nums[0].parse().unwrap_or(0);
+                    let minor: u32 = version_nums[1].parse().unwrap_or(0);
+
+                    let landlock_abi = if major > 6 || (major == 6 && minor >= 1) {
+                        "ABI v4"
+                    } else if major == 5 && minor >= 19 {
+                        "ABI v3"
+                    } else if major == 5 && minor >= 13 {
+                        "ABI v1"
+                    } else {
+                        "unavailable (kernel < 5.13)"
+                    };
+                    eprintln!("  Landlock: {}", landlock_abi);
+                }
+            }
+        }
+
+        // Check Seccomp support
+        let seccomp_result = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
+        eprintln!(
+            "  Seccomp: {}",
+            if seccomp_result >= 0 {
+                "available"
+            } else {
+                "not supported"
+            }
+        );
+    }
+
     eprintln!();
     eprintln!("Run 'tach self-test' for full system diagnostics.");
 
@@ -447,6 +513,153 @@ fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// Handle the `--dry-run` flag
+///
+/// Discovers tests, resolves fixtures, applies path filtering,
+/// and prints a summary of what would be executed without actually running.
+fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Result<()> {
+    if !is_json {
+        eprintln!("[dry-run] Discovering tests in {}...", cwd.display());
+    }
+
+    let start = std::time::Instant::now();
+    let (discovery_result, toxicity_graph) = discover_with_toxicity(cwd)?;
+
+    if !is_json {
+        let toxic_count = toxicity_graph.toxic_modules().len();
+        let safe_count = toxicity_graph.safe_modules().len();
+        eprintln!(
+            "[dry-run] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
+            discovery_result.test_count(),
+            discovery_result.fixture_count(),
+            start.elapsed(),
+            toxic_count,
+            safe_count
+        );
+    }
+
+    // --- RESOLUTION ---
+    let fixture_registry = resolver::FixtureRegistry::from_discovery(&discovery_result);
+    let resolver = resolver::Resolver::new(&fixture_registry);
+    let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
+
+    if !is_json {
+        eprintln!(
+            "[dry-run] Resolved {} tests ({} errors)",
+            runnable_tests.len(),
+            errors.len()
+        );
+    }
+
+    // --- TOXICITY TAGGING ---
+    let mut runnable_tests = runnable_tests;
+    let mut toxic_test_count = 0;
+    for test in &mut runnable_tests {
+        test.is_toxic = toxicity_graph.is_toxic(&test.file_path);
+        if test.is_toxic {
+            toxic_test_count += 1;
+        }
+    }
+
+    // --- PATH FILTERING ---
+    let target = std::path::Path::new(target_path);
+    let target_canonical = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
+
+    let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
+        .into_iter()
+        .filter(|test| {
+            let test_path = std::path::Path::new(&test.file_path);
+            let test_canonical = test_path
+                .canonicalize()
+                .unwrap_or_else(|_| test_path.to_path_buf());
+
+            test_canonical.starts_with(&target_canonical)
+                || test_canonical == target_canonical
+                || test_path.starts_with(target)
+        })
+        .collect();
+
+    // --- OUTPUT SUMMARY ---
+    if is_json {
+        // JSON output for machine consumption
+        println!("{{");
+        println!("  \"dry_run\": true,");
+        println!("  \"test_count\": {},", filtered_tests.len());
+        println!("  \"toxic_count\": {},", toxic_test_count);
+        println!("  \"error_count\": {},", errors.len());
+        println!("  \"tests\": [");
+        for (i, test) in filtered_tests.iter().enumerate() {
+            let comma = if i < filtered_tests.len() - 1 {
+                ","
+            } else {
+                ""
+            };
+            println!(
+                "    {{\"id\": \"{}::{}\", \"file\": \"{}\", \"toxic\": {}}}{}",
+                test.file_path.display(),
+                test.test_name,
+                test.file_path.display(),
+                test.is_toxic,
+                comma
+            );
+        }
+        println!("  ]");
+        println!("}}");
+    } else {
+        eprintln!();
+        eprintln!("=== DRY RUN SUMMARY ===");
+        eprintln!();
+        eprintln!("Would run {} tests:", filtered_tests.len());
+
+        // Group tests by file for cleaner output
+        let mut by_file: std::collections::HashMap<PathBuf, Vec<&resolver::RunnableTest>> =
+            std::collections::HashMap::new();
+        for test in &filtered_tests {
+            by_file
+                .entry(test.file_path.clone())
+                .or_default()
+                .push(test);
+        }
+
+        let mut files: Vec<_> = by_file.keys().collect();
+        files.sort();
+
+        for file in files {
+            let tests = &by_file[file];
+            let toxic_marker = if tests.iter().any(|t| t.is_toxic) {
+                " [TOXIC]"
+            } else {
+                ""
+            };
+            eprintln!("  {}{}:", file.display(), toxic_marker);
+            for test in tests {
+                eprintln!("    - {}", test.test_name);
+            }
+        }
+
+        eprintln!();
+        eprintln!("Summary:");
+        eprintln!("  Total tests: {}", filtered_tests.len());
+        eprintln!(
+            "  Safe tests: {}",
+            filtered_tests.iter().filter(|t| !t.is_toxic).count()
+        );
+        eprintln!(
+            "  Toxic tests: {}",
+            filtered_tests.iter().filter(|t| t.is_toxic).count()
+        );
+        if !errors.is_empty() {
+            eprintln!("  Resolution errors: {}", errors.len());
+        }
+        eprintln!();
+        eprintln!("(No tests were executed - this was a dry run)");
+    }
+
     Ok(())
 }
 

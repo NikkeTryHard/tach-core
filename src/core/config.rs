@@ -64,7 +64,38 @@ pub enum Verbosity {
     author = "Anthropic",
     about = "Hypervisor-Accelerated Python Test Runner",
     long_about = "A drop-in replacement for pytest using userfaultfd snapshots for sub-millisecond test isolation. Compatible with pytest arguments.",
-    after_help = "For more information, visit: https://github.com/anthropics/tach-core"
+    after_help = r#"EXAMPLES:
+    # Run all tests in current directory
+    tach
+
+    # Run tests in a specific directory
+    tach tests/
+
+    # Run tests matching a pattern
+    tach -k "test_login or test_logout"
+
+    # Run with specific marker
+    tach -m "not slow"
+
+    # Stop on first failure with coverage
+    tach -x --coverage
+
+    # Dry run - show what would run without executing
+    tach --dry-run
+
+    # Collect tests only (same as 'tach list')
+    tach --collect-only
+
+    # Show version and build information
+    tach version
+
+    # Show detailed version info with capabilities
+    tach -v version
+
+    # Run with parallel workers
+    tach -n auto tests/
+
+For more information, visit: https://github.com/anthropics/tach-core"#
 )]
 pub struct Cli {
     // =========================================================================
@@ -178,6 +209,24 @@ pub struct Cli {
     /// Show timing for slowest N tests.
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
+
+    // =========================================================================
+    // Dry Run / Collect Only (pytest compatible)
+    // =========================================================================
+    /// Discover tests and show what would run without executing.
+    ///
+    /// Performs test discovery and filtering, prints a summary of tests
+    /// that would be executed, then exits. No tests are actually run.
+    /// Useful for CI dry runs or verifying test selection patterns.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Collect and list tests without running (alias for 'list' command).
+    ///
+    /// This is a pytest-compatible alias for 'tach list'. It discovers
+    /// all tests matching the given filters and prints them to stdout.
+    #[arg(long)]
+    pub collect_only: bool,
 
     // =========================================================================
     // Passthrough Arguments
