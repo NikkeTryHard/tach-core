@@ -1,0 +1,417 @@
+# Cross-Platform Process Cloning and Runtime Architecture: A Deep Dive into Non-Linux Systems
+
+## 1. Introduction: The Copy-on-Write Conundrum in High-Performance Runtime Environments
+
+The contemporary landscape of high-performance software testing, particularly in the domains of fuzzing and parallel test execution, is disproportionately optimized for the Linux kernel. This hegemony is underpinned by a single, powerful kernel primitive: fork(). Specifically, the Copy-on-Write (CoW) semantics provided by the Linux clone() system call allow a parent process—often a heavy runtime like a Python interpreter pre-loaded with gigabytes of modules—to spawn worker processes in microseconds.¹ These workers inherit the parent's memory state without duplication, only copying physical pages when they are modified by the child. This architecture, widely recognized as the "Zygote" pattern, enables sub-10ms startup times per test case, a performance metric that has become a non-negotiable requirement for modern continuous integration feedback loops.
+
+However, the necessity to replicate this performance profile on macOS (Darwin) and Windows (NT) presents a formidable architectural challenge. The Darwin kernel (XNU) and the Windows NT kernel utilize fundamentally different process creation paradigms that were not designed with the optimization of runtime cloning as a primary objective. On macOS, while fork() exists for POSIX compliance, it is historically performant but fraught with complications arising from the Mach microkernel abstraction and the Objective-C runtime's interactions with the Mach port namespace.² On Windows, the concept of fork() is alien to the Win32 subsystem, which relies on a spawn model—create a process, then load an executable—that necessitates full initialization of the runtime, incurring massive latency penalties often measured in hundreds of milliseconds.³
+
+This report provides an exhaustive architectural analysis of implementing a userspace cloning mechanism on these non-Linux platforms. By leveraging undocumented kernel primitives—Mach virtual memory remapping on macOS and NT process cloning on Windows—it is theoretically possible to approximate the performance of Linux fork(). Furthermore, this analysis explores the necessary infrastructure to support this "Zygote" model, including shared memory heaps via Section Objects, high-performance virtualization alternatives, and a sophisticated TTY proxy architecture for interactive debugging. The findings synthesize deep kernel research into a survival guide for systems architects attempting to break the Linux barrier.
+
+## 2. macOS Mach Kernel Primitives: Architecting Userspace Clones
+
+The macOS kernel, XNU, is a hybrid architecture blending the Mach microkernel with a BSD Unix layer. While the BSD layer provides standard POSIX calls like fork(), these are high-level abstractions that carry significant overhead. To implement a high-performance userspace clone mechanism that rivals Linux, one must bypass the BSD abstractions and interact directly with the underlying Mach layer, particularly its virtual memory (VM) and task management primitives.
+
+### 2.1 The Mechanics of mach_vm_remap and Memory Inheritance
+
+The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach_vm_remap (and its precursor vm_remap). This kernel routine is a powerful primitive that allows a process (referred to as a task in Mach terminology) to map a range of memory from another task's address space into its own.⁴ Unlike vm_read or vm_copy, which involve the physical duplication of data, mach_vm_remap manipulates the kernel's virtual memory map entries (vm_map_entry). It points the target virtual address range to the same physical backing pages as the source, effectively establishing shared memory with minimal overhead.
+
+The function signature for mach_vm_remap reveals the granularity of control available to the systems programmer:
+
+```C
+kern_return_t mach_vm_remap(
+    vm_map_t target_task,
+    mach_vm_address_t *target_address,
+    mach_vm_size_t size,
+    mach_vm_offset_t mask,
+    int flags,
+    vm_map_t src_task,
+    mach_vm_address_t src_address,
+    boolean_t copy,
+    vm_prot_t *cur_protection,
+    vm_prot_t *max_protection,
+    vm_inherit_t inheritance
+);
+```
+
+The critical parameter in this signature is copy. When this boolean is set to TRUE, the kernel marks the memory region as Copy-on-Write (CoW). Any subsequent write operations by either the target_task (the child) or the src_task (the parent) will trigger a page fault. The kernel's fault handler then allocates a private physical page for the modifying task, preserving the integrity of the shared data for the other.⁵ This behavior is functionally identical to the memory semantics of fork(), but it can be applied selectively to specific memory ranges rather than the entire address space.
+
+This capability for selective remapping is a significant advantage over fork(). A supervisor process acting as a Zygote can choose to remap only the essential components of the runtime—such as the Python heap, the code segment, and read-only data—while ignoring volatile memory regions, thread stacks, or scratch buffers that do not need to be shared. This reduces the kernel's workload in managing page tables and accelerates the instantiation of the worker process.
+
+#### 2.1.1 Case Study: Chrome's PartitionAlloc and Memory Management
+
+The efficacy of mach_vm_remap is demonstrated in the architecture of Google Chrome's memory allocator, PartitionAlloc. Chrome utilizes this primitive to manage large blocks of memory securely and efficiently. By remapping "super pages" to new locations with different permissions or into different processes, PartitionAlloc effectively achieves low-overhead memory sharing and isolation.⁶
+
+The implementation details of PartitionAlloc on macOS reveal a sophisticated usage pattern of vm_remap. The allocator uses it to create "mirrors" of memory regions. For instance, to effect a defragmentation or to change permissions on a specific slot without moving data, PartitionAlloc can remap a physical page to a new virtual address.⁷ This confirms that mach_vm_remap is performant enough for high-frequency operations, a crucial validation for its use in a process cloning loop.
+
+Furthermore, the Checkpoint/Restore In Userspace (CRIU) project, while primarily Linux-focused, faces similar challenges when porting to macOS. The core requirement for restoring a process tree is the ability to reconstruct the virtual address space exactly as it was at the checkpoint. On macOS, mach_vm_remap is the only mechanism capable of placing specific memory contents at arbitrary addresses in a target task without incurring the cost of copying data from userspace buffers.⁸
+
+#### 2.1.2 The VM_FLAGS_OVERWRITE Optimization
+
+A critical nuance in using mach_vm_remap for process cloning is handling the target's existing address space. When a new process is spawned (even a skeletal one), it comes with a basic memory layout—dyld images, stack, and kernel commpage. To successfully "hydrate" this process with the Zygote's state, the supervisor must overwrite these existing mappings.
+
+mach_vm_remap accepts a flag VM_FLAGS_OVERWRITE.⁹ When this flag is combined with VM_FLAGS_FIXED, it instructs the kernel to unmap any existing mapping at the target address before establishing the new mapping. This "destructive remap" is essential for the Zygote model. It allows the supervisor to brutally overwrite the child's memory layout with the snapshot of the parent's interpreter state, creating a pixel-perfect clone.¹⁰ Without this flag, mach_vm_remap would return an error if the target address range were even partially occupied, necessitating a slow vm_deallocate loop prior to remapping.
+
+### 2.2 task_create vs. posix_spawn with Suspension
+
+The Mach kernel provides task_create as the fundamental routine for creating a new execution context. This function creates a new Mach task—the kernel representation of a process—that shares the parent's resource ledger.¹¹
+
+```C
+kern_return_t task_create(
+    task_t target_task,
+    ledger_array_t ledgers,
+    mach_msg_type_number_t ledgersCnt,
+    boolean_t inherit_memory,
+    task_t *child_task
+);
+```
+
+While task_create appears promising due to its inherit_memory parameter, it creates a "bare" task. This task has no BSD identity: no Process ID (PID), no file descriptors, no signal handlers, and no connection to the BSD subsystem.¹² A Python interpreter running inside a raw Mach task would immediately crash upon attempting any POSIX system call (e.g., read, write, open), as the kernel structures backing these calls (the proc struct) do not exist for the task.
+
+Therefore, for a high-level runtime like Python, task_create is insufficient. The superior architectural choice is posix_spawn, utilized with Apple-specific extensions to create the process in a suspended state.
+
+#### 2.2.1 The Suspended Spawn Strategy
+
+The posix_spawn API on macOS supports the POSIX_SPAWN_START_SUSPENDED flag.¹³ This flag directs the kernel to create a fully initialized BSD process, complete with a PID and process structure, but to pause execution immediately at the entry point (before main is called).
+
+This suspended state provides a stable window for the supervisor to perform surgery on the child process. The workflow for implementing a userspace clone is as follows:
+
+1.  **Spawn Skeleton:** The supervisor calls posix_spawn with POSIX_SPAWN_START_SUSPENDED. This creates a valid PID and a corresponding Mach task port.
+2.  **Acquire Task Port:** The supervisor calls task_for_pid() on the new PID to obtain the send right to the child's kernel task port.¹⁵
+    *   **Security Note:** This operation requires the com.apple.security.get-task-allow entitlement. While standard in debug builds, this entitlement is stripped in release distributions, necessitating signed binaries with specific entitlements for production deployment.¹⁶
+3.  **Remap Address Space:** Using the acquired task port, the supervisor iterates through its own memory regions (using mach_vm_region) and re-maps them into the child using mach_vm_remap with VM_FLAGS_OVERWRITE and copy=TRUE. This effectively transplants the heap, stack, and text segments.
+4.  **Transfer Thread State:** The supervisor uses thread_get_state to capture its own register state and thread_set_state to apply it to the child's primary thread. This ensures the child resumes execution exactly where the parent left off, simulating the return from fork().
+5.  **Resume:** Finally, the supervisor calls task_resume or sends SIGCONT to wake the child.
+
+This hybrid approach leverages the BSD subsystem for process lifecycle management while utilizing Mach primitives for high-performance memory cloning, theoretically achieving the <10ms startup latency by avoiding the repeated initialization of the Python runtime.
+
+## 3. macOS Virtualization: Evaluating the Micro-VM Alternative
+
+If userspace cloning via Mach primitives proves unstable due to the complexity of managing Mach port namespaces and BSD file descriptors, the alternative architectural path is hardware-assisted isolation. macOS provides two primary frameworks: Hypervisor.framework and Virtualization.framework. The viability of this approach hinges entirely on raw boot latency.
+
+### 3.1 Hypervisor.framework vs. Virtualization.framework
+
+Hypervisor.framework is a low-level, thin wrapper around the CPU's virtualization extensions (Intel VT-x on x86, Apple Silicon v/EL2 on ARM).¹⁷ It allows userspace code to act as a Virtual Machine Monitor (VMM), managing vCPUs and memory mappings directly. It does not provide any device models (disk, network, console); these must be implemented by the user.
+
+Virtualization.framework, introduced in macOS Big Sur, is a high-level abstraction built atop Hypervisor.framework. It provides a complete VMM implementation, including virtio device support and a simplified API for booting Linux (VZLinuxBootLoader) and macOS guests.¹⁸
+
+### 3.2 Latency Analysis for <10ms Targets
+
+For a "Micro-VM per Test" architecture to compete with fork(), the total time from VM instantiation to the execution of user code must be under 10ms.
+
+**Virtualization.framework:** When booting a Linux kernel via Virtualization.framework, the latency encompasses the framework's initialization, the bootloader execution, the kernel decompression, and the kernel's hardware enumeration and subsystem initialization. Benchmarks indicate that even with a minimal kernel and optimized bootloader, the boot time ranges from **150ms to 300ms.**¹⁹ The overhead of the virtio device emulation and the Swift/Obj-C runtime bridging within the framework contributes significantly to this latency. This is an order of magnitude slower than the target.
+
+**Hypervisor.framework (Unikernels):** By interacting directly with Hypervisor.framework, an architect can load a "unikernel" or a bare-metal payload that bypasses the complexity of a full OS. Firecracker, an open-source VMM designed for serverless workloads, utilizes this approach (via KVM on Linux, and experimentally on macOS). Firecracker optimizes boot times by stripping out all non-essential hardware emulation. On Linux, Firecracker can boot a microVM in roughly 125ms.²⁰ On macOS, however, the overhead of the Hypervisor.framework system calls and the lack of aggressive kernel-side optimizations present in KVM result in latencies that, while faster than Virtualization.framework, still struggle to break the 100ms barrier consistently.²¹
+
+### 3.3 The Verdict on Micro-VMs
+
+The analysis conclusively indicates that **neither framework can currently achieve <10ms startup times** for a fresh VM boot sequence. The inherent latency of context switching between the macOS host and the guest VM, combined with the initialization of the guest's virtual memory and interrupt tables, exceeds the strict budget required for high-frequency fuzzing loops.
+
+While a snapshot-restore mechanism within the VM (restoring a running VM from memory) could theoretically approach the target, macOS lacks a native equivalent to Linux's userfaultfd for efficient lazy page loading from disk, making the restoration process I/O bound and slower than memory mapping. Consequently, for strictly <10ms latency, userspace cloning via mach_vm_remap remains the only viable architectural path on macOS.
+
+## 4. Windows NT Internals: The Quest for Process Cloning
+
+The Windows operating system does not natively support fork(). The Win32 API relies exclusively on CreateProcess, which implements a spawn model. However, the NT kernel (the substrate beneath Win32) has supported fork-like semantics since its inception to facilitate the POSIX subsystem (Interix/SFU) and, more recently, the Windows Subsystem for Linux (WSL) v1.³
+
+### 4.1 NtCreateProcessEx: The Legacy POSIX Fork
+
+The primary system call historically used to implement fork() in the Windows POSIX subsystem is NtCreateProcessEx. This undocumented function allows the creation of a new process object that shares the address space of the parent.²²
+
+```C
+NTSTATUS NtCreateProcessEx(
+    PHANDLE ProcessHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes,
+    HANDLE ParentProcess,
+    ULONG Flags,
+    HANDLE SectionHandle,
+    HANDLE DebugPort,
+    HANDLE ExceptionPort,
+    BOOLEAN InJob
+);
+```
+
+When ParentProcess is set to the current process handle and SectionHandle is NULL, the kernel clones the parent's address space. The Flags parameter allows for fine-grained control over handle inheritance.
+
+**The Limitation:** While NtCreateProcessEx successfully clones the virtual memory space, **it does not create any threads in the new process.**²³ The result is a "zombie" process—a container with memory but no execution context. In the Windows XP/Server 2003 era, it was possible to follow this call with NtCreateThread to manually instantiate a thread in the child process, copying the register state from the parent. However, in modern Windows versions (Windows 8.1+), the kernel's process initialization logic has tightened. Creating a thread in a process created via NtCreateProcessEx often fails with STATUS_PROCESS_IS_TERMINATING because the kernel expects the process to have passed through specific initialization stages (CSRSS registration) that NtCreateProcessEx bypasses.²²
+
+### 4.2 RtlCloneUserProcess: The Modern Primitive
+
+The modern successor to NtCreateProcessEx, utilized by advanced exploits like DirtyVanity and likely internal Microsoft subsystems, is RtlCloneUserProcess. Exported by ntdll.dll, this function wraps the lower-level kernel calls (likely NtCreateUserProcess) to perform a complete fork operation: it clones the address space, duplicates the handle table, **and creates a clone of the calling thread.**²²
+
+```C
+NTSTATUS RtlCloneUserProcess(
+    ULONG ProcessFlags,
+    PSECURITY_DESCRIPTOR ProcessSecurityDescriptor,
+    PSECURITY_DESCRIPTOR ThreadSecurityDescriptor,
+    HANDLE DebugPort,
+    PRTL_USER_PROCESS_INFORMATION ProcessInformation
+);
+```
+
+*   **ProcessFlags:** The flags RTL_CLONE_PROCESS_FLAGS_CREATE_SUSPENDED (0x01) and RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES (0x02) are essential for replicating fork() behavior.
+*   **Copy-on-Write Mechanism:** RtlCloneUserProcess relies on the NT kernel's internal MmInitializeProcessAddressSpace routine, which utilizes the parent's page tables to set up the child's address space with CoW semantics.²² This allows the operation to complete in milliseconds, bypassing the filesystem and loader overhead of CreateProcess.
+
+**The Fork-Safety/Lock Problem:** While RtlCloneUserProcess is performant, it inherits the exact state of the parent process, including the state of all synchronization primitives. Crucially, it only clones the *calling thread*. If the parent process was multi-threaded, any mutexes or critical sections (such as the heap lock or the loader lock) held by *other* threads at the moment of cloning will remain locked in the child process, but the threads owning those locks will not exist.²² This leads to immediate deadlocks if the child attempts to allocate memory or call generic Win32 APIs. This is the classic "fork-safety" problem, and it is particularly acute on Windows where the C runtime and Win32 subsystems are heavily threaded and lock-dependent.
+
+### 4.3 PssCaptureSnapshot: Inspection vs. Execution
+
+Windows 8.1 introduced PssCaptureSnapshot, a documented API for Process Snapshotting. This function can capture the state of a process (virtual address space, threads, handles) very quickly.²⁵ However, the snapshot object created is "passive." It is designed for debugging, analysis, and inspection (via PssQuerySnapshot, PssWalkSnapshot). There is no API to "revive" or "hydrate" a PSS snapshot into a running process context.²⁶ It is strictly a read-only introspection tool and cannot serve as a mechanism for executing worker processes.
+
+## 5. Windows Job Objects and Section Objects: The Shared Heap Strategy
+
+Given the inherent instability of RtlCloneUserProcess for general-purpose runtimes (due to the lock inheritance issue), a more robust "Zygote" architecture on Windows involves explicitly implementing memory sharing using **Section Objects**. This approach simulates the memory benefits of fork() ("Manual Copy-on-Write") without the risks of kernel-level process cloning.
+
+### 5.1 Section Objects for "Manual" Copy-on-Write
+
+In the NT kernel, a **Section Object** (exposed via CreateFileMapping in Win32) represents a block of memory that can be shared between processes. The strategy involves the Supervisor (Zygote) mapping its Python heap into a Section, and Workers mapping views of this Section.
+
+**The Zygote Strategy:**
+
+1.  **Zygote Initialization:** The Supervisor starts and initializes the Python interpreter, loading all necessary modules and data.
+2.  **Heap Consolidation:** The Supervisor creates a custom memory allocator (hooking pymalloc or using Rust's GlobalAlloc). Instead of allocating from the default process heap, this allocator requests a large block of memory via NtCreateSection backed by the paging file.²⁷ All persistent Python objects are placed into this Section.
+3.  **Worker Spawning:** To create a worker, the Zygote uses standard CreateProcess. This ensures the worker is a clean, stable Win32 process with no lock corruption.
+4.  **Heap Hydration:** The worker inherits the handle to the Section Object. Crucially, it calls NtMapViewOfSection to map the Section into its address space.
+    *   **The Key Optimization:** The worker maps the view with the PAGE_WRITECOPY protection flag.
+    *   **Result:** The worker gains instant access to the pre-initialized Python heap. The OS treats the pages as Copy-on-Write. Any modification the worker makes to the heap triggers a local page copy, leaving the Zygote's master section untouched.²⁸
+
+This architecture avoids the CPU overhead of parsing and loading Python modules in the worker, as the data structures are already present in the mapped memory. It achieves the fork() memory efficiency while maintaining Win32 process stability.
+
+### 5.2 Job Objects for Lifecycle Management
+
+To ensure robust process management—preventing "orphan" or "zombie" worker processes if the supervisor crashes—Windows **Job Objects** are mandatory.
+
+*   **Mechanism:** The Supervisor creates a Job Object using CreateJobObject.
+*   **Policy:** It sets the JOBOBJECT_EXTENDED_LIMIT_INFORMATION structure. Specifically, the JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE flag is enabled.²⁹
+*   **Assignment:** Every spawned worker process is assigned to this Job via AssignProcessToJobObject immediately after creation.
+
+With this configuration, the lifecycle of the workers is cryptographically tied to the Job handle. If the Supervisor exits (gracefully or via a crash), the OS closes the Job handle. The kernel then immediately terminates all processes associated with that Job.³⁰ This provides the same cleanup guarantees that process groups (kill -TERM -pgid) provide on Linux.³¹
+
+## 6. Architecting the "TTY Proxy" for Interactive Debugging
+
+Interactive debugging (using pdb or ipdb) in a parallel execution environment requires isolating the user's terminal input and routing it to the specific worker that has hit a breakpoint. Since standard stdio inheritance routes all output to the supervisor's terminal immediately and mixes input, a proxy layer is required to manage the streams.
+
+### 6.1 Architecture Overview
+
+The Supervisor does not allow workers to inherit its standard stdin. Instead, it creates a **Pseudo-Terminal (PTY)** pair for each worker using the portable-pty crate.³²
+
+1.  **Supervisor (Master):** The Supervisor owns the "Master" side of the PTY. It reads the worker's output from the master file descriptor and prints it to the real stdout, optionally tagging it with the worker ID.
+2.  **Worker (Slave):** The worker is attached to the "Slave" side of the PTY. To the worker, it appears to be running in a real interactive terminal.
+3.  **Hotswap Protocol:**
+    *   **Normal Mode:** The Supervisor reads from all PTY masters and multiplexes the output. stdin from the user is ignored or routed to a specific "focused" worker.
+    *   **Debug Mode:** When a worker hits a breakpoint (e.g., pdb.set_trace()), it emits a specific output signature or sends an IPC signal to the Supervisor.
+        *   **Suspend:** The Supervisor suspends all other workers to prevent log noise.
+        *   **Hotswap:** The Supervisor "locks" the user's stdin to the debugging worker's PTY master.
+        *   **Raw Mode:** The Supervisor enables **Raw Mode** on its own terminal. This ensures that every keystroke—including special characters like Ctrl+C, Tab, and arrow keys—is forwarded directly to the worker's PTY without local interpretation.³³
+
+### 6.2 IPC Transport: Unix Domain Sockets vs. Named Pipes
+
+*   **macOS:** The architecture utilizes **Unix Domain Sockets (UDS).** They are efficient, file-descriptor based, and support passing file descriptors (via SCM_RIGHTS), which allows the Supervisor to pass the PTY slave fd to the child dynamically if needed.
+*   **Windows:** The architecture utilizes **Named Pipes** (\\\\.\pipe\name). While Windows Named Pipes are functionally similar to UDS, they do not support passing handles between unrelated processes as easily. However, since the Supervisor creates the PTY and spawns the child, handle inheritance is managed at creation time.³⁴ The portable-pty crate abstracts this complexity. On Windows, it leverages the **ConPTY** (Pseudo Console) API, which is the modern, robust way to host console applications.³⁵ ConPTY creates a hidden conhost.exe that acts as the PTY, translating the worker's API calls into VT sequences for the Supervisor.
+
+### 6.3 Sequence Diagram: The TTY Proxy Handshake
+
+The following narrative describes the flow of control during a debugging session:
+
+1.  **Normal Operation:** Workers 1 through N are executing tests. They write logs to their PTY slaves. The Supervisor reads these logs from the PTY masters and prints them to the user's terminal.
+2.  **Breakpoint Hit:** Worker 3 hits pdb.set_trace(). It halts execution and waits for input on stdin. It sends an IPC message PAUSED_ON_PDB to the Supervisor.
+3.  **Mode Switch:** The Supervisor receives the message. It immediately sends SIGSTOP (or SuspendThread on Windows) to all other workers.
+4.  **Hotswap:** The Supervisor sets the user's physical terminal to **Raw Mode.** It enters a loop where it reads bytes from the user's stdin and writes them directly to Worker 3's PTY master. Simultaneously, it reads from Worker 3's PTY master and writes to the user's stdout.
+5.  **Interactive Session:** The user interacts with pdb (typing commands, inspecting variables).
+6.  **Resume:** The user types continue in pdb. Worker 3 resumes execution and sends an IPC message RESUMED to the Supervisor.
+7.  **Restoration:** The Supervisor sets the user's terminal back to **Cooked Mode.** It sends SIGCONT (or ResumeThread) to the other workers and resumes log multiplexing.
+
+```mermaid
+sequenceDiagram
+    participant User as User Terminal
+    participant Sup as Rust Supervisor
+    participant W_Debug as Worker (Debugging)
+    participant W_Idle as Other Workers
+
+    Note over Sup: Normal Operation
+    W_Debug->>Sup: PTY Output (logs)
+    W_Idle->>Sup: PTY Output (logs)
+    Sup->>User: Multiplexed Logs
+
+    Note over W_Debug: Hit pdb.set_trace()
+    W_Debug->>Sup: IPC Msg: "PAUSED_ON_PDB"
+
+    rect rgb(240, 240, 240)
+    Note right of Sup: Interactive Hotswap
+    Sup->>W_Idle: SIGSTOP / SuspendThread
+    Sup->>User: "Entering Debug Mode on Worker #3..."
+    Sup->>Sup: Set User Terminal to RAW MODE
+
+    loop Interactive Session
+        User->>Sup: Stdin (Keypresses)
+        Sup->>W_Debug: Write to PTY Master
+        W_Debug->>Sup: Read PTY Master (Echo/Output)
+        Sup->>User: Write to User Stdout
+    end
+
+    Note over W_Debug: User types 'continue'
+    W_Debug->>Sup: IPC Msg: "RESUMED"
+    end
+
+    Sup->>Sup: Set User Terminal to COOKED MODE
+    Sup->>W_Idle: SIGCONT / ResumeThread
+    Note over Sup: Resume Multiplexing
+```
+
+## 7. Signal Forwarding Strategy
+
+Handling signals, particularly SIGINT (Ctrl+C) and SIGWINCH (Window Resize), is critical for a seamless user experience in a proxied environment.
+
+### 7.1 Signal Interception
+
+The Supervisor must intercept signals *before* they terminate the process.
+
+*   **Rust (Cross-Platform):** Libraries like signal-hook or ctrlc are used to register handlers.
+*   **Windows Specifics:** On Windows, console signals like Ctrl+C are handled via SetConsoleCtrlHandler. A critical nuance is that Windows generates Ctrl+C events for *all* processes attached to a console. However, since the workers are attached to a *different* console (the ConPTY hidden console), they will not automatically receive the Ctrl+C typed in the Supervisor's console.³⁶ The Supervisor must explicitly bridge this gap.
+
+### 7.2 Routing Logic
+
+*   **SIGWINCH (Resize):** When the user resizes their terminal window, the Supervisor receives SIGWINCH. It must query the new dimensions (rows/columns) of its own terminal. It then calls the pty_pair.master.resize(new_size) method for the **active** worker (or all workers). This propagates the size change to the worker's pseudo-terminal, ensuring that pdb or readline redraws the prompt correctly.³⁷
+*   **SIGINT (Ctrl+C):**
+    *   **Debug Mode:** If a worker is in the TTY Proxy "Hotswap" mode, the Ctrl+C is intended for the debugger (to interrupt a command or cancel input). The Supervisor must forward this signal **only** to the active debug worker. In the context of a PTY, this involves writing the ASCII End-of-Text byte (\\x03, ETX) into the PTY master. The PTY line discipline in the kernel (or ConPTY) interprets this byte and generates a SIGINT signal for the child process.³⁸
+    *   **Normal Mode:** If no worker is debugging, the Ctrl+C is interpreted as a "Stop All" command. The Supervisor initiates the shutdown sequence, sending SIGTERM (or calling TerminateJobObject) to clean up all workers.
+
+## 8. Non-Linux Survival Guide: FFI and Reference
+
+This section provides the precise Foreign Function Interface (FFI) definitions required to implement the userspace cloning primitives in Rust. These definitions are often missing from standard crates or require specific flags to match the kernel's ABI.
+
+### 8.1 macOS vm_remap FFI Definition (Rust)
+
+To utilize mach_vm_remap, the following definitions map to the Mach kernel interface. Note the specific integer types used for protection and inheritance flags.
+
+```rust
+use libc::{c_int, c_uint};
+use mach::vm_types::{mach_vm_address_t, mach_vm_offset_t, mach_vm_size_t, vm_map_t};
+use mach::kern_return::kern_return_t;
+use mach::boolean::boolean_t;
+
+// Standard Mach types often missing from high-level crates
+pub type VmProt = c_int;
+pub type VmInherit = c_uint;
+
+// Protection Flags
+pub const VM_PROT_READ: VmProt = 0x01;
+pub const VM_PROT_WRITE: VmProt = 0x02;
+pub const VM_PROT_EXECUTE: VmProt = 0x04;
+
+// Inheritance Flags
+pub const VM_INHERIT_SHARE: VmInherit = 0;
+pub const VM_INHERIT_COPY: VmInherit = 1; // <--- The Magic Value for CoW
+pub const VM_INHERIT_NONE: VmInherit = 2;
+
+// Remap Flags
+pub const VM_FLAGS_FIXED: c_int = 0x0000;
+pub const VM_FLAGS_ANYWHERE: c_int = 0x0001;
+pub const VM_FLAGS_OVERWRITE: c_int = 0x4000; // <--- Crucial for hydration
+
+extern "C" {
+    pub fn mach_vm_remap(
+        target_task: vm_map_t,
+        target_address: *mut mach_vm_address_t,
+        size: mach_vm_size_t,
+        mask: mach_vm_offset_t,
+        flags: c_int,
+        src_task: vm_map_t,
+        src_address: mach_vm_address_t,
+        copy: boolean_t,
+        cur_protection: *mut VmProt,
+        max_protection: *mut VmProt,
+        inheritance: VmInherit,
+    ) -> kern_return_t;
+}
+```
+
+### 8.2 Windows NtCreateProcessEx FFI Definition (Rust)
+
+This function is exported by ntdll.dll but is typically undocumented in standard Windows SDKs. It requires manual linking and careful structure definition.
+
+```rust
+use std::ffi::c_void;
+use windows_sys::Win32::Foundation::{HANDLE, NTSTATUS, BOOLEAN};
+
+// The OBJECT_ATTRIBUTES structure is complex; this is a simplified
+// representation sufficient for NtCreateProcessEx usage.
+#[repr(C)]
+pub struct OBJECT_ATTRIBUTES {
+    pub Length: u32,
+    pub RootDirectory: HANDLE,
+    pub ObjectName: *mut c_void, // PUNICODE_STRING
+    pub Attributes: u32,
+    pub SecurityDescriptor: *mut c_void,
+    pub SecurityQualityOfService: *mut c_void,
+}
+
+// Flags for NtCreateProcessEx
+// This specific flag instructs the kernel to inherit the handle table.
+pub const PROCESS_CREATE_FLAGS_INHERIT_HANDLES: u32 = 0x00000004;
+
+#[link(name = "ntdll")]
+extern "system" {
+    pub fn NtCreateProcessEx(
+        ProcessHandle: *mut HANDLE,
+        DesiredAccess: u32, // ACCESS_MASK
+        ObjectAttributes: *mut OBJECT_ATTRIBUTES,
+        ParentProcess: HANDLE,
+        Flags: u32,
+        SectionHandle: HANDLE,
+        DebugPort: HANDLE,
+        ExceptionPort: HANDLE,
+        InJob: BOOLEAN,
+    ) -> NTSTATUS;
+}
+```
+
+### 8.3 Recommendations for Implementation
+
+1.  **Discard Micro-VMs for <10ms Latency:** The analysis confirms that Hypervisor.framework and Virtualization.framework introduce irreducible latency due to context switching and OS initialization. For ultra-fast test isolation, userspace cloning is the only viable path.
+2.  **macOS Implementation:** Adopt the posix_spawn(SUSPENDED) + mach_vm_remap(VM_INHERIT_COPY) pattern. This hybrid approach provides the stability of BSD process management with the performance of Mach shared memory. Ensure the supervisor binary is signed with the com.apple.security.get-task-allow entitlement to permit task_for_pid operations.
+3.  **Windows Implementation:** Avoid direct reliance on NtCreateProcessEx for execution due to the "zombie process" limitations. Instead, implement a **Zygote with Section Objects**. Use NtCreateSection to back the Python heap and NtMapViewOfSection with PAGE_WRITECOPY in workers to achieve manual Copy-on-Write performance. Enforce lifecycle management strictly using Job Objects.
+4.  **TTY Proxy is Mandatory:** Interactive debugging is impossible without a proxy layer to manage standard input/output handles. Use portable-pty to abstract the differences between Windows ConPTY and Unix PTYs, ensuring a unified codebase for the supervisor.
+
+By synthesizing these advanced kernel primitives, a cross-platform test runner can effectively break the OS barrier, achieving the "instant-on" performance characteristics of Linux fork() on macOS and Windows.
+
+**Works cited**
+
+1.  How is the address space for new processes allocated with \`fork()\` or \`clone\`? - Reddit, accessed December 20, 2025, https://www.reddit.com/r/C\_Programming/comments/16in9a6/how\_is\_the\_address\_space\_for\_new\_processes/
+2.  Mac OS: how to fork without copying process state? - Stack Overflow, accessed December 20, 2025, https://stackoverflow.com/questions/55460899/mac-os-how-to-fork-without-copying-process-state
+3.  Why isn't windows implementing fork? : r/compsci - Reddit, accessed December 20, 2025, https://www.reddit.com/r/compsci/comments/1h30md0/why\_isnt\_windows\_implementing\_fork/
+4.  vm_remap | Apple Developer Documentation, accessed December 20, 2025, https://developer.apple.com/documentation/kernel/1585336-vm\_remap
+5.  Memory and Virtual Memory - Apple Developer, accessed December 20, 2025, https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/KernelProgramming/vm/vm.html
+6.  Efficient And Safe Allocations Everywhere! - Chromium Blog, accessed December 20, 2025, https://blog.chromium.org/2021/04/efficient-and-safe-allocations-everywhere.html
+7.  PartitionAlloc Design, accessed December 20, 2025, https://chromium.googlesource.com/chromium/src/+/master/base/allocator/partition\_allocator/PartitionAlloc.md
+8.  CRIU, accessed December 20, 2025, https://criu.org/Main\_Page
+9.  Section 8.6. The Mach VM User-Space Interface | Mac OS X Internals - Flylib.com, accessed December 20, 2025, https://flylib.com/books/en/3.126.1.89/1/
+10. Modifying the mach-o executable file .text section to be writable caused a crash, accessed December 20, 2025, https://stackoverflow.com/questions/76548426/modifying-the-mach-o-executable-file-text-section-to-be-writable-caused-a-crash
+11. task_create - Documentation - Apple Developer, accessed December 20, 2025, https://developer.apple.com/documentation/kernel/1538088-task\_create
+12. Abusing Mach on Mac OS X - Multiple papers Exploit, accessed December 20, 2025, https://www.exploit-db.com/exploits/13176
+13. MacOS Create a Process in suspended state - c++ - Stack Overflow, accessed December 20, 2025, https://stackoverflow.com/questions/33123318/macos-create-a-process-in-suspended-state
+14. Creating suspended processes - Scott Knight, accessed December 20, 2025, https://knight.sc/malware/2019/01/06/creating-suspended-processes.html
+15. mach_sys - Rust - Docs.rs, accessed December 20, 2025, https://docs.rs/mach-sys
+16. macOS Dangerous Entitlements & TCC perms - HackTricks - GitBook, accessed December 20, 2025, https://angelica.gitbook.io/hacktricks/macos-hardening/macos-security-and-privilege-escalation/macos-security-protections/macos-dangerous-entitlements
+17. We replaced Firecracker with QEMU - Hacker News, accessed December 20, 2025, https://news.ycombinator.com/item?id=36666782
+18. Notes on Virtualization.Framework - kel.bz, accessed December 20, 2025, https://kel.bz/post/virtualization-framework-reversing/
+19. Parallels Hypervisor vs Apple's Hypervisor? | Parallels Forums, accessed December 20, 2025, https://forum.parallels.com/threads/parallels-hypervisor-vs-apples-hypervisor.337755/
+20. I tried Firecracker microVMs for self-hosted services, and it's surprisingly powerful, accessed December 20, 2025, https://www.xda-developers.com/firecracker-microvms-self-hosted-services-surprisingly-powerful/
+21. Tart: VMs on macOS using Apple's native Virtualization.Framework | Hacker News, accessed December 20, 2025, https://news.ycombinator.com/item?id=39059100
+22. The Definitive Guide To Process Cloning on Windows - GitHub, accessed December 20, 2025, https://github.com/huntandhackett/process-cloning
+23. What the Fork: Exploring Telemetry Gaps in Microsoft's 4688 Event - Jonathan Johnson, accessed December 20, 2025, https://jonny-johnson.medium.com/what-the-fork-exploring-telemetry-gaps-in-microsofts-4688-event-7d9e00979ea8
+24. Dirty Vanity: A New Approach to Code Injection & EDR Bypass | Deep Instinct, accessed December 20, 2025, https://www.deepinstinct.com/blog/dirty-vanity-a-new-approach-to-code-injection-edr-bypass
+25. How to Capture a Process Snapshot in Windows, accessed December 20, 2025, https://trainsec.net/library/windows-internals/process-snapshotting-in-windows/
+26. Differences between CreateToolhelp32Snapshot and PssCaptureSnapshot functions, accessed December 20, 2025, https://stackoverflow.com/questions/45275882/differences-between-createtoolhelp32snapshot-and-psscapturesnapshot-functions
+27. Malware Series: Process Injection Mapped Sections - TrustedSec, accessed December 20, 2025, https://trustedsec.com/blog/malware-series-process-injection-mapped-sections
+28. Internals of Windows Memory Management (not only) for Malware Analysis - MADOC, accessed December 20, 2025, https://madoc.bib.uni-mannheim.de/3148/1/InternalsOfWindowsMemoryMangement2.pdf
+29. CloseHandle() on a job object but not killing a process created by ShellExecute, accessed December 20, 2025, https://stackoverflow.com/questions/51588296/closehandle-on-a-job-object-but-not-killing-a-process-created-by-shellexecute
+30. TerminateJobObject function (jobapi2.h) - Win32 apps - Microsoft Learn, accessed December 20, 2025, https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject
+31. win32job: a crate for using Windows' Job Objects : r/rust - Reddit, accessed December 20, 2025, https://www.reddit.com/r/rust/comments/f1ob3a/win32job\_a\_crate\_for\_using\_windows\_job\_objects/
+32. portable\_pty - Rust - Docs.rs, accessed December 20, 2025, https://docs.rs/portable-pty
+33. Piping stdin and stdout with an interactive child process (raw mode) - Rust Users Forum, accessed December 20, 2025, https://users.rust-lang.org/t/piping-stdin-and-stdout-with-an-interactive-child-process-raw-mode/94649
+34. Python and Windows Named Pipes - Stack Overflow, accessed December 20, 2025, https://stackoverflow.com/questions/48542644/python-and-windows-named-pipes
+35. Creating a Pseudoconsole session - Windows Console - Microsoft Learn, accessed December 20, 2025, https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session
+36. Killing subprocesses of \`std::process::Command\` - help - Rust Users Forum, accessed December 20, 2025, https://users.rust-lang.org/t/killing-subprocesses-of-std-process-command/117905
+37. MasterPty in portable\_pty - Rust - Docs.rs, accessed December 20, 2025, https://docs.rs/portable-pty/latest/portable\_pty/trait.MasterPty.html
+38. Windows Command-Line: Introducing the Windows Pseudo Console (ConPTY) - Reddit, accessed December 20, 2025, https://www.reddit.com/r/programming/comments/97lh1k/windows\_commandline\_introducing\_the\_windows/

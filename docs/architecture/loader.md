@@ -538,3 +538,24 @@ unsafe {
 
 - [Discovery Engine](discovery.md) - How modules are found
 - [Zygote Lifecycle](zygote.md) - How the loader is initialized
+
+---
+
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                        | Key Contribution                                                     |
+| :------------------------------------------- | :------------------------------------------------------------------- |
+| **Zero-Copy Python Module Loading**          | `sys.meta_path` bypass, `mmap` of `.pyc` artifacts, header stripping |
+| **Python Testing Engine Rust Breakthroughs** | Content-addressable logic, eliminating the "Import Tax"              |
+
+### Key Technical Details from Research
+
+- **Stat Storm Elimination**: Traditional `importlib` performs ~10 stat calls per import - bypassing it eliminates this overhead
+- **16-Byte Header**: `.pyc` files have a 16-byte header (magic + timestamp + size) that must be stripped before `PyMarshal_ReadObjectFromString`
+- **mmap Workflow**: `mmap(pyc_file)` -> skip 16 bytes -> `PyMarshal_ReadObjectFromString` -> `PyImport_ExecCodeModuleObject`
+- **Relative Import Hazard**: Must manually set `__package__` and `__path__` attributes or relative imports will fail
+- **sys.modules Injection**: Use `PyImport_ExecCodeModuleObject` (preferred over `PyImport_ExecCodeModule`) for full control over module attributes
+
+See [Research Investigation](../research-investigation.md) for complete analysis.

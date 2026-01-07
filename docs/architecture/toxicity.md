@@ -346,3 +346,25 @@ Toxic workers skip Seccomp because they may legitimately need:
 - [Discovery Engine](discovery.md) - How modules are found
 - [Iron Dome](sandbox.md) - How Seccomp is applied
 - [Scheduler](scheduler.md) - How tests are dispatched
+
+---
+
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                             | Key Contribution                                                                          |
+| :------------------------------------------------ | :---------------------------------------------------------------------------------------- |
+| **Fork Safety of Python C-Extensions**            | Orphaned lock scenarios, async-signal-safety, "Poison Fork" triggers (OpenMP, CUDA, gRPC) |
+| **Rust Static Analysis for Toxic Python Modules** | Taxonomy of import-time toxicity, `ruff_python_parser` integration, fixed-point iteration |
+| **Python Monorepo Zygote Tree Design**            | Toxicity propagation rules, contagion model ("if A imports toxic B, A is toxic")          |
+
+### Key Technical Details from Research
+
+- **Orphaned Locks**: `fork()` only clones the calling thread - background threads (BLAS workers, gRPC pollers) vanish, leaving mutexes permanently locked
+- **POSIX Constraint**: Post-fork, only async-signal-safe functions are safe to call - Python interpreter is NOT async-signal-safe
+- **Detection Patterns**: `threading.Thread().start()`, `ssl.create_default_context()`, `multiprocessing.Pool()` at module scope (depth=0)
+- **C-Extension Blindspot**: Static analysis cannot see into compiled `.so` files - consider `ld-linux.so` auditing for thread spawning detection
+- **if **name** == "**main**" Guard**: Must not flag code inside this guard as toxic (only runs when executed as main)
+
+See [Research Investigation](../research-investigation.md) for complete analysis.

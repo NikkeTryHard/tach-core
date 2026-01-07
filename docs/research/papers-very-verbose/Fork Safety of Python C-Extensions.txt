@@ -1,0 +1,341 @@
+# The Fork-Safety Paradox: An Exhaustive Analysis of Concurrency in the Python C-Extension Ecosystem
+
+## 1. Introduction: The Divergence of POSIX and Python
+
+The architecture of modern Python applications sits at a precarious intersection between high-level interpreted code and low-level C-extension optimization. For decades, the Unix fork() system call has been the bedrock of concurrency in this ecosystem, providing an efficient, Copy-on-Write (COW) mechanism for process duplication. However, as the Python landscape has evolved from simple scripting to powering global infrastructure in machine learning, scientific computing, and high-performance networking, the interaction between fork() and the threading models of C-extensions has become a source of critical instability.
+
+This report investigates the "fork-safety" of the top 20 most critical C-extension libraries in the Python ecosystem, including NumPy, TensorFlow, gRPC, and Cryptography. The analysis reveals a systemic fragility: the fundamental assumptions of fork()—specifically regarding memory isolation and state duplication—are incompatible with the complex internal threading pools, global state mutexes, and hardware contexts managed by modern C libraries. The resulting "poison fork" scenarios, characterized by silent deadlocks, corrupted SSL state, and undefined behavior, represent one of the most significant reliability challenges in Python software engineering.¹
+
+The investigation synthesizes technical documentation, issue tracker archaeology, and developer discourse to categorize the risks associated with these libraries. It further explores the industry-wide migration away from fork toward spawn and forkserver models, a shift formally recognized by the Python Steering Council's deprecation of fork-with-threads in Python 3.12.³
+
+## 2. Theoretical Framework: The Anatomy of a Broken Fork
+
+To properly assess the safety of specific libraries, one must first understand the mechanism of failure. The term "fork-safety" is effectively a measure of a library's compliance with the strict limitations imposed by the POSIX standard on multithreaded processes.
+
+### 2.1 The POSIX Constraint and the Vanishing Threads
+
+The fork() system call was designed in an era of single-threaded processes. When applied to a process containing multiple threads—a standard configuration for Python applications using C-extensions—fork() performs a violent abstraction: it duplicates the address space of the parent process but only replicates the single thread that invoked the call. All other threads in the process are instantly terminated in the child process, without executing any cleanup handlers or stack unwinding.¹
+
+This behavior creates a critical consistency problem known as the "orphaned lock" scenario. If a background thread (e.g., a logging thread, a garbage collector, or a BLAS worker) holds a mutex or lock at the precise nanosecond fork() is invoked, that lock is copied into the child process's memory in a "locked" state. However, the thread that "owns" the lock does not exist in the child process. If the child process subsequently attempts to acquire this lock—perhaps to allocate memory via malloc, write to a log file, or initialize a library—it will wait indefinitely for the non-existent owner to release it. This results in a deadlock that freezes the child process immediately upon startup, often without throwing an exception or generating a traceback.⁵
+
+The POSIX standard explicitly addresses this, stating that after fork() in a multithreaded program, the child process may only execute **async-signal-safe** functions until it calls one of the exec family of functions.³ Async-signal-safe functions are a restrictive subset of system calls (like write or signal) that are guaranteed not to use internal locks or global state that might be inconsistent. Crucially, the Python interpreter itself, along with standard C library functions like printf, malloc, and free, are *not* async-signal-safe.
+
+### 2.2 The Python C-API and Global State
+
+Python adds a layer of complexity via the Global Interpreter Lock (GIL) and its memory management. While Python attempts to handle its own internal locks (such as the GIL and import locks) via pthread_atfork handlers or internal logic, it has no visibility into the private state of compiled extension modules.
+
+C-extensions often initialize their own resources independent of the Python runtime:
+
+*   **Thread Pools:** Libraries like NumPy (via OpenBLAS) and PyTorch (via OpenMP) spawn worker threads to parallelize CPU-bound tasks.
+*   **Hardware Contexts:** Libraries like TensorFlow and PyTorch initialize CUDA contexts that map directly to GPU hardware registers.
+*   **File Descriptors:** Networking libraries like gRPC and database drivers like Psycopg2 manage pools of socket file descriptors.
+
+When fork() occurs, these resources enter an undefined state. Thread pools appear to be initialized (pointers are non-null), but the workers are dead. Hardware contexts point to memory mapped regions that are no longer valid for the child process. File descriptors are duplicated, causing race conditions where two processes attempt to talk over the same TCP stream. This phenomenon, where a library appears functional but is internally corrupted, is referred to in the PyTorch documentation and broader community as a "poison fork".²
+
+### 2.3 The "Copy-on-Write" Fallacy
+
+Historically, the preference for fork() over spawn() in Python was driven by the copy-on-write (COW) optimization. In theory, COW allows a child process to share the parent's memory pages until they are modified, theoretically saving massive amounts of RAM when loading large read-only datasets or models.⁷
+
+However, the architecture of CPython undermines this benefit. Python utilizes reference counting for memory management. Even reading a Python object requires incrementing its reference count, which is a write operation to the memory page containing the object header. This "read-implies-write" behavior triggers the operating system's page fault mechanism, causing the shared memory page to be duplicated. Consequently, a forked Python process that actively reads data will eventually duplicate a significant portion of the parent's memory, negating the COW advantage while incurring the massive stability risks of fork-safety violations.⁹ This reality shifts the cost-benefit analysis heavily against fork() for any application using complex C-extensions.
+
+## 3. Sector Analysis: Scientific Computing and Numerics
+
+The scientific Python stack is the most frequent casualty of fork-safety issues. These libraries rely heavily on parallelism provided by underlying C and Fortran libraries, which manage their own threading lifecycles outside the Python interpreter's control.
+
+### 3.1 NumPy and the BLAS Deadlock
+
+**Architecture:**
+NumPy serves as the foundation of the stack, providing high-performance array operations. Critically, NumPy offloads vector math to BLAS (Basic Linear Algebra Subprograms) libraries. The default wheels on PyPI link against OpenBLAS, while Anaconda distributions often use Intel MKL (Math Kernel Library). Both OpenBLAS and MKL are aggressively multithreaded.¹⁰
+
+**Fork-Safety Profile: Critical Risk**
+The interaction between NumPy's BLAS backend and fork() is a textbook example of the orphaned lock problem. When a NumPy operation is executed, the BLAS library initializes a thread pool (e.g., a pool of pthreads). If the parent process subsequently forks, the thread pool structure is copied to the child, but the threads are not.
+
+If the child process attempts a linear algebra operation, the BLAS library checks its internal state, sees an "initialized" pool, and attempts to dispatch work to the threads. Since the threads do not exist, the dispatch mechanism deadlocks, often waiting on a condition variable or spinlock that will never be signaled.¹¹
+
+**Case Evidence:**
+Reports indicate that simple operations like np.linalg.inv(A) in a child process can cause the entire process to hang indefinitely if the parent had previously triggered the BLAS initialization.¹² This behavior is exacerbated by libraries that import NumPy as a dependency, implicitly initializing the BLAS layer without the user's knowledge.
+
+**Mitigation and Configuration:**
+The community has developed workarounds, though they are brittle. Disabling multithreading in the BLAS layer before forking can prevent the creation of the problematic thread pool. This is achieved via environment variables:
+
+*   OPENBLAS_NUM_THREADS=1
+*   MKL_NUM_THREADS=1
+*   OMP_NUM_THREADS=1
+
+Setting these variables ensures that the linear algebra operations run sequentially in the main thread, avoiding the creation of the thread pool that would be corrupted by the fork.¹³ However, this comes at a significant performance cost for the parent process.
+
+### 3.2 SciPy and the OpenMP Runtime War
+
+**Architecture:**
+SciPy builds upon NumPy, adding complex solvers (ARPACK, LAPACK) and algorithms. Like NumPy, it links against BLAS, but it also utilizes OpenMP for parallelizing C++ extensions.¹⁵
+
+**Fork-Safety Profile: High Risk**
+SciPy introduces a specific conflict involving the OpenMP runtime. There are two primary OpenMP implementations: libgomp (GNU) and libomp (LLVM/Intel).
+
+*   **libgomp:** Historically not fork-safe. It maintains rigid internal state that corrupts easily across forks.¹⁰
+*   **libomp:** Technically fork-safe in recent versions, but it is an implementation detail often hidden from the user.
+
+A critical failure mode occurs when different libraries load conflicting OpenMP runtimes (e.g., SciPy loading libgomp and a Torch extension loading libomp). This "runtime collision," combined with forking, leads to segmentation faults or deadlocks known as the "OpenMP runtime war".¹⁰
+
+**The loky Solution:**
+Recognizing the intractability of making fork safe with OpenMP, the Scikit-learn developers (who rely heavily on SciPy) created loky, a custom backend for joblib. Loky defaults to the spawn method or a specialized forkserver implementation to ensure that worker processes are fresh and uncorrupted by the parent's OpenMP state. This represents an architectural admission that standard fork is untenable for this class of library.¹⁶
+
+### 3.3 Pandas and the Copy-on-Write Complication
+
+**Architecture:**
+Pandas provides high-level data structures (DataFrames) powered by NumPy and Cython.
+
+**Fork-Safety Profile: Moderate Risk**
+Pandas inherits the BLAS risks of NumPy. Furthermore, recent versions (Pandas 2.0+) have introduced a strict Copy-on-Write (CoW) mode to improve memory safety and performance within Python.¹⁷
+
+While Pandas' internal CoW logic (using BlockValuesRefs) is robust within a single process, it does not magically extend to inter-process communication via fork. Users often assume that forking a Pandas DataFrame allows for "free" parallel processing. However, the reference tracking mechanism in CoW involves updating Python object reference counts. As discussed in the theoretical framework, these updates trigger the OS-level COW mechanism to copy pages, eroding the memory benefits.
+
+More dangerously, if the DataFrame operations in the child process trigger the underlying NumPy/BLAS layer (e.g., matrix multiplication or complex aggregations), the deadlock risk remains. The integration of the **Apache Arrow** backend in newer Pandas versions introduces another C++ threading runtime, further complicating the fork-safety landscape.¹⁹
+
+## 4. Sector Analysis: Deep Learning Frameworks
+
+The "heavy lifters" of the Python ecosystem, TensorFlow and PyTorch, act almost as independent operating systems, managing memory allocators, device drivers, and scheduling queues. Their incompatibility with fork is absolute.
+
+### 4.1 TensorFlow and the CUDA Context
+
+**Architecture:**
+TensorFlow uses a massive C++ backend (Eigen for CPU, cuDNN/cublas for GPU) and manages a global Session (in TF1) or Eager Context (in TF2).
+
+**Fork-Safety Profile: Unsafe (Do Not Fork)**
+TensorFlow is explicitly not fork-safe. The primary point of failure is the interaction with the GPU via CUDA. The CUDA runtime API does not support fork(). When a process initializes CUDA, it maps the GPU's memory into its virtual address space. Forking duplicates this mapping, but the handle to the GPU hardware is not valid in the child. Attempting to touch the GPU in the child results in undefined behavior, crashes, or hanging processes.⁷
+
+Even on CPU, TensorFlow creates a global thread pool (Eigen) for operation scheduling. Forking leaves this pool in a zombie state. Calls to Session.run() or eager execution in the child will hang indefinitely as they wait for the zombie threads to execute the graph nodes.²²
+
+**Mitigation:**
+TensorFlow requires the use of spawn or forkserver. Attempting to use multiprocessing.Pool with the default fork method is a guaranteed path to failure. Users must clear the session state explicitly (tf.keras.backend.clear_session()) if they attempt to run in a child, but re-initialization is fragile.²³
+
+### 4.2 PyTorch and the Poison Fork
+
+**Architecture:**
+PyTorch uses libtorch (C++), OpenMP for CPU parallelism, and CUDA for GPU.
+
+**Fork-Safety Profile: Unsafe**
+PyTorch documentation defines the "Poison Fork" as a scenario where the accelerator runtime (CUDA or OpenMP) is initialized before the fork.²
+
+*   **OpenMP Deadlocks:** Like SciPy, PyTorch's heavy reliance on OpenMP means that forking an initialized process deadlocks the threading runtime. PyTorch attempts to mitigate this by providing torch.set_num_threads(1) to disable parallelism in the child, but this is a partial fix.²
+*   **DataLoader:** The torch.utils.data.DataLoader uses multiprocessing to load data. On Linux, it defaults to fork for performance (shared memory tensors). However, if the main process has touched CUDA or initialized complex C-extensions before the loop starts, the worker processes will die. This has led to a persistent stream of user issues where training hangs silently.²⁵
+
+**Mitigation:**
+PyTorch strongly advises using spawn for CUDA operations. For CPU operations, fork is permitted only if the user is extremely careful not to initialize the runtime in the parent. The library exposes torch.multiprocessing, a wrapper around Python's module that helps manage these start methods, and supports sharing tensors via shared memory (shm) which works better with spawn than standard pickling.²
+
+## 5. Sector Analysis: Networking and RPC
+
+Networking libraries introduce the problem of file descriptor (FD) duplication. When a process forks, all open socket FDs are duplicated. If both parent and child attempt to read/write to the same FD, the byte stream becomes corrupted, leading to protocol violations.
+
+### 5.1 gRPC: The Evolution of a Crash
+
+**Architecture:**
+gRPC Python wraps grpc-core (C), which uses a sophisticated polling engine (epoll on Linux) and a pool of background threads to manage completion queues.
+
+**Fork-Safety Profile: Conditionally Safe (Caveat Emptor)**
+Historically, gRPC was completely unsafe to fork. The background threads managed by grpc-core would die upon fork, leaving the completion queue in a zombie state. Any RPC call in the child would hang, waiting for a completion event that would never arrive.²⁷
+
+**The Mitigation Mechanism:**
+In response to widespread failures (e.g., usage with Gunicorn/uWSGI), gRPC introduced fork support via the environment variable GRPC_ENABLE_FORK_SUPPORT=1 (defaulting to enabled in newer versions if poll strategy allows). This mechanism uses pthread_atfork to register handlers that:
+
+1.  Pause all gRPC threads in the parent (Prepare).
+2.  Destroy the threading context in the child (Parent/Child Post-fork).
+3.  Re-create the threads in the child.
+
+**Limitations:**
+This support is brittle. It only works with epoll1 and poll polling strategies. It fails if the application has already created a channel that has active RPCs. The documentation explicitly warns that "Complexities are inevitable" and recommends using spawn or initializing gRPC after the fork.²⁹ A common error logs "gRPC cannot be used before and after forking," indicating the failure of this heuristic.³⁰
+
+### 5.2 Gevent and Greenlet
+
+**Architecture:**
+Gevent runs an event loop (based on libev or libuv) and uses Greenlet for coroutine scheduling.
+
+**Fork-Safety Profile: Unsafe**
+The event loop relies on kernel structures (kqueue, epoll). Forking duplicates the file descriptor pointing to the kernel queue, but the kernel treats events on this FD as belonging to a specific context. If the child process tries to run the inherited loop, it interferes with the parent's event processing.³¹
+
+**Mitigation:**
+Gevent provides gevent.os.fork(), a monkey-patched replacement that attempts to destroy the hub in the child and create a new one. However, using the standard os.fork without this wrapper is catastrophic. The standard pattern for Gevent applications (like Gunicorn workers) is to fork early (before the loop starts) and never fork again.³²
+
+## 6. Sector Analysis: Database Drivers and Persistence
+
+Database drivers combine the risks of socket duplication (like networking) with the risks of connection pooling state.
+
+### 6.1 Psycopg2 (PostgreSQL)
+
+**Architecture:**
+Wraps libpq, the C client for PostgreSQL.
+
+**Fork-Safety Profile: Unsafe**
+libpq connections are stateful and tied to a socket. Forking duplicates the socket. If the child uses the inherited connection, it injects data into the parent's TCP stream. PostgreSQL's backend may interpret this as protocol garbage or a man-in-the-middle attack, terminating the connection.³⁴
+
+SSL state is particularly sensitive; the encryption context cannot be shared.
+
+**Mitigation:**
+The application must ensure that inherited connections are never used. The standard pattern is to use a connection pool (like SQLAlchemy's) and explicitly dispose of it in the child process immediately after forking.
+
+```python
+# In the child process:
+engine.dispose(close=False) # Discards the pool struct without closing parent sockets
+```
+
+Failure to do this results in "SSL error: decryption failed or bad record mac".³⁵
+
+### 6.2 Redis-py and Hiredis
+
+**Architecture:**
+Uses hiredis (C) for parsing and a Python-level ConnectionPool.
+
+**Fork-Safety Profile: Unsafe**
+The scenario mirrors Psycopg2. The ConnectionPool in the parent contains valid connections. The child inherits a copy of the pool object. If the child "returns" a connection to the pool or closes it, it might close the underlying FD that the parent is still using.³⁷
+
+**Mitigation:**
+redis-py implements a PID check (os.getpid()) in its connection retrieval logic. If it detects that the PID has changed (indicating a fork), it resets the pool. However, this is a reactive measure. Race conditions can occur if a command is issued immediately after fork before the check runs. The safest approach is explicit pool reset.³⁸
+
+## 7. Sector Analysis: Security, Serialization, and Utilities
+
+### 7.1 Cryptography (pyca/cryptography)
+
+**Architecture:**
+Bindings to OpenSSL via CFFI/Rust.
+
+**Fork-Safety Profile: Conditionally Safe (Modern)**
+The primary risk here is the breakdown of randomness. In older OpenSSL versions, the Pseudo-Random Number Generator (PRNG) state was managed in userspace memory. Forking copied this state. If the child process did not explicitly re-seed, both parent and child would generate identical sequences of "random" numbers for keys and Initialization Vectors (IVs). This effectively breaks encryption security.⁴⁰
+
+**Evolution:**
+Since OpenSSL 1.1.1d, the library mixes the process ID (PID) into the RNG state, providing automatic fork safety. The cryptography library further mitigates this by using os.urandom (which accesses the kernel's CSPRNG) where possible, bypassing the OpenSSL user-space RNG issues. However, on legacy systems or with LibreSSL, explicit cleanup via OPENSSL_cleanup may still be required to avoid state corruption.⁴²
+
+### 7.2 Lxml
+
+**Architecture:**
+Bindings for libxml2 and libxslt.
+
+**Fork-Safety Profile: Risk of Global State**
+libxml2 relies on global initialization (xmlInitParser). While modern versions are thread-safe, the interaction of global mutexes across a fork is undefined. If a thread holds a parser lock during fork, the child inherits a locked mutex with no owner.⁴³ While generally robust for stateless parsing, complex usage involving global configuration catalogs or XSLT contexts is risky.⁴⁴
+
+### 7.3 Orjson and the Rise of Rust
+
+**Architecture:**
+orjson is a high-performance JSON library written in Rust.
+
+**Fork-Safety Profile: Safe**
+Rust's memory safety guarantees often align well with fork safety if the library is stateless. orjson functions (loads, dumps) are pure functions that do not maintain global state or background threads. This makes it significantly safer than legacy C libraries that might use global scratchpads. The shift toward Rust in libraries like Pydantic V2 (via pydantic-core) reinforces this trend, prioritizing memory safety and statelessness which naturally benefits fork safety.⁴⁵
+
+### 7.4 Coverage.py
+
+**Architecture:**
+Uses a C trace function for performance.
+
+**Fork-Safety Profile: Unsafe (Data Race)**
+The C tracer collects data in memory buffers. Forking copies these buffers. If multiple subprocesses write their coverage data to the same file on exit, race conditions corrupt the data.
+
+**Mitigation:**
+coverage.py requires the --concurrency=multiprocessing flag and a process_startup configuration file hook. This forces the library to detect the subprocess mode and write to distinct, PID-suffixed files, which are later combined.⁴⁸
+
+## 8. Summary of Findings: The Top 20 Libraries
+
+The following table synthesizes the fork-safety status of the investigated libraries.
+
+| Library | Domain | Fork-Safety Status | Primary Failure Mechanism | Recommended Remediation |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. NumPy** | Numerics | Unsafe | OpenBLAS/MKL thread pool deadlock | spawn / OPENBLAS_NUM_THREADS=1 |
+| **2. Pandas** | Data | Unsafe | Inherits NumPy BLAS deadlocks | spawn |
+| **3. SciPy** | Science | Unsafe | OpenMP (libgomp) runtime deadlock | spawn / loky backend |
+| **4. TensorFlow** | ML | Unsafe | CUDA context / Session thread pools | spawn (Mandatory) |
+| **5. PyTorch** | ML | Unsafe | OpenMP deadlock / Poison Fork | spawn (Mandatory for CUDA) |
+| **6. gRPC** | Network | Conditionally Safe | Background polling threads die | GRPC_ENABLE_FORK_SUPPORT=1 |
+| **7. Psycopg2** | DB | Unsafe | Shared socket FDs / SSL state | Engine.dispose() in child |
+| **8. Cryptography** | Security | Safe (Modern) | PRNG state duplication (Historic) | Update OpenSSL > 1.1.1d |
+| **9. Lxml** | XML | Conditionally Safe | Global mutexes in libxml2 | Avoid global config changes |
+| **10. Pillow** | Image | Safe | Stateless C calls | N/A |
+| **11. Redis-py** | DB | Unsafe | Connection Pool duplication | Reset pool in child |
+| **12. Gevent** | Async | Unsafe | Event loop (epoll) duplication | Fork *before* loop start |
+| **13. Matplotlib** | Plotting | Unsafe (macOS) | Cocoa/GUI framework interactions | spawn on macOS |
+| **14. Orjson** | JSON | Safe | Stateless Rust implementation | N/A |
+| **15. Ujson** | JSON | Safe | Stateless C implementation | N/A |
+| **16. Msgpack** | Serial | Safe | Stateless C implementation | N/A |
+| **17. PyYAML** | YAML | Safe | Stateless libyaml bindings | N/A |
+| **18. Wrapt** | Util | Safe | Transparent Object Proxies | N/A |
+| **19. Coverage** | Tooling | Conditionally Safe | Data collection race conditions | --concurrency=multiprocessing |
+| **20. Netifaces** | Network | Safe | Simple system calls | N/A |
+
+## 9. Implications and The Path Forward
+
+The data explicitly demonstrates that the core pillars of the Python data stack—NumPy, TensorFlow, PyTorch, and database drivers—are fundamentally incompatible with the fork() execution model in multithreaded environments. The reliance on C-level parallelism (OpenMP, BLAS) and hardware acceleration (CUDA) has rendered the POSIX fork() constraints impossible to satisfy.
+
+### 9.1 The Python 3.12+ Paradigm Shift
+
+The Python core developers have formally acknowledged this crisis. In Python 3.12, a DeprecationWarning is now issued when os.fork() is called in a multithreaded process.³ This is a precursor to a planned shift in Python 3.14, where the default start method on POSIX systems is expected to change from fork to spawn or forkserver.⁵⁰
+
+This change aligns Linux with macOS (which switched to spawn in Python 3.8 to solve the Matplotlib/Cocoa crashes) and Windows (which has always used spawn).
+
+### 9.2 Recommendations for Engineering Teams
+
+1.  **Abandon Fork for "Heavy" Apps:** If your application imports TensorFlow, PyTorch, or gRPC, do not use fork. Configure multiprocessing to use spawn explicitly:
+    ```python
+    import multiprocessing
+    multiprocessing.set_start_method('spawn')
+    ```
+2.  **Explicit Resource Disposal:** For applications using database drivers, adopt the "dispose pattern." Ensure that any connection pool created in the parent is explicitly discarded (not closed, which kills the parent's socket) in the child process immediately after startup.
+3.  **Environment Isolation:** To prevent the "OpenMP War" and BLAS deadlocks, enforce single-threaded mode in libraries if fork must be used:
+    ```bash
+    export OMP_NUM_THREADS=1
+    export OPENBLAS_NUM_THREADS=1
+    ```
+4.  **Adopt Stateless Serializers:** Prefer modern, stateless libraries like orjson or msgpack over older, potentially stateful alternatives. The move to Rust-backed extensions (like Pydantic V2) offers a higher degree of safety due to Rust's strict ownership model, which generally precludes the kind of dangling pointer/mutex issues seen in legacy C/C++ extensions.
+
+## 10. Conclusion
+
+The investigation confirms that "fork-safety" in the Python C-extension ecosystem is largely a myth for complex libraries. While simple utility modules remain safe, the complex runtimes driving modern AI and data engineering have outgrown the capabilities of the 1970s-era fork() system call. The industry is in a transitional phase: maintaining legacy fork compatibility via brittle workarounds (pthread_atfork) while simultaneously migrating toward a spawn-only future. For production systems, the only robust guarantee of stability is to treat fork() as a deprecated primitive when C-extensions are involved.
+
+### Works cited
+
+1.  fork() without exec() is dangerous in large programs (evanjones.ca), accessed December 22, 2025, https://www.evanjones.ca/fork-is-dangerous.html
+2.  Multiprocessing best practices — PyTorch 2.9 documentation, accessed December 22, 2025, https://docs.pytorch.org/docs/stable/notes/multiprocessing.html
+3.  Concerns regarding deprecation of "fork()" with alive threads - Ideas - Python Discussions, accessed December 22, 2025, https://discuss.python.org/t/concerns-regarding-deprecation-of-fork-with-alive-threads/33555
+4.  pthread_atfork(3) - Linux manual page - man7.org, accessed December 22, 2025, https://man7.org/linux/man-pages/man3/pthread_atfork.3.html
+5.  Safe to call multiprocessing from a thread in Python? - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
+6.  Python multiprocessing pool some process in deadlock when forked but runs when spawned - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/65080123/python-multiprocessing-pool-some-process-in-deadlock-when-forked-but-runs-when-s
+7.  Solve your TensorFlow + Multiprocessing woes with forkserver, accessed December 22, 2025, https://kferg.dev/posts/2020/python-tensorflow-multiprocessing-forkserver/
+8.  Taking advantage of fork system call to avoid read/writing or serializing altogether?, accessed December 22, 2025, https://stackoverflow.com/questions/60359511/taking-advantage-of-fork-system-call-to-avoid-read-writing-or-serializing-altoge
+9.  Will os.fork() use copy on write or do a full copy of the parent-process in Python?, accessed December 22, 2025, https://stackoverflow.com/questions/14941729/will-os-fork-use-copy-on-write-or-do-a-full-copy-of-the-parent-process-in-pyth
+10. Parallelism in Numerical Python Libraries - GitHub Pages, accessed December 22, 2025, https://thomasjpfan.github.io/parallelism-python-libraries-design/
+11. OpenBLAS threadsafety issues for downstream libraries (NumPy) #1844 - GitHub, accessed December 22, 2025, https://github.com/OpenMathLib/OpenBLAS/issues/1844
+12. BUG: Binary Builds Deadlock due to OpenBLAS threading issue with fork #30092 - GitHub, accessed December 22, 2025, https://github.com/numpy/numpy/issues/30092
+13. Understanding why numpy make a fork whenever it is imported - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/65122388/understanding-why-numpy-make-a-fork-whenever-it-is-imported
+14. deadlock in fork() because of OpenBlas · Issue #13802 - GitHub, accessed December 22, 2025, https://github.com/tensorflow/tensorflow/issues/13802
+15. Debugging linear algebra related issues — SciPy v1.16.2 Manual, accessed December 22, 2025, https://docs.scipy.org/doc/scipy/dev/contributor/debugging_linalg_issues.html
+16. Frequently Asked Questions — scikit-learn 1.8.0 documentation, accessed December 22, 2025, https://scikit-learn.org/stable/faq.html
+17. Copy on write — pandas 3.0.0rc1+4.g2d6c51f3f7 documentation - PyData |, accessed December 22, 2025, https://pandas.pydata.org/docs/dev/development/copy_on_write.html
+18. Copy-on-Write (CoW) — pandas 2.3.3 documentation - PyData |, accessed December 22, 2025, https://pandas.pydata.org/docs/user_guide/copy_on_write.html
+19. Copy-On-Write - When to Use It, When to Avoid It - Arpit Bhayani, accessed December 22, 2025, https://arpitbhayani.me/blogs/copy-on-write/
+20. forking a python process after loading TensorFlow - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/37874838/forking-a-python-process-after-loading-tensorflow
+21. Tensorflow is not fork safe · Issue #69 · usnistgov/frvt - GitHub, accessed December 22, 2025, https://github.com/usnistgov/frvt/issues/69
+22. How to handle a Tensorflow session in a multiprocessing environment with fork()?, accessed December 22, 2025, https://stackoverflow.com/questions/52310182/how-to-handle-a-tensorflow-session-in-a-multiprocessing-environment-with-fork
+23. tf.keras.backend.clear_session | TensorFlow v2.16.1, accessed December 22, 2025, https://www.tensorflow.org/api_docs/python/tf/keras/backend/clear_session
+24. Some useful tensorflow code snippets - GitHub, accessed December 22, 2025, https://github.com/keineahnung2345/tensorflow-code-snippets
+25. DistributedDataParallel deadlock - PyTorch Forums, accessed December 22, 2025, https://discuss.pytorch.org/t/distributeddataparallel-deadlock/14809
+26. fork() without exec() is dangerous in large programs (evanjones.ca) - Reddit, accessed December 22, 2025, https://www.reddit.com/r/programming/comments/vg3be2/fork_without_exec_is_dangerous_in_large_programs/
+27. C fork() server->embedded Python->gRPC-python deadlock on method call, accessed December 22, 2025, https://groups.google.com/g/grpc-io/c/uI5vOtacknA/m/IzbgrtPuAAAJ
+28. Deadlock during close in Python client · Issue #20026 · grpc/grpc - GitHub, accessed December 22, 2025, https://github.com/grpc/grpc/issues/20026
+29. GRPC PHP: Background, accessed December 22, 2025, https://grpc.github.io/grpc/php/md_doc_fork_support.html
+30. Running into problems when setting RAILS_ENV=production - Temporal Community Forum, accessed December 22, 2025, https://community.temporal.io/t/running-into-problems-when-setting-rails-env-production/12731
+31. common functions - gevent 25.9.2.dev0 documentation, accessed December 22, 2025, https://www.gevent.org/api/gevent.html
+32. Low-level operating system functions from os - gevent 25.9.2.dev0 documentation, accessed December 22, 2025, https://www.gevent.org/api/gevent.os.html
+33. Python Gevent in practice: common pitfalls to keep in mind - Platform.sh, accessed December 22, 2025, https://upsun.com/blog/python-gevent-best-practices/
+34. Sharing psycopg2 / libpq connections across processes - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/40482555/sharing-psycopg2-libpq-connections-across-processes
+35. Basic module usage — Psycopg 2.9.11 documentation, accessed December 22, 2025, https://www.psycopg.org/docs/usage.html
+36. Documentation on using connection pools with forking is incorrect · Issue #7815 - GitHub, accessed December 22, 2025, https://github.com/sqlalchemy/sqlalchemy/issues/7815
+37. what is function of _checkpid method in connectionPool of redis-py? - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/42018102/what-is-function-of-checkpid-method-in-connectionpool-of-redis-py
+38. Fix re-used connections after fork (again) · Issue #863 · redis/redis-py - GitHub, accessed December 22, 2025, https://github.com/redis/redis-py/issues/863
+39. Welcome to redis-py's documentation! - Read the Docs, accessed December 22, 2025, https://redis.readthedocs.io/en/v4.0.2/
+40. OpenSSL backend — Cryptography 3.1 documentation, accessed December 22, 2025, https://cryptography.io/en/3.1/hazmat/backends/openssl/
+41. Random fork-safety - OpenSSLWiki, accessed December 22, 2025, https://wiki.openssl.org/index.php/Random_fork-safety
+42. Build failed on OpenBSD 7.2 · Issue #7653 · pyca/cryptography - GitHub, accessed December 22, 2025, https://github.com/pyca/cryptography/issues/7653
+43. libxml2.so Init/CleanupParser usage for multiple processes with threads - Stack Overflow, accessed December 22, 2025, https://stackoverflow.com/questions/49896108/libxml2-so-init-cleanupparser-usage-for-multiple-processes-with-threads
+44. lxmldoc-4.5.0.pdf, accessed December 22, 2025, https://lxml.de/lxmldoc-4.5.0.pdf
+45. ijl/orjson: Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy - GitHub, accessed December 22, 2025, https://github.com/ijl/orjson
+46. Introducing Pydantic v2 - Key Features, accessed December 22, 2025, https://pydantic.dev/articles/pydantic-v2
+47. Why Rust as a backend for PydanticV2? #5279 - GitHub, accessed December 22, 2025, https://github.com/pydantic/pydantic/discussions/5279
+48. Managing processes — Coverage.py 7.11.2 documentation, accessed December 22, 2025, https://coverage.readthedocs.io/en/latest/subprocess.html
+49. Measuring sub-processes — Coverage.py 6.5.0 documentation, accessed December 22, 2025, https://coverage.readthedocs.io/en/6.5.0/subprocess.html
+50. Switching default multiprocessing context to "spawn" on POSIX as well - Python Discussions, accessed December 22, 2025, https://discuss.python.org/t/switching-default-multiprocessing-context-to-spawn-on-posix-as-well/21868

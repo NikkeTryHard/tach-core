@@ -1,0 +1,378 @@
+# Hierarchical Zygote Tree Construction: A Static Analysis and Algorithmic Framework for Python Monorepos
+
+## Abstract
+
+The "cold start" latency inherent in serverless architectures remains a primary barrier to the adoption of high-throughput, real-time applications, particularly within the Python ecosystem where module initialization is computationally expensive. This report presents a comprehensive architectural specification for an automated "Hierarchical Zygote Tree" construction system designed for large-scale Python monorepos. By moving beyond the traditional single-zygote model to a tiered, hierarchical structure, the proposed system maximizes memory sharing via Copy-on-Write (CoW) mechanisms while adhering to strict safety constraints regarding side-effects.
+
+The core contribution of this work is a three-pronged algorithmic framework: (1) A high-performance static analysis engine developed in Rust, utilizing rustpython-parser and custom data-flow analysis to resolve both static and dynamic imports without runtime execution; (2) A rigorous "Side-Effect Toxicity" analysis protocol to enforce purity in shared memory states; and (3) A novel "Dependency-Aware Agglomerative Clustering" (DAAC) algorithm that synthesizes the dependency graph into an optimal initialization tree. This document details the theoretical underpinnings, algorithmic design, and implementation strategy for this system, addressing the unique challenges of Python’s dynamic nature through strictly static means.
+
+---
+
+## 1. Introduction: The Initialization Latency Challenge
+
+### 1.1 The Serverless Performance Landscape
+
+Serverless computing, characterized by the Function-as-a-Service (FaaS) paradigm, promises operational efficiency and limitless scalability. However, this promise is frequently compromised by "cold start" latency—the time required to provision a container, initialize the runtime environment, and load application code before processing a request. In high-performance contexts, this initialization phase can dominate the total request lifecycle, degrading user experience and increasing costs.
+
+For Python, a language defined by its dynamic interpretation and runtime linking, this challenge is acute. Profiling data from large-scale deployments indicates that module initialization—specifically the parsing, compiling, and executing of top-level code in dependencies—accounts for 60% to 80% of cold start duration. Unlike compiled languages where linking occurs at build time, Python performs these operations at load time. In a monorepo environment, where a single function acts as an entry point into a massive graph of shared library code, the overhead of identifying and loading the necessary subset of modules is non-trivial.
+
+### 1.2 The Zygote Pattern and its Evolution
+
+To mitigate initialization overhead, advanced serverless platforms (e.g., OpenLambda) have adopted the "Zygote" pattern. Inspired by the Android operating system’s process management, a zygote is a pre-initialized process that has already loaded the runtime and common standard libraries. When a new function instance is required, the platform forks the zygote rather than creating a new process from scratch.
+
+The operating system’s implementation of `fork()` utilizes Copy-on-Write (CoW), ensuring that the memory pages containing the Python interpreter and imported modules are shared physically between the parent (zygote) and the child (function instance). New physical memory is allocated only when the child writes to a page. This significantly reduces both memory footprint and startup time.
+
+However, the traditional "Global Zygote" model—a single parent pre-loading a static list of popular packages—is insufficient for monorepos.
+
+*   **Divergent Dependencies:** A data science function requiring pandas and scipy shares little with a lightweight webhook handler using requests and cryptography. A single global zygote containing all these libraries would be bloated, consuming excessive memory and potentially introducing version conflicts.
+*   **The Hierarchical Solution:** The solution is a **Hierarchical Zygote Tree**. The root node contains universally shared modules (e.g., os, sys). Child nodes branch off to specialize (e.g., a "Data Science Zygote" adds numpy, a "Web Zygote" adds fastapi). Leaf nodes represent the specific function handlers. This structure aligns the process hierarchy with the logical dependency structure of the application.
+
+### 1.3 The Problem Statement
+
+Designing such a tree manually is intractable in a monorepo with thousands of modules and shifting dependencies. It requires an automated, algorithmic approach. Furthermore, executing code to trace dependencies (dynamic analysis) is risky and slow in CI/CD pipelines.
+
+Therefore, this report addresses the design of an algorithm to construct this tree using **strictly static analysis**. This imposes three distinct technical hurdles:
+
+1.  **Resolution of Dynamic Imports:** Python code frequently uses `importlib.import_module()` with variable arguments. The system must statically infer these targets.
+2.  **Side-Effect Isolation:** Pre-loading a module that initiates a network connection or spawns a thread is dangerous in a zygote, as these resources may not survive a `fork()`. The system must identify and exclude such "toxic" modules from intermediate tree nodes.
+3.  **Optimal Clustering:** The system must group functions with overlapping dependencies into a tree structure that balances memory savings against the overhead of maintaining intermediate zygote processes.
+
+---
+
+## 2. Static Analysis Infrastructure: The Rust Engine
+
+To achieve the performance required to analyze massive monorepos within a CI/CD timeframe, the analysis engine must be built in a systems language. Rust is the optimal choice due to its memory safety, parallelism capabilities (rayon), and the existence of mature Python parsing ecosystems.
+
+### 2.1 Architectural Components
+
+The proposed ZygoteArchitect tool is composed of three Rust-based subsystems:
+
+1.  **The Parallel Harvester:** Crawls the file system, utilizing `ignore` (the engine behind ripgrep) to respect `.gitignore` and identify Python source files.
+2.  **The AST Parser:** Uses `rustpython-parser` to generate Abstract Syntax Trees (ASTs) for every identified file.
+3.  **The Abstract Resolver:** A custom implementation of Python’s import resolution logic (replicating `importlib` semantics) that connects AST import nodes to physical file paths.
+
+**Tool Selection: rustpython-parser vs. ruff**
+While ruff (built on `ruff_python_parser`) is renowned for its speed in linting, its primary goal is error checking and formatting. It uses a "resilient" parser designed to handle invalid code during editing. For this application, `rustpython-parser` is preferred. Being the parser for a full Python implementation in Rust, it provides a stricter, execution-oriented representation of the code, which is critical when we attempt to simulate the interpreter's behavior during import resolution.
+
+### 2.2 The Static Import Resolution Algorithm
+
+Python's import system is complex, governed by `sys.path`, namespace packages, and relative import syntax. To build an accurate dependency graph, the Rust engine must simulate these mechanics without invoking the Python interpreter.
+
+#### 2.2.1 Simulating sys.path
+
+The analyzer must maintain a virtual `sys.path` list. In a monorepo, this typically includes:
+
+*   The repository root.
+*   Specific source directories (e.g., `src`, `lib`).
+*   Virtual environment `site-packages` (for resolving third-party dependencies).
+
+The configuration for this virtual path is derived from `pyproject.toml` or `setup.cfg` files found in the repository root.
+
+#### 2.2.2 Handling Relative Imports
+
+Relative imports (e.g., `from ..utils import helper`) rely on the `__name__` of the current module. The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest `__init__.py` or namespace root.
+
+**Resolution Logic:**
+When the AST visitor encounters an `ImportFrom` node with `level > 0`:
+1.  **Context Identification:** Determine the current file's directory.
+2.  **Ascension:** Traverse up the directory tree $N$ times, where $N$ is the level (number of dots).
+3.  **Path Construction:** Append the module name to the resolved base directory.
+4.  **Existence Check:** The resolver checks for the existence of:
+    *   `module.py`
+    *   `module/__init__.py`
+    *   `module` (namespace package)
+
+This logic mirrors the behavior described in Python's `importlib` documentation, ensuring that the static graph matches the runtime reality.
+
+### 2.3 Statically Resolving Dynamic Imports
+
+One of the most significant challenges in static analysis is handling dynamic imports—imports where the module name is not a string literal but a variable.
+
+*   **Literal:** `importlib.import_module("os")` (Trivial to resolve)
+*   **Dynamic:** `importlib.import_module(plugin_name)` (Non-trivial)
+
+To address the requirement of resolving these statically, we implement a **Local Data-Flow Analysis (Constant Propagation)** within the Rust engine.
+
+#### 2.3.1 The Abstract Interpretation Strategy
+
+The analyzer does not execute the code but traces the flow of constant values through variable assignments within the local scope of the function or module.
+
+**Target AST Pattern:**
+We look for `Call` nodes where the function is one of:
+*   `importlib.import_module`
+*   `__import__`
+*   `pkgutil.get_loader`
+
+**Algorithm: Backward Slice Constant Folding**
+When a dynamic import call `importlib.import_module(var_x)` is detected:
+1.  **Initiate Backward Search:** The analyzer traverses the AST upwards from the call site, looking for assignments to `var_x`.
+2.  **Assignment Analysis:**
+    *   If `var_x = "literal_string"`, the resolution is successful.
+    *   If `var_x = f"prefix.{var_y}"`, the search recurses to find the value of `var_y`.
+    *   If `var_x = some_dict[key]`, the analyzer inspects the dictionary definition if it exists in the local scope.
+3.  **Branch Handling:** If `var_x` is assigned different values in if/else blocks, the analyzer bifurcates and records **all** possible values as potential dependencies. This conservative approach ensures that the zygote is prepared for all statically determinable paths.
+
+**Example Resolution:**
+
+```python
+# Source Code
+SERVICE_TYPE = "payment"
+
+def load_service():
+    module_name = f"services.{SERVICE_TYPE}.handler"
+    importlib.import_module(module_name)
+```
+
+**Rust Analysis Trace:**
+1.  **Detect:** Call to `importlib.import_module` with arg `module_name`.
+2.  **Trace module_name:** Found Assign: `JoinedStr("services.", Name(SERVICE_TYPE), ".handler")`.
+3.  **Trace SERVICE_TYPE:** Found Assign (Global scope): `Constant("payment")`.
+4.  **Fold:** Construct string `"services.payment.handler"`.
+5.  **Graph Update:** Add edge `SourceFile -> services/payment/handler.py`.
+
+**Limitations and Safety:**
+If the variable depends on runtime input (e.g., function argument, environment variable, database result), the analysis marks the import as **Unresolvable**.
+*   **Implication for Zygote:** Unresolvable imports are strictly excluded from any shared zygote. They are flagged to be loaded only at the leaf node (the specific function instance) where runtime information is available. This prevents the "poisoning" of the zygote with incorrect guesses.
+
+### 2.4 Graph Construction
+
+The output of this phase is a Directed Acyclic Graph (DAG) $G_{dep}$ where:
+*   Nodes $V$ represent modules.
+*   Edges $E$ represent dependency relationships.
+*   Metadata on nodes includes:
+    *   **Size:** File size (proxy for memory footprint).
+    *   **Type:** Stdlib, Third-party, or Local.
+    *   **Dynamic Flag:** Boolean indicating if the node was reached via dynamic resolution.
+
+---
+
+## 3. Side-Effect Analysis: Ensuring Zygote Purity
+
+The Zygote pattern relies on the property that pre-loading a module in the parent process is functionally equivalent to loading it in the child. This property holds for **Pure** modules (definitions of classes/functions) but breaks for **Impure** modules (those with side effects).
+
+### 3.1 The Taxonomy of Side Effects
+
+We classify import-time behavior into three tiers to guide the clustering algorithm.
+
+| Tier | Classification | Definition | Examples | Zygote Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1** | **Pure** | Declarative code only. No state mutation beyond module namespace. | dataclasses, typing, math, simple utils. | **Always Safe** |
+| **Tier 2** | **Benign State** | Local state initialization that is fork-safe and idempotent. | Logging config, populating a local registry dict, regex compilation. | **Safe** |
+| **Tier 3** | **Toxic / Impure** | External I/O, threading, global locks, non-idempotent system calls. | Database connections, threading.Thread.start(), opening files for write, socket binding. | **Unsafe (Leaf Only)** |
+
+### 3.2 Automated Detection Heuristics
+
+Since Python does not enforce purity, we use the Rust AST visitor to detect "Toxic Patterns" in the top-level scope of modules. Code inside `def` or `class` blocks is ignored as it does not execute at import time.
+
+**Toxicity Signatures (AST Matching):**
+The visitor flags a module as Tier 3 if it encounters:
+1.  **Network I/O:** Calls to `socket`, `requests`, `urllib`, `boto3.client` (unless wrapped in lazy loaders).
+2.  **Concurrency:** Calls to `threading.Thread`, `multiprocessing.Process`, `asyncio.create_task`.
+3.  **System Mutation:** Calls to `os.remove`, `os.mkdir`, `sys.stdout.write`.
+4.  **Global Locks:** Instantiation of `threading.Lock` at module level (can lead to deadlocks in forked children).
+
+**The "Main" Guard Exception:**
+Any code block protected by `if __name__ == "__main__":` is explicitly excluded from side-effect analysis, as standard Python import semantics prevent this block from executing during import.
+
+### 3.3 Toxicity Propagation Algorithm
+
+Toxicity is contagious. If Module A imports Module B, and Module B opens a database connection, then importing Module A effectively opens a database connection.
+
+**Propagation Logic:**
+1.  Initialize all modules with their direct toxicity scores (detected via AST).
+2.  Perform a **Reverse Topological Traversal** of the dependency graph $G_{dep}$.
+3.  For each node $u$:
+    $$Toxicity(u) = DirectToxicity(u) \lor \bigvee_{v \in Children(u)} Toxicity(v)$$
+4.  **Result:** A boolean map `IsToxic`.
+
+**Optimization:** If an import is nested inside a function definition in Module A (Lazy Import), the toxicity of Module B does **not** propagate to Module A's import time. The Rust analyzer distinguishes between `StmtKind::Import` at `scope_level == 0` vs `scope_level > 0`.
+
+---
+
+## 4. Algorithmic Clustering: The Hierarchical Zygote Tree
+
+With the dependency graph built and side-effects mapped, the core task is to construct the initialization tree. This is an optimization problem: we want to group functions that share significant "Safe" dependencies into common zygotes to maximize memory sharing, without exceeding a tree depth that introduces OS overhead.
+
+### 4.1 Algorithm Selection: Dependency-Aware Agglomerative Clustering (DAAC)
+
+We reject K-Means clustering because the "centroid" of a dependency set is difficult to define in Euclidean space, and K-Means does not naturally produce a hierarchy. Instead, we adapt **Agglomerative Hierarchical Clustering (AHC)**, utilizing a custom distance metric that respects the software dependency constraints.
+
+This approach aligns with the principles of the "Forklift" algorithm, but replaces runtime invocation history with static dependency footprints.
+
+### 4.2 Feature Representation
+
+Let $F = \{f_1, f_2, \dots, f_N\}$ be the set of entry points (serverless functions) in the monorepo.
+Let $M = \{m_1, m_2, \dots, m_K\}$ be the universe of all non-toxic (Tier 1 & 2) modules.
+Each function $f_i$ is represented by a binary feature vector $V_i$ of length $K$, where $V_i[j] = 1$ if $f_i$ depends on module $m_j$.
+
+**Note:** Toxic modules are excluded from this vector. They are "Must-Link" constraints for the leaf node (the function itself) but "Cannot-Link" constraints for any shared zygote.
+
+### 4.3 The Similarity Metric: Weighted Jaccard Impact
+
+Standard Jaccard similarity treats all modules equally. However, sharing pandas (50MB, 500ms load) is far more valuable than sharing textwrap (10KB, 1ms load).
+
+We define a **Weight Vector $W$** where $W[j]$ corresponds to the estimated cost (size + latency) of module $m_j$. These weights are derived from heuristics (file size) or optional historical profiling data.
+
+The **Weighted Jaccard Similarity** between two function clusters $C_a$ and $C_b$ is:
+
+$$Sim(C_a, C_b) = \frac{\sum_{m \in (D(C_a) \cap D(C_b))} W[m]}{\sum_{m \in (D(C_a) \cup D(C_b))} W[m]}$$
+
+Where $D(C)$ is the set of dependencies common to all functions in cluster $C$.
+
+### 4.4 The DAAC Algorithm Execution
+
+**Phase 1: Initialization**
+*   Create a cluster $C_i$ for each function $f_i$.
+*   The "Zygote State" of $C_i$ is $Z_i = D(f_i)$.
+
+**Phase 2: Iterative Merging (The Loop)**
+While number of clusters $> 1$:
+1.  Calculate the pairwise similarity matrix for all active clusters.
+2.  Identify the pair $(C_a, C_b)$ with the maximum **Merge Gain**.
+    *   Merge Gain is defined not just by similarity, but by the absolute savings:
+    *   $Gain(a, b) = \sum_{m \in (Z_a \cap Z_b)} W[m]$
+3.  **Threshold Check:** If the max Gain is below a defined threshold $\tau$ (e.g., merging saves < 10MB of memory), stop clustering. This prevents creating useless zygotes that share trivial dependencies.
+4.  **Merge:**
+    *   Create new parent node $C_{parent}$.
+    *   State $Z_{parent} = Z_a \cap Z_b$.
+    *   Children of $C_{parent}$ are $C_a$ and $C_b$.
+    *   Update the "Effective Load" of children: The child now only needs to load $Z_{child} - Z_{parent}$.
+
+**Phase 3: Tree Pruning & Flattening**
+The raw dendrogram produced by AHC is often deep and unbalanced. Deep process hierarchies negatively impact OS scheduler performance.
+*   **Vertical Collapse:** If a parent zygote $P$ and its child zygote $C$ differ by a very small set of modules (e.g., $P$ loads 100MB, $C$ loads 101MB), we collapse them. $C$ is removed, and its children are attached directly to $P$. The 1MB delta is pushed down to the next level.
+*   **Branch Factor Limit:** We enforce a maximum tree depth (e.g., 3 levels: Root -> Domain Zygote -> App Zygote -> Leaf).
+
+### 4.5 Handling Constraints in Clustering
+
+The algorithm implicitly handles the "Side-Effect" constraint via the Feature Representation. Since toxic modules are removed from the feature vectors $V_i$ before clustering begins, they naturally "fall out" of the intersection $Z_a \cap Z_b$.
+
+*   **Result:** Toxic modules are never present in the calculated Zygote State $Z_{parent}$. They are only loaded when the runtime reaches a leaf node (the actual function) or a specific branch explicitly marked as "Dirty" (though the proposed design avoids Dirty Zygotes for safety).
+
+---
+
+## 5. Implementation Strategy and Architecture
+
+### 5.1 Technology Stack
+
+*   **Core Logic:** Rust (for performance and safety).
+*   **Graph Library:** `petgraph` (Rust) for DAG operations.
+*   **Parsing:** `rustpython-parser` (Rust).
+*   **Clustering:** `ndarray` (Rust) or binding to Python's `scipy` if prototyping speed is required, though a native Rust implementation of the greedy clustering is recommended for performance on large datasets.
+
+### 5.2 The ZygoteArchitect CLI Workflow
+
+The system is delivered as a CLI tool `zygote-arch`.
+
+**Step 1: Ingestion**
+
+```bash
+zygote-arch analyze --repo ./monorepo --config ./zygote.toml
+```
+
+*   Scans `pyproject.toml` to determine source roots.
+*   Parsing phase runs on all cores (rayon).
+*   Resolves imports and builds the Global Dependency Graph.
+
+**Step 2: Safety Audit**
+
+```bash
+zygote-arch audit --report safety_report.json
+```
+
+*   Runs the Toxicity Analyzer.
+*   Outputs a list of modules flagged as Tier 3.
+*   Allows developers to whitelist "false positives" via `zygote.toml`.
+
+**Step 3: Tree Synthesis**
+
+```bash
+zygote-arch build-tree --entry-points functions.yaml --output tree_def.json
+```
+
+*   Executes the DAAC algorithm.
+*   Generates the JSON definition of the hierarchy.
+
+### 5.3 Deployment Integration
+
+The output `tree_def.json` is consumed by the FaaS control plane (e.g., OpenLambda or a Kubernetes Operator).
+
+**Runtime Bootstrap Sequence:**
+1.  **Level 0 Boot:** Operator starts `python -m zygote_boot --node root`. Process imports stdlib.
+2.  **Snapshot/Fork:** Operator waits for readiness.
+3.  **Level 1 Boot:** Operator requests fork for "DataScience" node.
+4.  **Differential Import:** The forked process receives the list of modules to add (numpy, pandas) via a pipe. It imports them.
+5.  **Ready State:** This process becomes the "DataScience Zygote". It listens for fork requests for specific functions.
+
+### 5.4 Handling Version Conflicts
+
+In a monorepo, different functions might require different versions of pandas.
+*   **Conflict Detection:** The Dependency Graph explicitly nodes on `(Package, Version)`. `pandas==1.0` and `pandas==2.0` are distinct nodes.
+*   **Clustering Impact:** Since these are distinct nodes, the Intersection $Z_{1.0} \cap Z_{2.0}$ will be empty regarding pandas. The algorithm will naturally separate these functions into different branches of the Zygote tree, or push the pandas import down to the leaf nodes. No version conflict occurs in the shared memory because they never coexist in the same zygote state.
+
+---
+
+## 6. Evaluation and Future Considerations
+
+### 6.1 Performance Complexity
+
+*   **Static Analysis:** Linear $O(L)$ with the total lines of code. `rustpython-parser` is extremely efficient, capable of parsing hundreds of megabytes of source code in seconds.
+*   **Clustering:** The naive agglomerative approach is $O(N^2 \log N)$ where $N$ is the number of functions. For 10,000 functions, this is manageable. For hyperscale (1M+ functions), we recommend integrating **Locality Sensitive Hashing (LSH)** (specifically MinHash) to approximate the Jaccard similarity, reducing neighbour search to near-linear time $O(N)$.
+
+### 6.2 Limitations of Static Analysis
+
+*   **Reflection:** `eval("im" + "port os")` is invisible to static analysis.
+*   **C-Extensions:** Side effects inside `.so` files (e.g., initializing a global C struct that isn't fork-safe) cannot be detected by parsing Python code.
+*   **Mitigation:** The system must include a "Canary" phase where generated zygotes are dry-run in a sandbox. If a zygote crashes or exhibits resource leaks upon forking, it is automatically blocklisted, and its dependencies are pushed to the leaves.
+
+### 6.3 Conclusion
+
+The proposed architecture provides a rigorous, automated path to optimizing serverless cold starts in Python monorepos. By strictly decoupling side-effect-laden initialization from pure module loading, and using a Rust-powered engine to resolve even dynamic dependencies, we enable a safe, high-performance Hierarchical Zygote Tree. This transforms the dependency graph from a chaotic web into a structured, memory-efficient execution hierarchy, satisfying the latency demands of modern cloud applications.
+
+---
+
+## Tables and Structured Data:
+
+### Table 1: Comparative Analysis of Dependency Resolution Tools
+
+| Feature | importlib (Runtime) | ruff (Static) | rustpython (Static) | Proposed ZygoteArchitect |
+| :--- | :--- | :--- | :--- | :--- |
+| **Execution Safety** | Unsafe (executes code) | Safe | Safe | **Safe** |
+| **Performance** | Slow (IO bound) | Extreme | High | **High** |
+| **AST Fidelity** | N/A | Linter-optimized | Interpreter-compliant | **Interpreter-compliant** |
+| **Dynamic Resolution** | Perfect | None | None | **Partial (Constant Prop)** |
+| **Side Effect Detect** | N/A | No | No | **Yes (Custom Visitor)** |
+
+### Table 2: Clustering Metric Weights (Example Heuristics)
+
+| Module Type | Size Weight (ws) | Latency Weight (wl) | Total Impact Score |
+| :--- | :--- | :--- | :--- |
+| **Standard Lib** (os, json) | Low (1) | Low (1) | **2** (Root Candidate) |
+| **Heavy Numeric** (numpy) | High (50) | High (20) | **70** (High Priority) |
+| **Web Framework** (django) | High (40) | Medium (10) | **50** (Medium Priority) |
+| **Small Utility** (textwrap) | Low (1) | Low (1) | **2** (Leaf Candidate) |
+
+---
+
+## References to Research Material:
+*   $^1$ Forklift: Zygote Trees for Serverless (WoSC 2024).
+*   $^4$ `rustpython-parser` documentation and capabilities.
+*   $^7$ Python Import System specifications (Relative imports, sys.path).
+*   $^{10}$ Agglomerative Hierarchical Clustering methodology.
+*   $^{12}$ Semi-supervised clustering with constraints (Must-Link / Cannot-Link).
+*   $^3$ ruff architecture and static analysis speeds.
+
+## Works cited
+1.  Forklift: Fitting Zygote Trees for Faster Package ... - cs.wisc.edu, accessed December 22, 2025, [https://pages.cs.wisc.edu/~yuanzhuo/assets/pdf/forklift.pdf](https://pages.cs.wisc.edu/~yuanzhuo/assets/pdf/forklift.pdf)
+2.  Settings | Ruff - Astral Docs, accessed December 22, 2025, [https://docs.astral.sh/ruff/settings/](https://docs.astral.sh/ruff/settings/)
+3.  Contributing | Ruff - Astral Docs, accessed December 22, 2025, [https://docs.astral.sh/ruff/contributing/](https://docs.astral.sh/ruff/contributing/)
+4.  rustpython_parser - Rust - Docs.rs, accessed December 22, 2025, [https://docs.rs/rustpython-parser](https://docs.rs/rustpython-parser)
+5.  Introduction to the RustPython parser, accessed December 22, 2025, [https://rustpython.github.io/blog/2020/04/02/thing-explainer-parser.html](https://rustpython.github.io/blog/2020/04/02/thing-explainer-parser.html)
+6.  rustpython-parser - crates.io: Rust Package Registry, accessed December 22, 2025, [https://crates.io/crates/rustpython-parser](https://crates.io/crates/rustpython-parser)
+7.  Absolute vs Relative Imports in Python, accessed December 22, 2025, [https://realpython.com/absolute-vs-relative-python-imports/](https://realpython.com/absolute-vs-relative-python-imports/)
+8.  5. The import system — Python 3.14.2 documentation, accessed December 22, 2025, [https://docs.python.org/3/reference/import.html](https://docs.python.org/3/reference/import.html)
+9.  Relative imports in Python 3 - Stack Overflow, accessed December 22, 2025, [https://stackoverflow.com/questions/16981921/relative-imports-in-python-3](https://stackoverflow.com/questions/16981921/relative-imports-in-python-3)
+10. Agglomerative Hierarchical Clustering - Datanovia.com, accessed December 22, 2025, [https://www.datanovia.com/en/lessons/agglomerative-hierarchical-clustering/](https://www.datanovia.com/en/lessons/agglomerative-hierarchical-clustering/)
+11. Agglomerative Clustering Explained: From Single Points to Meaningful Groups - Medium, accessed December 22, 2025, [https://medium.com/@avantika10roy/agglomerative-clustering-explained-from-single-points-to-meaningful-groups-c2a6e3d4bdf6](https://medium.com/@avantika10roy/agglomerative-clustering-explained-from-single-points-to-meaningful-groups-c2a6e3d4bdf6)
+12. 3 Probabilistic Semi-Supervised Clustering with Constraints | Request PDF - ResearchGate, accessed December 22, 2025, [https://www.researchgate.net/publication/265023810_3_Probabilistic_Semi-Supervised_Clustering_with_Constraints](https://www.researchgate.net/publication/265023810_3_Probabilistic_Semi-Supervised_Clustering_with_Constraints)
+13. astral-sh/ruff: An extremely fast Python linter and code formatter, written in Rust. - GitHub, accessed December 22, 2025, [https://github.com/astral-sh/ruff](https://github.com/astral-sh/ruff)

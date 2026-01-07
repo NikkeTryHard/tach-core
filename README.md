@@ -297,27 +297,6 @@ See [Configuration Reference](docs/configuration.md) for full details.
 
 ---
 
-## Feature Completion
-
-| Component                   | Status   |
-| :-------------------------- | :------- |
-| Physics Check (userfaultfd) | Complete |
-| Zero-Copy Loader            | Complete |
-| Toxicity Filter             | Complete |
-| Worker Loop                 | Complete |
-| Coverage (PEP 669)          | Complete |
-| Iron Dome (Sandbox)         | Complete |
-| Hot Reload                  | Complete |
-| Allocator (Jemalloc)        | Complete |
-| Coverage Resolution         | Complete |
-| Configuration Engine        | Complete |
-| Progress Reporter           | Complete |
-| Security Hardening          | Complete |
-
-See [CHANGELOG.md](CHANGELOG.md) for version history.
-
----
-
 ## Key Technical Features
 
 - **Zero-Copy Module Loading**: Bypasses `importlib` entirely via `PyMarshal_ReadObjectFromString`
@@ -328,45 +307,6 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - **Toxicity Propagation**: Fixed-point algorithm over petgraph dependency graph
 - **Django Integration**: Automatic transaction rollback and connection pooling
 - **Async Support**: Built-in asyncio loop management for coroutine tests
-
----
-
-## Security Hardening
-
-Tach implements comprehensive security hardening across all subsystems:
-
-### Memory Safety
-
-| Fix                             | Description                                                                     |
-| :------------------------------ | :------------------------------------------------------------------------------ |
-| **Static Mut Elimination**      | Replaced `static mut` with `OnceLock`/`Mutex` for thread-safe global state      |
-| **Dangling Pointer Prevention** | Fixed CString lifetime issues in FFI calls to prevent use-after-free            |
-| **TOCTOU Race Fix**             | Lock-free CAS loop in ring buffer prevents race conditions                      |
-| **Mutex Poisoning Recovery**    | All mutex locks use `unwrap_or_else(\|e\| e.into_inner())` for crash resilience |
-
-### Syscall Security
-
-| Fix                      | Description                                                                    |
-| :----------------------- | :----------------------------------------------------------------------------- |
-| **Seccomp Hardening**    | Added `ptrace`, `mount`, `umount2`, `unshare`, `setns` to syscall blacklist    |
-| **Landlock TOCTOU**      | Removed `path.exists()` check, handle `ENOENT` atomically                      |
-| **Environment Denylist** | Blocks 11 dangerous env vars: `LD_PRELOAD`, `PYTHONPATH`, `PYTHONMALLOC`, etc. |
-
-### Performance Optimizations
-
-| Fix                            | Description                                                      |
-| :----------------------------- | :--------------------------------------------------------------- |
-| **RwLock for Read-Heavy Data** | `code_map` uses `RwLock` instead of `Mutex` for concurrent reads |
-| **Zero-Copy Data Extraction**  | `take_data()` uses `std::mem::take()` to avoid HashMap cloning   |
-| **Pre-sized Collections**      | Thread-local `HashSet` pre-allocated with 1024 capacity          |
-
-### Test Coverage
-
-Regression tests added across critical subsystems:
-
-- `namespace.rs`: Path logic, overlay options, isolation bypass
-- `logcapture.rs`: memfd operations, read/clear, fd lifecycle
-- `scheduler.rs`: Queue separation, priority dispatch, slot calculation
 
 ---
 

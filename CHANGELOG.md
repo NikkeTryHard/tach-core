@@ -9,7 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Roadmap to 1.0.0 and Beyond
 
-> **Research Foundation**: This roadmap is informed by 12 research papers covering process cloning, memory snapshotting, fork safety, and test isolation. See [docs/research-investigation.md](docs/research-investigation.md) for complete analysis and [docs/research-reference.md](docs/research-reference.md) for paper-to-implementation mapping.
+> **Research Foundation**: This roadmap is informed by 12 research papers and competitive analysis of 10+ Rust-Python test tools. See [docs/research/research-investigation.md](docs/research/research-investigation.md) for paper analysis, [docs/research/external-research.md](docs/research/external-research.md) for competitive landscape, and [docs/research/research-reference.md](docs/research/research-reference.md) for implementation mapping.
+
+#### Competitive Landscape Summary
+
+| Tool          | Approach            | Startup     | Tach Advantage            |
+| ------------- | ------------------- | ----------- | ------------------------- |
+| pytest-xdist  | execnet workers     | ~50-100ms   | 1000x faster isolation    |
+| pytest-forked | fork() per test     | ~500-1000μs | 10x faster reset          |
+| Maelstrom     | Container per test  | 50-100ms    | 1000x faster startup      |
+| rtest/karva   | No isolation        | N/A         | Full isolation + fixtures |
+| snob          | Test selection only | N/A         | Full execution engine     |
+
+> **Key Insight**: No existing tool combines Tach's speed (<50μs reset), isolation (userfaultfd), and compatibility (full pytest fixtures). See [external-research.md §23](docs/research/external-research.md) for detailed analysis.
+
+#### What Tach Must Implement for pytest Parity
+
+**Critical (Blocking Adoption)**:
+
+- [ ] **Plugin Shim** (0.2.x): pytest-django, pytest-asyncio, pytest-mock support
+  > Most real-world projects use at least one plugin. Without shims, adoption is blocked.
+- [ ] **Database Rollback** (0.3.x): Transaction savepoint/rollback for Django ORM, SQLAlchemy
+  > Database tests are ~40% of enterprise test suites. Memory snapshots don't restore DB state.
+- [ ] **Session/Module Fixtures** (0.4.x): Fixtures persisting across tests
+  > Expensive setup (DB migrations, API clients) must be cached, not re-run per test.
+
+**Important (Adoption Friction)**:
+
+- [ ] **pytest.raises/warns**: Exception and warning assertion helpers
+- [ ] **Parametrized Fixtures**: `@pytest.fixture(params=[...])`
+- [ ] **Marker Expressions**: Full `-m` expression support (`-m "slow and not db"`)
+- [ ] **conftest.py Hooks**: `pytest_configure`, `pytest_collection_modifyitems`
+
+**Nice-to-Have (Competitive Edge)**:
+
+- [ ] **Test Impact Analysis**: snob-style "only run affected tests" mode
+  > Ref: [alexpasmantier/snob](https://github.com/alexpasmantier/snob) - dependency graph analysis
+- [ ] **Flaky Test Detection**: nextest-style retry and flakiness tracking
+- [ ] **Distributed Execution**: Maelstrom-style cluster mode for CI farms
 
 #### Research-to-Implementation Mapping
 

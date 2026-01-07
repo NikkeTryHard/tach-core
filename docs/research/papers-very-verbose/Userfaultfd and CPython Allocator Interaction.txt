@@ -1,0 +1,294 @@
+# Deep Technical Analysis: Linux Userfaultfd, CPython Allocators, and Snapshot-Based Test Runners
+
+## 1. Introduction to Snapshot-Fuzzing Architectures in Managed Runtimes
+
+The paradigm of "Snapshot/Restore" fuzzing and test execution represents a significant evolution in dynamic software analysis. Unlike traditional fork-server models—exemplified by American Fuzzy Lop (AFL)—which rely on the Copy-On-Write (COW) semantics of the fork() system call to isolate test executions, snapshot-based approaches seek to eliminate the overhead of process creation and teardown entirely. By leveraging the Linux kernel's userfaultfd mechanism, developers can institute a userspace-controlled paging system that allows a process to effectively "time travel" back to a pristine state after executing a test case. This technique is particularly potent when applied to managed runtimes like CPython, where the initialization cost of the interpreter, module loading, and JIT compilation (in newer versions) can dwarf the execution time of individual unit tests.
+
+However, the application of userfaultfd (specifically the UFFDIO_COPY and UFFDIO_ZEROPAGE operations) to the CPython runtime introduces a complex matrix of interactions between the kernel's virtual memory subsystem and the interpreter's user-space memory allocators. CPython does not use the system allocator (malloc/free provided by glibc) for all operations; instead, it employs a specialized small object allocator known as pymalloc (or obmalloc). This allocator maintains intricate internal state—hierarchical arenas, pools, and block free-lists—that assumes a monotonic or strictly managed lifecycle. Violating these assumptions by resetting the underlying physical memory pages without synchronizing the allocator's metadata leads to immediate heap corruption, "use-after-free" scenarios, and interpreter crashes.
+
+This report provides an exhaustive analysis of these interactions. It deconstructs the architecture of pymalloc across Python versions (focusing on the shifts in 3.12 and 3.13), examines the role of Thread Local Storage (TLS) in memory caching, identifies fatal race conditions involving the Garbage Collector (GC), and formulates a robust architectural pattern for implementing this system in Rust.
+
+## 2. Linux userfaultfd Mechanics in the Context of Snapshotting
+
+To understand the friction points with CPython, one must first rigorously define the capabilities and limitations of the userfaultfd (UFFD) mechanism when used for snapshot restoration.
+
+### 2.1 The Page Fault Handling Lifecycle
+
+The userfaultfd system call creates a file descriptor that allows a userspace process to handle page faults. In a snapshotting context, the workflow differs significantly from its original use case (VM migration). The architecture typically involves a "Manager" thread (often the Rust test runner) and one or more "Worker" threads (the Python interpreter).
+
+1.  **Registration:** The Manager registers specific virtual memory ranges (VMAs) with the UFFD using UFFDIO_REGISTER. For snapshotting, the mode UFFDIO_REGISTER_MODE_MISSING is foundational. This tells the kernel: "If a thread accesses a page in this range, and that page is not present in the page tables, do not send a SIGSEGV. Instead, enqueue an event on the UFFD."
+2.  **The "Zap" (Reset):** To restore a snapshot, the Manager effectively erases the memory modifications of the previous run. This is achieved not by writing data, but by modifying the page tables. The madvise(addr, len, MADV_DONTNEED) system call is the critical primitive here. It instructs the kernel to invalidate the page table entries (PTEs) for the specified range. The physical pages are released (or unmapped), and the "Present" bit in the PTE is cleared.
+3.  **The Fault:** When the Worker thread executes code and attempts to read or write to a memory address within the zapped range, the Memory Management Unit (MMU) raises a page fault because the PTE is invalid. The Linux kernel intercepts this, checks the VMA flags, sees the UFFD registration, and puts the Worker thread into a TASK_KILLABLE sleep state.
+4.  **Resolution (UFFDIO_COPY):** The Manager reads the struct uffd_msg from the file descriptor, identifying the faulting address. It retrieves the original content of that page from a "Golden Snapshot" buffer (stored in a separate, non-registered memory region) and issues the UFFDIO_COPY ioctl. This ioctl copies the data into a newly allocated physical page and updates the Worker's page tables to map this new page. The Worker is then woken up.
+
+### 2.2 UFFDIO_ZEROPAGE Optimization
+
+The UFFDIO_ZEROPAGE ioctl is a specialized variant of the copy operation. If the source page in the Golden Snapshot is entirely zero-filled, the Manager can issue this call instead. The kernel resolves the fault by mapping the zero page (a special, read-only system-wide page) into the process's address space (for reads) or allocating a fresh zeroed page (for writes). This reduces memory bandwidth consumption, which is relevant for CPython's large BSS segments or pre-allocated but untouched arenas.
+
+### 2.3 The Write-Tracking Nuance
+
+A naive implementation using only UFFDIO_COPY relies on MADV_DONTNEED to reset all pages. However, iterating over the entire heap to issue madvise is linear in the size of the heap O(N). To optimize this, modern snapshot fuzzers track "dirty" pages—pages written to during execution.
+
+Historically, this required mprotect(PROT_READ) and handling SIGSEGV. Newer Linux kernels (5.7+) support UFFDIO_WRITEPROTECT. The Manager can write-protect the snapshot region. The first write triggers a UFFD event (distinguishable from a missing fault). The Manager logs the page index and removes the write protection. During restoration, only these logged pages are subjected to MADV_DONTNEED and subsequent UFFDIO_COPY.
+
+**Implication for CPython:** CPython is a memory-intensive runtime. Even simple operations involve reference count updates (Py_INCREF/Py_DECREF), which are writes. Consequently, the "dirty set" for even a trivial Python function can be surprisingly dispersed across the heap, affecting the PyObject headers of every object touched, including modules and built-ins.
+
+## 3. CPython's pymalloc (obmalloc) Architecture
+
+The core of the user's query concerns pymalloc. To determine if TLS caching occurs, we must dissect the allocator's hierarchy. pymalloc is optimized for small objects (<= 512 bytes) and delegates larger requests to the system allocator (malloc).
+
+### 3.1 The Arena-Pool-Block Hierarchy
+
+1.  **Arenas (256 KB):**
+    The top-level allocation unit is the "Arena," a 256 KB chunk of memory aligned to a 256 KB boundary. Crucially, arenas are allocated via anonymous mmap (or malloc on systems without mmap). They are containers for Pools.
+    *   **Analysis:** Because Arenas are often anonymous mappings distinct from the main program heap (brk), a snapshot system scanning /proc/pid/maps must explicitly identify these regions. They usually appear as anonymous regions rw-p with no file backing.
+2.  **Pools (4 KB):**
+    Arenas are subdivided into 4 KB Pools. Each pool is assigned a specific "size class" (e.g., size class 0 for 8-byte blocks, size class 1 for 16-byte blocks).
+    *   **Metadata:** A pool_header structure resides at the beginning of each 4 KB pool. This header contains a pointer freeblock to the head of a singly linked list of free blocks within that pool.
+    *   **The Check:** The macro address_in_range(P, pool) is used to verify if a pointer belongs to a pool. It relies on the 4 KB alignment.
+3.  **The usedpools Array:**
+    This is the critical static data structure for allocation. It is an array of pointers to pool_header structures, indexed by size class.
+    *   **Structure:** usedpools[i] points to the head of a doubly linked list of pools that are currently handling allocations for size class i.
+    *   **Location:** In versions prior to 3.12, usedpools is a static array defined in Objects/obmalloc.c. This places it in the BSS (uninitialized data) segment of the libpython shared object or the main executable.
+
+### 3.2 The Snapshot Synchronization Hazard
+
+The answer to the question "Does pymalloc cache memory addresses... that break after reset?" is nuanced.
+
+In Python 3.11 and older:
+pymalloc does not typically use Thread Local Storage (TLS) for the usedpools array or the block caching mechanisms. It relies on the Global Interpreter Lock (GIL) to serialize access to the global usedpools array.
+
+However, a "Use-After-Reset" bug is virtually guaranteed if the snapshot scope is incorrect. Consider this sequence:
+
+1.  **Snapshot Taken:**
+    *   usedpools points to Pool_A.
+    *   Pool_A (in the Heap/Arena) indicates the next free block is Block_1.
+2.  **Execution:**
+    *   Python allocates Block_1.
+    *   Pool_A updates its freeblock pointer to Block_2.
+    *   Python allocates Block_2, Block_3... Pool_A becomes full.
+    *   usedpools is updated to point to Pool_B (a new pool).
+3.  **Restore (Memory Reset):**
+    *   The Snapshot mechanism detects dirty pages in the Arena containing Pool_A.
+    *   Pool_A is reset via UFFDIO_COPY. Its header now claims freeblock is Block_1.
+    *   **The Failure:** If the snapshot mechanism only restores the heap/arenas but fails to restore the BSS segment (where usedpools lives), the state is now:
+        *   Memory at Pool_A: Reset (looks like it has space).
+        *   usedpools: Still points to Pool_B (from the end of execution).
+    *   **Result:** The allocator is desynchronized. It will continue allocating from Pool_B. Pool_A is effectively orphaned (a memory leak in the restored state) until it is eventually rediscovered or freed. While this specific scenario might just be a leak, the inverse is catastrophic: if usedpools points to Pool_A, but Pool_A's header wasn't reset, the allocator reads garbage data.
+
+**Insight:** The critical state to capture is not just the "heap" but the Data/BSS segments of the interpreter. The usedpools array contains pointers into the arenas. Both the pointers (in BSS) and the targets (in Arenas) must be snapshotted atomically.
+
+## 4. The Architectural Shift: Python 3.12 and 3.13
+
+The stability of this technique depends heavily on the Python version due to recent architectural overhauls.
+
+### 4.1 Python 3.12: Per-Interpreter State
+
+In Python 3.12, to support sub-interpreters (PEP 684), global runtime state was moved into the PyInterpreterState structure.
+
+*   **Impact:** The obmalloc state (including usedpools) is no longer a static global variable. It is now a member of PyInterpreterState.
+*   **Location:** PyInterpreterState is allocated on the heap (using raw malloc or pymalloc).
+*   **Benefit:** This actually simplifies snapshotting. If your snapshot mechanism covers the entire heap (including allocations made by system malloc for interpreter structs), the usedpools pointers are restored alongside the objects they point to. The "Split Brain" between BSS and Heap is resolved, provided the entire heap is tracked.
+
+### 4.2 Python 3.13: The mimalloc Revolution
+
+Python 3.13 introduces a "Free-Threaded" build (no GIL) and adopts mimalloc as the underlying allocator. Even in the default build, mimalloc interacts differently.
+
+Does mimalloc use TLS?
+Yes, extensively. mimalloc (and allocators like jemalloc) relies heavily on Thread Local Allocation Buffers (TLABs) and thread-local segment caches to perform allocations without locks.
+
+*   **The Danger:** The fs or gs register (on x86_64) points to the Thread Control Block (TCB), which contains the TLS data. mimalloc stores pointers to the "current free block" in TLS variables.
+*   **Scenario:**
+    1.  Snapshot taken.
+    2.  Thread allocates object at 0x1000. TLS pointer moves to 0x1020.
+    3.  Restore memory (Reset heap content).
+    4.  **Register State:** userfaultfd cannot restore CPU registers. The fs register still points to the same active TLS block. The values inside the TLS memory (if mapped) might be restored, but if the TLS segment itself is not part of the registered UFFD range (which is common, as TLS is often setup by glibc in obscure mappings), the allocator state remains "post-execution".
+    5.  **Corruption:** The allocator thinks the next free block is 0x1020, but the heap at 0x1000 has been reset to "free" state. We have inconsistent views of heap metadata.
+
+**Conclusion:** For Python 3.13+, you must identify and register the TLS memory segments with userfaultfd. This requires parsing the fs_base (via arch_prctl) to find the TLS range. Failing to restore TLS memory content guarantees allocator corruption.
+
+## 5. Race Conditions and The Garbage Collector
+
+The query asks about race conditions with background threads like the GC. This is a definitive risk area.
+
+### 5.1 The GC Object Graph Consistency
+
+The CPython GC (cyclic collector) operates by traversing a doubly linked list of container objects (gc_generations).
+
+*   **Generations:** There are three generations (0, 1, 2). The state is stored in PyInterpreterState (3.12+) or static globals (pre-3.12).
+*   **The Race:**
+    1.  Thread A (GC): Starts running. It traverses the object graph. It temporarily modifies the ob_refcnt or gc_refs fields of objects to detect cycles. It might move a list of objects from Generation 0 to Generation 1.
+    2.  Thread B (Fuzzer/Test): Hits a condition that triggers a snapshot restore (or the snapshot was taken while GC was running).
+    3.  Restore: The memory of the objects is reverted.
+    4.  Result: The GC thread resumes. It holds pointers (in CPU registers or stack) to objects. It expects those objects to be in the "intermediate" state it left them in (e.g., partially decremented refcounts). The memory restore reverts them to their "stable" state. The GC logic now computes incorrect reference counts, potentially freeing live objects or leaking garbage.
+
+### 5.2 The "Stop-The-World" Requirement
+
+To safely snapshot CPython, you cannot allow the GC to run concurrently or be in an interrupted state during the snapshot.
+
+*   **Solution:** You must explicitly disable the GC (gc.disable()) or ensure the snapshot is taken at a safe point where the GIL is held and no background threads are active.
+*   **Background Threads:** If the user's code spawns threading.Thread, those threads have their own stacks. userfaultfd restores the stack memory, but it does not restore the Instruction Pointer (RIP) or Stack Pointer (RSP) of the threads.
+*   **Fatal Flaw:** If you restore the stack memory of a thread but its CPU registers remain at the "post-execution" instruction, the thread will return into a stack frame that no longer matches its execution history. This is unrecoverable.
+
+**Architectural Constraint:** The snapshot-restore architecture is only valid for single-threaded execution (or where all threads are joined before reset). If the Python code under test is multi-threaded, you must use fork() to create a process-level snapshot (which creates a single-threaded child) rather than attempting in-place memory restoration of a multi-threaded process.
+
+## 6. Rust Implementation Strategy
+
+To build this in Rust, the system must act as the "Manager" process. We assume the "In-Place Restore" model (single-threaded) or a "Fork-Server" model. The code below illustrates the userfaultfd event loop required to service the page faults.
+
+### 6.1 Prerequisites
+
+1.  **Memory Map Parsing:** The Rust runner must read /proc/self/maps. It must identify:
+    *   The Heap [heap]
+    *   The Stack [stack]
+    *   Anonymous regions (for Arenas)
+    *   BSS/Data segments of libpython and extension modules.
+2.  **Registration:** Use the userfaultfd crate or nix bindings to register these ranges.
+
+### 6.2 The Proof of Concept (Rust)
+
+This PoC demonstrates the userfaultfd loop. It assumes a "Fork-Server" model where the parent takes the snapshot (by virtue of being the source) and the child registers its own memory with UFFD to track/revert changes, or simply uses the UFFD to catch accesses to pages zap'd by MADV_DONTNEED.
+
+```rust
+// Dependencies: nix, userfaultfd (crate)
+use nix::sys::mman::{madvise, MmanAdvice};
+use userfaultfd::{Uffd, UffdBuilder, Event, ReadWrite};
+use std::os::unix::io::AsRawFd;
+use std::thread;
+use std::sync::{Arc, Barrier};
+
+fn snapshot_restore_loop(
+    uffd: Arc<Uffd>,
+    start_addr: *mut u8,
+    len: usize,
+    snapshot_data: Arc<Vec<u8>>
+) {
+    let page_size = 4096;
+
+    loop {
+        // Read an event from the UFFD file descriptor
+        match uffd.read_event() {
+            Ok(Some(Event::Pagefault { addr, .. })) => {
+                let fault_addr = addr as usize;
+                let start = start_addr as usize;
+
+                // Calculate offset into our golden snapshot
+                if fault_addr < start || fault_addr >= start + len {
+                    panic!("Fault outside registered range!");
+                }
+
+                let offset = fault_addr - start;
+                let page_boundary = offset - (offset % page_size);
+
+                // Prepare source pointer from the snapshot buffer
+                let src_ptr = unsafe {
+                    snapshot_data.as_ptr().add(page_boundary)
+                } as *const std::ffi::c_void;
+
+                let dst_ptr = (start + page_boundary) as *mut std::ffi::c_void;
+
+                // UFFDIO_COPY: Copy data from snapshot back to memory
+                // This resolves the fault and wakes the thread.
+                unsafe {
+                    uffd.copy(src_ptr, dst_ptr, page_size, true)
+                        .expect("UFFDIO_COPY failed");
+                }
+            }
+            Ok(Some(Event::Remove { .. })) => {
+                // Handle remapping events if necessary
+            }
+            Ok(None) => break, // EOF
+            Err(e) => panic!("UFFD Read Error: {}", e),
+            _ => {}
+        }
+    }
+}
+
+// Concept for the Reset Phase (Called between tests)
+unsafe fn reset_pages(addr: *mut u8, len: usize) {
+    // MADV_DONTNEED tells the kernel to drop the physical pages.
+    // The virtual range remains valid but unmapped.
+    // The next access will trigger a UFFD Missing Fault.
+    madvise(
+        addr as *mut std::ffi::c_void,
+        len,
+        MmanAdvice::MADV_DONTNEED
+    ).expect("madvise failed");
+}
+```
+
+### 6.3 Handling obmalloc Specifically
+
+When integrating this with CPython:
+
+1.  **Freeze the Allocator:** Before taking the snapshot, ensure no partial allocations are happening. Calling gc.collect() followed by gc.disable() is recommended to quiesce the heap.
+2.  **Clear Free Lists:** CPython maintains "free lists" for built-in types (tuples, lists, dicts, floats) to avoid pymalloc overhead. These are caches.
+    *   **Risk:** If you restore the heap, but a free list points to a "dead" object that was just reset, you get corruption.
+    *   **Mitigation:** Call PyUnstable_GC_VisitObjects or internal APIs to clear free lists before snapshotting. In Python 3.10+, gc.collect() clears *some* but not all. The safest bet is a full process snapshot that includes the segments where these free lists reside (usually static globals in Objects/listobject.c etc., or PyInterpreterState).
+
+## 7. Comparison: obmalloc vs. System malloc
+
+If pymalloc proves too fragile due to the usedpools BSS sync issues, CPython offers a runtime switch.
+
+*   **Disable pymalloc:** You can configure Python to use the system allocator (malloc) by setting the environment variable PYTHONMALLOC=malloc.
+*   **Impact:** This bypasses obmalloc arenas and pools entirely. All allocations go to malloc.
+*   **Snapshotting Benefit:** glibc's malloc still uses arenas (via mmap) and metadata (chunk headers). However, tools like criu (Checkpoint/Restore In Userspace) have robust support for handling standard malloc heaps. If you use PYTHONMALLOC=malloc, you eliminate the CPython-specific allocator state from the equation, reducing the problem to generic C heap restoration.
+
+## 8. Summary of Findings
+
+1.  **TLS Caching:**
+    *   **Python < 3.13:** pymalloc does **not** use TLS for caching addresses in a way that endangers snapshotting, *provided* the Global/Interpreter state (BSS/Heap) is synchronized.
+    *   **Python 3.13+:** mimalloc **does** use TLS. Restoring memory without restoring TLS registers/segments is fatal.
+2.  **Race Conditions:**
+    *   **GC:** High risk. The snapshot must be taken when the GC is idle and the object graph is consistent.
+    *   **Threading:** High risk. userfaultfd cannot restore CPU register state. Multi-threaded snapshots are essentially impossible without fork or heavyweight context serialization.
+3.  **Critical Implementation Detail:**
+    *   You must snapshot **Anonymous Mappings** (Arenas) and **Data Segments** (Global State). Snapshotting only [heap] is insufficient.
+    *   The **Reset** must use MADV_DONTNEED to unmap pages so that userfaultfd can trap the next access.
+
+## 9. Recommendations for the Test Runner
+
+1.  **Use PYTHONMALLOC=malloc:** If performance allows, disable pymalloc. This removes the complexity of the Arena/Pool hierarchy and the usedpools array sync.
+2.  **Enforce Single-Threaded Tests:** If utilizing in-place restoration, ensure tests do not spawn threads that outlive the test scope.
+3.  **Architecture: Use a Fork-Server.** Have a parent process initialize Python and load modules. For each test, fork(). The child uses userfaultfd (or simply relies on COW) to execute. When the test finishes, the child dies. The OS handles the cleanup. This is significantly more robust than manual memory restoration because fork gives you a fresh address space and a valid single-threaded state (the calling thread) for free. If you strictly require "In-Place" (no fork), you must implement the full memory map scanning and MADV_DONTNEED loop described in Section 6.2.
+
+## 10. Tables and Data
+
+**Table 1: Allocator Characteristics by Python Version**
+
+| Python Version | Default Allocator | Allocator State Location | TLS Usage | Snapshot Risk Level |
+| :--- | :--- | :--- | :--- | :--- |
+| < 3.12 | pymalloc | Global Static (.bss) | No | High (BSS/Heap desync) |
+| 3.12 | pymalloc | PyInterpreterState (Heap) | No | Medium (Heap consistency) |
+| 3.13 | mimalloc | TLS + Heap | Yes | Critical (TLS desync) |
+
+**Table 2: Reset Strategy Comparison**
+
+| Strategy | Mechanism | Speed | Robustness | Thread Safety |
+| :--- | :--- | :--- | :--- | :--- |
+| **Fork-Server** | fork() COW | Fast (Linux optimized) | High (Kernel managed) | High (Single thread survives) |
+| **UFFD In-Place** | MADV_DONTNEED + Copy | Very Fast (User space) | Low (Manual state sync) | Low (Register state lost) |
+| **Hard Restart** | execve() | Slow | Perfect | Perfect |
+
+## 11. Final Conclusion
+
+Building a Python test runner using userfaultfd for dirty page resetting is technically feasible but fraught with "hidden state" perils. The transition to mimalloc in Python 3.13 represents a hard barrier for naive memory restoration strategies due to its dependence on Thread Local Storage. For versions prior to 3.13, the primary challenge is synchronizing the usedpools metadata (in BSS) with the Arenas (in Anonymous Maps). The most stable path forward for a generic test runner is to leverage PYTHONMALLOC=malloc to standardize allocation behavior or to utilize a fork()-based architecture where userfaultfd is used strictly for monitoring rather than state restoration.
+
+### Works cited
+
+1.  Userfaultfd — The Linux Kernel documentation, accessed December 22, 2025, [https://www.kernel.org/doc/html/v5.7/admin-guide/mm/userfaultfd.html](https://www.kernel.org/doc/html/v5.7/admin-guide/mm/userfaultfd.html)
+2.  userfaultfd(2) - Linux manual page - man7.org, accessed December 22, 2025, [https://man7.org/linux/man-pages/man2/userfaultfd.2.html](https://man7.org/linux/man-pages/man2/userfaultfd.2.html)
+3.  Improving Fuzzing Speed with userfaultfd - Nick Gregory, accessed December 22, 2025, [https://nickgregory.me/post/2022/12/09/uffd-fuzz/](https://nickgregory.me/post/2022/12/09/uffd-fuzz/)
+4.  userfaultfd(2) — manpages-dev — Debian testing, accessed December 22, 2025, [https://manpages.debian.org/testing/manpages-dev/userfaultfd.2.en.html](https://manpages.debian.org/testing/manpages-dev/userfaultfd.2.en.html)
+5.  userfaultfd.rst, accessed December 22, 2025, [https://www.kernel.org/doc/Documentation/admin-guide/mm/userfaultfd.rst](https://www.kernel.org/doc/Documentation/admin-guide/mm/userfaultfd.rst)
+6.  CPython-Internals/Interpreter/memory\_management/memory\_management.md at master · zpoint/CPython-Internals - GitHub, accessed December 22, 2025, [https://github.com/zpoint/CPython-Internals/blob/master/Interpreter/memory_management/memory_management.md](https://github.com/zpoint/CPython-Internals/blob/master/Interpreter/memory_management/memory_management.md)
+7.  Memory Management in Python - Honeybadger Developer Blog, accessed December 22, 2025, [https://www.honeybadger.io/blog/memory-management-in-python/](https://www.honeybadger.io/blog/memory-management-in-python/)
+8.  Python allocators - memray, accessed December 22, 2025, [https://bloomberg.github.io/memray/python_allocators.html](https://bloomberg.github.io/memray/python_allocators.html)
+9.  obmalloc.c - Python, accessed December 22, 2025, [https://svn.python.org/projects/python/trunk/Objects/obmalloc.c](https://svn.python.org/projects/python/trunk/Objects/obmalloc.c)
+10. Python 3.12 Preview: Subinterpreters, accessed December 22, 2025, [https://realpython.com/python312-subinterpreters/](https://realpython.com/python312-subinterpreters/)
+11. PEP 684 – A Per-Interpreter GIL - Python Enhancement Proposals, accessed December 22, 2025, [https://peps.python.org/pep-0684/](https://peps.python.org/pep-0684/)
+12. What's New In Python 3.13 — Python 3.14.2 documentation, accessed December 22, 2025, [https://docs.python.org/3/whatsnew/3.13.html](https://docs.python.org/3/whatsnew/3.13.html)
+13. Python 3.13.0 Released: Key Features and Enhancements Unveiled | by Deepak Kumar, accessed December 22, 2025, [https://medium.com/@deep.kumar2052/python-3-13-0-released-key-features-and-enhancements-unveiled-fca698670b27](https://medium.com/@deep.kumar2052/python-3-13-0-released-key-features-and-enhancements-unveiled-fca698670b27)
+14. Design of CPython's Garbage Collector - Python Developer's Guide, accessed December 22, 2025, [https://daobook.github.io/devguide/garbage_collector.html](https://daobook.github.io/devguide/garbage_collector.html)
+15. Objects/obmalloc.c - platform/external/python/cpython3 - Git at Google - Android GoogleSource, accessed December 22, 2025, [https://android.googlesource.com/platform/external/python/cpython3/+/refs/heads/android13-mainline-os-statsd-release/Objects/obmalloc.c](https://android.googlesource.com/platform/external/python/cpython3/+/refs/heads/android13-mainline-os-statsd-release/Objects/obmalloc.c)
+16. Memory Management — Python 3.14.2 documentation, accessed December 22, 2025, [https://docs.python.org/3/c-api/memory.html](https://docs.python.org/3/c-api/memory.html)

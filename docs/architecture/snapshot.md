@@ -453,3 +453,24 @@ fn should_snapshot(region: &MemoryRegion) -> bool {
 - [Allocator](allocator.md) - Jemalloc quiesce sequence
 - [Zygote Lifecycle](zygote.md) - Worker initialization
 - [IPC Protocol](protocol.md) - SCM_RIGHTS fd passing
+
+---
+
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                             | Key Contribution                                                                        |
+| :------------------------------------------------ | :-------------------------------------------------------------------------------------- |
+| **Python Memory Snapshotting with Userfaultfd**   | Core UFFD architecture, `UFFDIO_COPY` workflow, O(N) cost model where N = touched pages |
+| **Userfaultfd and CPython Allocator Interaction** | TLS restoration requirements, `mi_heap_t` synchronization, GC race conditions           |
+| **Rust-Python Test Isolation Blueprint**          | `MADV_DONTNEED` reset loop, stack restoration requirements                              |
+
+### Key Technical Details from Research
+
+- **Page Fault Lifecycle**: `handle_mm_fault` -> UFFD-managed VMA check -> thread suspension -> `UFFD_EVENT_PAGEFAULT` -> supervisor `UFFDIO_COPY` -> thread wake
+- **TLB Shootdown Cost**: `MADV_DONTNEED` triggers Inter-Processor Interrupts (IPIs) to flush TLBs across all cores - this is the primary performance bottleneck
+- **setjmp/longjmp Limitation**: `longjmp` restores RSP but NOT stack contents - full stack memory must be tracked and restored
+- **mimalloc TLS Hazard**: Python 3.13+ stores `mi_heap_t` pointers in TLS via `fs_base` - must use `arch_prctl(ARCH_GET_FS)` to capture
+
+See [Research Investigation](../research-investigation.md) for complete analysis.

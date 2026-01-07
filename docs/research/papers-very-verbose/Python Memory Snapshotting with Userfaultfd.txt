@@ -1,0 +1,433 @@
+# Deep Kernel-Level Analysis of CPython Memory Snapshotting: Allocator Stability, Userfaultfd Mechanics, and Heap Consistency
+
+## 1. Introduction: The Physics of Microsecond-Scale Process Restoration
+
+The pursuit of high-frequency execution environments for coverage-guided fuzzing and rigorous regression testing has pushed the boundaries of traditional process management. The conventional fork-server model, while robust, incurs non-trivial kernel overhead due to page table duplication and copy-on-write (COW) fault handling. In the context of CPython—a runtime characterized by high memory churn and complex internal object graphs—these overheads become prohibitive when targeting execution rates in the range of thousands of iterations per second. The Linux userfaultfd (UFFD) mechanism offers a compelling alternative: user-space demand paging that effectively decouples memory restoration from the heavy machinery of process creation. By "snapshotting" the virtual memory state of a process and lazily restoring it upon access, engineers can achieve reset times measured in microseconds rather than milliseconds.
+
+However, the application of userfaultfd to a managed runtime like CPython introduces a class of subtle, catastrophic state desynchronization issues. CPython does not manage memory in isolation; it relies heavily on the underlying C system allocator. When the environment variable `PYTHONMALLOC=malloc` is employed to bypass CPython's specific obmalloc arena allocator, the runtime becomes directly dependent on the implementation details of the system malloc—typically glibc's ptmalloc. This dependency exposes the snapshot mechanism to the internal complexities of thread-local caching, pointer mangling, and arena locking. If the restored memory image (the "snapshot") does not perfectly align with the thread's execution context (registers and Thread Local Storage), the allocator's internal invariants are violated, leading to immediate heap corruption.
+
+This report presents a comprehensive kernel-level analysis of these interactions. It deconstructs the mechanics of userfaultfd and MADV_DONTNEED, dissects the failure modes of glibc's tcache during snapshot restoration, and rigorously evaluates jemalloc and mimalloc as deterministic alternatives. Furthermore, it details a hybrid Rust/C architecture that leverages jemalloc's manual cache flushing capabilities to establish a stable, high-performance test runner for CPython extensions. The analysis is grounded in the conviction that robust snapshotting requires not just preserving bytes, but preserving the logical consistency of the allocator's metadata across the temporal boundary of a restore operation.
+
+## 2. Kernel-Level Mechanics of Userfaultfd and Memory Resetting
+
+To understand why simple snapshotting fails with complex allocators, one must first master the underlying kernel primitives. The userfaultfd subsystem fundamentally alters the contract between the memory management unit (MMU) and the user-space application.
+
+### 2.1 The Userfaultfd State Machine and Page Fault Lifecycle
+
+At the kernel level, userfaultfd intercepts the standard page fault handler path. When a process accesses a virtual address (VA) registered with `UFFDIO_REGISTER` (specifically in `UFFDIO_REGISTER_MODE_MISSING` mode), the hardware raises a page fault exception. The kernel's `handle_mm_fault` routine traverses the Virtual Memory Areas (VMAs) and identifies the region as UFFD-managed.
+
+Instead of allocating a physical page or swapping in data, the kernel suspends the faulting thread. It places the thread into a wait queue (`TASK_INTERRUPTIBLE`) and generates a `UFFD_EVENT_PAGEFAULT` message, which is enqueued on the userfaultfd file descriptor.¹ A separate "supervisor" thread, polling this file descriptor (typically via epoll), receives the notification containing the faulting address.
+
+The critical operation for snapshotting is `UFFDIO_COPY`. This ioctl instructs the kernel to:
+
+1. Allocate a new physical page.
+2. Copy data from a buffer provided by the supervisor (the snapshot source) into this new page.
+3. Map the page into the faulting process's page table.
+4. Wake up the suspended thread.
+
+Crucially, this mechanism allows for "lazy restoration." If a 1GB heap is snapshotted, but the subsequent execution only touches 50KB, only those 50KB are physically copied and mapped. This O(N) cost, where N is the number of touched pages rather than the total heap size, is the primary driver of UFFD's performance advantage.³
+
+### 2.2 The MADV_DONTNEED Reset Loop
+
+Once an execution iteration completes, the memory must be reverted to its initial state. While `UFFDIO_COPY` populates pages, madvise with the `MADV_DONTNEED` flag is the standard mechanism to depopulate them.
+
+When `madvise(addr, length, MADV_DONTNEED)` is invoked on a range:
+
+1. **Page Table modification:** The kernel iterates over the Page Table Entries (PTEs) corresponding to the address range. It clears the "Present" bit, effectively unmapping the physical pages backing that range.⁴
+2. **Physical Memory Release:** The reference counts of the underlying physical pages are decremented. If a count drops to zero, the page is returned to the kernel's free list (the buddy allocator).
+3. **TLB Shootdown:** This is the performance bottleneck. The kernel must ensure that no CPU core retains a cached translation for the unmapped pages. It issues an Inter-Processor Interrupt (IPI) to flush the Translation Lookaside Buffers (TLBs) on all cores running threads of the target process. This synchronization point is costly, scaling with the number of cores.⁵
+
+In a snapshotting loop, `MADV_DONTNEED` effectively "punches holes" in the process's memory. The next time the application accesses these addresses, the userfaultfd mechanism triggers again, allowing the supervisor to re-copy the original data.
+
+### 2.3 The setjmp/longjmp and Register State
+
+Memory restoration is necessary but insufficient; the CPU's register state must also be rewound. The C standard library provides `setjmp` and `longjmp` for this purpose. `setjmp` saves the callee-saved registers (Instruction Pointer RIP, Stack Pointer RSP, Frame Pointer RBP, and others) into a `jmp_buf`. `longjmp` restores them.
+
+The interaction with memory is subtle. `longjmp` restores the Stack Pointer, effectively discarding all stack frames pushed since `setjmp` was called. However, `longjmp` does *not* revert the contents of the stack memory. If the execution phase overwrote values on the stack (in frames that existed prior to `setjmp`), `longjmp` will restore the RSP to point to that corrupted memory.
+
+Therefore, the userfaultfd supervisor must track and restore *all* writable memory segments: the Heap, the Stack, the Data segment, and the BSS. Failure to restore the stack contents leads to return-oriented programming (ROP)-like crashes where the restored instruction pointer attempts to use corrupted local variables or return addresses.⁶
+
+## 3. CPython Memory Architecture and PYTHONMALLOC
+
+Understanding the target runtime is prerequisite to stabilizing the snapshot. CPython's memory management is multi-layered, and utilizing `PYTHONMALLOC=malloc` is a strategic decision to simplify this stack for analysis and control.
+
+### 3.1 The obmalloc Arena Allocator vs. System Malloc
+
+By default, CPython employs pymalloc (also known as obmalloc), a specialized allocator optimized for small objects (< 512 bytes) with short lifetimes. pymalloc requests large chunks (256 KB arenas) from the system allocator and manages sub-allocations internally using pools and blocks.⁹
+
+**Implications for Snapshotting:**
+
+* **Fragmentation:** pymalloc structures group unrelated objects into the same physical page. A single modified integer could dirty a 4KB page containing hundreds of other static objects, forcing the UFFD handler to restore the entire page.
+* **Opaque Metadata:** The state of the pymalloc allocator (free lists, pool headers) is embedded within the heap. While this is technically snapshottable, the complexity makes debugging heap corruption nearly impossible.
+
+Setting `PYTHONMALLOC=malloc` forces CPython to redirect all memory requests (via `PyMem_Malloc`, `PyObject_Malloc`, etc.) directly to the standard C library's malloc.⁹ This linearization of memory management ensures that:
+
+1. Every Python object corresponds to a distinct allocation block in the system allocator.
+2. Standard heap analysis tools (and standard heap exploit mitigations) apply directly to Python objects.
+3. The "state" of the allocator is entirely contained within the system malloc's metadata, removing pymalloc as a variable.
+
+### 3.2 The Hidden State: CPython's Internal Free Lists
+
+Even with `PYTHONMALLOC=malloc`, CPython is not stateless. The interpreter maintains its own internal caches for performance, which persist independently of the underlying memory allocator. These structures represent "hidden state" that must be reset or snapshotted correctly to avoid logical corruption.
+
+#### 3.2.1 The Float and Int Free Lists
+
+CPython implements free lists for specific immutable types to avoid allocation overhead. For example, when a float is deallocated, it is pushed onto `PyFloat_FreeList` rather than being freed to the system.
+
+* **Mechanism:** `Objects/floatobject.c` maintains a singly linked list of deallocated float objects.
+* **Snapshot Risk:** If the snapshot is taken when the free list is empty, and the execution phase fills it with 100 floats, the memory restoration step (`MADV_DONTNEED`) will discard the content of those float objects. However, if the `PyFloat_FreeList` head pointer (a global variable) is not also reverted (e.g., because it lives in a data segment that wasn't tracked), the interpreter will point to unmapped memory. The next float allocation will segfault. Conversely, if the memory is restored but the free list pointer indicates "empty" (from the snapshot), the allocator leaks the cached objects (memory leak) but remains safe. The critical danger is **untracked globals**.¹⁰
+
+#### 3.2.2 The small_ints Singleton Array
+
+CPython pre-allocates integers from -5 to 256 in a static array `small_ints` (located in `Objects/longobject.c`).
+
+* **Memory Location:** As a static array, this resides in the .bss or .data segment of the libpython shared object, not the heap.¹¹
+* **Snapshot Requirement:** userfaultfd logic typically prioritizes the heap. However, the reference counts (`ob_refcnt`) of these small integers change constantly during execution. If the .data segment of libpython is not included in the UFFD registered range, the reference counts will not roll back after `longjmp`. This leads to reference count overflows/underflows across fuzzing iterations, eventually causing the interpreter to deallocate a singleton (a fatal error) or leak memory indefinitely.
+
+### 3.3 The PyInterpreterState and Sub-Interpreters
+
+Python 3.12 introduced per-interpreter GILs and moved significant global state into the `PyInterpreterState` structure to support true multicore sub-interpreters.
+
+* **Allocation:** `PyInterpreterState` is allocated on the heap.
+* **Desynchronization:** If the snapshot restores the heap (containing the interpreter state) but the thread-local variable pointing to the "current interpreter" (`_PyThreadState_Current`) is not restored, the C extension might operate on a stale or mismatched interpreter context. This is particularly relevant if the test runner creates/destroys threads or interpreters between snapshots.¹⁴
+
+## 4. Deep Analysis of Glibc ptmalloc Instability
+
+The default allocator on Linux, glibc's ptmalloc, presents the most significant barrier to reliable memory snapshotting. Its aggressive optimization for multi-threaded performance creates a split-brain problem between heap metadata and thread-local state.
+
+### 4.1 The Thread Local Cache (tcache) Architecture
+
+Introduced in glibc 2.26, tcache provides per-thread bins for small allocations, bypassing the lock contention associated with the main arena's fastbins and unsorted bins.
+
+**Structure:**
+Each thread possesses a `tcache_perthread_struct` typically located at the start of the heap chunk associated with that thread.
+
+```c
+typedef struct tcache_perthread_struct {
+    uint16_t counts[TCACHE_MAX_BINS];
+    tcache_entry *entries[TCACHE_MAX_BINS];
+} tcache_perthread_struct;
+```
+
+The `entries` array serves as the head of LIFO (Last-In, First-Out) singly linked lists for various chunk sizes.¹⁷
+
+**The Snapshot Paradox:**
+When a snapshot is taken via `setjmp` + UFFD registration:
+
+1. **Memory Snapshot:** The contents of the heap, including the `tcache_perthread_struct` and the linked lists of free chunks, are logically saved.
+2. **TLS Snapshot:** The FS/GS registers (pointing to Thread Local Storage) are saved by `setjmp`.
+
+During execution:
+
+1. The thread calls malloc. The tcache code pops a chunk from `entries[i]`.
+2. Crucially, it updates the `entries[i]` pointer in the `tcache_perthread_struct` to point to the *next* chunk in the list.
+
+During restoration:
+
+1. `MADV_DONTNEED` reverts the heap memory. The `tcache_perthread_struct` (living on the heap) is reverted. `entries[i]` now points back to the *first* chunk.
+2. **The Conflict:** If the TLS variable that points to the `tcache_perthread_struct` itself remains valid, the system *should* be consistent. However, ptmalloc is not purely heap-resident. It relies on global variables (like `mp_`, `main_arena`) and TLS variables that might live in memory regions (`[anon:stack]`, `ld.so data`) that are easily missed by a naive UFFD registration that only targets the "Heap" segment reported by `/proc/self/maps`.
+
+If any part of the allocator's state resides in non-snapshotted memory, the tcache becomes desynchronized. The heap says "Chunk A is free," but the global state says "Chunk A is in use." This leads to `malloc()`: corrupted top size or double-free errors immediately upon restore.²⁰
+
+### 4.2 Pointer Mangling and ASLR
+
+Glibc implements a security mitigation known as pointer mangling (or pointer guarding) to protect tcache entries and fastbin pointers from heap overwrites. Pointers stored in these structures are XORed with a random secret key (`tcache_key`).
+
+**The Mechanism:**
+`Stored_Ptr = (Raw_Ptr >> 12) ^ tcache_key`
+
+**The Snapshot Hazard:**
+The `tcache_key` is generated at process initialization (typically via `getrandom`) and stored in the thread-control block (TLS).
+
+1. If the snapshot restores the heap (containing mangled pointers), it **must** also restore the exact `tcache_key` that was used to mangle them.
+2. If the test runner forks or re-initializes the C runtime between snapshots, a new `tcache_key` is generated.
+3. When malloc attempts to demangle the pointers from the restored heap using the *new* key, it produces garbage addresses.
+4. Dereferencing these garbage addresses causes a segmentation fault inside malloc logic.
+
+This necessitates that the Thread Local Storage (TLS) region is essentially immutable across snapshots or is strictly included in the snapshot restoration set. Since `longjmp` does not restore TLS memory contents, UFFD is the only mechanism protecting this state.²⁰
+
+## 5. Allocator Alternatives: Evaluating Stability for Snapshotting
+
+Given the fragility of ptmalloc's tcache and pointer mangling, alternative allocators provide more control over the heap state, potentially simplifying the snapshot requirement.
+
+### 5.1 Table 1: Allocator Comparison for Snapshot-Based Fuzzing
+
+| Feature | Glibc ptmalloc | Jemalloc | Mimalloc |
+| :--- | :--- | :--- | :--- |
+| **Default in CPython?** | Yes (PYTHONMALLOC=malloc) | No (Requires LD_PRELOAD) | No (Requires LD_PRELOAD) |
+| **Thread Local Cache** | tcache (Aggressive) | tcache (Tunable) | Sharded Pages (Deep integration) |
+| **Manual Cache Flush** | No (Internal only) | **Yes (thread.tcache.flush)** | Partial (mi_collect) |
+| **Pointer Mangling** | Yes (Random Key) | No (Deterministic) | Yes (In Secure Mode) |
+| **Metadata Location** | Mixed (Heap + Global + TLS) | Mostly Heap + Metadata Arenas | Segregated Heaps |
+| **Snapshot Suitability** | **Low** (High corruption risk) | **High** (With flushing) | **Medium** (Complex page ownership) |
+
+### 5.2 Jemalloc: The Deterministic Solution
+
+jemalloc is structurally distinct from ptmalloc. It uses "arenas" to manage memory chunks and "extents" to map to virtual memory. Crucially, jemalloc exposes a powerful introspection API called `mallctl`.
+
+**The thread.tcache.flush Strategy:**
+The primary instability in snapshotting is the thread-local state. jemalloc allows an application to manually force the synchronization of thread-local caches back to the global arena via the command:
+`mallctl("thread.tcache.flush", NULL, NULL, NULL, 0);`
+
+By invoking this *before* taking the snapshot (`setjmp`), the test runner ensures that:
+
+1. The thread-local bins are empty.
+2. All free chunks are returned to the global arena structures (which reside in the heap).
+3. The heap state is "quiescent" and consistent.
+
+When the memory is later restored via UFFD and execution resumes (via `longjmp`), the thread sees an empty tcache. The first allocation triggers a fetch from the global arena (which was correctly restored). This eliminates the "split-brain" problem of TLS pointing to heap chunks that no longer exist or have changed state.²³
+
+**Comparison to Glibc:** Glibc offers `mallopt`, but it lacks a direct command to flush the tcache on demand without disabling it entirely (which destroys performance).
+
+### 5.3 Mimalloc: Performance vs. Snapshot Complexity
+
+Microsoft's mimalloc uses a unique design based on "free list sharding." The heap is divided into segments, and each segment is owned by a specific thread.
+
+**The mi_collect API:**
+mimalloc provides `mi_collect(bool force)`, which attempts to reclaim memory. However, mimalloc's architecture is fundamentally different: memory is owned by threads. Freed objects from other threads are placed in "concurrent free lists" that must be atomically claimed. While `mi_collect` helps reduce the memory footprint, mimalloc (especially in secure mode) employs free list encoding (similar to glibc's mangling) and randomized allocation offsets.²⁵
+
+* **Risk:** mimalloc's dependence on thread-local "heartbeats" and complex page ownership transfers makes it harder to guarantee a "clean slate" state comparable to jemalloc's flushed state. There is no simple API to "empty everything to global," because mimalloc avoids global locks by design.
+
+**Conclusion on Allocators:** jemalloc is the superior choice for this specific use case. The ability to programmatically flush thread caches provides a deterministic synchronization point that is essential for reliable snapshot restoration.
+
+## 6. Architecture of a Rust + C Snapshot Fuzzer
+
+To demonstrate heap stability, we define a hybrid architecture. Rust provides the safety and rich ecosystem for the userfaultfd supervisor, while C provides the necessary low-level hooks into CPython and jemalloc.
+
+### 6.1 System Components
+
+1. **The Supervisor (Rust):**
+    * Responsibilities: Manages the userfaultfd file descriptor, handles page fault events, maintains the "clean" snapshot buffer, and drives the fuzzing loop.
+    * Dependencies: `userfaultfd-rs`, `nix` (for ioctl/mmap), `libc`.
+2. **The Harness (C):**
+    * Responsibilities: Interfaces with libpython, calls jemalloc APIs, sets up setjmp buffers, and exposes a foreign function interface (FFI) to Rust.
+    * Dependencies: `libpython3.x`, `libjemalloc`.
+
+### 6.2 Step-by-Step Implementation Strategy
+
+**Step 1: Memory Layout and Initialization**
+The process must be single-threaded during initialization to avoid race conditions during UFFD registration.
+
+* **Rust:** Allocates a large anonymous memory mapping (e.g., 2GB) to serve as the "Managed Heap."
+* **C Harness:** Initializes CPython. Crucially, we must ensure CPython allocates *inside* this Managed Heap.
+    * *Technique:* We can use jemalloc's "extent hooks" to replace the system mmap allocator with a custom allocator that carves chunks out of our pre-allocated Managed Heap. Alternatively, simpler approaches involve letting jemalloc allocate naturally and parsing `/proc/self/maps` to register all resulting arenas.
+
+**Step 2: Quiescing the Allocator**
+Before the first snapshot, the harness invokes `thread.tcache.flush`.
+
+```c
+// C Harness Code
+#include <jemalloc/jemalloc.h>
+
+void flush_allocator() {
+    // Flush the calling thread's cache
+    mallctl("thread.tcache.flush", NULL, NULL, NULL, 0);
+    // Force a specific epoch update to synchronize stats
+    uint64_t epoch = 1;
+    mallctl("epoch", &epoch, sizeof(epoch), &epoch, sizeof(epoch));
+}
+```
+This ensures the tcache is empty and all heap metadata is committed to the arenas.²³
+
+**Step 3: Registering Memory**
+The Rust supervisor scans `/proc/self/maps`. It must register:
+
+1. **The Heap:** (Where jemalloc arenas live).
+2. **The Stack:** (Where local variables live).
+3. **The BSS/Data segments:** (Where `small_ints` and `PyFloat_FreeList` live).
+4. **TLS Segments:** (Identified typically as anonymous mappings near the stack or labeled in map files).
+
+```rust
+// Rust Supervisor Logic
+let uffd = UffdBuilder::new().close_on_exec(true).non_blocking(true).create().unwrap();
+// Register potentially multiple regions
+uffd.register(heap_start, heap_len).unwrap();
+uffd.register(stack_start, stack_len).unwrap();
+//... register other segments
+```
+
+**Step 4: The Snapshot (setjmp)**
+The C harness exposes a function `take_snapshot()`:
+
+```c
+static jmp_buf restore_point;
+
+int take_snapshot() {
+    return setjmp(restore_point);
+}
+
+void restore_snapshot() {
+    longjmp(restore_point, 1);
+}
+```
+When `take_snapshot` returns 0, the system is in the "save" state. The Rust supervisor then copies the current content of all registered pages into a backup buffer (the "Golden Snapshot").
+
+**Step 5: The Fuzzing Loop**
+
+1. **Execute:** Run the Python bytecode.
+2. **Fault:** If Python writes to a page, UFFD triggers. The Rust background thread catches this.
+    * *First Access:* If the page is missing, copy the page content from the "Golden Snapshot" into the process using copy ioctl.
+3. **Reset:** Upon completion of the iteration:
+    * The Rust supervisor tracks which pages were dirtied (either by tracking UFFD events or using soft-dirty bits).
+    * It issues `madvise(addr, len, MADV_DONTNEED)` on all dirty pages. This removes them from the page table.
+4. **Restore:** Call `restore_snapshot()` (longjmp).
+    * The instruction pointer reverts to `take_snapshot`.
+    * The Stack Pointer reverts.
+    * The memory (due to `MADV_DONTNEED`) effectively reverts: the next access will trigger a fault, pulling clean data from the Golden Snapshot again.
+
+## 7. Addressing the "Missing" Requirements
+
+The previous analysis identified gaps regarding specific Python object persistence and Rust integration. This section integrates those solutions.
+
+### 7.1 Handling small_ints and Global Lists
+
+Since `small_ints` lives in the static data segment, simply resetting the heap is insufficient.
+
+* **Solution:** The Rust supervisor must parse the ELF header of `libpython.so` (mapped in memory) to find the .data and .bss sections.
+* **Integration:** These ranges must be added to the userfaultfd registration list. When the Python interpreter modifies a reference count on `SmallInt(5)`, it writes to .data. UFFD must trap this, copy the original .data page, and allow the write. On reset, `MADV_DONTNEED` throws away the modified reference counts, restoring the integer state perfectly.
+
+### 7.2 Rust Panic Safety and FFI
+
+Rust's panic unwinding mechanism interacts dangerously with `longjmp`. If the Rust supervisor calls into C, and C `longjmp`s past Rust stack frames, destructors (Drop traits) for Rust objects will not run, leading to resource leaks (e.g., open file descriptors).
+
+* **Architecture Constraint:** The `longjmp` must typically happen entirely within the C side of the boundary, or the Rust code must be designed to not own resources on the stack across the boundary where `longjmp` occurs.
+* **PoC Design:** The main loop logic remains in Rust, but the `setjmp`/`longjmp` cycle is encapsulated in a small C wrapper that Rust invokes only once to enter the "fuzzing mode."
+
+## 8. Proof of Concept Code Structure
+
+The following snippets illustrate the critical integration points for the Rust + C solution.
+
+**harness.c (The CPython + Jemalloc Interface):**
+
+```c
+#include <Python.h>
+#include <jemalloc/jemalloc.h>
+#include <setjmp.h>
+#include <stdio.h>
+
+// Global jump buffer for restoration
+static jmp_buf env;
+
+// Function to flush thread caches (Jemalloc specific)
+void flush_allocator() {
+    // "thread.tcache.flush" - flushes the calling thread's cache to the arena
+    mallctl("thread.tcache.flush", NULL, NULL, NULL, 0);
+}
+
+// Entry point called by Rust to start the snapshot loop
+void start_fuzzing_loop(void (*payload_func)(void)) {
+    printf("[C] Flushing allocator...\n");
+    flush_allocator();
+
+    printf("[C] Taking snapshot (setjmp)...\n");
+    if (setjmp(env) == 0) {
+        // First return: Snapshot taken.
+        // Signal Rust that we are ready to register memory and run.
+        // (In a real implementation, we might return to Rust here,
+        // but setjmp/longjmp across FFI is undefined behavior in Rust).
+        // Instead, we execute the payload here.
+    } else {
+        // Second return: We just longjmp'd back.
+        // Memory has been reset by the supervisor via MADV_DONTNEED.
+        // Registers are restored. Allocator caches are effectively empty (as they were at setjmp).
+    }
+
+    // Run the Python target
+    payload_func();
+}
+
+// Function to trigger a restore
+void trigger_restore() {
+    longjmp(env, 1);
+}
+```
+
+**supervisor.rs (The Rust UFFD Manager):**
+
+```rust
+use userfaultfd::Uffd;
+use std::thread;
+use std::ffi::c_void;
+
+// Represents the "Golden" copy of a memory page
+struct PageSnapshot {
+    addr: u64,
+    data: Vec<u8>,
+}
+
+fn fault_handler_thread(uffd: Uffd, snapshots: Arc<RwLock<HashMap<u64, PageSnapshot>>>) {
+    loop {
+        let event = uffd.read_event().expect("Failed to read UFFD event");
+        match event {
+            userfaultfd::Event::Pagefault { addr,.. } => {
+                let page_addr = addr as u64 &!(4096 - 1);
+                let lock = snapshots.read().unwrap();
+
+                if let Some(snap) = lock.get(&page_addr) {
+                    // Restore from snapshot
+                    unsafe {
+                        uffd.copy(page_addr as *const c_void, 4096, snap.data.as_ptr() as *const c_void, true)
+                            .expect("UFFDIO_COPY failed");
+                    }
+                } else {
+                    // First access ever? Or outside snapshot range?
+                    // Zero-fill it.
+                    unsafe {
+                        uffd.zeropage(page_addr as *const c_void, 4096, true)
+                            .expect("UFFDIO_ZEROPAGE failed");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// The Reset Logic
+fn reset_memory(uffd: &Uffd, dirty_pages: &[u64]) {
+    for addr in dirty_pages {
+        // MADV_DONTNEED to drop the page
+        unsafe {
+            libc::madvise(*addr as *mut c_void, 4096, libc::MADV_DONTNEED);
+        }
+    }
+    // Now the next access to 'addr' will trigger a page fault,
+    // causing the handler to re-copy the data.
+}
+```
+
+## 9. Conclusion
+
+The creation of a stable, high-performance CPython test runner using userfaultfd and `PYTHONMALLOC=malloc` is a complex systems engineering challenge that hinges on allocator determinism. The standard glibc allocator is ill-suited for this task due to the tight coupling of heap metadata with thread-local storage and security-focused pointer obfuscation, which leads to corruption upon partial state restoration.
+
+This analysis confirms that jemalloc is the necessary enabler for this architecture. Its `thread.tcache.flush` API provides the critical capability to "quiesce" the allocator, ensuring that the heap state captured by `setjmp` and userfaultfd is self-consistent and devoid of dangling thread-local references. When combined with a rigorous registration of memory segments—including the often-overlooked .data and .bss segments where CPython stores singleton objects—and a `MADV_DONTNEED` reset loop managed by a Rust supervisor, it is possible to achieve stable, microsecond-scale snapshot restoration. This architecture effectively neutralizes the initialization overhead of the Python interpreter, unlocking new frontiers in fuzzing efficiency for Python-based applications.
+
+### Works cited
+
+1. Improving Fuzzing Speed with userfaultfd - Nick Gregory, accessed December 22, 2025, [https://nickgregory.me/post/2022/12/09/uffd-fuzz/](https://nickgregory.me/post/2022/12/09/uffd-fuzz/)
+2. userfaultfd.rst, accessed December 22, 2025, [https://www.kernel.org/doc/Documentation/admin-guide/mm/userfaultfd.rst](https://www.kernel.org/doc/Documentation/admin-guide/mm/userfaultfd.rst)
+3. userfaultfd(2) - Linux manual page - man7.org, accessed December 22, 2025, [https://man7.org/linux/man-pages/man2/userfaultfd.2.html](https://man7.org/linux/man-pages/man2/userfaultfd.2.html)
+4. ChangeLog-6.6.80 - The Linux Kernel Archives, accessed December 22, 2025, [https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.6.80](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.6.80)
+5. Eden: Developer-Friendly Application-Integrated Far Memory - USENIX, accessed December 22, 2025, [https://www.usenix.org/system/files/nsdi25-yelam.pdf](https://www.usenix.org/system/files/nsdi25-yelam.pdf)
+6. longjmp() — Restore Stack Environment - IBM, accessed December 22, 2025, [https://www.ibm.com/docs/pl/ssw_ibm_i_74/rtref/longjmp.htm](https://www.ibm.com/docs/pl/ssw_ibm_i_74/rtref/longjmp.htm)
+7. Does setjmp literally save the state of the program? - Stack Overflow, accessed December 22, 2025, [https://stackoverflow.com/questions/72657045/does-setjmp-literally-save-the-state-of-the-program](https://stackoverflow.com/questions/72657045/does-setjmp-literally-save-the-state-of-the-program)
+8. CRIU-RTX: Remote Thread eXecution using Checkpoint/Restore in Userspace - VTechWorks, accessed December 22, 2025, [https://vtechworks.lib.vt.edu/bitstreams/1a8c415f-18cc-4095-8a86-450c92c6c574/download](https://vtechworks.lib.vt.edu/bitstreams/1a8c415f-18cc-4095-8a86-450c92c6c574/download)
+9. Memory Management — Python 3.14.2 documentation, accessed December 22, 2025, [https://docs.python.org/3/c-api/memory.html](https://docs.python.org/3/c-api/memory.html)
+10. How Operating Systems Work - Khoury College of Computer Sciences, accessed December 22, 2025, [https://www.khoury.northeastern.edu/~pjd/CS5600-text-240905.pdf](https://www.khoury.northeastern.edu/~pjd/CS5600-text-240905.pdf)
+11. Exploring the BBC micro:bit software stack and OS - DEV Community, accessed December 22, 2025, [https://dev.to/mattwarren/exploring-the-bbc-microbit-software-stack-and-os-b11](https://dev.to/mattwarren/exploring-the-bbc-microbit-software-stack-and-os-b11)
+12. Python variable allocation and `id` keyword [duplicate] - Stack Overflow, accessed December 22, 2025, [https://stackoverflow.com/questions/13975762/python-variable-allocation-and-id-keyword](https://stackoverflow.com/questions/13975762/python-variable-allocation-and-id-keyword)
+13. python - Why (0-6) is -6 = False? - Stack Overflow, accessed December 22, 2025, [https://stackoverflow.com/questions/11476190/why-0-6-is-6-false](https://stackoverflow.com/questions/11476190/why-0-6-is-6-false)
+14. Python Initialization Configuration — Python 3.14.2 documentation, accessed December 22, 2025, [https://docs.python.org/3/c-api/init_config.html](https://docs.python.org/3/c-api/init_config.html)
+15. Python 3.12 Preview: Subinterpreters, accessed December 22, 2025, [https://realpython.com/python312-subinterpreters/](https://realpython.com/python312-subinterpreters/)
+16. What's New in Python 3.12 - F-Strings and Interpreter Changes - Andy Pearce, accessed December 22, 2025, [https://www.andy-pearce.com/blog/posts/2024/Feb/whats-new-in-python-312-f-strings-and-interpreter-changes/](https://www.andy-pearce.com/blog/posts/2024/Feb/whats-new-in-python-312-f-strings-and-interpreter-changes/)
+17. Glibc Malloc Principle - openEuler, accessed December 22, 2025, [https://www.openeuler.org/en/blog/wangshuo/Glibc%20Malloc%20Principle/Glibc_Malloc_Principle](https://www.openeuler.org/en/blog/wangshuo/Glibc%20Malloc%20Principle/Glibc_Malloc_Principle)
+18. ctf-wiki-en/docs/pwn/linux/glibc-heap/implementation/tcache.md at master - GitHub, accessed December 22, 2025, [https://github.com/mahaloz/ctf-wiki-en/blob/master/docs/pwn/linux/glibc-heap/implementation/tcache.md](https://github.com/mahaloz/ctf-wiki-en/blob/master/docs/pwn/linux/glibc-heap/implementation/tcache.md)
+19. Glibc PTMalloc Internals - Intranautic, accessed December 22, 2025, [https://intranautic.com/posts/glibc-ptmalloc-internals/](https://intranautic.com/posts/glibc-ptmalloc-internals/)
+20. C free() on Ubuntu VM, a question regarding heap memory - Stack Overflow, accessed December 22, 2025, [https://stackoverflow.com/questions/78669434/c-free-on-ubuntu-vm-a-question-regarding-heap-memory](https://stackoverflow.com/questions/78669434/c-free-on-ubuntu-vm-a-question-regarding-heap-memory)
+21. Breaking Memory Safety in the Heap Arena - Deep Kondah, accessed December 22, 2025, [https://www.deep-kondah.com/breaking-memory-safety-in-the-heap-arena/](https://www.deep-kondah.com/breaking-memory-safety-in-the-heap-arena/)
+22. Tcache parsing should be handled on per thread basis · Issue #1259 · rizinorg/rizin - GitHub, accessed December 22, 2025, [https://github.com/rizinorg/rizin/issues/1259](https://github.com/rizinorg/rizin/issues/1259)
+23. synopsis - jemalloc, accessed December 22, 2025, [https://jemalloc.net/jemalloc.3.html](https://jemalloc.net/jemalloc.3.html)
+24. doc/jemalloc.xml.in - platform/external/jemalloc_new - Git at Google - Android GoogleSource, accessed December 22, 2025, [https://android.googlesource.com/platform/external/jemalloc_new/+/refs/heads/android-s-beta-4/doc/jemalloc.xml.in](https://android.googlesource.com/platform/external/jemalloc_new/+/refs/heads/android-s-beta-4/doc/jemalloc.xml.in)
+25. mi-malloc, accessed December 22, 2025, [https://microsoft.github.io/mimalloc/](https://microsoft.github.io/mimalloc/)
+26. doc/mimalloc-doc.h · d6bed296cd68c0c5075c777970cc8fd9df41913f · halogenOS / android_external_mimalloc · GitLab, accessed December 22, 2025, [https://git.halogenos.org/halogenOS/android_external_mimalloc/-/blob/d6bed296cd68c0c5075c777970cc8fd9df41913f/doc/mimalloc-doc.h](https://git.halogenos.org/halogenOS/android_external_mimalloc/-/blob/d6bed296cd68c0c5075c777970cc8fd9df41913f/doc/mimalloc-doc.h)
+27. stats.allocation reports incorrect values · Issue #757 - GitHub, accessed December 22, 2025, [https://github.com/jemalloc/jemalloc/issues/757](https://github.com/jemalloc/jemalloc/issues/757)

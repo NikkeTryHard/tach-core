@@ -452,3 +452,26 @@ def run_django_test(test_func):
 - [Physics Engine](snapshot.md) - Memory snapshot details
 - [Iron Dome](sandbox.md) - Sandbox application
 - [IPC Protocol](protocol.md) - Message format
+
+---
+
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                       | Key Contribution                                                                             |
+| :------------------------------------------ | :------------------------------------------------------------------------------------------- |
+| **Python Monorepo Zygote Tree Design**      | Hierarchical zygote trees, DAAC clustering algorithm, tiered warm-up                         |
+| **Forklift: Fitting Zygote Trees**          | Original research on hierarchical zygotes, 5x latency improvement, top-15 package preloading |
+| **Cross-Platform Process Cloning Research** | macOS `mach_vm_remap`, Windows NT process cloning, platform-specific spawning                |
+
+### Key Technical Details from Research
+
+- **DAAC Algorithm**: Dependency-Aware Agglomerative Clustering groups tests by shared "Safe" dependencies using Jaccard similarity
+- **Tiered Architecture**: Root Zygote (bare Python) -> Specialized Zygotes (framework-specific) -> Leaf Workers
+- **Merge Gain Formula**: `gain = memory_saved / (latency_increase + epsilon)` for tree pruning decisions
+- **Top-15 Optimization**: Pre-importing the top 15 most common packages (requests, numpy, django, etc.) improves median latency by 5x
+- **Tree Depth Limit**: Deep trees (depth > 3) increase OS scheduler latency - prefer wider, shallower trees
+- **macOS Alternative**: Use `mach_vm_remap` with `VM_FLAGS_OVERWRITE` + `copy=TRUE` for CoW semantics without fork()
+
+See [Research Investigation](../research-investigation.md) for complete analysis.
