@@ -1,0 +1,15 @@
+[project]
+name = "simple-example"
+version = "0.1.0"
+description = "Simple tach-core example project"
+requires-python = ">=3.10"
+
+[tool.tach]
+test_pattern = "test_*.py"
+timeout = 30
+workers = 2
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
