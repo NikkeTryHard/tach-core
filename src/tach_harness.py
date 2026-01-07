@@ -13,10 +13,12 @@ import asyncio
 import inspect
 import socket
 import pdb
+import re
+import warnings as warnings_module
 import _pytest.runner
 import _pytest.main
 import _pytest.config
-from typing import Optional, Set
+from typing import Optional, Set, Type, Tuple, Union
 
 # Status codes (must match protocol.rs)
 STATUS_PASS = 0
@@ -24,6 +26,204 @@ STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
 STATUS_HARNESS_ERROR = 4
+
+# =============================================================================
+# PYTEST COMPATIBILITY: Exception and Warning Context Managers
+# =============================================================================
+
+
+class ExceptionInfo:
+    """Wrapper for exception information (similar to pytest.ExceptionInfo).
+
+    This class provides a compatible interface with pytest's ExceptionInfo,
+    allowing tests to access exception details after using the raises context manager.
+
+    Attributes:
+        type: The exception class that was raised.
+        value: The exception instance that was raised.
+        tb: The traceback object.
+        traceback: Alias for tb (for compatibility).
+    """
+
+    def __init__(
+        self,
+        type_: Type[BaseException],
+        value: BaseException,
+        tb,
+    ):
+        self.type = type_
+        self.value = value
+        self.tb = tb
+        self.traceback = tb
+
+    def match(self, pattern: str) -> bool:
+        """Check if exception message matches a regex pattern.
+
+        Args:
+            pattern: Regular expression pattern to match against the exception message.
+
+        Returns:
+            True if the pattern matches, False otherwise.
+        """
+        return bool(re.search(pattern, str(self.value)))
+
+    def __repr__(self) -> str:
+        return f"<ExceptionInfo {self.type.__name__}('{self.value}')>"
+
+
+class raises:
+    """Context manager for expected exceptions (compatible with pytest.raises).
+
+    This context manager verifies that a specific exception is raised within
+    the context block. If the expected exception is not raised, or if a
+    different exception is raised, the test fails.
+
+    Example:
+        with raises(ValueError, match="invalid"):
+            int("not_a_number")
+
+    Attributes:
+        expected_exception: The exception type(s) expected to be raised.
+        match: Optional regex pattern that must match the exception message.
+        excinfo: ExceptionInfo object populated after successful exception capture.
+    """
+
+    def __init__(
+        self,
+        expected_exception: Union[Type[BaseException], Tuple[Type[BaseException], ...]],
+        *,
+        match: Optional[str] = None,
+    ):
+        """Initialize the raises context manager.
+
+        Args:
+            expected_exception: Exception type or tuple of types to expect.
+            match: Optional regex pattern to match against the exception message.
+        """
+        self.expected_exception = expected_exception
+        self.match = match
+        self.excinfo: Optional[ExceptionInfo] = None
+
+    def __enter__(self) -> "raises":
+        """Enter the context manager.
+
+        Returns:
+            Self, allowing access to excinfo after the context exits.
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Exit the context manager and validate the exception.
+
+        Args:
+            exc_type: The exception type if one was raised, None otherwise.
+            exc_val: The exception instance if one was raised, None otherwise.
+            exc_tb: The traceback if an exception was raised, None otherwise.
+
+        Returns:
+            True if the exception was expected and matched (suppresses it).
+            False if a different exception was raised (re-raises it).
+
+        Raises:
+            AssertionError: If no exception was raised, or if the match pattern
+                doesn't match the exception message.
+        """
+        if exc_type is None:
+            # Format expected exception for error message
+            if isinstance(self.expected_exception, tuple):
+                expected_names = ", ".join(e.__name__ for e in self.expected_exception)
+                raise AssertionError(f"DID NOT RAISE <{expected_names}>")
+            raise AssertionError(f"DID NOT RAISE {self.expected_exception}")
+
+        # Check if the raised exception is an instance of expected type(s)
+        if not issubclass(exc_type, self.expected_exception):
+            # Re-raise the unexpected exception
+            return False
+
+        # If match pattern is provided, validate it
+        if self.match and not re.search(self.match, str(exc_val)):
+            raise AssertionError(f"Pattern '{self.match}' not found in '{exc_val}'")
+
+        # Capture exception info for later inspection
+        self.excinfo = ExceptionInfo(exc_type, exc_val, exc_tb)
+
+        # Suppress the expected exception
+        return True
+
+
+class warns:
+    """Context manager for expected warnings (compatible with pytest.warns).
+
+    This context manager verifies that a specific warning is raised within
+    the context block. If the expected warning is not raised, the test fails.
+
+    Example:
+        with warns(DeprecationWarning, match="deprecated"):
+            deprecated_function()
+
+    Attributes:
+        expected_warning: The warning type expected to be raised.
+        match: Optional regex pattern that must match the warning message.
+    """
+
+    def __init__(
+        self,
+        expected_warning: Type[Warning],
+        *,
+        match: Optional[str] = None,
+    ):
+        """Initialize the warns context manager.
+
+        Args:
+            expected_warning: Warning type to expect.
+            match: Optional regex pattern to match against the warning message.
+        """
+        self.expected_warning = expected_warning
+        self.match = match
+        self._catch = None
+        self._warnings = None
+
+    def __enter__(self) -> "warns":
+        """Enter the context manager and start capturing warnings.
+
+        Returns:
+            Self, allowing access to captured warnings after the context exits.
+        """
+        self._catch = warnings_module.catch_warnings(record=True)
+        self._warnings = self._catch.__enter__()
+        warnings_module.simplefilter("always")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Exit the context manager and validate the warnings.
+
+        Args:
+            exc_type: The exception type if one was raised, None otherwise.
+            exc_val: The exception instance if one was raised, None otherwise.
+            exc_tb: The traceback if an exception was raised, None otherwise.
+
+        Returns:
+            False (never suppresses exceptions).
+
+        Raises:
+            AssertionError: If the expected warning was not raised, or if the
+                match pattern doesn't match any warning message.
+        """
+        self._catch.__exit__(exc_type, exc_val, exc_tb)
+
+        # Filter warnings to find matching ones
+        matching = [w for w in self._warnings if issubclass(w.category, self.expected_warning)]
+
+        if not matching:
+            raise AssertionError(f"DID NOT WARN {self.expected_warning}")
+
+        # If match pattern is provided, validate it
+        if self.match:
+            if not any(re.search(self.match, str(w.message)) for w in matching):
+                raise AssertionError(f"Pattern '{self.match}' not found in warnings")
+
+        return False  # Never suppress exceptions
+
 
 # =============================================================================
 # TTY Proxy: Interactive Debugging Support
