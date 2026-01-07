@@ -483,6 +483,7 @@ fn handle_version_command(verbose: bool) -> Result<()> {
         }
 
         // Check Seccomp support
+        // SAFETY: PR_GET_SECCOMP is a read-only query with no side effects.
         let seccomp_result = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
         eprintln!(
             "  Seccomp: {}",
@@ -556,12 +557,8 @@ fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Resul
 
     // --- TOXICITY TAGGING ---
     let mut runnable_tests = runnable_tests;
-    let mut toxic_test_count = 0;
     for test in &mut runnable_tests {
         test.is_toxic = toxicity_graph.is_toxic(&test.file_path);
-        if test.is_toxic {
-            toxic_test_count += 1;
-        }
     }
 
     // --- PATH FILTERING ---
@@ -587,10 +584,11 @@ fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Resul
     // --- OUTPUT SUMMARY ---
     if is_json {
         // JSON output for machine consumption
+        let filtered_toxic_count = filtered_tests.iter().filter(|t| t.is_toxic).count();
         println!("{{");
         println!("  \"dry_run\": true,");
         println!("  \"test_count\": {},", filtered_tests.len());
-        println!("  \"toxic_count\": {},", toxic_test_count);
+        println!("  \"toxic_count\": {},", filtered_toxic_count);
         println!("  \"error_count\": {},", errors.len());
         println!("  \"tests\": [");
         for (i, test) in filtered_tests.iter().enumerate() {
