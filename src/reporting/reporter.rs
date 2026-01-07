@@ -13,7 +13,11 @@
 //! When JsonReporter is active, ONLY valid JSON goes to stdout.
 //! All other output (logs, errors, debug) must go to stderr.
 
+use crate::config::TracebackStyle;
 use serde::Serialize;
+
+// Re-export TracebackStyle for convenience
+pub use crate::config::TracebackStyle as TbStyle;
 
 // =============================================================================
 // Helper Functions
@@ -39,6 +43,119 @@ fn get_terminal_width() -> usize {
     terminal_size::terminal_size()
         .map(|(w, _)| w.0 as usize)
         .unwrap_or(80)
+}
+
+/// Format a traceback message according to the specified style.
+///
+/// This function transforms Python tracebacks based on the --tb flag:
+/// - `Short`: Shows only the first and last frames of the traceback
+/// - `Long`: Returns the full traceback unchanged (default)
+/// - `Line`: Returns a single line summary (file:line: message)
+/// - `Native`: Returns the traceback unchanged (same as Long)
+/// - `No`: Returns an empty string (suppresses traceback output)
+///
+/// # Arguments
+/// * `traceback` - The raw traceback/error message from Python
+/// * `test_id` - The test identifier (used for Line format)
+/// * `style` - The traceback formatting style
+///
+/// # Returns
+/// The formatted traceback string
+pub fn format_traceback(traceback: &str, test_id: &str, style: TracebackStyle) -> String {
+    match style {
+        TracebackStyle::No => String::new(),
+        TracebackStyle::Native | TracebackStyle::Long => traceback.to_string(),
+        TracebackStyle::Line => format_traceback_line(traceback, test_id),
+        TracebackStyle::Short => format_traceback_short(traceback),
+    }
+}
+
+/// Format traceback as a single line: file:line: message
+fn format_traceback_line(traceback: &str, test_id: &str) -> String {
+    // Try to extract the last line which usually contains the assertion/error message
+    let lines: Vec<&str> = traceback.lines().collect();
+
+    // Find the error message (usually the last non-empty line)
+    let error_msg = lines
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(|s| s.trim())
+        .unwrap_or("Test failed");
+
+    // Try to find file:line from the traceback
+    // Python tracebacks have format: File "path/to/file.py", line N, in func
+    let file_line = lines
+        .iter()
+        .rev()
+        .find(|line| line.contains("File \"") && line.contains(", line "))
+        .and_then(|line| {
+            // Parse: File "path/to/file.py", line N, in func
+            let start = line.find("File \"")? + 6;
+            let end = line[start..].find("\"")? + start;
+            let file = &line[start..end];
+
+            let line_start = line.find(", line ")? + 7;
+            let line_end = line[line_start..]
+                .find(|c: char| !c.is_ascii_digit())
+                .map(|i| i + line_start)
+                .unwrap_or(line[line_start..].len() + line_start);
+            let line_num = &line[line_start..line_end];
+
+            Some(format!("{}:{}", file, line_num))
+        })
+        .unwrap_or_else(|| test_id.to_string());
+
+    format!("{}: {}", file_line, error_msg)
+}
+
+/// Format traceback showing only first and last frames
+fn format_traceback_short(traceback: &str) -> String {
+    let lines: Vec<&str> = traceback.lines().collect();
+
+    if lines.len() <= 6 {
+        // Already short enough, return as-is
+        return traceback.to_string();
+    }
+
+    // Find traceback frames (lines starting with "  File " or containing "File \"")
+    let mut frame_indices: Vec<usize> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("File \"") {
+            frame_indices.push(i);
+        }
+    }
+
+    if frame_indices.len() <= 2 {
+        // Only 2 or fewer frames, return as-is
+        return traceback.to_string();
+    }
+
+    let mut result: Vec<String> = Vec::new();
+
+    // Get first frame (first 2 lines: File line + code line)
+    let first_frame = frame_indices[0];
+    result.push(lines[first_frame].to_string());
+    if first_frame + 1 < lines.len() && !lines[first_frame + 1].trim_start().starts_with("File \"")
+    {
+        result.push(lines[first_frame + 1].to_string());
+    }
+
+    // Add ellipsis to show skipped frames
+    let skipped = frame_indices.len() - 2;
+    if skipped > 0 {
+        result.push(String::new());
+        result.push(format!("    ... ({} frames omitted) ...", skipped));
+        result.push(String::new());
+    }
+
+    // Get last frame and everything after it (error message)
+    let last_frame = *frame_indices.last().unwrap();
+    for line in lines.iter().skip(last_frame) {
+        result.push(line.to_string());
+    }
+
+    result.join("\n")
 }
 
 /// Machine-readable events for JSON output
@@ -147,18 +264,28 @@ impl Reporter for JsonReporter {
 pub struct HumanReporter {
     /// Maximum width for test names (based on terminal width)
     max_name_width: usize,
+    /// Traceback formatting style
+    traceback_style: TracebackStyle,
 }
 
 impl HumanReporter {
     /// Create a new human reporter with terminal width detection
     pub fn new() -> Self {
+        Self::with_traceback_style(TracebackStyle::Long)
+    }
+
+    /// Create a new human reporter with a specific traceback style
+    pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         // Get terminal width, default to 80 if not available
         let term_width = terminal_size::terminal_size()
             .map(|(w, _)| w.0 as usize)
             .unwrap_or(80);
         // Reserve space for "  " prefix, " ... " suffix, and result (20 chars)
         let max_name_width = term_width.saturating_sub(30).max(20);
-        Self { max_name_width }
+        Self {
+            max_name_width,
+            traceback_style,
+        }
     }
 
     /// Truncate a test ID if it exceeds the maximum width
@@ -185,7 +312,7 @@ impl Reporter for HumanReporter {
 
     fn on_test_finished(
         &mut self,
-        _id: &str,
+        id: &str,
         status: &str,
         duration_ms: u64,
         message: Option<&str>,
@@ -195,9 +322,13 @@ impl Reporter for HumanReporter {
             "fail" => {
                 eprintln!("FAILED ({}ms)", duration_ms);
                 if let Some(msg) = message {
-                    // Indent failure message
-                    for line in msg.lines().take(10) {
-                        eprintln!("    {}", line);
+                    // Format traceback according to style
+                    let formatted = format_traceback(msg, id, self.traceback_style);
+                    if !formatted.is_empty() {
+                        // Indent failure message
+                        for line in formatted.lines().take(20) {
+                            eprintln!("    {}", line);
+                        }
                     }
                 }
             }
@@ -297,11 +428,18 @@ pub struct ProgressReporter {
     total: usize,
     /// Maximum width for test IDs in messages
     max_id_width: usize,
+    /// Traceback formatting style
+    traceback_style: TracebackStyle,
 }
 
 impl ProgressReporter {
     /// Create a new progress reporter with terminal-responsive layout
     pub fn new() -> Self {
+        Self::with_traceback_style(TracebackStyle::Long)
+    }
+
+    /// Create a new progress reporter with a specific traceback style
+    pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         let term_width = get_terminal_width();
 
         // Calculate responsive bar width:
@@ -348,6 +486,7 @@ impl ProgressReporter {
             failures: Vec::new(),
             total: 0,
             max_id_width,
+            traceback_style,
         }
     }
 
@@ -387,10 +526,13 @@ impl Reporter for ProgressReporter {
             "pass" => self.passed += 1,
             "fail" => {
                 self.failed += 1;
-                // Buffer failure for summary
+                // Format and buffer failure for summary
+                let formatted_msg = message
+                    .map(|m| format_traceback(m, id, self.traceback_style))
+                    .unwrap_or_default();
                 self.failures.push(FailureRecord {
                     id: id.to_string(),
-                    message: message.unwrap_or("").to_string(),
+                    message: formatted_msg,
                 });
             }
             "skip" => self.skipped += 1,
@@ -407,15 +549,17 @@ impl Reporter for ProgressReporter {
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
         self.bar.finish_and_clear();
 
-        // Print failure details
-        if !self.failures.is_empty() {
+        // Print failure details (already formatted by traceback style)
+        if !self.failures.is_empty() && self.traceback_style != TracebackStyle::No {
             eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
             for failure in &self.failures {
                 eprintln!("\n{}", failure.id);
                 eprintln!("{}", "-".repeat(failure.id.len().min(70)));
-                // Limit failure message to 20 lines
-                for line in failure.message.lines().take(20) {
-                    eprintln!("{}", line);
+                if !failure.message.is_empty() {
+                    // Limit failure message to 20 lines
+                    for line in failure.message.lines().take(20) {
+                        eprintln!("{}", line);
+                    }
                 }
             }
             eprintln!("{}", "=".repeat(70));
@@ -482,17 +626,25 @@ pub struct DotsReporter {
     skipped: usize,
     failures: Vec<FailureRecord>,
     column: usize,
+    /// Traceback formatting style
+    traceback_style: TracebackStyle,
 }
 
 impl DotsReporter {
     /// Create a new dots reporter
     pub fn new() -> Self {
+        Self::with_traceback_style(TracebackStyle::Long)
+    }
+
+    /// Create a new dots reporter with a specific traceback style
+    pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         Self {
             passed: 0,
             failed: 0,
             skipped: 0,
             failures: Vec::new(),
             column: 0,
+            traceback_style,
         }
     }
 
@@ -537,10 +689,13 @@ impl Reporter for DotsReporter {
             "fail" => {
                 self.failed += 1;
                 self.print_char('F');
-                // Buffer failure for summary
+                // Format and buffer failure for summary
+                let formatted_msg = message
+                    .map(|m| format_traceback(m, id, self.traceback_style))
+                    .unwrap_or_default();
                 self.failures.push(FailureRecord {
                     id: id.to_string(),
-                    message: message.unwrap_or("").to_string(),
+                    message: formatted_msg,
                 });
             }
             "skip" => {
@@ -559,15 +714,17 @@ impl Reporter for DotsReporter {
             eprintln!();
         }
 
-        // Print failure details
-        if !self.failures.is_empty() {
+        // Print failure details (already formatted by traceback style)
+        if !self.failures.is_empty() && self.traceback_style != TracebackStyle::No {
             eprintln!("\n{} FAILURES {}", "=".repeat(30), "=".repeat(30));
             for failure in &self.failures {
                 eprintln!("\n{}", failure.id);
                 eprintln!("{}", "-".repeat(failure.id.len().min(70)));
-                // Limit failure message to 20 lines
-                for line in failure.message.lines().take(20) {
-                    eprintln!("{}", line);
+                if !failure.message.is_empty() {
+                    // Limit failure message to 20 lines
+                    for line in failure.message.lines().take(20) {
+                        eprintln!("{}", line);
+                    }
                 }
             }
             eprintln!("{}", "=".repeat(70));
@@ -847,5 +1004,136 @@ mod tests {
             reporter.max_name_width >= 20,
             "Max name width should be reasonable"
         );
+    }
+
+    // =========================================================================
+    //  Traceback Formatting Tests (0.1.2-C)
+    // =========================================================================
+
+    #[test]
+    fn test_format_traceback_no_style() {
+        let traceback = "Traceback (most recent call last):\n  File \"test.py\", line 10\n    assert False\nAssertionError";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::No);
+        assert!(result.is_empty(), "No style should return empty string");
+    }
+
+    #[test]
+    fn test_format_traceback_long_style() {
+        let traceback = "Traceback (most recent call last):\n  File \"test.py\", line 10\n    assert False\nAssertionError";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Long);
+        assert_eq!(result, traceback, "Long style should return unchanged");
+    }
+
+    #[test]
+    fn test_format_traceback_native_style() {
+        let traceback = "Traceback (most recent call last):\n  File \"test.py\", line 10\n    assert False\nAssertionError";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Native);
+        assert_eq!(result, traceback, "Native style should return unchanged");
+    }
+
+    #[test]
+    fn test_format_traceback_line_style() {
+        let traceback = "Traceback (most recent call last):\n  File \"test.py\", line 10, in test_foo\n    assert False\nAssertionError";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Line);
+        assert!(
+            result.contains("test.py:10"),
+            "Line style should include file:line"
+        );
+        assert!(
+            result.contains("AssertionError"),
+            "Line style should include error message"
+        );
+    }
+
+    #[test]
+    fn test_format_traceback_line_style_extracts_location() {
+        let traceback = r#"Traceback (most recent call last):
+  File "/path/to/test_example.py", line 42, in test_something
+    assert 1 == 2
+AssertionError: 1 != 2"#;
+        let result = super::format_traceback(traceback, "test_something", TracebackStyle::Line);
+        assert!(
+            result.contains("/path/to/test_example.py:42"),
+            "Should extract correct file:line"
+        );
+        assert!(
+            result.contains("AssertionError"),
+            "Should include error message"
+        );
+    }
+
+    #[test]
+    fn test_format_traceback_line_style_fallback() {
+        let traceback = "Simple error without traceback format";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Line);
+        assert!(result.contains("test_foo"), "Should fall back to test_id");
+        assert!(result.contains("Simple error"), "Should include error text");
+    }
+
+    #[test]
+    fn test_format_traceback_short_style_already_short() {
+        let traceback = "File \"test.py\", line 10\nAssertionError";
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Short);
+        assert_eq!(result, traceback, "Short traceback should be unchanged");
+    }
+
+    #[test]
+    fn test_format_traceback_short_style_truncates() {
+        let traceback = r#"Traceback (most recent call last):
+  File "first.py", line 1, in first
+    second()
+  File "second.py", line 2, in second
+    third()
+  File "third.py", line 3, in third
+    fourth()
+  File "fourth.py", line 4, in fourth
+    fifth()
+  File "fifth.py", line 5, in fifth
+    assert False
+AssertionError"#;
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Short);
+        assert!(result.contains("first.py"), "Should include first frame");
+        assert!(result.contains("fifth.py"), "Should include last frame");
+        assert!(result.contains("AssertionError"), "Should include error");
+        assert!(
+            result.contains("frames omitted"),
+            "Should indicate omitted frames"
+        );
+        // Should NOT include middle frames
+        assert!(
+            !result.contains("third.py"),
+            "Should not include middle frame"
+        );
+    }
+
+    #[test]
+    fn test_format_traceback_short_style_two_frames() {
+        let traceback = r#"Traceback (most recent call last):
+  File "first.py", line 1, in first
+    second()
+  File "second.py", line 2, in second
+    assert False
+AssertionError"#;
+        let result = super::format_traceback(traceback, "test_foo", TracebackStyle::Short);
+        // With only 2 frames, should return as-is
+        assert_eq!(result, traceback, "Two-frame traceback should be unchanged");
+    }
+
+    #[test]
+    fn test_progress_reporter_with_traceback_style() {
+        let reporter = ProgressReporter::with_traceback_style(TracebackStyle::Short);
+        assert_eq!(reporter.traceback_style, TracebackStyle::Short);
+    }
+
+    #[test]
+    fn test_dots_reporter_with_traceback_style() {
+        let reporter = DotsReporter::with_traceback_style(TracebackStyle::Line);
+        assert_eq!(reporter.traceback_style, TracebackStyle::Line);
+    }
+
+    #[test]
+    fn test_human_reporter_with_traceback_style() {
+        let reporter = HumanReporter::with_traceback_style(TracebackStyle::No);
+        assert_eq!(reporter.traceback_style, TracebackStyle::No);
     }
 }

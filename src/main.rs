@@ -1,4 +1,4 @@
-use tach_core::config::{self, Cli, Commands, OutputFormat};
+use tach_core::config::{self, Cli, Commands, OutputFormat, TracebackStyle};
 use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity;
@@ -199,17 +199,32 @@ fn main() -> Result<()> {
         let format = cli.format.clone();
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
+        let tb_style = cli.traceback;
 
         return watch::start_watch_loop(&cwd, move || {
-            execute_session(&cwd_clone, &format, &junit_path, &path_clone, false)
+            execute_session(
+                &cwd_clone,
+                &format,
+                &junit_path,
+                &path_clone,
+                false,
+                tb_style,
+            )
         });
     }
 
     // --- SINGLE RUN MODE ---
-    execute_session(&cwd, &cli.format, &cli.junit_xml, &cli.path, cli.coverage)
+    execute_session(
+        &cwd,
+        &cli.format,
+        &cli.junit_xml,
+        &cli.path,
+        cli.coverage,
+        cli.traceback,
+    )
 }
 
-/// Execute a complete test session (discovery → resolution → zygote → run)
+/// Execute a complete test session (discovery -> resolution -> zygote -> run)
 /// This is the reusable function that watch mode calls repeatedly.
 fn execute_session(
     cwd: &PathBuf,
@@ -217,6 +232,7 @@ fn execute_session(
     junit_path: &Option<PathBuf>,
     target_path: &str,
     coverage_enabled: bool,
+    traceback_style: TracebackStyle,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
@@ -228,9 +244,13 @@ fn execute_session(
         OutputFormat::Human => {
             // Use progress bar for interactive terminals, dots for CI
             if ProgressReporter::should_use_progress_bar() {
-                reporters.push(Box::new(ProgressReporter::new()));
+                reporters.push(Box::new(ProgressReporter::with_traceback_style(
+                    traceback_style,
+                )));
             } else {
-                reporters.push(Box::new(DotsReporter::new()));
+                reporters.push(Box::new(DotsReporter::with_traceback_style(
+                    traceback_style,
+                )));
             }
         }
     }

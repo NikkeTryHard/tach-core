@@ -36,6 +36,22 @@ pub enum Verbosity {
     VeryVerbose,
 }
 
+/// Traceback formatting style (pytest-compatible --tb flag)
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq, Copy)]
+pub enum TracebackStyle {
+    /// First and last frames only
+    Short,
+    /// Full traceback with locals (default)
+    #[default]
+    Long,
+    /// Single line per failure (file:line: message)
+    Line,
+    /// Python's default traceback format (unmodified)
+    Native,
+    /// No traceback output
+    No,
+}
+
 /// tach - Hypervisor-Accelerated Python Test Runner
 ///
 /// A drop-in replacement for pytest using userfaultfd snapshots for
@@ -166,6 +182,17 @@ pub struct Cli {
     /// Output format (also: TACH_FORMAT env var)
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
     pub format: OutputFormat,
+
+    /// Traceback formatting style for failures.
+    ///
+    /// Controls how Python tracebacks are displayed:
+    ///   short:  First and last frames only
+    ///   long:   Full traceback (default)
+    ///   line:   Single line per failure (file:line: message)
+    ///   native: Python's default format (unmodified)
+    ///   no:     No traceback output
+    #[arg(long = "tb", value_enum, default_value_t = TracebackStyle::Long, env = "TACH_TB")]
+    pub traceback: TracebackStyle,
 
     // =========================================================================
     // Coverage (pytest-cov compatible)
