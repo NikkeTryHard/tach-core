@@ -407,6 +407,33 @@ PyO3 supports free-threaded Python builds:
 
 **Tach Application**: Future optimization for Python 3.14+ when no-GIL is stable
 
+### PyO3 0.26+ API Migration
+
+> **Important:** PyO3 0.26 renamed GIL APIs for Python 3.13 free-threading compatibility:
+
+| Old API (pre-0.26)                  | New API (0.26+)      | Purpose                               |
+| ----------------------------------- | -------------------- | ------------------------------------- |
+| `Python::with_gil`                  | `Python::attach`     | Attach thread-state to current thread |
+| `Python::allow_threads`             | `Python::detach`     | Detach thread-state (release GIL)     |
+| `pyo3::prepare_freethreaded_python` | `Python::initialize` | Initialize Python                     |
+
+**Modern Example:**
+
+```rust
+use pyo3::prelude::*;
+
+#[pyfunction]
+fn heavy_computation(py: Python<'_>, data: &str) -> usize {
+    // Release GIL during Rust computation
+    py.detach(|| {
+        // CPU-bound work happens here without holding GIL
+        data.lines().count()
+    })
+}
+```
+
+> Source: [PyO3 Migration Guide](https://pyo3.rs/main/migration)
+
 ---
 
 ## 8. Jemalloc Integration for Snapshotting
