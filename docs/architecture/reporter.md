@@ -16,7 +16,7 @@ Tach supports multiple output formats:
 ```mermaid
 flowchart TB
     subgraph Detection["ENVIRONMENT DETECTION"]
-        TTY["atty::is(Stderr)?"]
+        TTY["stderr().is_terminal()?"]
         CI["CI env var?"]
     end
 
@@ -132,7 +132,7 @@ impl ProgressReporter {
 
     /// Check if we should use progress bar (interactive terminal)
     pub fn should_use_progress_bar() -> bool {
-        atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
+        std::io::stderr().is_terminal() && std::env::var("CI").is_err()
     }
 }
 ```
@@ -351,7 +351,7 @@ let mut multi = MultiReporter::new(reporters);
 
 ```rust
 pub fn should_use_progress_bar() -> bool {
-    atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
+    std::io::stderr().is_terminal() && std::env::var("CI").is_err()
 }
 ```
 
