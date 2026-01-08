@@ -21,6 +21,7 @@ use std::time::Instant;
 ///
 /// # Returns
 /// A new string with all ANSI escape sequences and null bytes removed
+#[doc(hidden)] // Public only for fuzz testing, not part of public API
 pub fn strip_ansi_codes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
