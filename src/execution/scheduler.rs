@@ -165,7 +165,7 @@ impl Scheduler {
                 >= self.max_workers
             {
                 // Try to collect a result
-                if let Some((test_name, status, duration_ms, msg)) =
+                if let Some((test_name, status, duration_ms, msg, _memory_rss)) =
                     self.try_collect_result_for_reporter()
                 {
                     reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
@@ -192,7 +192,7 @@ impl Scheduler {
         // Collect remaining results with timeout for crash detection
         let deadline = Instant::now() + Duration::from_secs(10);
         while collected < total && Instant::now() < deadline {
-            if let Some((test_name, status, duration_ms, msg)) =
+            if let Some((test_name, status, duration_ms, msg, _memory_rss)) =
                 self.try_collect_result_for_reporter()
             {
                 reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
@@ -277,10 +277,11 @@ impl Scheduler {
     }
 
     /// Collect result and return formatted data for reporter
-    /// Returns: (test_name, status, duration_ms, message)
+    /// Returns: (test_name, status, duration_ms, message, memory_rss_bytes)
+    #[allow(clippy::type_complexity)]
     fn try_collect_result_for_reporter(
         &self,
-    ) -> Option<(String, &'static str, u64, Option<String>)> {
+    ) -> Option<(String, &'static str, u64, Option<String>, Option<u64>)> {
         let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut len_buf = [0u8; 4];
@@ -326,7 +327,7 @@ impl Scheduler {
                     Some(result.message)
                 };
 
-                return Some((test_name, status, duration_ms, msg));
+                return Some((test_name, status, duration_ms, msg, result.memory_rss_bytes));
             }
         }
         None

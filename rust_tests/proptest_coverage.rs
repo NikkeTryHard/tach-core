@@ -174,6 +174,7 @@ proptest! {
             status,
             duration_ns,
             message: message.clone(),
+            memory_rss_bytes: None,
         };
 
         let serialized = bincode::serde::encode_to_vec(&result, bincode::config::standard()).expect("Failed to serialize");

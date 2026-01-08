@@ -237,6 +237,13 @@ pub struct Cli {
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
 
+    /// Show memory usage for each test.
+    ///
+    /// Displays peak RSS (Resident Set Size) for each test from /proc/{pid}/statm.
+    /// Also shows total peak memory and warns if any test uses > 500MB.
+    #[arg(long)]
+    pub memory: bool,
+
     /// Global timeout in seconds for each test (default: 60).
     ///
     /// Tests running longer than this will be killed with SIGTERM.

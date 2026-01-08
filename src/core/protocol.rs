@@ -71,6 +71,10 @@ pub struct TestResult {
     pub duration_ns: u64,
     /// Truncated to 4KB max
     pub message: String,
+    /// Peak memory usage in bytes (resident set size from /proc/pid/statm)
+    /// None if memory monitoring failed or not available
+    #[serde(default)]
+    pub memory_rss_bytes: Option<u64>,
 }
 
 impl TestResult {
@@ -80,6 +84,7 @@ impl TestResult {
             status: STATUS_PASS,
             duration_ns,
             message: String::new(),
+            memory_rss_bytes: None,
         }
     }
 
@@ -89,6 +94,7 @@ impl TestResult {
             status: STATUS_FAIL,
             duration_ns,
             message: truncate_message(message),
+            memory_rss_bytes: None,
         }
     }
 
@@ -98,6 +104,7 @@ impl TestResult {
             status: STATUS_CRASH,
             duration_ns: 0,
             message: "Worker crashed (EOF on socket)".to_string(),
+            memory_rss_bytes: None,
         }
     }
 
@@ -107,6 +114,7 @@ impl TestResult {
             status: STATUS_TIMEOUT,
             duration_ns,
             message: "Test exceeded timeout limit".to_string(),
+            memory_rss_bytes: None,
         }
     }
 
@@ -139,6 +147,39 @@ impl TestResult {
     pub fn duration_ms(&self) -> f64 {
         self.duration_ns as f64 / 1_000_000.0
     }
+
+    /// Set memory usage (builder pattern)
+    pub fn with_memory(mut self, memory_rss_bytes: Option<u64>) -> Self {
+        self.memory_rss_bytes = memory_rss_bytes;
+        self
+    }
+}
+
+/// Memory usage threshold for warnings (500MB)
+pub const MEMORY_WARNING_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Read resident set size (RSS) from /proc/{pid}/statm
+///
+/// Returns the RSS in bytes, or None if the file cannot be read.
+/// The statm file has format: size resident share text lib data dt
+/// We read the second field (resident) and multiply by page size.
+pub fn read_process_memory_rss(pid: i32) -> Option<u64> {
+    use std::fs;
+
+    // Get page size (usually 4096 bytes)
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    if page_size == 0 {
+        return None;
+    }
+
+    // Read /proc/{pid}/statm
+    let statm_path = format!("/proc/{}/statm", pid);
+    let content = fs::read_to_string(&statm_path).ok()?;
+
+    // Parse the second field (resident pages)
+    let resident_pages: u64 = content.split_whitespace().nth(1)?.parse().ok()?;
+
+    Some(resident_pages * page_size)
 }
 
 fn truncate_message(msg: String) -> String {
@@ -308,5 +349,61 @@ mod tests {
             FixtureInfo::from_scope("db".into(), &FixtureScope::Session).scope,
             "session"
         );
+    }
+
+    #[test]
+    fn test_memory_monitoring_read_own_process() {
+        // Read our own process memory - should always succeed on Linux
+        let pid = std::process::id() as i32;
+        let memory = read_process_memory_rss(pid);
+
+        // Should return Some value on Linux
+        assert!(
+            memory.is_some(),
+            "Should be able to read own process memory"
+        );
+
+        // Memory should be non-zero (we're running)
+        let rss = memory.unwrap();
+        assert!(rss > 0, "Process should have non-zero memory usage");
+
+        // Should be less than 10GB (sanity check for reasonable value)
+        assert!(
+            rss < 10 * 1024 * 1024 * 1024,
+            "Memory should be less than 10GB"
+        );
+    }
+
+    #[test]
+    fn test_memory_monitoring_invalid_pid() {
+        // Reading non-existent process should return None
+        let memory = read_process_memory_rss(-1);
+        assert!(memory.is_none(), "Invalid PID should return None");
+
+        let memory = read_process_memory_rss(999999999);
+        assert!(memory.is_none(), "Non-existent PID should return None");
+    }
+
+    #[test]
+    fn test_memory_warning_threshold() {
+        // Verify constant is 500MB
+        assert_eq!(MEMORY_WARNING_THRESHOLD_BYTES, 500 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_result_with_memory() {
+        let result = TestResult::pass(1, 1000).with_memory(Some(1024 * 1024));
+        assert_eq!(result.memory_rss_bytes, Some(1024 * 1024));
+
+        let result_none = TestResult::pass(2, 2000).with_memory(None);
+        assert_eq!(result_none.memory_rss_bytes, None);
+    }
+
+    #[test]
+    fn test_timeout_status() {
+        let result = TestResult::timeout(1, 60_000_000_000);
+        assert_eq!(result.status, STATUS_TIMEOUT);
+        assert_eq!(result.status_str(), "TIMEOUT");
+        assert_eq!(result.status_icon(), "⏱");
     }
 }

@@ -987,7 +987,7 @@ except Exception as e:
 }
 
 fn run_worker(payload: &TestPayload) -> TestResult {
-    use crate::protocol::STATUS_HARNESS_ERROR;
+    use crate::protocol::{STATUS_HARNESS_ERROR, read_process_memory_rss};
 
     let start = Instant::now();
 
@@ -1014,6 +1014,9 @@ fn run_worker(payload: &TestPayload) -> TestResult {
 
     let duration_ns = start.elapsed().as_nanos() as u64;
 
+    // Capture worker's own memory usage (RSS) after test completes
+    let memory_rss_bytes = read_process_memory_rss(std::process::id() as i32);
+
     match result {
         Ok((status, _, message, thread_leaked)) => {
             // Log thread leak if detected (for visibility)
@@ -1028,6 +1031,7 @@ fn run_worker(payload: &TestPayload) -> TestResult {
                 status,
                 duration_ns,
                 message,
+                memory_rss_bytes,
             }
         }
         Err(e) => TestResult {
@@ -1035,6 +1039,7 @@ fn run_worker(payload: &TestPayload) -> TestResult {
             status: STATUS_HARNESS_ERROR,
             duration_ns,
             message: format!("PyO3 Error: {}", e),
+            memory_rss_bytes,
         },
     }
 }
@@ -1260,6 +1265,7 @@ mod tests {
             status: STATUS_PASS,
             duration_ns: 1_000_000,
             message: String::new(),
+            memory_rss_bytes: None,
         };
         let result_bytes = encode_with_length(&test_result).expect("Failed to encode result");
 
@@ -1328,6 +1334,7 @@ mod tests {
             status: STATUS_PASS,
             duration_ns: 500_000,
             message: String::new(),
+            memory_rss_bytes: None,
         };
         let result_bytes = encode_with_length(&test_result).expect("Failed to encode result");
 
@@ -1835,6 +1842,7 @@ mod tests {
             status: STATUS_PASS,
             duration_ns: 1_234_567,
             message: "Test passed successfully".to_string(),
+            memory_rss_bytes: None,
         };
 
         let encoded = encode_with_length(&result).expect("Encoding should succeed");

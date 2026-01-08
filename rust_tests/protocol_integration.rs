@@ -43,6 +43,7 @@ fn test_serialize_test_result() {
         status: STATUS_PASS,
         duration_ns: 1_000_000_000, // 1 second
         message: String::new(),
+        memory_rss_bytes: None,
     };
 
     let encoded = encode_with_length(&result).expect("Should serialize");
@@ -56,6 +57,7 @@ fn test_serialize_test_result_with_message() {
         status: STATUS_FAIL,
         duration_ns: 500_000_000,
         message: "AssertionError: expected True".to_string(),
+        memory_rss_bytes: None,
     };
 
     let encoded = encode_with_length(&result).expect("Should serialize");
@@ -108,6 +110,7 @@ fn test_roundtrip_test_result() {
         status: STATUS_CRASH,
         duration_ns: 123456789,
         message: "Segmentation fault".to_string(),
+        memory_rss_bytes: None,
     };
 
     let encoded = encode_with_length(&original).expect("Should serialize");
