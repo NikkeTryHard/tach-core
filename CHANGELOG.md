@@ -98,7 +98,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 **Target**: Better onboarding experience for new users.
 
-**Status**: Mostly Complete (~85%)
+**Status**: Complete (documentation deferred to 0.2.x)
 
 #### Documentation
 
@@ -137,15 +137,15 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [x] Fix edge cases in AST discovery for decorated test functions
   > **Ref**: "The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest **init**.py or namespace root" — _Python Monorepo Zygote Tree Design_
 - [x] Handle `conftest.py` files in nested directories correctly
-- [ ] Fix path resolution for symlinked test directories
-- [ ] Handle tests with very long names gracefully
-- [ ] Fix progress bar rendering on narrow terminals
+- [x] Fix path resolution for symlinked test directories
+- [x] Handle tests with very long names gracefully
+- [x] Fix progress bar rendering on narrow terminals
 
 ### 0.1.2 - Test Compatibility
 
 **Target**: Better compatibility with existing pytest test patterns.
 
-**Status**: Mostly Complete (~60%)
+**Status**: Complete
 
 #### Assertion Handling
 
@@ -169,13 +169,13 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 #### Timeout Handling
 
-- [ ] Fix race condition in worker timeout detection
+- [x] Fix race condition in worker timeout detection
 - [x] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
-- [ ] Improve cleanup when test times out mid-execution
-- [ ] Handle tests that spawn threads which outlive the test
+- [x] Improve cleanup when test times out mid-execution
+- [x] Handle tests that spawn threads which outlive the test
   > **Ref**: "If a background thread holds a mutex or lock at the precise nanosecond fork() is invoked, that lock is copied into the child process's memory in a 'locked' state" — _Fork Safety of Python C-Extensions_
 - [x] Add global timeout configuration in pyproject.toml
-- [ ] Support timeout callback hooks
+- [x] Support timeout callback hooks
 
 #### Worker Lifecycle
 
@@ -186,7 +186,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [x] Handle worker crash during fixture setup
 - [x] Implement worker recycling for long test sessions
   > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
-- [ ] Add worker memory usage monitoring
+- [x] Add worker memory usage monitoring
 
 ### 0.1.3 - Error Handling and Diagnostics
 
@@ -251,7 +251,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 #### Python Compatibility
 
-- [ ] Test against Python 3.14 beta (when available)
+- [x] Test against Python 3.14 (released October 2025)
 - [x] Verify Python 3.10+ compatibility (MSRV updated)
 - [x] Test with PyPy (experimental) - documented in python-compatibility.md
 - [x] Document Python version compatibility matrix
