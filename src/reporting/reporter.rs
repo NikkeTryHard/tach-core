@@ -35,10 +35,6 @@ pub use crate::config::TracebackStyle as TbStyle;
 /// Based on empirical measurements across typical Python test suites.
 const PYTEST_COLD_TEST_MS: u64 = 300;
 
-/// Maximum length for values before truncation (Task 2.3)
-#[allow(dead_code)]
-const MAX_VALUE_LENGTH: usize = 200;
-
 // =============================================================================
 // ANSI Color Codes (Tasks 2.4, 2.5)
 // =============================================================================
@@ -59,25 +55,6 @@ const ANSI_RESET: &str = "\x1b[0m";
 // =============================================================================
 // Helper Functions
 // =============================================================================
-
-/// Truncate a value string intelligently (Task 2.3).
-///
-/// Values over MAX_VALUE_LENGTH chars are truncated with "..." and show length.
-/// This helps display large dicts, lists, and strings in a readable way.
-#[allow(dead_code)]
-fn truncate_value(value: &str) -> String {
-    if value.len() <= MAX_VALUE_LENGTH {
-        return value.to_string();
-    }
-
-    let length_info = format!(" (len={})", value.len());
-    let truncate_at = MAX_VALUE_LENGTH
-        .saturating_sub(3)
-        .saturating_sub(length_info.len())
-        .max(10);
-
-    format!("{}...{}", &value[..truncate_at], length_info)
-}
 
 /// Check if stdout/stderr is connected to a terminal that supports colors.
 fn supports_colors() -> bool {
@@ -745,16 +722,29 @@ impl Reporter for ProgressReporter {
             eprintln!("{}", "=".repeat(70));
         }
 
-        // Print summary with colors
+        // Print summary with colors (if supported)
         let duration_secs = duration_ms as f64 / 1000.0;
+        let use_colors = supports_colors();
         if failed > 0 {
+            if use_colors {
+                eprintln!(
+                    "\n{}{} passed, {} failed, {} skipped in {:.2}s{}",
+                    ANSI_RED, passed, failed, skipped, duration_secs, ANSI_RESET
+                );
+            } else {
+                eprintln!(
+                    "\n{} passed, {} failed, {} skipped in {:.2}s",
+                    passed, failed, skipped, duration_secs
+                );
+            }
+        } else if use_colors {
             eprintln!(
-                "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
-                passed, failed, skipped, duration_secs
+                "\n{}{} passed, {} failed, {} skipped in {:.2}s{}",
+                ANSI_GREEN, passed, failed, skipped, duration_secs, ANSI_RESET
             );
         } else {
             eprintln!(
-                "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+                "\n{} passed, {} failed, {} skipped in {:.2}s",
                 passed, failed, skipped, duration_secs
             );
         }
@@ -769,15 +759,21 @@ impl Reporter for ProgressReporter {
             if saved_secs >= 60.0 {
                 let mins = (saved_secs / 60.0).floor() as u64;
                 let secs = saved_secs % 60.0;
+                if use_colors {
+                    eprintln!(
+                        "{}(Saved {}m {:.0}s of initialization overhead){}",
+                        ANSI_CYAN, mins, secs, ANSI_RESET
+                    );
+                } else {
+                    eprintln!("(Saved {}m {:.0}s of initialization overhead)", mins, secs);
+                }
+            } else if use_colors {
                 eprintln!(
-                    "\x1b[36m(Saved {}m {:.0}s of initialization overhead)\x1b[0m",
-                    mins, secs
+                    "{}(Saved {:.1}s of initialization overhead){}",
+                    ANSI_CYAN, saved_secs, ANSI_RESET
                 );
             } else {
-                eprintln!(
-                    "\x1b[36m(Saved {:.1}s of initialization overhead)\x1b[0m",
-                    saved_secs
-                );
+                eprintln!("(Saved {:.1}s of initialization overhead)", saved_secs);
             }
         }
     }
@@ -1317,35 +1313,6 @@ AssertionError"#;
     fn test_human_reporter_with_traceback_style() {
         let reporter = HumanReporter::with_traceback_style(TracebackStyle::No);
         assert_eq!(reporter.traceback_style, TracebackStyle::No);
-    }
-
-    // =========================================================================
-    //  Value Truncation Tests (Task 2.3)
-    // =========================================================================
-
-    #[test]
-    fn test_truncate_value_short() {
-        let short = "short value";
-        assert_eq!(truncate_value(short), short);
-    }
-
-    #[test]
-    fn test_truncate_value_long() {
-        let long = "a".repeat(300);
-        let result = truncate_value(&long);
-        assert!(result.len() < long.len(), "Should be shorter than original");
-        assert!(result.contains("..."), "Should contain ellipsis");
-        assert!(result.contains("(len=300)"), "Should contain length info");
-    }
-
-    #[test]
-    fn test_truncate_value_exact_limit() {
-        let exact = "a".repeat(MAX_VALUE_LENGTH);
-        assert_eq!(
-            truncate_value(&exact),
-            exact,
-            "Exact limit should not be truncated"
-        );
     }
 
     // =========================================================================

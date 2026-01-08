@@ -1206,9 +1206,10 @@ def run_test(file_path: str, node_id: str) -> tuple:
                     exc_value = exc_info.value
                     exc_tb = exc_info.tb
                     msg = _format_enhanced_failure(exc_type, exc_value, exc_tb, msg)
-            except Exception:
+            except Exception as enhance_err:
                 # If enhancement fails, use the original message
-                pass
+                # Debug logging for troubleshooting enhancement failures
+                print(f"[harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
             return (STATUS_FAIL, duration, msg)
 
