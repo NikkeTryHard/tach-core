@@ -198,6 +198,39 @@ impl Scheduler {
                 }
                 collected += 1;
             } else {
+                // Check for crashed workers (process died unexpectedly)
+                let crashed = self.detect_crashed_workers();
+                for (test_id, test_name, slot) in crashed {
+                    // Determine crash phase for better error messages
+                    let crash_phase = {
+                        let workers = self
+                            .active_workers
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if let Some(w) = workers.get(&test_id) {
+                            if w.start_time.elapsed() < Duration::from_secs(1) {
+                                "Worker crashed during fixture setup"
+                            } else {
+                                "Worker crashed during test execution"
+                            }
+                        } else {
+                            "Worker crashed unexpectedly"
+                        }
+                    };
+                    reporter.on_test_finished(&test_name, "crash", 0, Some(crash_phase));
+                    let _ = self
+                        .log_capture
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .read_and_clear(slot);
+                    self.active_workers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&test_id);
+                    failed += 1;
+                    collected += 1;
+                }
+
                 // Check for workers that exceeded their per-test timeout
                 let timed_out = self.get_timed_out_workers();
                 for (test_id, test_name, slot, worker_pid) in timed_out {
@@ -435,6 +468,63 @@ impl Scheduler {
                 w.start_time.elapsed() > timeout
             })
             .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
+            .collect()
+    }
+
+    /// Detect workers whose processes have crashed (died unexpectedly).
+    ///
+    /// Uses kill(pid, 0) to check if the process still exists.
+    /// Returns (test_id, test_name, slot) for each crashed worker.
+    fn detect_crashed_workers(&self) -> Vec<(u32, String, usize)> {
+        let workers = self
+            .active_workers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        workers
+            .iter()
+            .filter(|(_, w)| {
+                if let Some(pid) = w.worker_pid {
+                    // Check if process is still alive using kill(pid, 0)
+                    // Returns Err if process doesn't exist
+                    kill(Pid::from_raw(pid), None).is_err()
+                } else {
+                    false
+                }
+            })
+            .map(|(id, w)| (*id, w.test_name.clone(), w.slot))
+            .collect()
+    }
+
+    /// Check health of active workers and report any crashes.
+    ///
+    /// This method detects workers that have crashed during test execution
+    /// (including fixture setup) and returns information for error reporting.
+    /// The caller should mark these tests as crashed and clean up resources.
+    #[allow(dead_code)]
+    fn check_worker_health(&self) -> Vec<(u32, String, usize, &'static str)> {
+        let crashed = self.detect_crashed_workers();
+        crashed
+            .into_iter()
+            .map(|(id, name, slot)| {
+                // Determine the crash phase based on elapsed time
+                // If very early (< 1s), likely fixture setup; otherwise test execution
+                let phase = {
+                    let workers = self
+                        .active_workers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if let Some(w) = workers.get(&id) {
+                        if w.start_time.elapsed() < Duration::from_secs(1) {
+                            "fixture setup"
+                        } else {
+                            "test execution"
+                        }
+                    } else {
+                        "unknown phase"
+                    }
+                };
+                (id, name, slot, phase)
+            })
             .collect()
     }
 

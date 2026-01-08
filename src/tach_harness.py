@@ -847,6 +847,195 @@ def can_recycle() -> bool:
 
 
 # =============================================================================
+# ENHANCED FAILURE INTROSPECTION (Tasks 2.1, 2.2, 2.6)
+# Captures local variables, source context, and formats assertions better
+# =============================================================================
+
+# Maximum length for individual values before truncation
+_MAX_VALUE_LENGTH = 200
+# Number of context lines to show before/after failing line
+_CONTEXT_LINES = 2
+
+
+def _truncate_value(value: str, max_length: int = _MAX_VALUE_LENGTH) -> str:
+    """Truncate a value representation intelligently.
+
+    For dicts, lists, and long strings, truncate with "..." and show length.
+
+    Args:
+        value: String representation of the value.
+        max_length: Maximum length before truncation.
+
+    Returns:
+        Truncated string with length indicator if truncated.
+    """
+    if len(value) <= max_length:
+        return value
+
+    # Calculate the length indicator
+    length_info = f" (len={len(value)})"
+
+    # Leave room for "..." and length info
+    truncate_at = max_length - 3 - len(length_info)
+    if truncate_at < 10:
+        truncate_at = 10
+
+    return value[:truncate_at] + "..." + length_info
+
+
+def _format_local_value(name: str, value) -> str:
+    """Format a local variable for display.
+
+    Args:
+        name: Variable name.
+        value: Variable value.
+
+    Returns:
+        Formatted string like "name = repr(value)"
+    """
+    try:
+        repr_value = repr(value)
+        return f"    {name} = {_truncate_value(repr_value)}"
+    except Exception:
+        return f"    {name} = <repr failed>"
+
+
+def _get_source_context(filename: str, lineno: int, context_lines: int = _CONTEXT_LINES) -> Optional[str]:
+    """Get source code context around a specific line.
+
+    Args:
+        filename: Path to the source file.
+        lineno: Line number (1-indexed).
+        context_lines: Number of lines before and after to include.
+
+    Returns:
+        Formatted source context with line numbers, or None if unavailable.
+    """
+    import linecache
+
+    lines = []
+    start = max(1, lineno - context_lines)
+    end = lineno + context_lines + 1
+
+    for i in range(start, end):
+        line = linecache.getline(filename, i)
+        if not line:
+            continue
+
+        # Mark the failing line with an arrow
+        prefix = ">>> " if i == lineno else "    "
+        lines.append(f"{prefix}{i:4d} | {line.rstrip()}")
+
+    if lines:
+        return "\n".join(lines)
+    return None
+
+
+def _extract_locals_from_traceback(tb) -> Optional[dict]:
+    """Extract local variables from the deepest frame in a traceback.
+
+    Args:
+        tb: Traceback object.
+
+    Returns:
+        Dict of local variables, or None if extraction fails.
+    """
+    if tb is None:
+        return None
+
+    # Walk to the deepest frame
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+
+    frame = tb.tb_frame
+    if frame is None:
+        return None
+
+    # Filter out dunder variables and modules
+    locals_dict = {}
+    for name, value in frame.f_locals.items():
+        # Skip dunder variables
+        if name.startswith("__") and name.endswith("__"):
+            continue
+        # Skip module imports
+        if isinstance(value, type(sys)):
+            continue
+        # Skip functions and classes (keep instances)
+        if callable(value) and not hasattr(value, "__dict__"):
+            continue
+        locals_dict[name] = value
+
+    return locals_dict if locals_dict else None
+
+
+def _get_failing_location(tb) -> Tuple[Optional[str], Optional[int]]:
+    """Get the filename and line number of the failing assertion.
+
+    Args:
+        tb: Traceback object.
+
+    Returns:
+        Tuple of (filename, lineno) or (None, None) if extraction fails.
+    """
+    if tb is None:
+        return None, None
+
+    # Walk to the deepest frame
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+
+    return tb.tb_frame.f_code.co_filename, tb.tb_lineno
+
+
+def _format_enhanced_failure(
+    exc_type: Type[BaseException],
+    exc_value: BaseException,
+    exc_tb,
+    original_longrepr: str,
+) -> str:
+    """Format an enhanced failure message with locals and source context.
+
+    Args:
+        exc_type: Exception type.
+        exc_value: Exception value.
+        exc_tb: Traceback object.
+        original_longrepr: Original pytest longrepr string.
+
+    Returns:
+        Enhanced failure message with locals and source context.
+    """
+    parts = []
+
+    # Get failing location
+    filename, lineno = _get_failing_location(exc_tb)
+
+    # Add source context if available
+    if filename and lineno:
+        source_context = _get_source_context(filename, lineno)
+        if source_context:
+            parts.append("")
+            parts.append("Source context:")
+            parts.append(source_context)
+
+    # Add local variables
+    locals_dict = _extract_locals_from_traceback(exc_tb)
+    if locals_dict:
+        parts.append("")
+        parts.append("Local variables:")
+        for name, value in sorted(locals_dict.items()):
+            parts.append(_format_local_value(name, value))
+
+    # Add the original traceback
+    if parts:
+        parts.append("")
+        parts.append("Traceback:")
+
+    parts.append(original_longrepr)
+
+    return "\n".join(parts)
+
+
+# =============================================================================
 # ZYGOTE COLLECTION PATTERN
 # Pytest session is initialized ONCE in Zygote, workers inherit via fork CoW
 # =============================================================================
@@ -1006,6 +1195,22 @@ def run_test(file_path: str, node_id: str) -> tuple:
         if failed_report:
             longrepr = failed_report.longrepr
             msg = str(longrepr) if longrepr else "Test failed (no traceback)"
+
+            # Try to enhance the failure message with locals and source context
+            # pytest stores exception info in the report when available
+            try:
+                exc_info = getattr(failed_report, "excinfo", None)
+                if exc_info is not None:
+                    # exc_info is a pytest.ExceptionInfo object
+                    exc_type = exc_info.type
+                    exc_value = exc_info.value
+                    exc_tb = exc_info.tb
+                    msg = _format_enhanced_failure(exc_type, exc_value, exc_tb, msg)
+            except Exception as enhance_err:
+                # If enhancement fails, use the original message
+                # Debug logging for troubleshooting enhancement failures
+                print(f"[harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
+
             return (STATUS_FAIL, duration, msg)
 
         if skipped_report:

@@ -7,6 +7,60 @@
 //!
 //! This eliminates fork() overhead in the hot loop (target: <50μs reset vs ~1ms fork)
 //!
+//! # Research Foundation
+//!
+//! This module implements the memory snapshotting technique described in
+//! _Python Memory Snapshotting with Userfaultfd_:
+//!
+//! > "The kernel iterates over the Page Table Entries corresponding to the
+//! > address range. It clears the 'Present' bit, effectively unmapping the
+//! > physical pages. The next memory access triggers a page fault."
+//!
+//! ## How userfaultfd Works
+//!
+//! 1. **Registration**: We register memory regions with `UFFDIO_REGISTER`.
+//!    The kernel marks these regions as "userfaultfd-managed".
+//!
+//! 2. **Invalidation**: We call `madvise(MADV_DONTNEED)` to discard pages.
+//!    Unlike unmap(), this keeps the virtual address range valid but releases
+//!    the physical pages. The PTEs are cleared (Present bit = 0).
+//!
+//! 3. **Fault Handling**: When the worker accesses an invalidated page:
+//!    - CPU raises a page fault
+//!    - Kernel checks: is this region registered with userfaultfd?
+//!    - If yes: instead of SIGSEGV, block the thread and notify the UFFD owner
+//!    - Supervisor receives fault notification via `read()` on UFFD fd
+//!
+//! 4. **Page Restoration**: Supervisor copies the golden page via `UFFDIO_COPY`:
+//!    - `uffd.copy(src_data, dst_addr, len, wake=true)`
+//!    - Kernel allocates a new physical page, copies data, updates PTE
+//!    - Worker thread is unblocked and resumes execution
+//!
+//! ## MADV_DONTNEED vs MADV_FREE
+//!
+//! We use MADV_DONTNEED (not MADV_FREE) because:
+//! - MADV_DONTNEED: Immediately discards pages, next access triggers fault
+//! - MADV_FREE: Marks pages as "reclaimable", but kernel may keep them
+//!
+//! For snapshot reset, we need deterministic behavior - MADV_DONTNEED guarantees
+//! the page will fault on next access.
+//!
+//! ## Why jemalloc tcache Flush is Required
+//!
+//! Python 3.13+ uses mimalloc (or jemalloc in some builds), which maintains
+//! per-thread caches (tcache). These caches store pointers to memory that
+//! will be invalidated by MADV_DONTNEED.
+//!
+//! If we don't flush the tcache before reset:
+//! 1. tcache contains pointer P to heap block B
+//! 2. MADV_DONTNEED invalidates B
+//! 3. Allocator returns P from tcache (cache hit, no fault!)
+//! 4. Worker writes to P, corrupting restored memory
+//!
+//! Solution: Call `mallctl("thread.tcache.flush")` before MADV_DONTNEED.
+//! This empties the tcache, ensuring all allocations go through the main heap
+//! (which will trigger proper page faults on invalidated pages).
+//!
 //! # ELF Segment Registration
 //!
 //! For correct snapshot/restore of Python's global state (small_ints, singletons),
@@ -759,7 +813,7 @@ pub fn restore_full_vectorized(
 /// Parse /proc/{pid}/maps to extract memory regions
 ///
 /// Format: start-end perms offset dev inode pathname
-/// Example: 7f1234560000-7f1234580000 rw-p 00000000 00:00 0 [heap]
+/// Example: `7f1234560000-7f1234580000 rw-p 00000000 00:00 0 [heap]`
 pub fn parse_memory_maps(pid: Pid) -> Result<Vec<MemoryRegion>> {
     let maps_path = format!("/proc/{}/maps", pid);
     let content =
@@ -1682,7 +1736,7 @@ impl SnapshotManager {
         loop {
             match worker.uffd.read_event() {
                 Ok(Some(Event::Pagefault { addr, .. })) => {
-                    let fault_addr = addr.addr();
+                    let fault_addr = addr as usize;
                     eprintln!(
                         "[snapshot] UFFD_EVENT_PAGEFAULT at {:x} for PID {}",
                         fault_addr, pid

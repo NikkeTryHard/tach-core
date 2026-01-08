@@ -1,0 +1,26 @@
+[project]
+name = "tach-django-example"
+version = "0.1.0"
+description = "Example Django project demonstrating Tach test runner"
+requires-python = ">=3.10"
+dependencies = [
+    "django>=4.2",
+    "pytest>=7.0",
+    "pytest-django>=4.5",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "myapp.settings"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.tach]
+test_pattern = "test_*.py"
+timeout = 30
+workers = 4
+
+[tool.tach.coverage]
+enabled = false
+source = ["myapp"]
+omit = ["**/tests/*", "**/migrations/*"]

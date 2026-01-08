@@ -36,8 +36,138 @@ pub use crate::config::TracebackStyle as TbStyle;
 const PYTEST_COLD_TEST_MS: u64 = 300;
 
 // =============================================================================
+// ANSI Color Codes (Tasks 2.4, 2.5)
+// =============================================================================
+
+/// ANSI escape code for cyan (file paths)
+const ANSI_CYAN: &str = "\x1b[36m";
+/// ANSI escape code for yellow (line numbers)
+const ANSI_YELLOW: &str = "\x1b[33m";
+/// ANSI escape code for green (function names)
+const ANSI_GREEN: &str = "\x1b[32m";
+/// ANSI escape code for red (error messages)
+const ANSI_RED: &str = "\x1b[31m";
+/// ANSI escape code for bold red (failing assertion line)
+const ANSI_BOLD_RED: &str = "\x1b[1;31m";
+/// ANSI escape code for reset
+const ANSI_RESET: &str = "\x1b[0m";
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
+
+/// Check if stdout/stderr is connected to a terminal that supports colors.
+fn supports_colors() -> bool {
+    std::io::stderr().is_terminal() && std::env::var("NO_COLOR").is_err()
+}
+
+/// Colorize a single traceback line based on its content (Tasks 2.4, 2.5).
+///
+/// Color scheme:
+/// - File paths: cyan
+/// - Line numbers: yellow
+/// - Function names: green
+/// - Error messages (exceptions): red
+/// - Failing assertion line (>>> prefix): bold red
+fn colorize_traceback_line(line: &str, use_colors: bool) -> String {
+    if !use_colors {
+        return line.to_string();
+    }
+
+    // Check for failing assertion line marker (from Python harness)
+    if line.trim_start().starts_with(">>>") {
+        return format!("{}{}{}", ANSI_BOLD_RED, line, ANSI_RESET);
+    }
+
+    // Check for Python traceback frame: File "path", line N, in func
+    if line.contains("File \"") && line.contains(", line ") {
+        let mut result = String::new();
+        let mut remaining = line;
+
+        // Find and color the file path
+        if let Some(file_start) = remaining.find("File \"") {
+            result.push_str(&remaining[..file_start]);
+            result.push_str("File \"");
+            remaining = &remaining[file_start + 6..];
+
+            if let Some(file_end) = remaining.find('"') {
+                // Color the file path cyan
+                result.push_str(ANSI_CYAN);
+                result.push_str(&remaining[..file_end]);
+                result.push_str(ANSI_RESET);
+                result.push('"');
+                remaining = &remaining[file_end + 1..];
+
+                // Find and color the line number
+                if let Some(line_start) = remaining.find(", line ") {
+                    result.push_str(&remaining[..line_start]);
+                    result.push_str(", line ");
+                    remaining = &remaining[line_start + 7..];
+
+                    // Find the end of the line number
+                    let line_end = remaining
+                        .find(|c: char| !c.is_ascii_digit())
+                        .unwrap_or(remaining.len());
+                    // Color the line number yellow
+                    result.push_str(ANSI_YELLOW);
+                    result.push_str(&remaining[..line_end]);
+                    result.push_str(ANSI_RESET);
+                    remaining = &remaining[line_end..];
+
+                    // Find and color the function name
+                    if let Some(in_start) = remaining.find(", in ") {
+                        result.push_str(&remaining[..in_start]);
+                        result.push_str(", in ");
+                        remaining = &remaining[in_start + 5..];
+
+                        // Color the function name green
+                        result.push_str(ANSI_GREEN);
+                        result.push_str(remaining.trim_end());
+                        result.push_str(ANSI_RESET);
+                        return result;
+                    }
+                }
+            }
+        }
+
+        // If parsing failed, return the remaining text
+        result.push_str(remaining);
+        return result;
+    }
+
+    // Check for error/exception lines (e.g., "AssertionError: ...")
+    if line
+        .trim_start()
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+        && (line.contains("Error") || line.contains("Exception") || line.contains("Failed"))
+    {
+        return format!("{}{}{}", ANSI_RED, line, ANSI_RESET);
+    }
+
+    // Check for section headers from enhanced failure (e.g., "Source context:", "Local variables:")
+    let trimmed = line.trim();
+    if trimmed == "Source context:" || trimmed == "Local variables:" || trimmed == "Traceback:" {
+        return format!("{}{}{}", ANSI_YELLOW, line, ANSI_RESET);
+    }
+
+    line.to_string()
+}
+
+/// Colorize an entire traceback message (Tasks 2.4, 2.5).
+fn colorize_traceback(traceback: &str, use_colors: bool) -> String {
+    if !use_colors {
+        return traceback.to_string();
+    }
+
+    traceback
+        .lines()
+        .map(|line| colorize_traceback_line(line, use_colors))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Truncate a test ID to fit within the given maximum width.
 ///
@@ -333,16 +463,23 @@ impl Reporter for HumanReporter {
         duration_ms: u64,
         message: Option<&str>,
     ) {
+        let use_colors = supports_colors();
         match status {
             "pass" => eprintln!("ok ({}ms)", duration_ms),
             "fail" => {
-                eprintln!("FAILED ({}ms)", duration_ms);
+                if use_colors {
+                    eprintln!("{}FAILED{} ({}ms)", ANSI_RED, ANSI_RESET, duration_ms);
+                } else {
+                    eprintln!("FAILED ({}ms)", duration_ms);
+                }
                 if let Some(msg) = message {
                     // Format traceback according to style
                     let formatted = format_traceback(msg, id, self.traceback_style);
                     if !formatted.is_empty() {
+                        // Apply colorization if terminal supports it
+                        let colorized = colorize_traceback(&formatted, use_colors);
                         // Indent failure message
-                        for line in formatted.lines().take(20) {
+                        for line in colorized.lines().take(20) {
                             eprintln!("    {}", line);
                         }
                     }
@@ -545,9 +682,13 @@ impl Reporter for ProgressReporter {
             "pass" => self.passed += 1,
             "fail" => {
                 self.failed += 1;
-                // Format and buffer failure for summary
+                // Format and buffer failure for summary with colorization
+                let use_colors = supports_colors();
                 let formatted_msg = message
-                    .map(|m| format_traceback(m, id, self.traceback_style))
+                    .map(|m| {
+                        let formatted = format_traceback(m, id, self.traceback_style);
+                        colorize_traceback(&formatted, use_colors)
+                    })
                     .unwrap_or_default();
                 self.failures.push(FailureRecord {
                     id: id.to_string(),
@@ -584,16 +725,29 @@ impl Reporter for ProgressReporter {
             eprintln!("{}", "=".repeat(70));
         }
 
-        // Print summary with colors
+        // Print summary with colors (if supported)
         let duration_secs = duration_ms as f64 / 1000.0;
+        let use_colors = supports_colors();
         if failed > 0 {
+            if use_colors {
+                eprintln!(
+                    "\n{}{} passed, {} failed, {} skipped in {:.2}s{}",
+                    ANSI_RED, passed, failed, skipped, duration_secs, ANSI_RESET
+                );
+            } else {
+                eprintln!(
+                    "\n{} passed, {} failed, {} skipped in {:.2}s",
+                    passed, failed, skipped, duration_secs
+                );
+            }
+        } else if use_colors {
             eprintln!(
-                "\n\x1b[31m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
-                passed, failed, skipped, duration_secs
+                "\n{}{} passed, {} failed, {} skipped in {:.2}s{}",
+                ANSI_GREEN, passed, failed, skipped, duration_secs, ANSI_RESET
             );
         } else {
             eprintln!(
-                "\n\x1b[32m{} passed, {} failed, {} skipped in {:.2}s\x1b[0m",
+                "\n{} passed, {} failed, {} skipped in {:.2}s",
                 passed, failed, skipped, duration_secs
             );
         }
@@ -608,15 +762,21 @@ impl Reporter for ProgressReporter {
             if saved_secs >= 60.0 {
                 let mins = (saved_secs / 60.0).floor() as u64;
                 let secs = saved_secs % 60.0;
+                if use_colors {
+                    eprintln!(
+                        "{}(Saved {}m {:.0}s of initialization overhead){}",
+                        ANSI_CYAN, mins, secs, ANSI_RESET
+                    );
+                } else {
+                    eprintln!("(Saved {}m {:.0}s of initialization overhead)", mins, secs);
+                }
+            } else if use_colors {
                 eprintln!(
-                    "\x1b[36m(Saved {}m {:.0}s of initialization overhead)\x1b[0m",
-                    mins, secs
+                    "{}(Saved {:.1}s of initialization overhead){}",
+                    ANSI_CYAN, saved_secs, ANSI_RESET
                 );
             } else {
-                eprintln!(
-                    "\x1b[36m(Saved {:.1}s of initialization overhead)\x1b[0m",
-                    saved_secs
-                );
+                eprintln!("(Saved {:.1}s of initialization overhead)", saved_secs);
             }
         }
     }
@@ -707,9 +867,13 @@ impl Reporter for DotsReporter {
             "fail" => {
                 self.failed += 1;
                 self.print_char('F');
-                // Format and buffer failure for summary
+                // Format and buffer failure for summary with colorization
+                let use_colors = supports_colors();
                 let formatted_msg = message
-                    .map(|m| format_traceback(m, id, self.traceback_style))
+                    .map(|m| {
+                        let formatted = format_traceback(m, id, self.traceback_style);
+                        colorize_traceback(&formatted, use_colors)
+                    })
                     .unwrap_or_default();
                 self.failures.push(FailureRecord {
                     id: id.to_string(),
@@ -1152,5 +1316,76 @@ AssertionError"#;
     fn test_human_reporter_with_traceback_style() {
         let reporter = HumanReporter::with_traceback_style(TracebackStyle::No);
         assert_eq!(reporter.traceback_style, TracebackStyle::No);
+    }
+
+    // =========================================================================
+    //  Colorization Tests (Tasks 2.4, 2.5)
+    // =========================================================================
+
+    #[test]
+    fn test_colorize_traceback_line_disabled() {
+        let line = "  File \"test.py\", line 10, in test_func";
+        let result = colorize_traceback_line(line, false);
+        assert_eq!(result, line, "No colors when disabled");
+    }
+
+    #[test]
+    fn test_colorize_traceback_line_file_path() {
+        let line = "  File \"test.py\", line 10, in test_func";
+        let result = colorize_traceback_line(line, true);
+        assert!(result.contains(ANSI_CYAN), "File path should be cyan");
+        assert!(result.contains(ANSI_YELLOW), "Line number should be yellow");
+        assert!(result.contains(ANSI_GREEN), "Function name should be green");
+        assert!(result.contains(ANSI_RESET), "Should have reset codes");
+    }
+
+    #[test]
+    fn test_colorize_traceback_line_error_message() {
+        let line = "AssertionError: expected True";
+        let result = colorize_traceback_line(line, true);
+        assert!(result.contains(ANSI_RED), "Error should be red");
+        assert!(result.contains(ANSI_RESET), "Should have reset code");
+    }
+
+    #[test]
+    fn test_colorize_traceback_line_failing_assertion() {
+        let line = ">>>   10 | assert x == y";
+        let result = colorize_traceback_line(line, true);
+        assert!(
+            result.contains(ANSI_BOLD_RED),
+            "Failing line should be bold red"
+        );
+    }
+
+    #[test]
+    fn test_colorize_traceback_line_section_header() {
+        let line = "Source context:";
+        let result = colorize_traceback_line(line, true);
+        assert!(
+            result.contains(ANSI_YELLOW),
+            "Section header should be yellow"
+        );
+    }
+
+    #[test]
+    fn test_colorize_traceback_full() {
+        let traceback = "Source context:\n>>>   10 | assert x == y\nAssertionError: x != y";
+        let result = colorize_traceback(traceback, true);
+        assert!(
+            result.contains(ANSI_YELLOW),
+            "Should contain yellow for header"
+        );
+        assert!(
+            result.contains(ANSI_BOLD_RED),
+            "Should contain bold red for failing line"
+        );
+        assert!(result.contains(ANSI_RED), "Should contain red for error");
+    }
+
+    #[test]
+    fn test_colorize_traceback_disabled() {
+        let traceback = "Source context:\n>>>   10 | assert x == y\nAssertionError";
+        let result = colorize_traceback(traceback, false);
+        assert_eq!(result, traceback, "No colors when disabled");
     }
 }

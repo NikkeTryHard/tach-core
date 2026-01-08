@@ -1,5 +1,72 @@
 //! Dependency Resolution & Graph Construction
-//! Resolves fixture dependencies and builds execution order.
+//!
+//! This module resolves pytest fixture dependencies and builds the execution order
+//! for test fixtures. It implements the fixture lookup algorithm described in the
+//! _Python Monorepo Zygote Tree Design_ research paper:
+//!
+//! > "The Rust resolver calculates the module's fully qualified name based on its
+//! > file path relative to the nearest __init__.py or namespace root."
+//!
+//! # Fixture Resolution Algorithm
+//!
+//! Pytest fixtures follow a specific lookup order:
+//!
+//! 1. **Class-scoped fixtures** - Fixtures defined within a test class
+//! 2. **Module-local fixtures** - Fixtures defined in the same file as the test
+//! 3. **Conftest hierarchy** - Walk UP the directory tree, checking each conftest.py
+//!
+//! ```text
+//! project/
+//! ├── conftest.py           <- Level 3 (root)
+//! ├── tests/
+//! │   ├── conftest.py       <- Level 2
+//! │   └── subdir/
+//! │       ├── conftest.py   <- Level 1 (closest)
+//! │       └── test_foo.py   <- Test file
+//! ```
+//!
+//! For `test_foo.py`, fixtures are searched in order:
+//! 1. `tests/subdir/conftest.py` (closest)
+//! 2. `tests/conftest.py`
+//! 3. `conftest.py` (root)
+//!
+//! **Inner conftest.py files take precedence over outer ones** - if a fixture
+//! with the same name exists at multiple levels, the closest one wins.
+//!
+//! # Dependency Ordering (Topological Sort)
+//!
+//! Fixtures may depend on other fixtures. We use **DFS with cycle detection**
+//! to produce a topological ordering (dependencies come before dependents):
+//!
+//! ```text
+//! test_foo depends on: [db]
+//! db depends on: [connection]
+//! connection depends on: [base]
+//!
+//! Resolution order (DFS post-order):
+//!   1. Resolve 'db' -> push to stack
+//!   2. Resolve 'connection' -> push to stack
+//!   3. Resolve 'base' -> no deps -> add to result: [base]
+//!   4. Pop 'connection' -> add to result: [base, connection]
+//!   5. Pop 'db' -> add to result: [base, connection, db]
+//! ```
+//!
+//! # Cycle Detection
+//!
+//! We maintain a "recursion stack" during DFS. If we encounter a fixture that's
+//! already on the stack, we've found a cycle:
+//!
+//! ```text
+//! a -> b -> c -> a  (cycle detected when 'a' is on stack and we try to add it again)
+//! ```
+//!
+//! Cycles produce a `ResolutionError::CyclicDependency` with the full cycle path.
+//!
+//! # Pytest Builtin Fixtures
+//!
+//! Some fixtures are provided by pytest at runtime (e.g., `tmp_path`, `monkeypatch`).
+//! These are NOT discovered statically - we skip them during resolution and let
+//! pytest inject them at runtime.
 
 use crate::discovery::{DiscoveryResult, FixtureDefinition, FixtureScope, TestCase};
 use std::collections::{HashMap, HashSet};
@@ -73,7 +140,37 @@ fn is_builtin_fixture(name: &str) -> bool {
     PYTEST_BUILTINS.contains(&name)
 }
 
-/// Registry holding all discovered fixtures
+/// Registry holding all discovered fixtures.
+///
+/// The registry organizes fixtures into three tiers based on their scope and origin:
+///
+/// 1. **Class-scoped fixtures** (`class_scoped`): Fixtures defined inside test classes.
+///    These have the highest priority and are only visible to tests within that class.
+///
+/// 2. **Module-local fixtures** (`local`): Fixtures defined in test files (not conftest.py).
+///    These are only visible to tests within the same file.
+///
+/// 3. **Conftest fixtures** (`conftest`): Fixtures defined in conftest.py files.
+///    These are organized by directory and follow Python's namespace inheritance rules.
+///
+/// # Conftest Hierarchy
+///
+/// The `conftest` map uses directory paths as keys, enabling the "walk up" lookup:
+///
+/// ```text
+/// conftest: {
+///     ""        -> {db: (fixture, "./conftest.py")},         // root
+///     "tests"   -> {setup: (fixture, "tests/conftest.py")},  // level 1
+///     "tests/unit" -> {...}                                   // level 2
+/// }
+/// ```
+///
+/// When looking up a fixture for `tests/unit/test_foo.py`, we search:
+/// 1. `tests/unit` (closest)
+/// 2. `tests`
+/// 3. `` (root)
+///
+/// First match wins.
 pub struct FixtureRegistry {
     /// Conftest fixtures by directory path
     /// Key: directory containing conftest.py
