@@ -1137,16 +1137,66 @@ mod tests {
     #[test]
     fn test_check_kernel_version() {
         let result = check_kernel_version();
-        // Should produce a valid result (pass or fail)
-        assert!(!result.name.is_empty());
-        assert!(!result.message.is_empty());
+        // Verify name is "Kernel Version"
+        assert_eq!(result.name, "Kernel Version");
+        // Message should contain version numbers (e.g., "6.6.87" or error info)
+        assert!(
+            result.message.contains('.') || result.message.contains("Cannot"),
+            "Kernel version message should contain version numbers or error: {}",
+            result.message
+        );
+        // On Linux systems, kernel check should either pass (5.15+) or fail with specific reason
+        if result.passed {
+            // If passed, message should indicate version meets requirement
+            assert!(
+                result.message.contains("5.15+"),
+                "Passing kernel check should mention 5.15+ requirement: {}",
+                result.message
+            );
+        }
     }
 
     #[test]
     fn test_check_physics_heartbeat() {
         let result = check_physics_heartbeat();
+
+        // Verify result name
+        assert_eq!(result.name, "Physics Heartbeat");
+
         // Physics heartbeat should always pass (it's just a memcpy test)
-        assert!(result.passed);
+        assert!(
+            result.passed,
+            "Physics heartbeat should pass: {}",
+            result.message
+        );
+
+        // Verify message format: "100-cycle restore OK (X.XXms)"
+        assert!(
+            result.message.contains("100-cycle restore OK"),
+            "Message should contain expected text: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("ms)"),
+            "Message should contain timing in ms: {}",
+            result.message
+        );
+
+        // Parse and validate timing is sensible (between 0ms and 1000ms)
+        // Note: On fast systems, 100 memcpy cycles can complete in <1ms
+        // Format is: "100-cycle restore OK (X.XXms)"
+        if let Some(start) = result.message.find('(') {
+            if let Some(end) = result.message.find("ms)") {
+                let timing_str = &result.message[start + 1..end];
+                if let Ok(timing_ms) = timing_str.parse::<f64>() {
+                    assert!(
+                        (0.0..1000.0).contains(&timing_ms),
+                        "Timing should be between 0 and 1000ms, got {}ms",
+                        timing_ms
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1208,17 +1258,69 @@ mod tests {
 
     #[test]
     fn test_check_fd_limits() {
-        // This should work on any Linux system
         let result = check_fd_limits();
-        // Should produce a valid result (pass or warn)
-        assert!(!result.name.is_empty());
-        assert!(!result.message.is_empty());
-        // FD limits should not be required (warn, not fail)
-        // The result should contain numeric information
+        // Verify the diagnostic name is correct
+        assert_eq!(result.name, "File Descriptors");
+        // Message should not be empty
         assert!(
-            result.message.contains("soft=") || result.message.contains("Could not"),
-            "FD limit result should contain soft limit or error message"
+            !result.message.is_empty(),
+            "FD limit message should not be empty"
         );
+
+        // If the check was able to read limits, verify the format and values
+        if result.message.contains("soft=") {
+            // Parse soft limit from message like "soft=65536, hard=65536"
+            let parts: Vec<&str> = result.message.split(',').collect();
+            assert!(!parts.is_empty(), "Should have at least soft limit");
+
+            // Extract soft limit value
+            let soft_part = parts[0];
+            assert!(soft_part.starts_with("soft="), "Should start with soft=");
+            let soft_value: u64 = soft_part
+                .strip_prefix("soft=")
+                .unwrap()
+                .trim()
+                .parse()
+                .expect("Soft limit should be a number");
+
+            // Soft limit should be positive and reasonable (at least process can run)
+            assert!(
+                soft_value > 0,
+                "Soft limit should be positive: {}",
+                soft_value
+            );
+            assert!(
+                soft_value <= 10_000_000,
+                "Soft limit should be reasonable: {}",
+                soft_value
+            );
+
+            // If there's a hard limit, verify it too
+            if parts.len() > 1 && parts[1].contains("hard=") {
+                let hard_part = parts[1].trim();
+                let hard_value: u64 = hard_part
+                    .strip_prefix("hard=")
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .expect("Hard limit should be a number");
+
+                // Hard limit should be >= soft limit
+                assert!(
+                    hard_value >= soft_value,
+                    "Hard limit {} should be >= soft limit {}",
+                    hard_value,
+                    soft_value
+                );
+            }
+        } else {
+            // If we couldn't read limits, should indicate why
+            assert!(
+                result.message.contains("Could not") || result.message.contains("recommend"),
+                "Failed FD check should explain why: {}",
+                result.message
+            );
+        }
     }
 
     #[test]
@@ -1236,21 +1338,59 @@ mod tests {
 
     #[test]
     fn test_check_shared_memory() {
-        // This should work on any Linux system with /dev/shm
         let result = check_shared_memory();
-        // Should produce a valid result
-        assert!(!result.name.is_empty());
-        assert!(!result.message.is_empty());
-        // Should be checking for /dev/shm
+        // Verify the diagnostic name is correct
+        assert_eq!(result.name, "Shared Memory");
+        // Message should not be empty
         assert!(
-            result.message.contains("/dev/shm")
-                || result.message.contains("Shared Memory")
-                || result.message.contains("available")
-                || result.message.contains("writable")
-                || result.message.contains("not found"),
-            "Shared memory result should reference /dev/shm or availability: {}",
-            result.message
+            !result.message.is_empty(),
+            "Shared memory message should not be empty"
         );
+
+        // Check that the result correctly reflects /dev/shm status
+        let shm_exists = std::path::Path::new("/dev/shm").exists();
+
+        if shm_exists {
+            // If /dev/shm exists, result should reference it or indicate availability
+            assert!(
+                result.message.contains("/dev/shm")
+                    || result.message.contains("available")
+                    || result.message.contains("writable"),
+                "When /dev/shm exists, message should reference it: {}",
+                result.message
+            );
+
+            // If passed with available space, verify MB is reported
+            if result.passed && result.message.contains("MB") {
+                // Extract the MB value and verify it's sensible
+                // Message format: "/dev/shm available (123MB free)"
+                if let Some(mb_start) = result.message.find('(') {
+                    if let Some(mb_end) = result.message.find("MB") {
+                        let mb_str = &result.message[mb_start + 1..mb_end];
+                        if let Ok(mb_value) = mb_str.parse::<u64>() {
+                            // Shared memory should be at least 1MB, at most reasonable (1TB)
+                            assert!(
+                                (1..=1_000_000).contains(&mb_value),
+                                "Shared memory size should be sensible: {}MB",
+                                mb_value
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // If /dev/shm doesn't exist, should report "not found"
+            assert!(
+                result.message.contains("not found"),
+                "When /dev/shm missing, should say 'not found': {}",
+                result.message
+            );
+            // Should not pass without /dev/shm
+            assert!(
+                !result.passed || !result.required,
+                "Should not pass or should be a warning when /dev/shm missing"
+            );
+        }
     }
 
     #[test]
