@@ -90,8 +90,8 @@ fn topological_sort(graph: &HashMap<String, Vec<String>>) -> Option<Vec<String>>
         for dep in deps {
             all_nodes.insert(dep.clone());
             *in_degree.entry(dep.clone()).or_insert(0) += 0; // Ensure exists
-                                                             // Wait, this is backwards for fixture deps
-                                                             // Fixture A depends on B means B comes first
+            // Wait, this is backwards for fixture deps
+            // Fixture A depends on B means B comes first
         }
     }
 
@@ -105,7 +105,7 @@ fn topological_sort(graph: &HashMap<String, Vec<String>>) -> Option<Vec<String>>
     // Kahn's algorithm
     let mut queue: Vec<String> = in_degree
         .iter()
-        .filter(|(_, &d)| d == 0)
+        .filter(|&(_, &d)| d == 0)
         .map(|(n, _)| n.clone())
         .collect();
 

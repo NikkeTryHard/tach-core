@@ -4,7 +4,7 @@
 //! from ring buffer initialization through report generation.
 
 use std::mem::size_of;
-use tach_core::coverage::{CoverageEntry, MappingEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE};
+use tach_core::coverage::{CoverageEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE, MappingEntry};
 
 // =============================================================================
 // Coverage Entry Tests

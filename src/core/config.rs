@@ -584,17 +584,26 @@ pub fn load_env_from_pyproject(root: &Path) {
         }
     };
 
-    if let Some(tool) = pyproject.tool {
-        if let Some(env_vars) = tool.pytest_env {
-            for (key, value) in env_vars {
-                // SECURITY: Block dangerous environment variables
-                if ENV_DENYLIST.iter().any(|&blocked| key.eq_ignore_ascii_case(blocked)) {
-                    eprintln!("[config] WARNING: Blocked dangerous env var from pyproject.toml: {}", key);
-                    continue;
-                }
-                std::env::set_var(&key, &value);
-                eprintln!("[config] Set env: {}={}", key, value);
+    if let Some(tool) = pyproject.tool
+        && let Some(env_vars) = tool.pytest_env
+    {
+        for (key, value) in env_vars {
+            // SECURITY: Block dangerous environment variables
+            if ENV_DENYLIST
+                .iter()
+                .any(|&blocked| key.eq_ignore_ascii_case(blocked))
+            {
+                eprintln!(
+                    "[config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
+                    key
+                );
+                continue;
             }
+            // SAFETY: set_var is unsafe in Rust 2024 due to potential data races
+            // in multi-threaded environments. This is called during config loading
+            // which happens before any worker threads are spawned.
+            unsafe { std::env::set_var(&key, &value) };
+            eprintln!("[config] Set env: {}={}", key, value);
         }
     }
 }
@@ -658,8 +667,8 @@ TEST_COVERAGE_VAR_2 = "value2"
         assert_eq!(std::env::var("TEST_COVERAGE_VAR_2").unwrap(), "value2");
 
         // Cleanup
-        std::env::remove_var("TEST_COVERAGE_VAR_1");
-        std::env::remove_var("TEST_COVERAGE_VAR_2");
+        unsafe { std::env::remove_var("TEST_COVERAGE_VAR_1") };
+        unsafe { std::env::remove_var("TEST_COVERAGE_VAR_2") };
     }
 
     #[test]
@@ -857,8 +866,8 @@ SAFE_VAR = "allowed"
         std::fs::write(&config_path, toml_content).unwrap();
 
         // Clear any existing value
-        std::env::remove_var("LD_PRELOAD");
-        std::env::remove_var("SAFE_VAR");
+        unsafe { std::env::remove_var("LD_PRELOAD") };
+        unsafe { std::env::remove_var("SAFE_VAR") };
 
         load_env_from_pyproject(temp_dir.path());
 
@@ -869,7 +878,7 @@ SAFE_VAR = "allowed"
         assert_eq!(std::env::var("SAFE_VAR").unwrap(), "allowed");
 
         // Cleanup
-        std::env::remove_var("SAFE_VAR");
+        unsafe { std::env::remove_var("SAFE_VAR") };
     }
 
     #[test]
@@ -883,7 +892,7 @@ PYTHONPATH = "/malicious/path"
 "#;
         std::fs::write(&config_path, toml_content).unwrap();
 
-        std::env::remove_var("PYTHONPATH");
+        unsafe { std::env::remove_var("PYTHONPATH") };
         load_env_from_pyproject(temp_dir.path());
 
         // PYTHONPATH should NOT be set (blocked)
@@ -901,7 +910,7 @@ PYTHONMALLOC = "malloc"
 "#;
         std::fs::write(&config_path, toml_content).unwrap();
 
-        std::env::remove_var("PYTHONMALLOC");
+        unsafe { std::env::remove_var("PYTHONMALLOC") };
         load_env_from_pyproject(temp_dir.path());
 
         // PYTHONMALLOC should NOT be set (blocked - critical for jemalloc)
@@ -920,8 +929,8 @@ Ld_Library_Path = "/malicious/path"
 "#;
         std::fs::write(&config_path, toml_content).unwrap();
 
-        std::env::remove_var("ld_preload");
-        std::env::remove_var("Ld_Library_Path");
+        unsafe { std::env::remove_var("ld_preload") };
+        unsafe { std::env::remove_var("Ld_Library_Path") };
         load_env_from_pyproject(temp_dir.path());
 
         // Both should be blocked (case-insensitive matching)

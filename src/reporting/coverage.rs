@@ -52,10 +52,10 @@
 //! 5. **Overflow handling**: If buffer is full, increment overflow counter
 //!    and drop the entry. Never block the worker.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pyo3::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // =============================================================================
 // Constants
@@ -815,8 +815,8 @@ fn mark_code_seen(code_id: u64) -> bool {
 // =============================================================================
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 

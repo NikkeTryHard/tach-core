@@ -9,11 +9,11 @@
 //! - **IS_DEBUGGING**: Global flag for signal routing
 //! - **Mutex Poison Immunity**: Cleanup works even after panic-while-holding-lock
 
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 
 /// Global flag to track if we're in debugging mode
 /// Used by signal handler to decide behavior:
@@ -102,10 +102,10 @@ impl CleanupGuard {
 
         // Kill the Zygote too
         let zygote = self.zygote_pid.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(pid) = *zygote {
-            if pid > 0 {
-                let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
-            }
+        if let Some(pid) = *zygote
+            && pid > 0
+        {
+            let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
         }
     }
 

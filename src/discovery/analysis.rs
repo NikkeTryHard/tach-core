@@ -360,8 +360,8 @@ fn check_expr_toxicity(
             check_expr_toxicity(&comp.key, report, import_aliases, from_imports);
             check_expr_toxicity(&comp.value, report, import_aliases, from_imports);
         }
-        ast::Expr::GeneratorExp(gen) => {
-            check_expr_toxicity(&gen.elt, report, import_aliases, from_imports);
+        ast::Expr::GeneratorExp(gen_expr) => {
+            check_expr_toxicity(&gen_expr.elt, report, import_aliases, from_imports);
         }
 
         // Recurse into await expressions
@@ -466,10 +466,10 @@ fn is_type_checking_block(test: &ast::Expr) -> bool {
         ast::Expr::Name(name) => name.id.as_str() == "TYPE_CHECKING",
         // `if typing.TYPE_CHECKING:`
         ast::Expr::Attribute(attr) => {
-            if attr.attr.as_str() == "TYPE_CHECKING" {
-                if let ast::Expr::Name(name) = &*attr.value {
-                    return name.id.as_str() == "typing";
-                }
+            if attr.attr.as_str() == "TYPE_CHECKING"
+                && let ast::Expr::Name(name) = &*attr.value
+            {
+                return name.id.as_str() == "typing";
             }
             false
         }
@@ -612,10 +612,12 @@ mod tests {
         let source = "import concurrent.futures";
         let report = analyze(source);
         assert!(report.is_toxic);
-        assert!(report
-            .reasons
-            .iter()
-            .any(|r| r.contains("concurrent.futures")));
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|r| r.contains("concurrent.futures"))
+        );
     }
 
     // =========================================================================

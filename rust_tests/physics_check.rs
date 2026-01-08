@@ -8,13 +8,13 @@
 //!
 //! If this test passes, the snapshot engine is viable for production use.
 
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{fork, ForkResult};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{ForkResult, fork};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
-use tach_core::snapshot::{recv_fd, send_fd, SnapshotManager};
+use tach_core::snapshot::{SnapshotManager, recv_fd, send_fd};
 use userfaultfd::UffdBuilder;
 
 /// Create a temporary directory for test sockets

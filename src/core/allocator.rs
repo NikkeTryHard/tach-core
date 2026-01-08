@@ -36,7 +36,7 @@
 //! nix::sys::signal::raise(Signal::SIGSTOP)?;
 //! ```
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pyo3::prelude::*;
 use std::ffi::CStr;
 

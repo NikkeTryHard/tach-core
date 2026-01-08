@@ -1,8 +1,8 @@
 //! Integration tests for the protocol module
 
 use tach_core::protocol::{
-    encode_with_length, FixtureInfo, TestPayload, TestResult, CMD_EXIT, CMD_FORK, STATUS_CRASH,
-    STATUS_FAIL, STATUS_PASS, STATUS_SKIP,
+    CMD_EXIT, CMD_FORK, FixtureInfo, STATUS_CRASH, STATUS_FAIL, STATUS_PASS, STATUS_SKIP,
+    TestPayload, TestResult, encode_with_length,
 };
 
 #[test]

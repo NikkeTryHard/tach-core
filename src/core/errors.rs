@@ -1093,7 +1093,7 @@ impl CategorizedError {
     /// // If running in Docker, suggestion now includes Docker-specific advice
     /// ```
     pub fn with_context_aware_suggestion(mut self) -> Self {
-        use crate::suggestions::{detect_condition_from_error, get_suggestion, SuggestionContext};
+        use crate::suggestions::{SuggestionContext, detect_condition_from_error, get_suggestion};
 
         if let Some(condition) = detect_condition_from_error(&self.message) {
             let ctx = SuggestionContext::detect();
@@ -1111,10 +1111,10 @@ impl CategorizedError {
     pub fn with_quick_suggestion(mut self) -> Self {
         use crate::suggestions::{detect_condition_from_error, quick_suggestion};
 
-        if self.suggestion.is_none() {
-            if let Some(condition) = detect_condition_from_error(&self.message) {
-                self.suggestion = Some(quick_suggestion(condition).to_string());
-            }
+        if self.suggestion.is_none()
+            && let Some(condition) = detect_condition_from_error(&self.message)
+        {
+            self.suggestion = Some(quick_suggestion(condition).to_string());
         }
 
         self

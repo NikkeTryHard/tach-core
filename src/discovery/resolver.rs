@@ -146,41 +146,42 @@ impl FixtureRegistry {
     ) -> Option<(FixtureDefinition, PathBuf)> {
         // Check class-scoped fixtures first for tests in classes
         // Test names in classes have format "ClassName::method_name"
-        if let Some(class_name) = test_name.split("::").next() {
-            if class_name.starts_with("Test") && test_name.contains("::") {
-                let key = (module_path.clone(), class_name.to_string());
-                if let Some(class_fixtures) = self.class_scoped.get(&key) {
-                    if let Some(fixture) = class_fixtures.get(name) {
-                        return Some((fixture.clone(), module_path.clone()));
-                    }
-                }
+        if let Some(class_name) = test_name.split("::").next()
+            && class_name.starts_with("Test")
+            && test_name.contains("::")
+        {
+            let key = (module_path.clone(), class_name.to_string());
+            if let Some(class_fixtures) = self.class_scoped.get(&key)
+                && let Some(fixture) = class_fixtures.get(name)
+            {
+                return Some((fixture.clone(), module_path.clone()));
             }
         }
 
         // Check local module scope
-        if let Some(local_fixtures) = self.local.get(module_path) {
-            if let Some(fixture) = local_fixtures.get(name) {
-                return Some((fixture.clone(), module_path.clone()));
-            }
+        if let Some(local_fixtures) = self.local.get(module_path)
+            && let Some(fixture) = local_fixtures.get(name)
+        {
+            return Some((fixture.clone(), module_path.clone()));
         }
 
         // Walk up the directory tree to find conftest fixtures
         // Start from the test file's directory
         let mut current_dir = module_path.parent();
         while let Some(dir) = current_dir {
-            if let Some(conftest_fixtures) = self.conftest.get(dir) {
-                if let Some((fixture, source)) = conftest_fixtures.get(name) {
-                    return Some((fixture.clone(), source.clone()));
-                }
+            if let Some(conftest_fixtures) = self.conftest.get(dir)
+                && let Some((fixture, source)) = conftest_fixtures.get(name)
+            {
+                return Some((fixture.clone(), source.clone()));
             }
             current_dir = dir.parent();
         }
 
         // Also check root-level conftest (empty path for relative paths)
-        if let Some(conftest_fixtures) = self.conftest.get(&PathBuf::new()) {
-            if let Some((fixture, source)) = conftest_fixtures.get(name) {
-                return Some((fixture.clone(), source.clone()));
-            }
+        if let Some(conftest_fixtures) = self.conftest.get(&PathBuf::new())
+            && let Some((fixture, source)) = conftest_fixtures.get(name)
+        {
+            return Some((fixture.clone(), source.clone()));
         }
 
         None

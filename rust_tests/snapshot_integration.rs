@@ -4,7 +4,7 @@
 //! These tests verify the SnapshotManager without the full worker lifecycle.
 
 use nix::unistd::Pid;
-use tach_core::snapshot::{parse_memory_maps, MemoryRegion, SnapshotManager};
+use tach_core::snapshot::{MemoryRegion, SnapshotManager, parse_memory_maps};
 
 /// Test: SnapshotManager can be constructed
 #[test]

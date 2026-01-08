@@ -61,7 +61,7 @@
 //! - Same source and target FD (dup2 is a no-op, returns success)
 //! - Multiple FDs in single message (batch teleportation)
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -176,7 +176,7 @@ pub struct FdAdoptionResult {
 /// After successful send, the caller should use `forget_sent_fds()` to prevent
 /// the Drop impl from closing the FDs before the Worker adopts them.
 pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
-    use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
+    use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
     use std::io::IoSlice;
 
     if request.is_empty() {

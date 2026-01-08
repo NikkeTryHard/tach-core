@@ -3,13 +3,13 @@
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{
-    encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY,
-    MSG_WORKER_READY,
+    CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY, MSG_WORKER_READY, TestPayload, TestResult,
+    encode_with_length,
 };
 use crate::snapshot::send_fd;
 use anyhow::Result;
-use nix::sys::signal::{signal, SigHandler, Signal};
-use nix::unistd::{fork, ForkResult};
+use nix::sys::signal::{SigHandler, Signal, signal};
+use nix::unistd::{ForkResult, fork};
 use pyo3::ffi::c_str;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule};
@@ -18,9 +18,9 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::process;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 use userfaultfd::UffdBuilder;
@@ -383,11 +383,11 @@ fn worker_loop(socket: UnixStream) {
 
                 // CRITICAL: Send result BEFORE exit decision
                 let _ = std::io::stdout().flush();
-                if let Ok(result_bytes) = encode_with_length(&result) {
-                    if socket.write_all(&result_bytes).is_err() {
-                        eprintln!("[worker] Failed to send result");
-                        break;
-                    }
+                if let Ok(result_bytes) = encode_with_length(&result)
+                    && socket.write_all(&result_bytes).is_err()
+                {
+                    eprintln!("[worker] Failed to send result");
+                    break;
                 }
 
                 // Dual-path decision
@@ -713,7 +713,10 @@ except Exception as e:
                         if let Err(e) =
                             crate::isolation::setup_filesystem(payload.test_id, &project_root)
                         {
-                            eprintln!("[worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}", e);
+                            eprintln!(
+                                "[worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}",
+                                e
+                            );
                             std::process::exit(1);
                         }
 
@@ -772,10 +775,10 @@ except Exception as e:
                         // 9. Flush and send result (CRITICAL: BEFORE exit decision)
                         // Invariant: Scheduler receives result even if worker exits
                         let _ = std::io::stdout().flush();
-                        if let Ok(result_bytes) = encode_with_length(&result) {
-                            if let Ok(mut sock) = child_sock.try_clone() {
-                                let _ = sock.write_all(&result_bytes);
-                            }
+                        if let Ok(result_bytes) = encode_with_length(&result)
+                            && let Ok(mut sock) = child_sock.try_clone()
+                        {
+                            let _ = sock.write_all(&result_bytes);
                         }
 
                         // 10.  Dual-path decision based on toxicity
@@ -1065,7 +1068,7 @@ mod tests {
     /// This test simulates the full Zygote <-> Worker protocol without forking.
     #[test]
     fn test_zygote_lifecycle_manager() {
-        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+        use crate::protocol::{STATUS_PASS, TestResult, encode_with_length};
         use std::time::Duration;
 
         // Clear the pool before test (in case previous tests left state)
@@ -1138,7 +1141,7 @@ mod tests {
     /// Test that toxic workers are NOT added to the pool.
     #[test]
     fn test_toxic_worker_not_pooled() {
-        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+        use crate::protocol::{STATUS_PASS, TestResult, encode_with_length};
         use std::time::Duration;
 
         // Clear the pool before test
@@ -1215,10 +1218,12 @@ mod tests {
             .clear();
 
         // Pool should be empty
-        assert!(IDLE_WORKERS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty());
+        assert!(
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
 
         // Create a socket pair for testing
         let (sock1, _sock2) = UnixStream::pair().expect("Failed to create socket pair");
@@ -1244,10 +1249,12 @@ mod tests {
         assert_eq!(worker.unwrap().pid, 12345);
 
         // Pool should be empty again
-        assert!(IDLE_WORKERS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty());
+        assert!(
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1549,10 +1556,12 @@ mod tests {
         assert_eq!(w3.pid, 111);
 
         // Pool should be empty
-        assert!(IDLE_WORKERS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty());
+        assert!(
+            IDLE_WORKERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1655,7 +1664,7 @@ mod tests {
     #[test]
     fn test_result_encoding() {
         // Test that TestResult can be encoded with length prefix
-        use crate::protocol::{encode_with_length, TestResult, STATUS_PASS};
+        use crate::protocol::{STATUS_PASS, TestResult, encode_with_length};
 
         let result = TestResult {
             test_id: 999,

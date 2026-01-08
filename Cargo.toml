@@ -1,7 +1,7 @@
 [package]
 name = "tach-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Hypervisor-accelerated Python test runner"
 license = "MIT"
 repository = "https://github.com/NikkeTryHard/tach-core"
@@ -29,14 +29,14 @@ path = "experiments/tls_sentinel_scan.rs"
 
 [dependencies]
 # Core
-pyo3 = { version = "0.27", features = ["auto-initialize"] }
-anyhow = "1.0"
-thiserror = "2.0"
+pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
+anyhow = "1.0.100"
+thiserror = "2.0.17"
 dashmap = "6.1"
 libc = "0.2"
 
 # System interfaces (ptrace for TLS capture, namespaces for isolation)
-nix = { version = "0.30", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched", "term", "ptrace"] }
+nix = { version = "0.30.1", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched", "term", "ptrace"] }
 
 # Discovery (static AST analysis)
 rustpython-parser = "0.4"
@@ -49,7 +49,7 @@ rayon = "1.10"
 petgraph = "0.8"
 
 # Scheduler
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 bincode = { version = "2.0", features = ["serde"] }
 num_cpus = "1.16"
@@ -65,7 +65,7 @@ toml = "0.9"
 signal-hook = "0.4"
 
 # CLI
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 serde_json = "1.0"
 
 # Reporting
@@ -88,7 +88,7 @@ goblin = "0.10"
 memmap2 = "0.9"
 
 # Sandbox (Landlock + Seccomp)
-landlock = "0.4"
+landlock = "0.4.4"
 seccompiler = "0.5"
 
 [dev-dependencies]

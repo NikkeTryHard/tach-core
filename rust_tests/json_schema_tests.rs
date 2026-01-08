@@ -349,19 +349,18 @@ fn test_json_no_extra_fields_in_events() {
     .collect();
 
     for event in &events {
-        if let Some(event_type) = event.get("event").and_then(|v| v.as_str()) {
-            if let Some(allowed_fields) = expected_fields.get(event_type) {
-                if let Value::Object(map) = event {
-                    for key in map.keys() {
-                        assert!(
-                            allowed_fields.contains(&key.as_str()),
-                            "Unexpected field '{}' in {} event. Allowed fields: {:?}",
-                            key,
-                            event_type,
-                            allowed_fields
-                        );
-                    }
-                }
+        if let Some(event_type) = event.get("event").and_then(|v| v.as_str())
+            && let Some(allowed_fields) = expected_fields.get(event_type)
+            && let Value::Object(map) = event
+        {
+            for key in map.keys() {
+                assert!(
+                    allowed_fields.contains(&key.as_str()),
+                    "Unexpected field '{}' in {} event. Allowed fields: {:?}",
+                    key,
+                    event_type,
+                    allowed_fields
+                );
             }
         }
     }

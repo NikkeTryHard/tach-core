@@ -12,7 +12,7 @@
 use proptest::prelude::*;
 
 // Re-export coverage types for testing
-use tach_core::coverage::{CoverageEntry, MappingEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE};
+use tach_core::coverage::{CoverageEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE, MappingEntry};
 
 // =============================================================================
 // CoverageEntry Property Tests

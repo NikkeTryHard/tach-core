@@ -10,12 +10,12 @@
 //! the expected error code (EPERM for Seccomp, EACCES for Landlock).
 
 use nix::errno::Errno;
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitStatus};
-use nix::unistd::{fork, ForkResult, Pid};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, fork};
 
 // Import sandbox functions from tach_core
-use tach_core::sandbox::{apply_iron_dome, apply_landlock, apply_seccomp, SandboxStatus};
+use tach_core::sandbox::{SandboxStatus, apply_iron_dome, apply_landlock, apply_seccomp};
 
 // =============================================================================
 // SECCOMP ENFORCEMENT TESTS
@@ -511,7 +511,7 @@ fn test_pid_namespace_isolation() {
 /// Helper: Spawn a worker in a new PID namespace.
 /// Returns (host_pid, inner_pid) or None if namespaces unavailable.
 fn spawn_namespaced_worker() -> Option<(i32, i32)> {
-    use nix::sched::{unshare, CloneFlags};
+    use nix::sched::{CloneFlags, unshare};
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 

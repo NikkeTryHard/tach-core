@@ -486,7 +486,10 @@ impl ProgressReporter {
         let max_id_width = term_width.saturating_sub(50).max(20);
 
         let bar = ProgressBar::new(0);
-        let template = format!("{{spinner:.green}} [{{elapsed_precise}}] [{{bar:{}.cyan/blue}}] {{pos}}/{{len}} {{msg}}", bar_width);
+        let template = format!(
+            "{{spinner:.green}} [{{elapsed_precise}}] [{{bar:{}.cyan/blue}}] {{pos}}/{{len}} {{msg}}",
+            bar_width
+        );
         bar.set_style(
             ProgressStyle::default_bar()
                 .template(&template)

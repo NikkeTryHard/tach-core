@@ -16,8 +16,8 @@
 //! - Socket file cleaned up on Drop
 
 use anyhow::{Context, Result};
-use nix::sys::signal::{kill, Signal};
-use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, SetArg, Termios};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::termios::{SetArg, Termios, cfmakeraw, tcgetattr, tcsetattr};
 use nix::unistd::Pid;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -362,11 +362,11 @@ pub fn install_panic_hook() {
         // Attempt to restore terminal if we were in raw mode
         if IN_RAW_MODE.load(Ordering::SeqCst) {
             // Thread-safe read via Mutex
-            if let Ok(guard) = ORIGINAL_TERMIOS.lock() {
-                if let Some(ref original) = *guard {
-                    let stdin = io::stdin();
-                    let _ = tcsetattr(&stdin, SetArg::TCSANOW, original);
-                }
+            if let Ok(guard) = ORIGINAL_TERMIOS.lock()
+                && let Some(ref original) = *guard
+            {
+                let stdin = io::stdin();
+                let _ = tcsetattr(&stdin, SetArg::TCSANOW, original);
             }
             IN_RAW_MODE.store(false, Ordering::SeqCst);
             eprintln!("\n[tach] Terminal restored after panic.\n");

@@ -196,7 +196,9 @@ struct GlibcTcbHeader {
 /// The address must be valid and contain a Glibc TCB.
 unsafe fn read_tcb_header(fs_base: usize) -> GlibcTcbHeader {
     let tcb_ptr = fs_base as *const GlibcTcbHeader;
-    std::ptr::read_volatile(tcb_ptr)
+    // SAFETY: tcb_ptr is validated by the caller to point to a valid Glibc TCB.
+    // Using read_volatile to prevent compiler from optimizing away the read.
+    unsafe { std::ptr::read_volatile(tcb_ptr) }
 }
 
 // =============================================================================

@@ -110,7 +110,7 @@ pub enum SandboxStatus {
 /// }
 /// ```
 pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStatus> {
-    use landlock::{Access, AccessFs, Ruleset, RulesetAttr, RulesetStatus, ABI};
+    use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr, RulesetStatus};
 
     // ========================================================================
     // ABI SELECTION
@@ -257,11 +257,11 @@ where
             .with_context(|| format!("Failed to add Landlock rule for: {}", path.display())),
         Err(PathFdError::OpenCall { source, .. }) => {
             // Check if the error is ENOENT (path doesn't exist)
-            if let Some(os_err) = source.raw_os_error() {
-                if os_err == libc::ENOENT {
-                    // Path doesn't exist - this is expected for optional paths
-                    return Ok(ruleset);
-                }
+            if let Some(os_err) = source.raw_os_error()
+                && os_err == libc::ENOENT
+            {
+                // Path doesn't exist - this is expected for optional paths
+                return Ok(ruleset);
             }
             // For other errors (permissions, etc.), silently skip
             // This maintains the original behavior of graceful degradation
@@ -502,14 +502,12 @@ pub fn apply_iron_dome(
     // ========================================================================
     // Seccomp blocks dangerous syscalls. Toxic workers skip this because
     // they may legitimately need network access or fork for integration tests.
-    if !is_toxic {
-        if let Err(e) = apply_seccomp() {
-            eprintln!(
-                "[worker:{}] WARNING: Seccomp setup failed: {}",
-                worker_id, e
-            );
-            // Continue execution - Seccomp is defense-in-depth, not critical
-        }
+    if !is_toxic && let Err(e) = apply_seccomp() {
+        eprintln!(
+            "[worker:{}] WARNING: Seccomp setup failed: {}",
+            worker_id, e
+        );
+        // Continue execution - Seccomp is defense-in-depth, not critical
     }
 
     Ok(landlock_status)
@@ -559,7 +557,7 @@ mod tests {
     /// Test that Landlock ABI V1 is available on supported kernels
     #[test]
     fn test_landlock_abi_detection() {
-        use landlock::{Access, AccessFs, ABI};
+        use landlock::{ABI, Access, AccessFs};
 
         // This test just verifies the landlock crate is working
         // The actual ABI support depends on the kernel
@@ -573,7 +571,7 @@ mod tests {
     /// Test that read access is a subset of all access
     #[test]
     fn test_landlock_access_subset() {
-        use landlock::{Access, AccessFs, ABI};
+        use landlock::{ABI, Access, AccessFs};
 
         let abi = ABI::V1;
         let all_access = AccessFs::from_all(abi);

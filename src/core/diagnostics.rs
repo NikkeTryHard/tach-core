@@ -37,7 +37,7 @@
 //! All checks passed. Tach is ready to run.
 //! ```
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::io;
 use std::time::{Duration, Instant};
@@ -457,7 +457,7 @@ pub fn check_jemalloc() -> DiagnosticResult {
 pub fn check_ptrace_capability() -> DiagnosticResult {
     use nix::sys::ptrace;
     use nix::sys::wait::waitpid;
-    use nix::unistd::{fork, ForkResult};
+    use nix::unistd::{ForkResult, fork};
 
     // Fork a child and try to ptrace it
     match unsafe { fork() } {
@@ -638,7 +638,7 @@ pub fn check_architecture() -> DiagnosticResult {
 /// Check fork overhead performance
 pub fn check_fork_overhead() -> DiagnosticResult {
     use nix::sys::wait::waitpid;
-    use nix::unistd::{fork, ForkResult};
+    use nix::unistd::{ForkResult, fork};
 
     let start = Instant::now();
     let iterations = 10;
@@ -816,11 +816,12 @@ pub fn run_and_print_diagnose() -> bool {
         eprintln!("Some required checks failed. Tach may not function correctly.");
         // Print details for failed checks
         for result in &all_results {
-            if !result.passed && result.required {
-                if let Some(details) = &result.details {
-                    eprintln!();
-                    eprintln!("  {}: {}", result.name, details);
-                }
+            if !result.passed
+                && result.required
+                && let Some(details) = &result.details
+            {
+                eprintln!();
+                eprintln!("  {}: {}", result.name, details);
             }
         }
     }

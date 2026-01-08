@@ -119,14 +119,16 @@ fn test_concurrent_queue_stress() {
             let queue = Arc::clone(&queue);
             let consumed = Arc::clone(&consumed);
             let done = Arc::clone(&done);
-            thread::spawn(move || loop {
-                let item = queue.lock().unwrap().pop_front();
-                if item.is_some() {
-                    consumed.fetch_add(1, Ordering::SeqCst);
-                } else if done.load(Ordering::SeqCst) {
-                    break;
+            thread::spawn(move || {
+                loop {
+                    let item = queue.lock().unwrap().pop_front();
+                    if item.is_some() {
+                        consumed.fetch_add(1, Ordering::SeqCst);
+                    } else if done.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::yield_now();
                 }
-                thread::yield_now();
             })
         })
         .collect();

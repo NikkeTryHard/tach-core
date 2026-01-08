@@ -182,14 +182,13 @@ fn detect_in_container() -> bool {
     }
 
     // Check cgroup for container indicators
-    if let Ok(cgroup) = fs::read_to_string("/proc/1/cgroup") {
-        if cgroup.contains("docker")
+    if let Ok(cgroup) = fs::read_to_string("/proc/1/cgroup")
+        && (cgroup.contains("docker")
             || cgroup.contains("lxc")
             || cgroup.contains("kubepods")
-            || cgroup.contains("containerd")
-        {
-            return true;
-        }
+            || cgroup.contains("containerd"))
+    {
+        return true;
     }
 
     // Check for container-specific files

@@ -39,7 +39,7 @@ fn tach_binary() -> String {
 fn run_command(args: &[&str]) -> Output {
     let binary = tach_binary();
 
-    let output = if binary == "cargo" {
+    if binary == "cargo" {
         // Use cargo run for cases where binary isn't built yet
         let mut cmd_args = vec!["run", "--quiet", "--"];
         cmd_args.extend(args);
@@ -54,9 +54,7 @@ fn run_command(args: &[&str]) -> Output {
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .expect("Failed to execute tach-core binary")
-    };
-
-    output
+    }
 }
 
 /// Run a command with timeout to prevent hanging

@@ -45,16 +45,16 @@
 //! cargo test --test memory_invariant -- --nocapture
 //! ```
 
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{fork, ForkResult, Pid as NixPid};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid as NixPid, fork};
 use pyo3::prelude::*;
 use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
-use tach_core::snapshot::{recv_fd, send_fd, SnapshotManager};
+use tach_core::snapshot::{SnapshotManager, recv_fd, send_fd};
 use userfaultfd::{Uffd, UffdBuilder};
 
 // =============================================================================
@@ -780,22 +780,22 @@ fn test_rss_stability_after_1000_restores() {
         });
 
         // Sample RSS periodically
-        if i % 100 == 0 || i == ITERATIONS - 1 {
-            if let Some(current_rss) = get_rss_bytes() {
-                rss_samples.push(current_rss);
-                if current_rss > peak_rss {
-                    peak_rss = current_rss;
-                }
-
-                let growth_percent =
-                    ((current_rss as f64 - initial_rss as f64) / initial_rss as f64) * 100.0;
-                eprintln!(
-                    "[ghost_hunt] Iteration {:4}: RSS = {} ({:+.2}%)",
-                    i,
-                    format_bytes(current_rss),
-                    growth_percent
-                );
+        if (i % 100 == 0 || i == ITERATIONS - 1)
+            && let Some(current_rss) = get_rss_bytes()
+        {
+            rss_samples.push(current_rss);
+            if current_rss > peak_rss {
+                peak_rss = current_rss;
             }
+
+            let growth_percent =
+                ((current_rss as f64 - initial_rss as f64) / initial_rss as f64) * 100.0;
+            eprintln!(
+                "[ghost_hunt] Iteration {:4}: RSS = {} ({:+.2}%)",
+                i,
+                format_bytes(current_rss),
+                growth_percent
+            );
         }
 
         // Progress indicator
@@ -916,10 +916,10 @@ fn test_rss_stability_quick() {
             let _ = cleanup_python_objects(py);
         });
 
-        if i % 25 == 0 {
-            if let Some(rss) = get_rss_bytes() {
-                eprintln!("[rss_quick] Iteration {}: RSS = {}", i, format_bytes(rss));
-            }
+        if i % 25 == 0
+            && let Some(rss) = get_rss_bytes()
+        {
+            eprintln!("[rss_quick] Iteration {}: RSS = {}", i, format_bytes(rss));
         }
     }
 

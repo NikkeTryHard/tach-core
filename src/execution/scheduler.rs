@@ -5,12 +5,12 @@
 //! - Toxic tests run last (containment via Isolation Mode)
 
 use crate::logcapture::LogCapture;
-use crate::protocol::{FixtureInfo, TestPayload, TestResult, CMD_EXIT, CMD_FORK, STATUS_PASS};
+use crate::protocol::{CMD_EXIT, CMD_FORK, FixtureInfo, STATUS_PASS, TestPayload, TestResult};
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
 use crate::signals;
 use anyhow::Result;
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -255,45 +255,45 @@ impl Scheduler {
             let len = u32::from_le_bytes(len_buf) as usize;
             let mut result_buf = vec![0u8; len];
 
-            if socket.read_exact(&mut result_buf).is_ok() {
-                if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+            if socket.read_exact(&mut result_buf).is_ok()
+                && let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
                     &result_buf,
                     bincode::config::standard(),
-                ) {
-                    // Get and remove worker
-                    let (test_name, slot) = {
-                        let mut workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        match workers.remove(&result.test_id) {
-                            Some(w) => (w.test_name, w.slot),
-                            None => (format!("test_{}", result.test_id), 0),
-                        }
-                    };
-
-                    // Read and discard logs (they went to memfd)
-                    let _ = self
-                        .log_capture
+                )
+            {
+                // Get and remove worker
+                let (test_name, slot) = {
+                    let mut workers = self
+                        .active_workers
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
+                        .unwrap_or_else(|e| e.into_inner());
+                    match workers.remove(&result.test_id) {
+                        Some(w) => (w.test_name, w.slot),
+                        None => (format!("test_{}", result.test_id), 0),
+                    }
+                };
 
-                    // Format for reporter
-                    let status = if result.status == STATUS_PASS {
-                        "pass"
-                    } else {
-                        "fail"
-                    };
-                    let duration_ms = result.duration_ns / 1_000_000;
-                    let msg = if result.message.is_empty() {
-                        None
-                    } else {
-                        Some(result.message)
-                    };
+                // Read and discard logs (they went to memfd)
+                let _ = self
+                    .log_capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .read_and_clear(slot);
 
-                    return Some((test_name, status, duration_ms, msg));
-                }
+                // Format for reporter
+                let status = if result.status == STATUS_PASS {
+                    "pass"
+                } else {
+                    "fail"
+                };
+                let duration_ms = result.duration_ns / 1_000_000;
+                let msg = if result.message.is_empty() {
+                    None
+                } else {
+                    Some(result.message)
+                };
+
+                return Some((test_name, status, duration_ms, msg));
             }
         }
         None
@@ -367,53 +367,53 @@ impl Scheduler {
             let len = u32::from_le_bytes(len_buf) as usize;
             let mut result_buf = vec![0u8; len];
 
-            if socket.read_exact(&mut result_buf).is_ok() {
-                if let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
+            if socket.read_exact(&mut result_buf).is_ok()
+                && let Ok((result, _)) = bincode::serde::decode_from_slice::<TestResult, _>(
                     &result_buf,
                     bincode::config::standard(),
-                ) {
-                    // Get and remove worker
-                    let (test_name, slot) = {
-                        let mut workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        match workers.remove(&result.test_id) {
-                            Some(w) => (w.test_name, w.slot),
-                            None => (format!("test_{}", result.test_id), 0),
-                        }
-                    };
-
-                    // Read logs
-                    let logs = self
-                        .log_capture
+                )
+            {
+                // Get and remove worker
+                let (test_name, slot) = {
+                    let mut workers = self
+                        .active_workers
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot)
-                        .unwrap_or_default();
-
-                    // Print result
-                    let duration_ms = result.duration_ns as f64 / 1_000_000.0;
-                    println!(
-                        "  {} {} ({:.2}ms)",
-                        result.status_icon(),
-                        test_name,
-                        duration_ms
-                    );
-
-                    // Print logs
-                    if !logs.is_empty() {
-                        for line in logs.lines().take(3) {
-                            println!("    │ {}", &line[..line.len().min(80)]);
-                        }
+                        .unwrap_or_else(|e| e.into_inner());
+                    match workers.remove(&result.test_id) {
+                        Some(w) => (w.test_name, w.slot),
+                        None => (format!("test_{}", result.test_id), 0),
                     }
+                };
 
-                    if !result.message.is_empty() {
-                        println!("    └─ {}", result.message);
+                // Read logs
+                let logs = self
+                    .log_capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .read_and_clear(slot)
+                    .unwrap_or_default();
+
+                // Print result
+                let duration_ms = result.duration_ns as f64 / 1_000_000.0;
+                println!(
+                    "  {} {} ({:.2}ms)",
+                    result.status_icon(),
+                    test_name,
+                    duration_ms
+                );
+
+                // Print logs
+                if !logs.is_empty() {
+                    for line in logs.lines().take(3) {
+                        println!("    │ {}", &line[..line.len().min(80)]);
                     }
-
-                    return Some(result);
                 }
+
+                if !result.message.is_empty() {
+                    println!("    └─ {}", result.message);
+                }
+
+                return Some(result);
             }
         }
         None

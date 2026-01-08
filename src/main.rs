@@ -19,7 +19,7 @@ use tach_core::zygote;
 use anyhow::Result;
 use clap::Parser;
 use nix::sys::wait::waitpid;
-use nix::unistd::{fork, ForkResult};
+use nix::unistd::{ForkResult, fork};
 use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -53,11 +53,16 @@ impl RunContext {
         let uffd_listener = match UnixListener::bind(&uffd_sock_path) {
             Ok(listener) => {
                 // Set TACH_SUPERVISOR_SOCK so workers know where to connect
-                std::env::set_var("TACH_SUPERVISOR_SOCK", &uffd_sock_path);
+                // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
+                // This is called during initialization before any worker threads spawn.
+                unsafe { std::env::set_var("TACH_SUPERVISOR_SOCK", &uffd_sock_path) };
                 Some(listener)
             }
             Err(e) => {
-                eprintln!("[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.", e);
+                eprintln!(
+                    "[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.",
+                    e
+                );
                 None
             }
         };
@@ -149,22 +154,25 @@ fn main() -> Result<()> {
 
     // Set TACH_NO_ISOLATION env var from CLI flag (inherits to all children)
     if cli.no_isolation {
-        std::env::set_var("TACH_NO_ISOLATION", "1");
+        // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
+        // This is called during initialization before any worker threads spawn.
+        unsafe { std::env::set_var("TACH_NO_ISOLATION", "1") };
     }
 
     // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
-    std::env::set_var("TACH_TARGET_PATH", &cli.path);
+    // SAFETY: Same as above - called before worker threads spawn.
+    unsafe { std::env::set_var("TACH_TARGET_PATH", &cli.path) };
 
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
-    if let Err(e) = signals::install_signal_handlers() {
-        if !is_json {
-            eprintln!(
-                "[supervisor] Warning: Failed to install signal handlers: {}",
-                e
-            );
-        }
+    if let Err(e) = signals::install_signal_handlers()
+        && !is_json
+    {
+        eprintln!(
+            "[supervisor] Warning: Failed to install signal handlers: {}",
+            e
+        );
     }
 
     let cwd = std::env::current_dir()?;
@@ -770,7 +778,9 @@ fn run_tests(
         coverage_aggregator = Some(aggregator);
 
         // Set env var so workers know to enable coverage
-        std::env::set_var("TACH_COVERAGE", "1");
+        // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
+        // This is called during initialization before any worker threads spawn.
+        unsafe { std::env::set_var("TACH_COVERAGE", "1") };
     }
 
     // --- CREATE DEBUG SERVER ---
@@ -881,13 +891,19 @@ fn run_tests(
                     if let Some(buffer) = coverage::get_coverage_buffer() {
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
-                            eprintln!("[supervisor] WARNING: {} coverage entries dropped (buffer overflow)", overflow);
+                            eprintln!(
+                                "[supervisor] WARNING: {} coverage entries dropped (buffer overflow)",
+                                overflow
+                            );
                         }
                     }
                     if let Some(buffer) = coverage::get_mapping_buffer() {
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
-                            eprintln!("[supervisor] WARNING: {} mapping entries dropped (buffer overflow)", overflow);
+                            eprintln!(
+                                "[supervisor] WARNING: {} mapping entries dropped (buffer overflow)",
+                                overflow
+                            );
                         }
                     }
                 }

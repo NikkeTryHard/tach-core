@@ -18,10 +18,10 @@
 //! 4. Merge overlapping/adjacent segments to avoid EINVAL from kernel
 //! 5. Register merged segments with UFFDIO_REGISTER_MODE_MISSING
 
-use anyhow::{anyhow, Context, Result};
-use goblin::elf::{program_header::PF_W, Elf};
-use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
-use nix::sys::uio::{process_vm_readv, RemoteIoVec};
+use anyhow::{Context, Result, anyhow};
+use goblin::elf::{Elf, program_header::PF_W};
+use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
+use nix::sys::uio::{RemoteIoVec, process_vm_readv};
 use nix::unistd::Pid;
 use std::collections::HashMap;
 use std::fs;
@@ -273,7 +273,7 @@ pub struct TlsSnapshot {
 #[cfg(target_arch = "x86_64")]
 pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
     use nix::sys::ptrace;
-    use nix::sys::wait::{waitpid, WaitPidFlag};
+    use nix::sys::wait::{WaitPidFlag, waitpid};
 
     // Attach to the process
     ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;
@@ -329,7 +329,7 @@ pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
 #[cfg(target_arch = "x86_64")]
 pub fn set_fs_base_ptrace(pid: Pid, fs_base: usize) -> Result<()> {
     use nix::sys::ptrace;
-    use nix::sys::wait::{waitpid, WaitPidFlag};
+    use nix::sys::wait::{WaitPidFlag, waitpid};
 
     // Attach to the process
     ptrace::attach(pid).with_context(|| format!("Failed to ptrace attach to PID {}", pid))?;

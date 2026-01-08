@@ -22,18 +22,18 @@ pub fn find_site_packages(project_root: &Path) -> Option<PathBuf> {
 
     // 2. Check local .venv
     let local_venv = project_root.join(".venv");
-    if local_venv.exists() {
-        if let Some(sp) = find_site_packages_in_venv(&local_venv) {
-            return Some(sp);
-        }
+    if local_venv.exists()
+        && let Some(sp) = find_site_packages_in_venv(&local_venv)
+    {
+        return Some(sp);
     }
 
     // 3. Check local venv (alternate naming)
     let alt_venv = project_root.join("venv");
-    if alt_venv.exists() {
-        if let Some(sp) = find_site_packages_in_venv(&alt_venv) {
-            return Some(sp);
-        }
+    if alt_venv.exists()
+        && let Some(sp) = find_site_packages_in_venv(&alt_venv)
+    {
+        return Some(sp);
     }
 
     None
@@ -51,14 +51,14 @@ fn find_site_packages_in_venv(venv: &Path) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(&lib) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name() {
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("python") {
-                        let site = path.join("site-packages");
-                        if site.exists() {
-                            return Some(site);
-                        }
+            if path.is_dir()
+                && let Some(name) = path.file_name()
+            {
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("python") {
+                    let site = path.join("site-packages");
+                    if site.exists() {
+                        return Some(site);
                     }
                 }
             }
@@ -101,7 +101,7 @@ mod tests {
     fn test_find_site_packages_no_venv() {
         // Save and unset VIRTUAL_ENV to test the no-venv case
         let saved_venv = std::env::var("VIRTUAL_ENV").ok();
-        std::env::remove_var("VIRTUAL_ENV");
+        unsafe { std::env::remove_var("VIRTUAL_ENV") };
 
         let temp = tempdir().unwrap();
         let project_root = temp.path().to_path_buf();
@@ -111,7 +111,7 @@ mod tests {
 
         // Restore VIRTUAL_ENV
         if let Some(v) = saved_venv {
-            std::env::set_var("VIRTUAL_ENV", v);
+            unsafe { std::env::set_var("VIRTUAL_ENV", v) };
         }
     }
 
@@ -129,7 +129,7 @@ mod tests {
         fs::create_dir_all(&external_site).unwrap();
 
         // Set VIRTUAL_ENV
-        std::env::set_var("VIRTUAL_ENV", external_venv.to_string_lossy().to_string());
+        unsafe { std::env::set_var("VIRTUAL_ENV", external_venv.to_string_lossy().to_string()) };
 
         let project_root = temp.path().to_path_buf();
         let result = find_site_packages(&project_root);
@@ -140,7 +140,7 @@ mod tests {
         assert!(result_path.to_string_lossy().contains("external_venv"));
 
         // Cleanup
-        std::env::remove_var("VIRTUAL_ENV");
+        unsafe { std::env::remove_var("VIRTUAL_ENV") };
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod tests {
     fn test_get_python_paths_no_venv() {
         // Save and unset VIRTUAL_ENV to test the no-venv case
         let saved_venv = std::env::var("VIRTUAL_ENV").ok();
-        std::env::remove_var("VIRTUAL_ENV");
+        unsafe { std::env::remove_var("VIRTUAL_ENV") };
 
         let temp = tempdir().unwrap();
         let project_root = temp.path().to_path_buf();
@@ -234,7 +234,7 @@ mod tests {
 
         // Restore VIRTUAL_ENV
         if let Some(v) = saved_venv {
-            std::env::set_var("VIRTUAL_ENV", v);
+            unsafe { std::env::set_var("VIRTUAL_ENV", v) };
         }
     }
 }

@@ -9,7 +9,7 @@
 //! - `PyMarshal_ReadObjectFromString`: Deserialize bytecode → code object
 //! - `PyImport_ExecCodeModuleObject`: Execute code, register in sys.modules
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use pyo3::ffi;
 use pyo3::prelude::*;
@@ -180,11 +180,11 @@ impl BytecodeCompiler {
 
         // Try python3, then python
         for name in &["python3", "python"] {
-            if let Ok(output) = Command::new("which").arg(name).output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    return Ok(PathBuf::from(path));
-                }
+            if let Ok(output) = Command::new("which").arg(name).output()
+                && output.status.success()
+            {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                return Ok(PathBuf::from(path));
             }
         }
 
@@ -557,10 +557,15 @@ unsafe fn patch_module_namespace(
     let file_cstr = make_cstring("__file__")?;
     // SAFETY: Store CString in variable to prevent dangling pointer
     let source_path_cstr = make_cstring(source_path)?;
-    let file_val = ffi::PyUnicode_FromString(source_path_cstr.as_ptr());
+    // SAFETY: All FFI calls here operate on valid pointers. The module pointer
+    // is verified non-null by the caller, and CString pointers are valid for
+    // the duration of these calls.
+    let file_val = unsafe { ffi::PyUnicode_FromString(source_path_cstr.as_ptr()) };
     if !file_val.is_null() {
-        ffi::PyObject_SetAttrString(module, file_cstr.as_ptr(), file_val);
-        ffi::Py_DECREF(file_val);
+        unsafe {
+            ffi::PyObject_SetAttrString(module, file_cstr.as_ptr(), file_val);
+            ffi::Py_DECREF(file_val);
+        }
     }
 
     // __package__: Parent package name
@@ -568,10 +573,13 @@ unsafe fn patch_module_namespace(
     let pkg_cstr = make_cstring("__package__")?;
     // SAFETY: Store CString in variable to prevent dangling pointer
     let package_name_cstr = make_cstring(package_name)?;
-    let pkg_val = ffi::PyUnicode_FromString(package_name_cstr.as_ptr());
+    // SAFETY: Same as above - valid pointers for FFI calls
+    let pkg_val = unsafe { ffi::PyUnicode_FromString(package_name_cstr.as_ptr()) };
     if !pkg_val.is_null() {
-        ffi::PyObject_SetAttrString(module, pkg_cstr.as_ptr(), pkg_val);
-        ffi::Py_DECREF(pkg_val);
+        unsafe {
+            ffi::PyObject_SetAttrString(module, pkg_cstr.as_ptr(), pkg_val);
+            ffi::Py_DECREF(pkg_val);
+        }
     }
 
     // __path__: Required for packages (directories)
@@ -591,7 +599,8 @@ unsafe fn patch_module_namespace(
 
         let path_list = PyList::new(py, &[parent_dir])?;
         let path_cstr = make_cstring("__path__")?;
-        ffi::PyObject_SetAttrString(module, path_cstr.as_ptr(), path_list.as_ptr());
+        // SAFETY: module pointer is valid (verified by caller), path_cstr is valid
+        unsafe { ffi::PyObject_SetAttrString(module, path_cstr.as_ptr(), path_list.as_ptr()) };
     }
 
     Ok(())
@@ -860,9 +869,11 @@ mod tests {
 
         // Single underscore prefix
         let underscore = temp.path().join("_private.py");
-        assert!(compiler
-            .path_to_module_name(&underscore)
-            .contains("_private"));
+        assert!(
+            compiler
+                .path_to_module_name(&underscore)
+                .contains("_private")
+        );
 
         // Double underscore prefix
         let dunder = temp.path().join("__dunder__.py");

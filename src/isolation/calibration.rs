@@ -26,7 +26,7 @@
 //! Call `TlsCalibration::calibrate()` during Zygote warm-up, before the first fork().
 //! If calibration fails, Tach must exit with `ERR_CALIBRATION_FAILED`.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pyo3::prelude::*;
 use std::fs;
 

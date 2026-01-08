@@ -10,7 +10,7 @@
 //! - Fixed-point iteration for propagation (handles cycles)
 //! - Module resolution: path -> dotted module name
 
-use crate::analysis::{analyze_file, ToxicityReport};
+use crate::analysis::{ToxicityReport, analyze_file};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
 use std::fs;
@@ -216,11 +216,7 @@ impl ToxicityGraph {
             .node_indices()
             .filter_map(|idx| {
                 let node = &self.graph[idx];
-                if node.is_toxic {
-                    Some(node)
-                } else {
-                    None
-                }
+                if node.is_toxic { Some(node) } else { None }
             })
             .collect()
     }
@@ -231,11 +227,7 @@ impl ToxicityGraph {
             .node_indices()
             .filter_map(|idx| {
                 let node = &self.graph[idx];
-                if !node.is_toxic {
-                    Some(node)
-                } else {
-                    None
-                }
+                if !node.is_toxic { Some(node) } else { None }
             })
             .collect()
     }

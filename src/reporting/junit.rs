@@ -19,7 +19,7 @@ fn strip_ansi_codes(s: &str) -> String {
             // Skip escape sequence
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
-                              // Skip until we hit a letter
+                // Skip until we hit a letter
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {

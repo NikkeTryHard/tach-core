@@ -376,19 +376,17 @@ fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
     for decorator in decorators {
         if let ast::Expr::Call(call) = decorator {
             for keyword in &call.keywords {
-                if let Some(ref arg) = keyword.arg {
-                    if arg.as_str() == "scope" {
-                        if let ast::Expr::Constant(c) = &keyword.value {
-                            if let ast::Constant::Str(s) = &c.value {
-                                return match s.as_str() {
-                                    "class" => FixtureScope::Class,
-                                    "module" => FixtureScope::Module,
-                                    "session" => FixtureScope::Session,
-                                    _ => FixtureScope::Function,
-                                };
-                            }
-                        }
-                    }
+                if let Some(ref arg) = keyword.arg
+                    && arg.as_str() == "scope"
+                    && let ast::Expr::Constant(c) = &keyword.value
+                    && let ast::Constant::Str(s) = &c.value
+                {
+                    return match s.as_str() {
+                        "class" => FixtureScope::Class,
+                        "module" => FixtureScope::Module,
+                        "session" => FixtureScope::Session,
+                        _ => FixtureScope::Function,
+                    };
                 }
             }
         }
@@ -407,11 +405,11 @@ fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String
     for decorator in decorators {
         if let ast::Expr::Call(call) = decorator {
             for keyword in &call.keywords {
-                if let Some(ref arg) = keyword.arg {
-                    if arg.as_str() == "params" {
-                        // Try to extract literals from the params value
-                        return extract_literal_list(&keyword.value);
-                    }
+                if let Some(ref arg) = keyword.arg
+                    && arg.as_str() == "params"
+                {
+                    // Try to extract literals from the params value
+                    return extract_literal_list(&keyword.value);
                 }
             }
         }
@@ -520,20 +518,20 @@ fn extract_parametrized_args(decorators: &[ast::Expr]) -> Vec<String> {
                     // Case 2: ["arg1", "arg2"] (list of strings)
                     ast::Expr::List(list) => {
                         for elt in &list.elts {
-                            if let ast::Expr::Constant(c) = elt {
-                                if let ast::Constant::Str(s) = &c.value {
-                                    args.push(s.to_string());
-                                }
+                            if let ast::Expr::Constant(c) = elt
+                                && let ast::Constant::Str(s) = &c.value
+                            {
+                                args.push(s.to_string());
                             }
                         }
                     }
                     // Case 3: ("arg1", "arg2") (tuple of strings)
                     ast::Expr::Tuple(tuple) => {
                         for elt in &tuple.elts {
-                            if let ast::Expr::Constant(c) = elt {
-                                if let ast::Constant::Str(s) = &c.value {
-                                    args.push(s.to_string());
-                                }
+                            if let ast::Expr::Constant(c) = elt
+                                && let ast::Constant::Str(s) = &c.value
+                            {
+                                args.push(s.to_string());
                             }
                         }
                     }
@@ -581,10 +579,10 @@ fn patch_injects_arg(expr: &ast::Expr) -> bool {
             }
             // If there's a "new" keyword arg, it's also a replacement (no injection)
             for kw in &call.keywords {
-                if let Some(ref arg_name) = kw.arg {
-                    if arg_name.as_str() == "new" {
-                        return false;
-                    }
+                if let Some(ref arg_name) = kw.arg
+                    && arg_name.as_str() == "new"
+                {
+                    return false;
                 }
             }
             // Otherwise, @patch(target) injects the mock as a function arg
@@ -661,16 +659,16 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
         // Get the call expression
         if let ast::Expr::Call(call) = decorator {
             // Check positional argument first (most common: @pytest.mark.timeout(30))
-            if let Some(ast::Expr::Constant(c)) = call.args.first() {
-                if let ast::Constant::Int(i) = &c.value {
-                    // Convert BigInt to u64
-                    if let Ok(val) = i.to_string().parse::<u64>() {
-                        // 0 means "no timeout" in pytest-timeout
-                        if val == 0 {
-                            return None;
-                        }
-                        return Some(val);
+            if let Some(ast::Expr::Constant(c)) = call.args.first()
+                && let ast::Constant::Int(i) = &c.value
+            {
+                // Convert BigInt to u64
+                if let Ok(val) = i.to_string().parse::<u64>() {
+                    // 0 means "no timeout" in pytest-timeout
+                    if val == 0 {
+                        return None;
                     }
+                    return Some(val);
                 }
             }
 
@@ -678,18 +676,16 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
             for keyword in &call.keywords {
                 if let Some(ref arg) = keyword.arg {
                     // Accept both "seconds" and "timeout" keyword args
-                    if arg.as_str() == "seconds" || arg.as_str() == "timeout" {
-                        if let ast::Expr::Constant(c) = &keyword.value {
-                            if let ast::Constant::Int(i) = &c.value {
-                                if let Ok(val) = i.to_string().parse::<u64>() {
-                                    // 0 means "no timeout" in pytest-timeout
-                                    if val == 0 {
-                                        return None;
-                                    }
-                                    return Some(val);
-                                }
-                            }
+                    if (arg.as_str() == "seconds" || arg.as_str() == "timeout")
+                        && let ast::Expr::Constant(c) = &keyword.value
+                        && let ast::Constant::Int(i) = &c.value
+                        && let Ok(val) = i.to_string().parse::<u64>()
+                    {
+                        // 0 means "no timeout" in pytest-timeout
+                        if val == 0 {
+                            return None;
                         }
+                        return Some(val);
                     }
                 }
             }
@@ -899,14 +895,18 @@ class TestMyClass:
 "#;
         let module = parse_source(source);
         assert_eq!(module.tests.len(), 2);
-        assert!(module
-            .tests
-            .iter()
-            .any(|t| t.name == "TestMyClass::test_method_one"));
-        assert!(module
-            .tests
-            .iter()
-            .any(|t| t.name == "TestMyClass::test_method_two"));
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "TestMyClass::test_method_one")
+        );
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "TestMyClass::test_method_two")
+        );
     }
 
     #[test]

@@ -7,8 +7,8 @@
 //! - Writable overlay on project directory
 
 use anyhow::{Context, Result};
-use nix::mount::{mount, MsFlags};
-use nix::sched::{unshare, CloneFlags};
+use nix::mount::{MsFlags, mount};
+use nix::sched::{CloneFlags, unshare};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -322,7 +322,7 @@ mod tests {
         // Save original value
         let original = env::var("TACH_NO_ISOLATION").ok();
 
-        env::set_var("TACH_NO_ISOLATION", "1");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "1") };
         assert!(
             is_isolation_disabled(),
             "Isolation should be disabled when TACH_NO_ISOLATION=1"
@@ -330,8 +330,8 @@ mod tests {
 
         // Restore
         match original {
-            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
-            None => env::remove_var("TACH_NO_ISOLATION"),
+            Some(v) => unsafe { env::set_var("TACH_NO_ISOLATION", v) },
+            None => unsafe { env::remove_var("TACH_NO_ISOLATION") },
         }
     }
 
@@ -339,15 +339,15 @@ mod tests {
     fn test_isolation_enabled_when_set_to_0() {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
-        env::set_var("TACH_NO_ISOLATION", "0");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "0") };
         assert!(
             !is_isolation_disabled(),
             "Isolation should be enabled when TACH_NO_ISOLATION=0"
         );
 
         match original {
-            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
-            None => env::remove_var("TACH_NO_ISOLATION"),
+            Some(v) => unsafe { env::set_var("TACH_NO_ISOLATION", v) },
+            None => unsafe { env::remove_var("TACH_NO_ISOLATION") },
         }
     }
 
@@ -355,14 +355,14 @@ mod tests {
     fn test_isolation_enabled_when_unset() {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
-        env::remove_var("TACH_NO_ISOLATION");
+        unsafe { env::remove_var("TACH_NO_ISOLATION") };
         assert!(
             !is_isolation_disabled(),
             "Isolation should be enabled when TACH_NO_ISOLATION is unset"
         );
 
         if let Some(v) = original {
-            env::set_var("TACH_NO_ISOLATION", v);
+            unsafe { env::set_var("TACH_NO_ISOLATION", v) };
         }
     }
 
@@ -370,27 +370,27 @@ mod tests {
     fn test_isolation_enabled_when_set_to_other() {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
-        env::set_var("TACH_NO_ISOLATION", "yes");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "yes") };
         assert!(
             !is_isolation_disabled(),
             "Isolation should be enabled for non-'1' values"
         );
 
-        env::set_var("TACH_NO_ISOLATION", "true");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "true") };
         assert!(
             !is_isolation_disabled(),
             "Isolation should be enabled for non-'1' values"
         );
 
-        env::set_var("TACH_NO_ISOLATION", "");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "") };
         assert!(
             !is_isolation_disabled(),
             "Isolation should be enabled for empty string"
         );
 
         match original {
-            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
-            None => env::remove_var("TACH_NO_ISOLATION"),
+            Some(v) => unsafe { env::set_var("TACH_NO_ISOLATION", v) },
+            None => unsafe { env::remove_var("TACH_NO_ISOLATION") },
         }
     }
 
@@ -402,7 +402,7 @@ mod tests {
     fn test_setup_filesystem_skipped_when_no_isolation() {
         let original = env::var("TACH_NO_ISOLATION").ok();
 
-        env::set_var("TACH_NO_ISOLATION", "1");
+        unsafe { env::set_var("TACH_NO_ISOLATION", "1") };
 
         // This should return Ok(()) immediately without requiring root
         let result = setup_filesystem(999, Path::new("/tmp/test"));
@@ -412,8 +412,8 @@ mod tests {
         );
 
         match original {
-            Some(v) => env::set_var("TACH_NO_ISOLATION", v),
-            None => env::remove_var("TACH_NO_ISOLATION"),
+            Some(v) => unsafe { env::set_var("TACH_NO_ISOLATION", v) },
+            None => unsafe { env::remove_var("TACH_NO_ISOLATION") },
         }
     }
 
