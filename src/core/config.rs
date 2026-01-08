@@ -440,6 +440,7 @@ struct ToolConfig {
 /// timeout = 60
 /// workers = 4
 /// isolation_strategy = "auto"
+/// timeout_hook = "mymodule:on_timeout"
 ///
 /// [tool.tach.coverage]
 /// enabled = true
@@ -463,6 +464,16 @@ pub struct TachConfig {
 
     /// Coverage configuration
     pub coverage: Option<CoverageConfig>,
+
+    /// Python callback hook for timeout events.
+    ///
+    /// Format: "module.path:function_name"
+    /// Example: "my_package.hooks:on_timeout"
+    ///
+    /// The function receives (test_id: str, test_name: str, timeout_seconds: int)
+    /// and is called in the supervisor when a test times out.
+    /// Hook execution is limited to 5 seconds.
+    pub timeout_hook: Option<String>,
 }
 
 /// Coverage configuration for Tach

@@ -52,6 +52,9 @@ pub struct Scheduler {
     toxic_queue: VecDeque<(u32, RunnableTest)>,
     /// Global timeout in seconds (used when test has no per-test timeout)
     global_timeout: u64,
+    /// Optional Python callback hook for timeout events.
+    /// Format: "module.path:function_name"
+    timeout_hook: Option<String>,
 }
 
 impl Scheduler {
@@ -61,12 +64,13 @@ impl Scheduler {
         log_capture: LogCapture,
         debug_socket_path: PathBuf,
     ) -> Result<Self> {
-        Self::with_timeout(
+        Self::with_config(
             cmd_socket,
             result_socket,
             log_capture,
             debug_socket_path,
             60,
+            None,
         )
     }
 
@@ -77,6 +81,25 @@ impl Scheduler {
         log_capture: LogCapture,
         debug_socket_path: PathBuf,
         global_timeout: u64,
+    ) -> Result<Self> {
+        Self::with_config(
+            cmd_socket,
+            result_socket,
+            log_capture,
+            debug_socket_path,
+            global_timeout,
+            None,
+        )
+    }
+
+    /// Create a scheduler with full configuration including timeout hook
+    pub fn with_config(
+        cmd_socket: UnixStream,
+        result_socket: UnixStream,
+        log_capture: LogCapture,
+        debug_socket_path: PathBuf,
+        global_timeout: u64,
+        timeout_hook: Option<String>,
     ) -> Result<Self> {
         let max_workers = log_capture.slot_count();
 
@@ -94,6 +117,7 @@ impl Scheduler {
             safe_queue: VecDeque::new(),
             toxic_queue: VecDeque::new(),
             global_timeout,
+            timeout_hook,
         })
     }
 
@@ -238,9 +262,15 @@ impl Scheduler {
 
                 // Check for workers that exceeded their per-test timeout
                 let timed_out = self.get_timed_out_workers();
-                for (test_id, test_name, slot, worker_pid) in timed_out {
+                for (test_id, test_name, slot, worker_pid, timeout_secs) in timed_out {
                     // Gracefully kill worker: SIGTERM first, then SIGKILL after 100ms
                     let _ = graceful_kill_worker(worker_pid, Duration::from_millis(100));
+
+                    // Invoke timeout hook if configured
+                    if let Some(ref hook_spec) = self.timeout_hook {
+                        invoke_timeout_hook(hook_spec, test_id, &test_name, timeout_secs);
+                    }
+
                     reporter.on_test_finished(
                         &test_name,
                         "timeout",
@@ -456,12 +486,12 @@ impl Scheduler {
 
     /// Get workers that have exceeded their per-test timeout
     ///
-    /// Returns (test_id, test_name, slot, worker_pid) for each timed-out worker.
+    /// Returns (test_id, test_name, slot, worker_pid, timeout_secs) for each timed-out worker.
     /// Each worker's timeout is checked against its individual timeout_secs setting.
     ///
     /// Uses atomic compare_exchange to ensure each timeout is claimed exactly once,
     /// preventing race conditions when multiple threads call this method concurrently.
-    fn get_timed_out_workers(&self) -> Vec<(u32, String, usize, Option<i32>)> {
+    fn get_timed_out_workers(&self) -> Vec<(u32, String, usize, Option<i32>, u64)> {
         let workers = self
             .active_workers
             .lock()
@@ -479,7 +509,15 @@ impl Scheduler {
                         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                         .is_ok()
             })
-            .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
+            .map(|(id, w)| {
+                (
+                    *id,
+                    w.test_name.clone(),
+                    w.slot,
+                    w.worker_pid,
+                    w.timeout_secs,
+                )
+            })
             .collect()
     }
 }
@@ -534,6 +572,68 @@ pub fn graceful_kill_worker(pid: Option<i32>, grace_period: Duration) -> Result<
     let _ = kill(pid_raw, Signal::SIGKILL);
 
     Ok(())
+}
+
+/// Invoke a Python timeout hook function.
+///
+/// The hook is specified as "module.path:function_name".
+/// The function is called with (test_id: str, test_name: str, timeout_seconds: int).
+/// Hook execution is limited to 5 seconds.
+///
+/// # Arguments
+/// * `hook_spec` - Hook specification in format "module.path:function_name"
+/// * `test_id` - The numeric test ID
+/// * `test_name` - The test name/path
+/// * `timeout_secs` - The timeout in seconds
+pub fn invoke_timeout_hook(hook_spec: &str, test_id: u32, test_name: &str, timeout_secs: u64) {
+    use pyo3::prelude::*;
+    use std::time::Duration;
+
+    // Parse hook spec: "module.path:function_name"
+    let parts: Vec<&str> = hook_spec.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        eprintln!(
+            "[scheduler] Invalid timeout_hook format '{}', expected 'module:function'",
+            hook_spec
+        );
+        return;
+    }
+    let (module_path, func_name) = (parts[0], parts[1]);
+
+    // Run hook with timeout (5 seconds max)
+    let hook_timeout = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+
+    let result = Python::attach(|py| -> PyResult<()> {
+        // Import the module
+        let module = py.import(module_path)?;
+        let func = module.getattr(func_name)?;
+
+        // Call with (test_id, test_name, timeout_seconds)
+        func.call1((test_id.to_string(), test_name, timeout_secs))?;
+        Ok(())
+    });
+
+    match result {
+        Ok(()) => {
+            eprintln!(
+                "[scheduler] Timeout hook completed for {} in {:?}",
+                test_name,
+                start.elapsed()
+            );
+        }
+        Err(e) => {
+            eprintln!("[scheduler] Timeout hook failed for {}: {}", test_name, e);
+        }
+    }
+
+    // Log if hook took too long (but don't interrupt - it already ran)
+    if start.elapsed() > hook_timeout {
+        eprintln!(
+            "[scheduler] Warning: timeout hook took {:?} (exceeds 5s limit)",
+            start.elapsed()
+        );
+    }
 }
 
 impl Scheduler {
