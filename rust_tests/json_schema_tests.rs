@@ -23,13 +23,28 @@ fn project_root() -> &'static str {
     env!("CARGO_MANIFEST_DIR")
 }
 
+/// Get the main project root (for accessing shared venv)
+fn main_project_root() -> String {
+    // Worktrees are typically in .worktrees/<name>
+    // The main project venv is in the parent repo
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    if manifest_dir.contains(".worktrees") {
+        // Extract path before .worktrees
+        if let Some(pos) = manifest_dir.find(".worktrees") {
+            return manifest_dir[..pos].trim_end_matches('/').to_string();
+        }
+    }
+    manifest_dir.to_string()
+}
+
 /// Helper to run tach-core with given args and return output
+/// Uses --no-isolation to avoid requiring sudo
 fn run_tach(args: &[&str]) -> std::process::Output {
     let binary = binary_path();
+    let main_root = main_project_root();
 
-    Command::new("sudo")
-        .arg("-E")
-        .arg(&binary)
+    Command::new(&binary)
+        .args(["--no-isolation", "-n", "1"])
         .args(args)
         .current_dir(project_root())
         .env("PYTHONHOME", "")
@@ -37,7 +52,7 @@ fn run_tach(args: &[&str]) -> std::process::Output {
             "PYTHONPATH",
             format!(
                 "{}/.venv/lib/python3.12/site-packages:{}",
-                project_root(),
+                main_root,
                 project_root()
             ),
         )
@@ -70,7 +85,6 @@ fn parse_ndjson_output(stdout: &str) -> Vec<Value> {
 // =============================================================================
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_output_is_valid_ndjson() {
     // Run with JSON format on a test directory
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
@@ -103,7 +117,6 @@ fn test_json_output_is_valid_ndjson() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_output_has_required_event_field() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -130,7 +143,6 @@ fn test_json_output_has_required_event_field() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_output_event_types_are_valid() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -151,7 +163,6 @@ fn test_json_output_event_types_are_valid() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_test_finish_has_outcome() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -199,7 +210,6 @@ fn test_json_test_finish_has_outcome() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_run_start_has_count() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -224,7 +234,6 @@ fn test_json_run_start_has_count() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_run_finished_has_summary() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -251,7 +260,6 @@ fn test_json_run_finished_has_summary() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_test_start_has_required_fields() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -280,7 +288,6 @@ fn test_json_test_start_has_required_fields() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_event_sequence_is_logical() {
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -317,7 +324,6 @@ fn test_json_event_sequence_is_logical() {
 }
 
 #[test]
-#[ignore] // Requires sudo and built binary
 fn test_json_no_extra_fields_in_events() {
     // This test ensures we don't accidentally add fields without updating schema
     let output = run_tach(&["--format=json", "tests/dummy_project/"]);
