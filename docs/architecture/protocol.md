@@ -166,6 +166,44 @@ let (decoded, _): (T, usize) =
 
 ---
 
+## Message Size Limits
+
+To prevent OOM attacks from malicious payloads, all IPC messages enforce size limits:
+
+| Limit              | Value  | Purpose                            |
+| ------------------ | ------ | ---------------------------------- |
+| `MAX_PAYLOAD_SIZE` | 16 MiB | Maximum serialized message size    |
+| Message truncation | 4 KiB  | Maximum error/output string length |
+
+### Enforcement
+
+Size validation occurs **before** memory allocation using `decode_with_limit`:
+
+```rust
+pub fn decode_with_limit<T: DeserializeOwned>(
+    data: &[u8],
+    max_size: usize,
+) -> Result<T, DecodeWithLimitError> {
+    // Extract claimed length from first 4 bytes
+    let claimed_len = u32::from_le_bytes(data[..4].try_into()?) as usize;
+
+    // Reject before allocating
+    if claimed_len > max_size {
+        return Err(DecodeWithLimitError::PayloadTooLarge {
+            claimed: claimed_len,
+            limit: max_size,
+        });
+    }
+    // ... proceed with decode
+}
+```
+
+This prevents a malicious actor from sending a crafted length prefix (e.g., `0xFFFFFFFF`) to trigger a 4GB allocation.
+
+> **Security Note:** The `decode_with_limit` function is used at all IPC boundaries where untrusted data is received (Supervisor ↔ Zygote, Zygote ↔ Worker).
+
+---
+
 ## Socket Architecture
 
 ```mermaid
