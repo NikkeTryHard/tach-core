@@ -136,122 +136,34 @@ class TestErrorCategories:
         assert len(system_errors) == 10, "Expected 10 system error codes"
 
 
-class TestErrorSuggestions:
-    """Tests for error suggestions/hints.
-
-    These tests verify the EXACT suggestion text matches what Rust errors.rs produces.
-    This ensures documentation and error messages stay synchronized.
-    """
-
-    # =========================================================================
-    # Exact Rust Suggestions (E005-E010)
-    # =========================================================================
-
-    def test_userfaultfd_suggestion(self):
-        """E005 should have exact userfaultfd fix suggestion."""
-        # EXACT match from errors.rs userfaultfd_unavailable()
-        suggestion = "Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE"
-        assert suggestion == "Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE"
-
-    def test_landlock_suggestion(self):
-        """E006 should have exact Landlock suggestion."""
-        # EXACT match from errors.rs landlock_unavailable()
-        suggestion = "Landlock requires kernel 5.13+. Running without filesystem isolation."
-        assert suggestion == "Landlock requires kernel 5.13+. Running without filesystem isolation."
-
-    def test_permission_suggestion(self):
-        """E007 should have exact permission suggestion."""
-        # EXACT match from errors.rs permission_denied()
-        suggestion = "Check file permissions or run with appropriate privileges"
-        assert suggestion == "Check file permissions or run with appropriate privileges"
-
-    def test_memory_suggestion(self):
-        """E008 should have exact memory suggestion."""
-        # EXACT match from errors.rs out_of_memory()
-        suggestion = "Reduce worker count with -n or increase system memory"
-        assert suggestion == "Reduce worker count with -n or increase system memory"
-
-    def test_file_limit_suggestion(self):
-        """E009 should have exact file limit suggestion."""
-        # EXACT match from errors.rs too_many_files()
-        suggestion = "Increase ulimit with: ulimit -n 65536"
-        assert suggestion == "Increase ulimit with: ulimit -n 65536"
-
-    def test_timeout_suggestion(self):
-        """E010 should have exact timeout suggestion."""
-        # EXACT match from errors.rs timeout_exceeded()
-        suggestion = "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
-        assert suggestion == "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
-
-    # =========================================================================
-    # Exact Rust Suggestions (E011-E018)
-    # =========================================================================
-
-    def test_overlayfs_suggestion(self):
-        """E011 should have exact overlayfs suggestion."""
-        # EXACT match from errors.rs overlayfs_mount_failed()
-        suggestion = "Ensure overlayfs kernel module is loaded and you have mount permissions"
-        assert suggestion == "Ensure overlayfs kernel module is loaded and you have mount permissions"
-
-    def test_python_version_suggestion(self):
-        """E012 should have exact Python version suggestion."""
-        # EXACT match from errors.rs python_version_mismatch()
-        suggestion = "Set PYO3_PYTHON to point to the correct Python binary"
-        assert suggestion == "Set PYO3_PYTHON to point to the correct Python binary"
-
-    def test_namespace_suggestion(self):
-        """E013 should have exact namespace suggestion."""
-        # EXACT match from errors.rs namespace_creation_failed()
-        suggestion = "Check kernel config for namespace support or run with CAP_SYS_ADMIN"
-        assert suggestion == "Check kernel config for namespace support or run with CAP_SYS_ADMIN"
-
-    def test_worker_crash_suggestion(self):
-        """E014 should have exact worker crash suggestion."""
-        # EXACT match from errors.rs worker_crashed()
-        suggestion = "Check for memory corruption, C extension bugs, or insufficient stack size"
-        assert suggestion == "Check for memory corruption, C extension bugs, or insufficient stack size"
-
-    def test_ipc_suggestion(self):
-        """E015 should have exact IPC suggestion."""
-        # EXACT match from errors.rs ipc_channel_failure()
-        suggestion = "Worker may have crashed or IPC buffer exhausted. Try reducing parallelism."
-        assert suggestion == "Worker may have crashed or IPC buffer exhausted. Try reducing parallelism."
-
-    def test_snapshot_suggestion(self):
-        """E016 should have exact snapshot suggestion."""
-        # EXACT match from errors.rs snapshot_integrity_failure()
-        suggestion = "Memory state corrupted. This is an internal error. Please report a bug."
-        assert suggestion == "Memory state corrupted. This is an internal error. Please report a bug."
-
-    def test_syntax_error_suggestion(self):
-        """E017 should have exact syntax error suggestion."""
-        # EXACT match from errors.rs syntax_error()
-        suggestion = "Fix the syntax error in the test file"
-        assert suggestion == "Fix the syntax error in the test file"
-
-    def test_circular_fixture_suggestion(self):
-        """E018 should have exact circular fixture suggestion."""
-        # EXACT match from errors.rs circular_fixture_dependency()
-        suggestion = "Refactor fixtures to break the circular dependency"
-        assert suggestion == "Refactor fixtures to break the circular dependency"
-
-    # =========================================================================
-    # Informational Error Codes (E019-E020) - No suggestions by design
-    # =========================================================================
-
-    def test_skipped_no_suggestion(self):
-        """E019 has no suggestion (informational only)."""
-        # E019 (test_skipped) returns None for suggestion - this is intentional
-        # These are informational messages, not actionable errors
-        has_suggestion = False  # Matches: None in errors.rs test_skipped()
-        assert has_suggestion is False
-
-    def test_xfail_no_suggestion(self):
-        """E020 has no suggestion (informational only)."""
-        # E020 (test_xfail) returns None for suggestion - this is intentional
-        # These are informational messages, not actionable errors
-        has_suggestion = False  # Matches: None in errors.rs test_xfail()
-        assert has_suggestion is False
+# =============================================================================
+# Error Suggestion Reference (Documentation Only)
+# =============================================================================
+#
+# Canonical source: src/core/errors.rs - CategorizedError constructors
+# The following documents the EXACT suggestion text from Rust errors.rs.
+# This serves as a reference for documentation and manual verification.
+# These are NOT tests - they document expected error messages.
+#
+# | Code | Rust Function                | Suggestion                                                           |
+# |------|------------------------------|----------------------------------------------------------------------|
+# | E005 | userfaultfd_unavailable()    | Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE         |
+# | E006 | landlock_unavailable()       | Landlock requires kernel 5.13+. Running without filesystem isolation.|
+# | E007 | permission_denied()          | Check file permissions or run with appropriate privileges            |
+# | E008 | out_of_memory()              | Reduce worker count with -n or increase system memory                |
+# | E009 | too_many_files()             | Increase ulimit with: ulimit -n 65536                                |
+# | E010 | timeout_exceeded()           | Increase the timeout with @pytest.mark.timeout(N) or optimize...    |
+# | E011 | overlayfs_mount_failed()     | Ensure overlayfs kernel module is loaded and you have mount perms   |
+# | E012 | python_version_mismatch()    | Set PYO3_PYTHON to point to the correct Python binary               |
+# | E013 | namespace_creation_failed()  | Check kernel config for namespace support or run with CAP_SYS_ADMIN |
+# | E014 | worker_crashed()             | Check for memory corruption, C extension bugs, or insufficient stack|
+# | E015 | ipc_channel_failure()        | Worker may have crashed or IPC buffer exhausted. Try reducing...    |
+# | E016 | snapshot_integrity_failure() | Memory state corrupted. This is an internal error. Please report... |
+# | E017 | syntax_error()               | Fix the syntax error in the test file                                |
+# | E018 | circular_fixture_dependency()| Refactor fixtures to break the circular dependency                   |
+# | E019 | test_skipped()               | None (informational - no action needed)                              |
+# | E020 | test_xfail()                 | None (informational - no action needed)                              |
+# =============================================================================
 
 
 class TestErrorCodeUniqueness:
