@@ -561,9 +561,9 @@ impl fmt::Display for ErrorCategory {
 /// Error code constants for categorized errors.
 ///
 /// Error codes follow the pattern `E###` where:
-/// - E001-E099: User errors (test code, configuration)
-/// - E100-E199: Reserved for future user error categories
-/// - E001-E010: Currently defined error codes
+/// - E001-E004, E010: User errors (test code, configuration)
+/// - E005-E009: System errors (kernel, permissions, resources)
+/// - E011+: Reserved for future error codes
 pub mod error_codes {
     /// Test assertion failed.
     pub const E001: &str = "E001";
@@ -875,11 +875,25 @@ impl CategorizedError {
                 Self::new(error_codes::E001, ErrorCategory::User, msg.clone(), None)
             }
 
-            _ => Self::new(
-                error_codes::E007,
+            TachError::Calibration(e) => Self::new(
+                error_codes::E008,
                 ErrorCategory::System,
-                format!("{}", err),
-                None,
+                format!("Calibration failed: {}", e),
+                Some("This is an internal error. Please report a bug.".to_string()),
+            ),
+
+            TachError::Teleportation(e) => Self::new(
+                error_codes::E008,
+                ErrorCategory::System,
+                format!("FD teleportation failed: {}", e),
+                Some("This is an internal error. Please report a bug.".to_string()),
+            ),
+
+            TachError::Protocol(e) => Self::new(
+                error_codes::E008,
+                ErrorCategory::System,
+                format!("Protocol error: {}", e),
+                Some("This is an internal error. Please report a bug.".to_string()),
             ),
         }
     }
