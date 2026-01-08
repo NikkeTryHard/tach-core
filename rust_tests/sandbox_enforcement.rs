@@ -28,7 +28,7 @@ use tach_core::sandbox::{SandboxStatus, apply_iron_dome, apply_landlock, apply_s
 /// This is the canonical "Suicide Worker" test. After apply_seccomp(),
 /// any attempt to create a network socket should fail with EPERM.
 #[test]
-fn test_seccomp_blocks_socket() {
+fn test_seccomp_blocks_socket_creation() {
     match unsafe { fork() }.expect("fork failed") {
         ForkResult::Child => {
             // Apply Seccomp filter
@@ -117,6 +117,70 @@ fn test_seccomp_blocks_connect() {
                     code,
                     libc::EPERM,
                     "Seccomp should block connect() with EPERM (1), got exit code {}",
+                    code
+                );
+            }
+            status => panic!("Child process did not exit normally: {:?}", status),
+        },
+    }
+}
+
+/// Test that Seccomp blocks bind() with EPERM.
+///
+/// This test verifies that even if a socket is created before Seccomp
+/// is applied, the process cannot bind it to an address afterward.
+#[test]
+fn test_seccomp_blocks_bind() {
+    match unsafe { fork() }.expect("fork failed") {
+        ForkResult::Child => {
+            // Create a socket BEFORE applying Seccomp
+            let sock = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+            if sock < 0 {
+                eprintln!("[suicide_worker] Failed to create socket before Seccomp");
+                std::process::exit(253);
+            }
+
+            // Apply Seccomp filter
+            if let Err(e) = apply_seccomp() {
+                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                unsafe { libc::close(sock) };
+                std::process::exit(254);
+            }
+
+            // Attempt to bind (should be blocked)
+            let addr = libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: 0u16.to_be(), // Let OS pick a port
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
+                },
+                sin_zero: [0; 8],
+            };
+
+            let result = unsafe {
+                libc::bind(
+                    sock,
+                    &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as u32,
+                )
+            };
+
+            unsafe { libc::close(sock) };
+
+            if result == -1 {
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                std::process::exit(errno);
+            } else {
+                eprintln!("[suicide_worker] CRITICAL: bind() succeeded, Seccomp not enforced!");
+                std::process::exit(255);
+            }
+        }
+        ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
+            WaitStatus::Exited(_, code) => {
+                assert_eq!(
+                    code,
+                    libc::EPERM,
+                    "Seccomp should block bind() with EPERM (1), got exit code {}",
                     code
                 );
             }
