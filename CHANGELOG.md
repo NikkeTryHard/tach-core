@@ -1709,7 +1709,7 @@ Options:
 
 - Linux 5.13+ (for Landlock ABI V1)
 - x86_64 or aarch64 architecture
-- Python 3.8+ with libpython
+- Python 3.10+ with libpython (3.12+ for coverage)
 - userfaultfd privileges (CAP_SYS_PTRACE or `vm.unprivileged_userfaultfd=1`)
 
 Run `tach self-test` to verify system compatibility.

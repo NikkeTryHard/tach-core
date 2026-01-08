@@ -73,7 +73,7 @@ class TestDiagnoseChecks:
         """Python version should be detectable."""
         version = sys.version_info
         assert version.major == 3, "Python 3 required"
-        assert version.minor >= 8, "Python 3.8+ required"
+        assert version.minor >= 10, "Python 3.10+ required"
 
     def test_pytest_availability(self):
         """pytest should be importable."""
