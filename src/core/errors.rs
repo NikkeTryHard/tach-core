@@ -912,6 +912,104 @@ impl CategorizedError {
     pub fn code(&self) -> &'static str {
         self.code
     }
+
+    /// Enhance this error with a context-aware suggestion.
+    ///
+    /// This method analyzes the error message and current system context
+    /// to provide more targeted, actionable suggestions. If a relevant
+    /// failure condition is detected, the suggestion is replaced with
+    /// a context-aware one.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let err = CategorizedError::userfaultfd_unavailable("EPERM");
+    /// let enhanced = err.with_context_aware_suggestion();
+    /// // If running in Docker, suggestion now includes Docker-specific advice
+    /// ```
+    pub fn with_context_aware_suggestion(mut self) -> Self {
+        use crate::suggestions::{detect_condition_from_error, get_suggestion, SuggestionContext};
+
+        if let Some(condition) = detect_condition_from_error(&self.message) {
+            let ctx = SuggestionContext::detect();
+            let detailed_suggestion = get_suggestion(condition, &ctx);
+            self.suggestion = Some(detailed_suggestion);
+        }
+
+        self
+    }
+
+    /// Try to enhance the suggestion based on the error message only.
+    ///
+    /// This is a lighter-weight version that doesn't perform full
+    /// system context detection. Use this when performance is critical.
+    pub fn with_quick_suggestion(mut self) -> Self {
+        use crate::suggestions::{detect_condition_from_error, quick_suggestion};
+
+        if self.suggestion.is_none() {
+            if let Some(condition) = detect_condition_from_error(&self.message) {
+                self.suggestion = Some(quick_suggestion(condition).to_string());
+            }
+        }
+
+        self
+    }
+
+    /// Create from an anyhow error with context-aware suggestions.
+    ///
+    /// This analyzes the error message and provides appropriate
+    /// categorization and suggestions.
+    pub fn from_anyhow(err: &anyhow::Error) -> Self {
+        use crate::suggestions::{detect_condition_from_error, quick_suggestion};
+
+        let message = err.to_string();
+        let lower = message.to_lowercase();
+
+        // Determine category based on error content
+        // NOTE: Order matters! More specific checks come first.
+        let (code, category) = if lower.contains("userfaultfd") {
+            // Check userfaultfd BEFORE generic EPERM (userfaultfd errors often contain EPERM)
+            (error_codes::E005, ErrorCategory::System)
+        } else if lower.contains("landlock") || lower.contains("seccomp") {
+            (error_codes::E006, ErrorCategory::System)
+        } else if lower.contains("too many open files")
+            || lower.contains("emfile")
+            || lower.contains("enfile")
+        {
+            (error_codes::E009, ErrorCategory::System)
+        } else if lower.contains("memory") || lower.contains("oom") || lower.contains("enomem") {
+            (error_codes::E008, ErrorCategory::System)
+        } else if lower.contains("permission")
+            || lower.contains("eperm")
+            || lower.contains("eacces")
+        {
+            // Generic permission checks come after specific ones
+            (error_codes::E007, ErrorCategory::System)
+        } else if lower.contains("import") || lower.contains("module") {
+            (error_codes::E002, ErrorCategory::User)
+        } else if lower.contains("fixture") {
+            (error_codes::E003, ErrorCategory::User)
+        } else if lower.contains("timeout") {
+            (error_codes::E010, ErrorCategory::User)
+        } else {
+            // Default to system error for unknown issues
+            (error_codes::E008, ErrorCategory::System)
+        };
+
+        // Get suggestion based on detected condition
+        let suggestion =
+            detect_condition_from_error(&message).map(|c| quick_suggestion(c).to_string());
+
+        Self::new(code, category, message, suggestion)
+    }
+
+    /// Print this error to stderr with full formatting.
+    ///
+    /// This outputs the error in a user-friendly format with the
+    /// error code, category, message, and suggestion (if any).
+    pub fn print_to_stderr(&self) {
+        eprintln!("{}", self);
+    }
 }
 
 // =============================================================================
@@ -1124,5 +1222,121 @@ mod tests {
         assert_eq!(error_codes::E008, "E008");
         assert_eq!(error_codes::E009, "E009");
         assert_eq!(error_codes::E010, "E010");
+    }
+
+    // =========================================================================
+    // Context-Aware Suggestion Tests
+    // =========================================================================
+
+    #[test]
+    fn test_with_quick_suggestion_adds_suggestion() {
+        // Error without suggestion
+        let err = CategorizedError::new(
+            error_codes::E005,
+            ErrorCategory::System,
+            "userfaultfd creation failed: EPERM",
+            None,
+        );
+        assert!(err.suggestion.is_none());
+
+        // After quick suggestion enhancement
+        let enhanced = err.with_quick_suggestion();
+        assert!(enhanced.suggestion.is_some());
+        let suggestion = enhanced.suggestion.unwrap();
+        assert!(
+            suggestion.contains("userfaultfd") || suggestion.contains("CAP_SYS_PTRACE"),
+            "Suggestion should mention userfaultfd or CAP_SYS_PTRACE: {}",
+            suggestion
+        );
+    }
+
+    #[test]
+    fn test_with_quick_suggestion_preserves_existing() {
+        // Error with existing suggestion
+        let err = CategorizedError::new(
+            error_codes::E005,
+            ErrorCategory::System,
+            "userfaultfd creation failed: EPERM",
+            Some("Custom suggestion".to_string()),
+        );
+
+        // Quick suggestion should NOT overwrite
+        let enhanced = err.with_quick_suggestion();
+        assert_eq!(enhanced.suggestion, Some("Custom suggestion".to_string()));
+    }
+
+    #[test]
+    fn test_from_anyhow_permission_error() {
+        let anyhow_err = anyhow::anyhow!("Permission denied when accessing /etc/shadow");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E007);
+        assert!(cat_err.is_system_error());
+        assert!(cat_err.message.contains("Permission denied"));
+    }
+
+    #[test]
+    fn test_from_anyhow_memory_error() {
+        let anyhow_err = anyhow::anyhow!("Out of memory during allocation");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E008);
+        assert!(cat_err.is_system_error());
+    }
+
+    #[test]
+    fn test_from_anyhow_file_limit_error() {
+        let anyhow_err = anyhow::anyhow!("Too many open files");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E009);
+        assert!(cat_err.is_system_error());
+        assert!(cat_err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_from_anyhow_userfaultfd_error() {
+        let anyhow_err = anyhow::anyhow!("userfaultfd: EPERM");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E005);
+        assert!(cat_err.is_system_error());
+        assert!(cat_err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_from_anyhow_import_error() {
+        let anyhow_err = anyhow::anyhow!("No module named 'pytest'");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E002);
+        assert!(cat_err.is_user_error());
+    }
+
+    #[test]
+    fn test_from_anyhow_timeout_error() {
+        let anyhow_err = anyhow::anyhow!("Test timeout after 30 seconds");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        assert_eq!(cat_err.code, error_codes::E010);
+        assert!(cat_err.is_user_error());
+    }
+
+    #[test]
+    fn test_from_anyhow_unknown_error() {
+        let anyhow_err = anyhow::anyhow!("Something went wrong");
+        let cat_err = CategorizedError::from_anyhow(&anyhow_err);
+
+        // Unknown errors default to system error
+        assert_eq!(cat_err.code, error_codes::E008);
+        assert!(cat_err.is_system_error());
+    }
+
+    #[test]
+    fn test_print_to_stderr() {
+        // Just verify it doesn't panic
+        let err = CategorizedError::userfaultfd_unavailable("EPERM");
+        // We can't easily capture stderr in tests, but we can ensure no panic
+        err.print_to_stderr();
     }
 }

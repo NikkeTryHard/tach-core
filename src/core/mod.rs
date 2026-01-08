@@ -9,6 +9,7 @@
 //! - `lifecycle`: Process lifecycle management
 //! - `protocol`: IPC protocol definitions
 //! - `signals`: Signal handling for graceful shutdown
+//! - `suggestions`: Context-aware error suggestions
 
 pub mod allocator;
 pub mod config;
@@ -18,3 +19,4 @@ pub mod errors;
 pub mod lifecycle;
 pub mod protocol;
 pub mod signals;
+pub mod suggestions;

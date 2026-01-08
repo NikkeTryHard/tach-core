@@ -3,6 +3,7 @@ use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity;
 use tach_core::discovery;
+use tach_core::errors::CategorizedError;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -11,6 +12,7 @@ use tach_core::reporter::{DotsReporter, JsonReporter, MultiReporter, ProgressRep
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
 use tach_core::signals;
+use tach_core::suggestions;
 use tach_core::watch;
 use tach_core::zygote;
 
@@ -119,11 +121,18 @@ fn main() -> Result<()> {
             );
         }
         Err(e) => {
-            eprintln!("[supervisor] FATAL: {}", e);
-            eprintln!("[supervisor] The Hypervisor cannot run without jemalloc.");
-            eprintln!(
-                "[supervisor] Ensure tikv-jemallocator is set as #[global_allocator] in lib.rs"
+            // Use CategorizedError for user-friendly error display
+            let suggestion = suggestions::get_suggestion(
+                suggestions::FailureCondition::JemallocNotActive,
+                &suggestions::SuggestionContext::detect(),
             );
+            let cat_error = CategorizedError::new(
+                tach_core::errors::error_codes::E008,
+                tach_core::errors::ErrorCategory::System,
+                format!("Jemalloc allocator not active: {}", e),
+                Some(suggestion),
+            );
+            cat_error.print_to_stderr();
             std::process::exit(1);
         }
     }
@@ -915,4 +924,30 @@ fn run_tests(
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Error Display Utilities
+// =============================================================================
+
+/// Print a user-friendly error message with context-aware suggestions.
+///
+/// This function is used to display errors in a helpful format when
+/// Tach encounters failures. It analyzes the error and provides
+/// actionable suggestions based on the current system context.
+#[allow(dead_code)]
+fn print_error_with_suggestions(err: &anyhow::Error) {
+    let cat_error = CategorizedError::from_anyhow(err);
+    // Try to enhance with context-aware suggestions
+    let enhanced = cat_error.with_context_aware_suggestion();
+    enhanced.print_to_stderr();
+}
+
+/// Analyze an error and return a helpful suggestion if available.
+///
+/// This can be used to add suggestions to error messages displayed
+/// by other parts of the system.
+#[allow(dead_code)]
+fn get_error_suggestion(error_msg: &str) -> Option<String> {
+    suggestions::suggest_for_error(error_msg)
 }

@@ -74,6 +74,7 @@ pub use core::errors;
 pub use core::lifecycle;
 pub use core::protocol;
 pub use core::signals;
+pub use core::suggestions;
 
 // Re-export discovery modules at top level for backward compatibility
 pub use discovery::analysis;
