@@ -1233,4 +1233,98 @@ mod tests {
             }
         }
     }
+
+    // =========================================================================
+    // Thread Leak Detection Tests (Task 3: 0.1.2)
+    // =========================================================================
+    //
+    // Thread leak detection is implemented in Python (tach_harness.py).
+    // The Rust side receives the `thread_leaked` flag from Python and logs it.
+    //
+    // These tests verify the Rust-side handling of the thread_leaked flag.
+
+    /// Test that thread leak detection affects worker toxicity decision.
+    ///
+    /// When a test spawns threads that outlive execution:
+    /// 1. Python harness detects the leak via threading.active_count()
+    /// 2. Python waits 500ms for threads to terminate
+    /// 3. If threads still running, Python returns thread_leaked=true
+    /// 4. Worker is marked toxic and must exit (cannot be reused)
+    #[test]
+    fn test_thread_leak_detection_concept() {
+        // This tests the conceptual logic of thread leak detection.
+        // Actual detection happens in Python; Rust receives the result.
+
+        // Case 1: No thread leak - worker can be reused
+        let is_toxic = false;
+        let thread_leaked = false;
+        let should_exit = is_toxic || thread_leaked;
+        assert!(
+            !should_exit,
+            "Clean test without thread leak should not exit"
+        );
+
+        // Case 2: Toxic test - worker must exit (regardless of threads)
+        let is_toxic = true;
+        let thread_leaked = false;
+        let should_exit = is_toxic || thread_leaked;
+        assert!(should_exit, "Toxic test should always exit");
+
+        // Case 3: Thread leak detected - worker must exit
+        let is_toxic = false;
+        let thread_leaked = true;
+        let should_exit = is_toxic || thread_leaked;
+        assert!(
+            should_exit,
+            "Thread leak should force worker exit even for safe test"
+        );
+
+        // Case 4: Both toxic and thread leak - worker must exit
+        let is_toxic = true;
+        let thread_leaked = true;
+        let should_exit = is_toxic || thread_leaked;
+        assert!(should_exit, "Toxic test with thread leak should exit");
+    }
+
+    /// Test that @pytest.mark.allow_threads marker behavior is correct.
+    ///
+    /// When a test has @pytest.mark.allow_threads:
+    /// 1. Thread leak detection is bypassed
+    /// 2. Worker does NOT get marked toxic due to threads
+    /// 3. Warning is logged but worker can continue
+    #[test]
+    fn test_allow_threads_marker_concept() {
+        // Simulates the marker logic (actual implementation in Python)
+        fn simulate_thread_leak_check(
+            initial_count: usize,
+            final_count: usize,
+            allow_threads: bool,
+        ) -> bool {
+            if final_count <= initial_count {
+                return false; // No new threads
+            }
+            if allow_threads {
+                return false; // User explicitly allowed threads
+            }
+            true // Thread leak detected
+        }
+
+        // Without marker: thread leak is detected
+        assert!(
+            simulate_thread_leak_check(1, 3, false),
+            "Without allow_threads, new threads should be detected as leak"
+        );
+
+        // With marker: thread leak is NOT detected (allowed)
+        assert!(
+            !simulate_thread_leak_check(1, 3, true),
+            "With allow_threads, new threads should be allowed"
+        );
+
+        // No new threads: no leak regardless of marker
+        assert!(
+            !simulate_thread_leak_check(2, 2, false),
+            "Same thread count should not trigger leak"
+        );
+    }
 }

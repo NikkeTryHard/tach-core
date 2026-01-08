@@ -29,6 +29,101 @@ STATUS_CRASH = 3
 STATUS_HARNESS_ERROR = 4
 
 # =============================================================================
+# THREAD LEAK DETECTION (Task 3: 0.1.2)
+# =============================================================================
+
+# Grace period to wait for threads to terminate (milliseconds)
+_THREAD_GRACE_PERIOD_MS = 500
+
+# Global flag set when thread leak is detected in current test
+_thread_leak_detected = False
+
+
+def _has_allow_threads_marker(item) -> bool:
+    """Check if test item has @pytest.mark.allow_threads marker.
+
+    Args:
+        item: A pytest test item
+
+    Returns:
+        True if the test has the allow_threads marker
+    """
+    try:
+        # Check for the marker on the item
+        markers = getattr(item, "iter_markers", None)
+        if markers:
+            for marker in markers():
+                if marker.name == "allow_threads":
+                    return True
+        # Also check own_markers attribute
+        own_markers = getattr(item, "own_markers", [])
+        for marker in own_markers:
+            if marker.name == "allow_threads":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _detect_thread_leak(initial_count: int, allow_threads: bool) -> bool:
+    """Detect if test spawned threads that outlive the test.
+
+    This function:
+    1. Compares current thread count to initial count
+    2. If threads increased and allow_threads is False:
+       - Waits up to _THREAD_GRACE_PERIOD_MS for threads to terminate
+       - If still running, returns True (leak detected)
+    3. Logs a warning if threads leaked
+
+    Args:
+        initial_count: Thread count before test execution
+        allow_threads: Whether @pytest.mark.allow_threads is set
+
+    Returns:
+        True if thread leak detected (worker should be marked toxic)
+    """
+    import threading
+    import time
+
+    current_count = threading.active_count()
+
+    if current_count <= initial_count:
+        return False  # No new threads
+
+    if allow_threads:
+        # User explicitly allowed thread leaks for this test
+        print(
+            f"[harness] INFO: Test spawned {current_count - initial_count} additional threads (allowed by @pytest.mark.allow_threads)",
+            file=sys.stderr,
+        )
+        return False
+
+    # Threads increased - wait for grace period
+    leaked_threads = current_count - initial_count
+    print(
+        f"[harness] WARN: Test spawned {leaked_threads} additional thread(s), waiting {_THREAD_GRACE_PERIOD_MS}ms for them to terminate...",
+        file=sys.stderr,
+    )
+
+    # Wait in small increments, checking thread count
+    grace_end = time.perf_counter() + (_THREAD_GRACE_PERIOD_MS / 1000.0)
+    while time.perf_counter() < grace_end:
+        time.sleep(0.050)  # 50ms intervals
+        current_count = threading.active_count()
+        if current_count <= initial_count:
+            print("[harness] INFO: Threads terminated within grace period", file=sys.stderr)
+            return False
+
+    # Grace period expired, threads still running
+    leaked_threads = threading.active_count() - initial_count
+    print(
+        f"[harness] WARN: {leaked_threads} thread(s) still running after grace period. Worker marked toxic (cannot be reused).",
+        file=sys.stderr,
+    )
+    return True
+
+
+# =============================================================================
 # PYTEST COMPATIBILITY: Exception and Warning Context Managers
 # =============================================================================
 
@@ -1098,8 +1193,18 @@ def run_test(file_path: str, node_id: str) -> tuple:
 
     FAST PATH: Item lookup is O(1) from _ITEMS_MAP.
     No pytest config, no collection, just run the test.
+
+    Returns:
+        Tuple of (status, duration, message, thread_leaked)
+        - status: Test result status code
+        - duration: Execution time in seconds
+        - message: Error/skip message if any
+        - thread_leaked: True if test spawned threads that didn't terminate
     """
-    global _SESSION, _ITEMS_MAP
+    global _SESSION, _ITEMS_MAP, _thread_leak_detected
+
+    # Reset thread leak flag for this test
+    _thread_leak_detected = False
 
     # CRITICAL: Reset logging lock FIRST before anything else
     # fork() corrupts the logging module's RLock, causing segfaults
@@ -1111,6 +1216,9 @@ def run_test(file_path: str, node_id: str) -> tuple:
     inject_entropy()
     start = time.perf_counter()
 
+    # Record initial thread count BEFORE test execution
+    initial_thread_count = threading.active_count()
+
     try:
         # O(1) lookup from pre-collected items
         target_item = _ITEMS_MAP.get(node_id)
@@ -1121,7 +1229,11 @@ def run_test(file_path: str, node_id: str) -> tuple:
                 STATUS_HARNESS_ERROR,
                 duration,
                 f"Test not found in Zygote session: {node_id}\nAvailable: {len(_ITEMS_MAP)} items",
+                False,  # No thread leak detection for failed lookup
             )
+
+        # Check for @pytest.mark.allow_threads marker
+        allow_threads = _has_allow_threads_marker(target_item)
 
         # Native Async Support
         original_obj = target_item.obj
@@ -1183,6 +1295,9 @@ def run_test(file_path: str, node_id: str) -> tuple:
 
         duration = time.perf_counter() - start
 
+        # Thread leak detection: check if test spawned threads that outlived execution
+        _thread_leak_detected = _detect_thread_leak(initial_thread_count, allow_threads)
+
         failed_report = None
         skipped_report = None
 
@@ -1211,22 +1326,22 @@ def run_test(file_path: str, node_id: str) -> tuple:
                 # Debug logging for troubleshooting enhancement failures
                 print(f"[harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
-            return (STATUS_FAIL, duration, msg)
+            return (STATUS_FAIL, duration, msg, _thread_leak_detected)
 
         if skipped_report:
             skip_reason = str(skipped_report.longrepr) if skipped_report.longrepr else ""
-            return (STATUS_SKIP, duration, f"Skipped: {skip_reason}")
+            return (STATUS_SKIP, duration, f"Skipped: {skip_reason}", _thread_leak_detected)
 
-        return (STATUS_PASS, duration, "")
+        return (STATUS_PASS, duration, "", _thread_leak_detected)
 
     except SystemExit as e:
         duration = time.perf_counter() - start
-        return (STATUS_HARNESS_ERROR, duration, f"SystemExit: {e.code}")
+        return (STATUS_HARNESS_ERROR, duration, f"SystemExit: {e.code}", False)
 
     except Exception as e:
         duration = time.perf_counter() - start
         tb = traceback.format_exc()
-        return (STATUS_HARNESS_ERROR, duration, f"Harness Error: {e}\n{tb}")
+        return (STATUS_HARNESS_ERROR, duration, f"Harness Error: {e}\n{tb}", False)
 
     finally:
         sys.stdout.flush()
@@ -1318,15 +1433,17 @@ def cleanup_test_modules() -> int:
     return removed_count
 
 
-def should_worker_exit(is_toxic: bool) -> bool:
+def should_worker_exit(is_toxic: bool, thread_leaked: bool = False) -> bool:
     """Determine if worker should exit after test execution.
 
     Dual-Path Decision:
     - Toxic tests: Always exit (Isolation Mode)
+    - Thread leak: Always exit (threads can't be cleaned up)
     - Safe tests: Can continue if reset succeeds (Hypervisor Mode)
 
     Args:
         is_toxic: Whether the test was marked as toxic
+        thread_leaked: Whether the test spawned threads that didn't terminate
 
     Returns:
         True if worker should exit, False if it can continue
@@ -1334,6 +1451,10 @@ def should_worker_exit(is_toxic: bool) -> bool:
     if is_toxic:
         # TOXIC PATH: Always exit
         # OS cleans up threads, file descriptors, network connections, etc.
+        return True
+    if thread_leaked:
+        # THREAD LEAK: Worker is now contaminated, must exit
+        # Threads can persist and affect subsequent tests
         return True
     else:
         # SAFE PATH: Can continue if reset succeeds
@@ -1365,11 +1486,11 @@ def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple
         - message: Error message if any
         - should_exit: Whether worker should exit after this test
     """
-    # 1. Execute the test
-    status, duration, message = run_test(file_path, node_id)
+    # 1. Execute the test (now returns 4 values including thread_leaked)
+    status, duration, message, thread_leaked = run_test(file_path, node_id)
 
-    # 2. Determine if worker should exit
-    exit_after = should_worker_exit(is_toxic)
+    # 2. Determine if worker should exit (consider thread leaks)
+    exit_after = should_worker_exit(is_toxic, thread_leaked)
 
     # 3. If continuing (safe test), reset memory
     if not exit_after:

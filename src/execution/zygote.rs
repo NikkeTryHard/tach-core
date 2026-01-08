@@ -1002,25 +1002,34 @@ fn run_worker(payload: &TestPayload) -> TestResult {
     );
 
     // Call Python harness
-    let result = Python::attach(|py| -> Result<(u8, f64, String), PyErr> {
+    let result = Python::attach(|py| -> Result<(u8, f64, String, bool), PyErr> {
         let harness = py.import("tach_harness")?;
         let run_test = harness.getattr("run_test")?;
 
         // Pass file_path and FULL node_id to harness
         let result = run_test.call1((&payload.file_path, &full_node_id))?;
-        let tuple = result.extract::<(u8, f64, String)>()?;
+        let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
     });
 
     let duration_ns = start.elapsed().as_nanos() as u64;
 
     match result {
-        Ok((status, _, message)) => TestResult {
-            test_id: payload.test_id,
-            status,
-            duration_ns,
-            message,
-        },
+        Ok((status, _, message, thread_leaked)) => {
+            // Log thread leak if detected (for visibility)
+            if thread_leaked {
+                eprintln!(
+                    "[worker] Thread leak detected for test {}, worker marked toxic",
+                    &payload.test_name
+                );
+            }
+            TestResult {
+                test_id: payload.test_id,
+                status,
+                duration_ns,
+                message,
+            }
+        }
         Err(e) => TestResult {
             test_id: payload.test_id,
             status: STATUS_HARNESS_ERROR,
