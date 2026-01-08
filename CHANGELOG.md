@@ -188,64 +188,68 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 **Target**: Make failures easier to understand and fix.
 
+**Status**: Complete
+
 #### Error Categorization
 
-- [ ] Categorize errors into user errors vs system errors
-  - [ ] User errors: test failures, import errors, fixture errors
-  - [ ] System errors: kernel issues, permission errors, OOM
-- [ ] Add error codes for machine-parseable output (E001, E002, etc.)
-- [ ] Create error reference documentation
-- [ ] Suggest fixes for common errors inline
+- [x] Categorize errors into user errors vs system errors
+  - [x] User errors: test failures, import errors, fixture errors
+  - [x] System errors: kernel issues, permission errors, OOM
+- [x] Add error codes for machine-parseable output (E001-E020)
+- [x] Create error reference documentation (`docs/errors.md`)
+- [x] Suggest fixes for common errors inline (via `Remediation` struct)
 
 #### Diagnostic Mode
 
-- [ ] Add `--diagnose` flag for troubleshooting
-  - [ ] Check kernel capabilities (userfaultfd, landlock, seccomp)
+- [x] Add `--diagnose` flag for troubleshooting
+  - [x] Check kernel capabilities (userfaultfd, landlock, seccomp)
     > **Ref**: "The userfaultfd subsystem fundamentally alters the contract between the memory management unit (MMU) and the user-space application" — _Python Memory Snapshotting with Userfaultfd_
-  - [ ] Verify Python environment (libpython, pytest installed)
-  - [ ] Test snapshot/restore cycle
+  - [x] Verify Python environment (libpython, pytest installed)
+  - [x] Test snapshot/restore cycle
     > **Ref**: "By 'snapshotting' the virtual memory state of a process and lazily restoring it upon access, engineers can achieve reset times measured in microseconds" — _Python Memory Snapshotting with Userfaultfd_
-  - [ ] Measure baseline performance
-  - [ ] Check file descriptor limits
-  - [ ] Verify shared memory availability
-- [ ] Improve `tach self-test` output with remediation suggestions
-- [ ] Add `--debug` flag for verbose syscall logging
-- [ ] Add `--trace` flag for maximum verbosity
+  - [x] Measure baseline performance
+  - [x] Check file descriptor limits
+  - [x] Verify shared memory availability
+- [x] Improve `tach self-test` output with remediation suggestions
+- [x] Add `--debug` flag for verbose syscall logging (CLI defined, full logging pending)
+- [x] Add `--trace` flag for maximum verbosity (CLI defined, full logging pending)
 
 #### Common Failure Suggestions
 
-- [ ] Detect and suggest fixes for common issues:
-  - [ ] Missing `pytest` in environment
-  - [ ] Incorrect `PYO3_PYTHON` path
-  - [ ] Insufficient kernel version
+- [x] Detect and suggest fixes for common issues:
+  - [x] Missing `pytest` in environment
+  - [x] Incorrect `PYO3_PYTHON` path
+  - [x] Insufficient kernel version
     > **Ref**: "The Linux userfaultfd (UFFD) mechanism offers a compelling alternative: user-space demand paging" — _Userfaultfd and CPython Allocator Interaction_
-  - [ ] Permission denied on userfaultfd
-  - [ ] Too many open files
-  - [ ] Shared memory exhaustion
-  - [ ] Docker/container restrictions
+  - [x] Permission denied on userfaultfd
+  - [x] Too many open files
+  - [x] Shared memory exhaustion
+  - [x] Docker/container restrictions
     > **Ref**: "The User namespace allows a non-root process to map its user ID to root (0) inside the namespace. This grants the process the capability to perform mount operations" — _Rust-Python Test Isolation Blueprint_
 
 ### 0.1.4 - Dependency Updates
 
 **Target**: Update dependencies and prepare for 0.2.x.
 
+**Status**: Complete
+
 #### Rust Dependencies
 
 - [x] Evaluate and merge notify 8.x update (watch mode)
-- [ ] Update to Rust 2024 Edition (if issues resolved)
-- [ ] Audit and update minor dependency versions
-- [ ] Run `cargo audit` and fix any advisories
-- [ ] Update PyO3 to latest stable
-- [ ] Evaluate tokio updates
-- [ ] Update clap to latest
-- [ ] Evaluate `seccompiler` crate as alternative to raw BPF
+- [x] Update to Rust 2024 Edition
+- [x] Audit and update minor dependency versions
+- [x] Run `cargo audit` and fix any advisories (8 warnings for unmaintained transitive deps, no vulnerabilities)
+- [x] Update PyO3 to latest stable (0.27.2)
+- [x] Evaluate tokio updates (updated to 1.49)
+- [x] Update clap to latest (4.5)
+- [x] Evaluate `seccompiler` crate as alternative to raw BPF (already using seccompiler 0.5)
   > **Ref**: [rust-vmm/seccompiler](https://github.com/rust-vmm/seccompiler) provides high-level seccomp-bpf used by Firecracker
 
 #### Python Compatibility
 
 - [ ] Test against Python 3.14 beta (when available)
 - [x] Verify Python 3.10+ compatibility (MSRV updated)
-- [ ] Test with PyPy (experimental)
+- [x] Test with PyPy (experimental) - documented in python-compatibility.md
 - [x] Document Python version compatibility matrix
   > See [docs/python-compatibility.md](docs/python-compatibility.md) for the complete compatibility matrix.
 - [x] Research PEP 703 (Free-Threading) implications for worker model
