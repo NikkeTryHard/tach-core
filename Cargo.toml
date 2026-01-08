@@ -190,3 +190,7 @@ path = "rust_tests/restoration_invariant.rs"
 [[test]]
 name = "plugin_bridge_integration"
 path = "rust_tests/plugin_bridge_integration.rs"
+
+[[test]]
+name = "json_schema_tests"
+path = "rust_tests/json_schema_tests.rs"
