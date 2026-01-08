@@ -93,3 +93,10 @@ path = "fuzz_targets/fuzz_plugin_bridge.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_toxicity_ast"
+path = "fuzz_targets/fuzz_toxicity_ast.rs"
+test = false
+doc = false
+bench = false
