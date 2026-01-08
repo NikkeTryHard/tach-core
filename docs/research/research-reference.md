@@ -52,35 +52,8 @@ Quick lookup for mapping research papers to Tach implementation.
 
 ---
 
-## Implementation Checklist
+## Implementation Status
 
-Derived from research requirements:
+> **Single Source of Truth:** See [CHANGELOG.md](../../CHANGELOG.md) for the authoritative implementation status. Each version section shows checked/unchecked items indicating completion status.
 
-### 1. Zygote Management
-
-- [ ] Implement **DAAC (Dependency-Aware Agglomerative Clustering)** for tree construction.
-- [ ] Build **Side-Effect Toxicity** scanner to prevent "poisoned" zygotes.
-- [ ] Support **Hierarchical Forking** (Parent -> Zygote -> Worker).
-
-### 2. Memory & Performance
-
-- [ ] Implement **userfaultfd** handler in Rust for microsecond-scale resets.
-- [ ] Integrate **jemalloc** with manual cache flushing to prevent heap corruption during snapshots.
-- [ ] Develop **Zero-Copy Loader** using `mmap` to bypass `importlib` overhead.
-
-### 3. Isolation (The Matrix)
-
-- [ ] Create **LD_PRELOAD** shim for `open`, `bind`, and `connect` interception.
-- [ ] Implement **Path Rewriting** logic for per-worker `/tmp` and `/dev/shm` isolation.
-- [ ] Add **eBPF** hooks for syscall-level virtualization on supported Linux kernels.
-
-### 4. Platform Compatibility
-
-- [ ] Implement **Mach VM Remapping** for macOS "pseudo-fork."
-- [ ] Implement **NT Process Cloning** for Windows performance parity.
-- [ ] Fallback to **Spawn/Forkserver** for non-supported environments.
-
-### 5. Static Analysis
-
-- [ ] Use **ruff_python_parser** to detect `threading.Thread` or `multiprocessing` calls in top-level module code.
-- [ ] Map **C-Extension dependencies** to a known "Fork-Unsafe" database (NumPy, gRPC, etc.).
+---
