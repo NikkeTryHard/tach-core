@@ -3,6 +3,7 @@ use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity;
 use tach_core::discovery;
+use tach_core::errors::CategorizedError;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -11,6 +12,7 @@ use tach_core::reporter::{DotsReporter, JsonReporter, MultiReporter, ProgressRep
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
 use tach_core::signals;
+use tach_core::suggestions;
 use tach_core::watch;
 use tach_core::zygote;
 
@@ -119,11 +121,18 @@ fn main() -> Result<()> {
             );
         }
         Err(e) => {
-            eprintln!("[supervisor] FATAL: {}", e);
-            eprintln!("[supervisor] The Hypervisor cannot run without jemalloc.");
-            eprintln!(
-                "[supervisor] Ensure tikv-jemallocator is set as #[global_allocator] in lib.rs"
+            // Use CategorizedError for user-friendly error display
+            let suggestion = suggestions::get_suggestion(
+                suggestions::FailureCondition::JemallocNotActive,
+                &suggestions::SuggestionContext::detect(),
             );
+            let cat_error = CategorizedError::new(
+                tach_core::errors::error_codes::E008,
+                tach_core::errors::ErrorCategory::System,
+                format!("Jemalloc allocator not active: {}", e),
+                Some(suggestion),
+            );
+            cat_error.print_to_stderr();
             std::process::exit(1);
         }
     }
@@ -174,6 +183,12 @@ fn main() -> Result<()> {
         Some(Commands::Test) | None => {
             // Continue to test execution below
         }
+    }
+
+    // --- DIAGNOSE FLAG (can be combined with any command) ---
+    // Handle --diagnose flag: run diagnostics and exit
+    if cli.diagnose {
+        return handle_diagnose_command();
     }
 
     // --- COLLECT-ONLY MODE (pytest compatibility) ---
@@ -420,6 +435,19 @@ fn execute_session(
 /// Handle the `self-test` subcommand
 fn handle_self_test_command() -> Result<()> {
     let success = tach_core::diagnostics::run_and_print_diagnostics();
+    if success {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
+}
+
+/// Handle the `--diagnose` flag
+///
+/// Runs comprehensive system diagnostics with a user-friendly output format.
+/// This is an alias for `self-test` with enhanced formatting.
+fn handle_diagnose_command() -> Result<()> {
+    let success = tach_core::diagnostics::run_and_print_diagnose();
     if success {
         Ok(())
     } else {

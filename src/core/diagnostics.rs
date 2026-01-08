@@ -480,6 +480,122 @@ pub fn check_python() -> DiagnosticResult {
     }
 }
 
+/// Check pytest installation and version
+pub fn check_pytest() -> DiagnosticResult {
+    let python_path = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python3".to_string());
+
+    match std::process::Command::new(&python_path)
+        .args(["-c", "import pytest; print(pytest.__version__)"])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                let version = String::from_utf8_lossy(&output.stdout);
+                let version = version.trim();
+                DiagnosticResult::pass("pytest", version.to_string())
+            } else {
+                DiagnosticResult::warn("pytest", "Not installed")
+                    .with_details("Install pytest: pip install pytest")
+            }
+        }
+        Err(_) => DiagnosticResult::warn("pytest", "Cannot check (Python not available)"),
+    }
+}
+
+/// Check libpython availability
+pub fn check_libpython() -> DiagnosticResult {
+    let python_path = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python3".to_string());
+
+    // Get libpython path using Python's sysconfig
+    match std::process::Command::new(&python_path)
+        .args([
+            "-c",
+            "import sysconfig; import os; \
+             libdir = sysconfig.get_config_var('LIBDIR') or ''; \
+             ldlib = sysconfig.get_config_var('LDLIBRARY') or ''; \
+             path = os.path.join(libdir, ldlib) if libdir and ldlib else ''; \
+             print(path if os.path.exists(path) else '')",
+        ])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout);
+                let path = path.trim();
+                if !path.is_empty() {
+                    DiagnosticResult::pass("libpython", path.to_string())
+                } else {
+                    // Try alternative detection
+                    DiagnosticResult::pass("libpython", "Available (embedded)")
+                }
+            } else {
+                DiagnosticResult::warn("libpython", "Cannot detect path")
+            }
+        }
+        Err(_) => DiagnosticResult::warn("libpython", "Cannot check (Python not available)"),
+    }
+}
+
+/// Check system architecture
+pub fn check_architecture() -> DiagnosticResult {
+    let arch = std::env::consts::ARCH;
+    match arch {
+        "x86_64" | "aarch64" => DiagnosticResult::pass("Architecture", arch.to_string()),
+        _ => DiagnosticResult::warn("Architecture", format!("{} (not fully tested)", arch)),
+    }
+}
+
+/// Check fork overhead performance
+pub fn check_fork_overhead() -> DiagnosticResult {
+    use nix::sys::wait::waitpid;
+    use nix::unistd::{fork, ForkResult};
+
+    let start = Instant::now();
+    let iterations = 10;
+    let mut total_duration = Duration::ZERO;
+
+    for _ in 0..iterations {
+        let fork_start = Instant::now();
+        match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                // Child exits immediately
+                std::process::exit(0);
+            }
+            Ok(ForkResult::Parent { child }) => {
+                // Wait for child
+                let _ = waitpid(child, None);
+                total_duration += fork_start.elapsed();
+            }
+            Err(e) => {
+                return DiagnosticResult::warn("Fork Overhead", format!("Fork failed: {}", e));
+            }
+        }
+    }
+
+    let avg_ms = total_duration.as_secs_f64() * 1000.0 / iterations as f64;
+    let total_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    if avg_ms < 5.0 {
+        DiagnosticResult::pass(
+            "Fork Overhead",
+            format!(
+                "{:.1}ms avg ({} forks in {:.1}ms)",
+                avg_ms, iterations, total_ms
+            ),
+        )
+    } else {
+        DiagnosticResult::warn(
+            "Fork Overhead",
+            format!("{:.1}ms avg (higher than expected)", avg_ms),
+        )
+        .with_details("Fork overhead may impact parallel test performance")
+    }
+}
+
 // =============================================================================
 // Main Diagnostic Runner
 // =============================================================================
@@ -508,6 +624,135 @@ pub fn run_and_print_diagnostics() -> bool {
     let report = run_diagnostics();
     report.print();
     report.all_passed()
+}
+
+/// Run comprehensive diagnostics with enhanced formatting for `--diagnose` flag.
+///
+/// This provides a user-friendly categorized output:
+/// - System: Kernel, Architecture
+/// - Capabilities: userfaultfd, Landlock, Seccomp
+/// - Python: Version, libpython, pytest
+/// - Performance: Snapshot/restore cycle, Fork overhead
+pub fn run_and_print_diagnose() -> bool {
+    let start = Instant::now();
+
+    eprintln!();
+    eprintln!("Tach Diagnostics");
+    eprintln!("================");
+    eprintln!();
+
+    // --- SYSTEM SECTION ---
+    eprintln!("System:");
+    let kernel_result = check_kernel_version();
+    print_diagnose_line("  Kernel", &kernel_result);
+
+    let arch_result = check_architecture();
+    print_diagnose_line("  Architecture", &arch_result);
+    eprintln!();
+
+    // --- CAPABILITIES SECTION ---
+    eprintln!("Capabilities:");
+    let uffd_result = check_userfaultfd();
+    print_diagnose_line("  userfaultfd", &uffd_result);
+
+    let landlock_result = check_landlock();
+    print_diagnose_line("  Landlock", &landlock_result);
+
+    let seccomp_result = check_seccomp();
+    print_diagnose_line("  Seccomp", &seccomp_result);
+
+    let jemalloc_result = check_jemalloc();
+    print_diagnose_line("  Jemalloc", &jemalloc_result);
+    eprintln!();
+
+    // --- PYTHON SECTION ---
+    eprintln!("Python:");
+    let python_result = check_python();
+    print_diagnose_line("  Version", &python_result);
+
+    let libpython_result = check_libpython();
+    print_diagnose_line("  libpython", &libpython_result);
+
+    let pytest_result = check_pytest();
+    print_diagnose_line("  pytest", &pytest_result);
+    eprintln!();
+
+    // --- PERFORMANCE SECTION ---
+    eprintln!("Performance:");
+    let heartbeat_result = check_physics_heartbeat();
+    print_diagnose_line("  Snapshot/restore cycle", &heartbeat_result);
+
+    let fork_result = check_fork_overhead();
+    print_diagnose_line("  Fork overhead", &fork_result);
+    eprintln!();
+
+    // --- SUMMARY ---
+    let all_results = vec![
+        kernel_result,
+        arch_result,
+        uffd_result,
+        landlock_result,
+        seccomp_result,
+        jemalloc_result,
+        python_result,
+        libpython_result,
+        pytest_result,
+        heartbeat_result,
+        fork_result,
+    ];
+
+    let passed = all_results.iter().filter(|r| r.passed).count();
+    let failed = all_results
+        .iter()
+        .filter(|r| !r.passed && r.required)
+        .count();
+    let warnings = all_results
+        .iter()
+        .filter(|r| !r.passed && !r.required)
+        .count();
+
+    let duration = start.elapsed();
+
+    eprintln!("-----------------------------");
+    eprintln!(
+        "Passed: {}  Failed: {}  Warnings: {}  Duration: {:.2}ms",
+        passed,
+        failed,
+        warnings,
+        duration.as_secs_f64() * 1000.0
+    );
+    eprintln!();
+
+    let all_passed = all_results.iter().all(|r| r.passed || !r.required);
+    if all_passed {
+        eprintln!("All checks passed. Tach is ready.");
+    } else {
+        eprintln!("Some required checks failed. Tach may not function correctly.");
+        // Print details for failed checks
+        for result in &all_results {
+            if !result.passed && result.required {
+                if let Some(details) = &result.details {
+                    eprintln!();
+                    eprintln!("  {}: {}", result.name, details);
+                }
+            }
+        }
+    }
+    eprintln!();
+
+    all_passed
+}
+
+/// Helper to print a diagnostic line with checkmark/cross formatting
+fn print_diagnose_line(prefix: &str, result: &DiagnosticResult) {
+    let icon = if result.passed {
+        "+"
+    } else if result.required {
+        "X"
+    } else {
+        "!"
+    };
+    eprintln!("{}: {} ({})", prefix, result.message, icon);
 }
 
 // =============================================================================

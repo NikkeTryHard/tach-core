@@ -245,6 +245,17 @@ pub struct Cli {
     pub timeout: Option<u64>,
 
     // =========================================================================
+    // Diagnostics
+    // =========================================================================
+    /// Run system diagnostics and exit.
+    ///
+    /// Checks kernel version, userfaultfd, Landlock, Seccomp, Python,
+    /// pytest, and performs a quick performance benchmark.
+    /// Use this to troubleshoot system compatibility issues.
+    #[arg(long)]
+    pub diagnose: bool,
+
+    // =========================================================================
     // Dry Run / Collect Only (pytest compatible)
     // =========================================================================
     /// Discover tests and show what would run without executing.
