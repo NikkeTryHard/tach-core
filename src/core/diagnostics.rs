@@ -191,6 +191,20 @@ impl DiagnosticReport {
 // Diagnostic Checks Implementation
 // =============================================================================
 
+/// Parse Python version string (e.g., "Python 3.12.0" -> (3, 12))
+fn parse_python_version(version_str: &str) -> Option<(u32, u32)> {
+    // Format: "Python 3.12.0" or just "3.12.0"
+    let version_part = version_str.strip_prefix("Python ").unwrap_or(version_str);
+    let parts: Vec<&str> = version_part.trim().split('.').collect();
+    if parts.len() >= 2 {
+        let major: u32 = parts[0].parse().ok()?;
+        let minor: u32 = parts[1].parse().ok()?;
+        Some((major, minor))
+    } else {
+        None
+    }
+}
+
 /// Parse kernel version from /proc/version
 fn parse_kernel_version() -> Result<(u32, u32, u32)> {
     let version_str = fs::read_to_string("/proc/version")?;
@@ -466,8 +480,10 @@ pub fn check_python() -> DiagnosticResult {
             let version = version.trim();
 
             // Parse version to check for 3.12+ (sys.monitoring support)
-            let has_monitoring =
-                version.contains("3.12") || version.contains("3.13") || version.contains("3.14");
+            // Use semantic version parsing for future-proofing (Python 3.15+)
+            let has_monitoring = parse_python_version(version)
+                .map(|(major, minor)| major == 3 && minor >= 12)
+                .unwrap_or(false);
 
             if has_monitoring {
                 DiagnosticResult::pass("Python", format!("{} (sys.monitoring available)", version))
@@ -846,5 +862,28 @@ mod tests {
         };
 
         assert!(report.all_passed()); // Warnings don't count as failures
+    }
+
+    #[test]
+    fn test_parse_python_version() {
+        // Standard format with "Python " prefix
+        assert_eq!(parse_python_version("Python 3.12.0"), Some((3, 12)));
+        assert_eq!(parse_python_version("Python 3.10.5"), Some((3, 10)));
+        assert_eq!(parse_python_version("Python 3.8.10"), Some((3, 8)));
+
+        // Without prefix (just version string)
+        assert_eq!(parse_python_version("3.12.0"), Some((3, 12)));
+        assert_eq!(parse_python_version("3.8.10"), Some((3, 8)));
+
+        // Future versions (Python 3.15+, Python 4.x)
+        assert_eq!(parse_python_version("Python 3.15.0"), Some((3, 15)));
+        assert_eq!(parse_python_version("Python 4.0.0"), Some((4, 0)));
+
+        // Edge cases - should return None
+        assert_eq!(parse_python_version("Python 3"), None);
+        assert_eq!(parse_python_version("3"), None);
+        assert_eq!(parse_python_version(""), None);
+        assert_eq!(parse_python_version("invalid"), None);
+        assert_eq!(parse_python_version("Python"), None);
     }
 }

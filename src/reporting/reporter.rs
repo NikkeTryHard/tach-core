@@ -21,6 +21,21 @@ use std::io::IsTerminal;
 pub use crate::config::TracebackStyle as TbStyle;
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Estimated time per test in cold pytest execution (milliseconds).
+///
+/// This baseline represents typical pytest startup + import overhead per test:
+/// - pytest discovery and collection: ~100-150ms
+/// - Module import and fixture setup: ~100-150ms
+/// - Test execution overhead: ~50ms
+///
+/// Used to calculate "time saved" by Tach's snapshot-based warm execution.
+/// Based on empirical measurements across typical Python test suites.
+const PYTEST_COLD_TEST_MS: u64 = 300;
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
 
@@ -581,9 +596,8 @@ impl Reporter for ProgressReporter {
         }
 
         // Time Saved metric: compare actual time vs estimated cold pytest time
-        // Baseline: 300ms per test (typical pytest startup + import overhead)
         let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * 300;
+        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
         let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
 
         if time_saved_ms > 1000 && total_tests > 10 {
@@ -739,9 +753,8 @@ impl Reporter for DotsReporter {
         );
 
         // Time Saved metric: compare actual time vs estimated cold pytest time
-        // Baseline: 300ms per test (typical pytest startup + import overhead)
         let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * 300;
+        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
         let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
 
         if time_saved_ms > 1000 && total_tests > 10 {

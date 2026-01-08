@@ -45,9 +45,10 @@ class TestErrorCodeFormat:
     def test_user_error_codes(self):
         """User error codes should be in expected range."""
         user_codes = ["E001", "E002", "E003", "E004", "E010"]
+        valid_user_nums = {1, 2, 3, 4, 10}
         for code in user_codes:
             num = int(code[1:])
-            assert num <= 99 or num == 10, f"User error code {code} out of expected range"
+            assert num in valid_user_nums, f"User error code {code} not in expected set"
 
     def test_system_error_codes(self):
         """System error codes should be in expected range."""
