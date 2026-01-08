@@ -451,13 +451,20 @@ fn execute_session(
     }
 
     // --- RUN TESTS ---
-    run_tests(
+    let failed_count = run_tests(
         &cleanup,
         filtered_tests,
         &mut reporter,
         is_json,
         coverage_enabled,
-    )
+    )?;
+
+    // Exit with code 1 if any tests failed
+    if failed_count > 0 {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 /// Handle the `self-test` subcommand
@@ -780,7 +787,7 @@ fn run_tests(
     reporter: &mut dyn Reporter,
     is_json: bool,
     coverage_enabled: bool,
-) -> Result<()> {
+) -> Result<usize> {
     let cwd = std::env::current_dir()?;
 
     // --- COVERAGE INITIALIZATION ---
@@ -923,11 +930,14 @@ fn run_tests(
                 debug_socket_path,
             )?;
 
-            scheduler.run(runnable_tests, reporter)?;
+            let stats = scheduler.run(runnable_tests, reporter)?;
 
             // Shutdown
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
+
+            // Track failure count for exit code
+            let failed_count = stats.failed;
 
             // --- COVERAGE FINALIZATION ---
             // Stop aggregator and report coverage statistics
@@ -993,8 +1003,9 @@ fn run_tests(
             if !is_json {
                 eprintln!("[supervisor] Done.");
             }
+
+            // Return failure count for exit code
+            Ok(failed_count)
         }
     }
-
-    Ok(())
 }
