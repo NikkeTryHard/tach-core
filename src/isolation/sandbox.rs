@@ -17,6 +17,44 @@
 //!    - Applied ONLY to safe workers (toxic workers need network/fork)
 //!    - Uses blacklist approach (whitelist too brittle for Python)
 //!
+//! # Why Blacklist Instead of Whitelist?
+//!
+//! A **whitelist** (allowlist) approach would enumerate every permitted syscall.
+//! This is problematic for Python because:
+//!
+//! 1. Python's syscall footprint changes between versions (3.11 vs 3.12 vs 3.13)
+//! 2. C extensions may use arbitrary syscalls that we can't predict
+//! 3. A missed syscall causes SIGSYS crash, not a graceful error
+//!
+//! The **blacklist** approach only blocks known-dangerous syscalls:
+//! - Network: socket, bind, connect, listen, accept
+//! - Process: fork, vfork, execve, execveat
+//! - Privilege: ptrace, mount, unshare, setns
+//!
+//! Unknown syscalls pass through, which is safe because:
+//! - Landlock prevents filesystem escape regardless of syscall
+//! - Seccomp + Landlock together provide defense-in-depth
+//!
+//! # Why clone() Must NEVER Be Blocked
+//!
+//! Python's threading module uses `clone()` (with CLONE_VM | CLONE_THREAD flags)
+//! to create OS threads. Blocking clone() would break:
+//!
+//! - `threading.Thread()` - Cannot start threads
+//! - `concurrent.futures.ThreadPoolExecutor` - Completely broken
+//! - GIL release during I/O - Some implementations use threads
+//!
+//! Instead, we block `execve` which prevents any cloned/forked process from
+//! becoming a new program. Combined with Landlock's write restrictions, a
+//! malicious forked Python process is effectively neutered:
+//!
+//! ```text
+//! Malicious test:
+//!   1. fork() -> ALLOWED (we block this, but clone() without CLONE_VM might work)
+//!   2. execve("/bin/sh") -> BLOCKED by Seccomp -> EPERM
+//!   3. open("/etc/passwd", O_WRONLY) -> BLOCKED by Landlock -> EACCES
+//! ```
+//!
 //! # Safe vs Toxic Worker Differentiation
 //!
 //! ```text

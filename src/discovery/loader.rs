@@ -374,7 +374,7 @@ impl BytecodeCompiler {
 
         for file in files {
             // Skip non-.py files
-            if file.extension().is_none_or(|e| e != "py") {
+            if file.extension().map_or(true, |e| e != "py") {
                 continue;
             }
 

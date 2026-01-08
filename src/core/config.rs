@@ -2,7 +2,7 @@
 //! - Reads pyproject.toml for environment variables (pytest-env replacement)
 //! - Provides CLI argument parsing with clap
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -335,6 +335,60 @@ pub enum Commands {
 
     /// Show version and build information
     Version,
+
+    /// Generate shell completion scripts
+    ///
+    /// Outputs completion scripts for the specified shell to stdout.
+    /// Redirect to a file or source directly in your shell config.
+    ///
+    /// Examples:
+    ///   tach completions bash > ~/.bash_completion.d/tach
+    ///   tach completions zsh > ~/.zsh/completions/_tach
+    ///   tach completions fish > ~/.config/fish/completions/tach.fish
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+}
+
+/// Supported shells for completion generation
+#[derive(ValueEnum, Clone, Debug)]
+pub enum Shell {
+    /// Bash shell
+    Bash,
+    /// Zsh shell
+    Zsh,
+    /// Fish shell
+    Fish,
+    /// PowerShell
+    PowerShell,
+    /// Elvish shell
+    Elvish,
+}
+
+impl Shell {
+    /// Convert to clap_complete::Shell
+    pub fn to_clap_shell(&self) -> clap_complete::Shell {
+        match self {
+            Shell::Bash => clap_complete::Shell::Bash,
+            Shell::Zsh => clap_complete::Shell::Zsh,
+            Shell::Fish => clap_complete::Shell::Fish,
+            Shell::PowerShell => clap_complete::Shell::PowerShell,
+            Shell::Elvish => clap_complete::Shell::Elvish,
+        }
+    }
+}
+
+/// Generate shell completion script and write to stdout
+pub fn generate_completions(shell: &Shell) {
+    let mut cmd = Cli::command();
+    clap_complete::generate(
+        shell.to_clap_shell(),
+        &mut cmd,
+        "tach",
+        &mut std::io::stdout(),
+    );
 }
 
 // =============================================================================

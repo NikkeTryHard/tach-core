@@ -180,6 +180,10 @@ fn main() -> Result<()> {
         Some(Commands::Version) => {
             return handle_version_command(cli.verbose > 0);
         }
+        Some(Commands::Completions { shell }) => {
+            config::generate_completions(shell);
+            return Ok(());
+        }
         Some(Commands::Test) | None => {
             // Continue to test execution below
         }
@@ -490,6 +494,43 @@ fn handle_version_command(verbose: bool) -> Result<()> {
 
     // --- VERBOSE OUTPUT: Show capabilities ---
     if verbose {
+        eprintln!();
+        eprintln!("Build Information:");
+
+        // Rust MSRV (Minimum Supported Rust Version from Cargo.toml)
+        let msrv = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
+        eprintln!("  Rust MSRV: {}", msrv);
+
+        // Target triple (compile-time)
+        #[cfg(target_arch = "x86_64")]
+        let arch = "x86_64";
+        #[cfg(target_arch = "aarch64")]
+        let arch = "aarch64";
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let arch = "unknown";
+
+        #[cfg(target_os = "linux")]
+        let os = "linux";
+        #[cfg(not(target_os = "linux"))]
+        let os = "unknown";
+
+        eprintln!("  Target: {}-unknown-{}-gnu", arch, os);
+
+        // Git commit hash - try runtime detection
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+        {
+            if output.status.success() {
+                let hash = String::from_utf8_lossy(&output.stdout);
+                let hash = hash.trim();
+                if !hash.is_empty() {
+                    eprintln!("  Git commit: {}", hash);
+                }
+            }
+        }
+
         eprintln!();
         eprintln!("Capabilities:");
 

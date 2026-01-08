@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 pub const CMD_EXIT: u8 = 0x00;
 pub const CMD_FORK: u8 = 0x01;
 pub const CMD_RUN_TEST: u8 = 0x02; //  Send test to existing worker
+pub const CMD_PING: u8 = 0x03; //  Health check ping to worker
 pub const MSG_READY: u8 = 0x42;
 pub const MSG_WORKER_READY: u8 = 0x43; //  Worker signals availability for reuse
+pub const MSG_PONG: u8 = 0x44; //  Worker responds to health check
 
 // Result status codes
 pub const STATUS_PASS: u8 = 0;

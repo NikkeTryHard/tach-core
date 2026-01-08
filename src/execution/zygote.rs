@@ -3,8 +3,8 @@
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{
-    encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_RUN_TEST, MSG_READY,
-    MSG_WORKER_READY,
+    encode_with_length, TestPayload, TestResult, CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST,
+    MSG_PONG, MSG_READY, MSG_WORKER_READY,
 };
 use crate::snapshot::send_fd;
 use anyhow::Result;
@@ -332,6 +332,7 @@ fn reset_and_signal_ready(socket: &UnixStream) -> Result<()> {
 /// The worker enters this loop after completing its first safe test.
 /// It waits for commands from Zygote:
 /// - CMD_RUN_TEST: Execute test, send result, decide exit/reset
+/// - CMD_PING: Respond with MSG_PONG (health check)
 /// - CMD_EXIT: Clean shutdown
 ///
 /// The loop breaks on:
@@ -351,6 +352,13 @@ fn worker_loop(socket: UnixStream) {
         }
 
         match cmd_buf[0] {
+            CMD_PING => {
+                // Health check - respond with PONG
+                if socket.write_all(&[MSG_PONG]).is_err() {
+                    eprintln!("[worker] Failed to send PONG, exiting");
+                    break;
+                }
+            }
             CMD_RUN_TEST => {
                 // Read payload length
                 let mut len_buf = [0u8; 4];
@@ -413,6 +421,99 @@ fn worker_loop(socket: UnixStream) {
             }
         }
     }
+}
+
+/// Check if a worker is alive and responsive.
+///
+/// Sends CMD_PING and waits for MSG_PONG with a short timeout.
+/// Returns true if worker responds, false if dead or unresponsive.
+#[allow(dead_code)] // Utility for debugging and future health check features
+fn check_worker_health(socket: &mut UnixStream, pid: i32) -> bool {
+    use std::time::Duration;
+
+    // Set a short read timeout for the health check
+    let old_timeout = socket.read_timeout().ok().flatten();
+    if socket
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .is_err()
+    {
+        return false;
+    }
+
+    // Send PING
+    if socket.write_all(&[CMD_PING]).is_err() {
+        eprintln!("[zygote] Worker {} failed PING write", pid);
+        let _ = socket.set_read_timeout(old_timeout);
+        return false;
+    }
+
+    // Wait for PONG
+    let mut buf = [0u8; 1];
+    let healthy = match socket.read_exact(&mut buf) {
+        Ok(_) => buf[0] == MSG_PONG,
+        Err(_) => false,
+    };
+
+    // Restore original timeout
+    let _ = socket.set_read_timeout(old_timeout);
+
+    if !healthy {
+        eprintln!("[zygote] Worker {} failed health check (no PONG)", pid);
+    }
+
+    healthy
+}
+
+/// Remove dead workers from the idle pool.
+///
+/// Called periodically to clean up workers that died unexpectedly.
+/// Returns the number of workers removed.
+#[allow(dead_code)] // Utility for debugging and future periodic cleanup
+fn reap_dead_workers() -> usize {
+    let mut workers = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner());
+    let original_count = workers.len();
+
+    // Partition into healthy and dead workers
+    let mut healthy = Vec::with_capacity(workers.len());
+    let mut dead_pids = Vec::new();
+
+    for mut worker in workers.drain(..) {
+        // First check if the process is still alive using kill(pid, 0)
+        let process_alive = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(worker.pid),
+            None, // Signal 0 = just check if process exists
+        )
+        .is_ok();
+
+        if !process_alive {
+            dead_pids.push(worker.pid);
+            continue;
+        }
+
+        // Process is alive, check if it's responsive
+        if check_worker_health(&mut worker.socket, worker.pid) {
+            healthy.push(worker);
+        } else {
+            dead_pids.push(worker.pid);
+            // Kill the unresponsive worker
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(worker.pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+    }
+
+    *workers = healthy;
+
+    let removed = original_count - workers.len();
+    if removed > 0 {
+        eprintln!(
+            "[zygote] Reaped {} dead/unresponsive workers: {:?}",
+            removed, dead_pids
+        );
+    }
+
+    removed
 }
 
 /// Spawn a thread to collect result from worker and manage worker lifecycle.
@@ -638,8 +739,34 @@ except Exception as e:
                 let is_toxic = payload.is_toxic;
 
                 //  Check for idle worker (only for safe tests)
+                // Also verify the worker is still alive before trying to use it
                 let idle_worker = if !is_toxic {
-                    IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).pop()
+                    loop {
+                        let mut workers = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner());
+                        match workers.pop() {
+                            None => break None,
+                            Some(worker) => {
+                                drop(workers); // Release lock before checking health
+
+                                // Verify process is still alive using kill(pid, 0)
+                                let process_alive = nix::sys::signal::kill(
+                                    nix::unistd::Pid::from_raw(worker.pid),
+                                    None,
+                                )
+                                .is_ok();
+
+                                if !process_alive {
+                                    eprintln!(
+                                        "[zygote] Worker {} died unexpectedly, trying next",
+                                        worker.pid
+                                    );
+                                    continue; // Try next worker
+                                }
+
+                                break Some(worker);
+                            }
+                        }
+                    }
                 } else {
                     None // Always fork fresh for toxic tests
                 };
@@ -808,8 +935,10 @@ except Exception as e:
                 let idle_workers =
                     std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
                 let worker_count = idle_workers.len();
+                let mut worker_pids = Vec::with_capacity(worker_count);
                 for mut worker in idle_workers {
                     eprintln!("[zygote] Sending EXIT to idle worker {}", worker.pid);
+                    worker_pids.push(worker.pid);
                     let _ = worker.socket.write_all(&[CMD_EXIT]);
                     // Socket drops here, worker will see EOF if write fails
                 }
@@ -819,6 +948,32 @@ except Exception as e:
 
                 // Give threads time to forward final results
                 thread::sleep(std::time::Duration::from_millis(200));
+
+                // Reap any worker processes that haven't exited yet
+                // Using WNOHANG to avoid blocking indefinitely
+                for pid in &worker_pids {
+                    if *pid > 0 {
+                        // Try to kill the process if it's still running
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(*pid),
+                            nix::sys::signal::Signal::SIGTERM,
+                        );
+                    }
+                }
+
+                // Give workers a short grace period to terminate
+                thread::sleep(std::time::Duration::from_millis(100));
+
+                // Force kill any remaining workers
+                for pid in &worker_pids {
+                    if *pid > 0 {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(*pid),
+                            nix::sys::signal::Signal::SIGKILL,
+                        );
+                    }
+                }
+
                 break;
             }
             _ => {}

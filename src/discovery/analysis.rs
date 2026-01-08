@@ -4,11 +4,54 @@
 //! Toxic patterns include: threading, multiprocessing, sockets, native code (ctypes),
 //! and external packages with native dependencies.
 //!
-//! Key Design Decisions:
-//! - Star imports from toxic modules = Toxic (aggressive stance)
-//! - Dynamic imports (importlib.import_module, __import__, exec) = Toxic
-//! - Imports inside functions are NOT ignored (Tach worker recycling model)
-//! - Any toxic token ANYWHERE in the file triggers Isolation Mode
+//! # Research Foundation
+//!
+//! This module implements the "Toxicity Classification" concept from the
+//! _Python Monorepo Zygote Tree Design_ research paper:
+//!
+//! > "Toxicity is contagious. If Module A imports Module B, and Module B opens a
+//! > database connection, then importing Module A effectively opens a database
+//! > connection."
+//!
+//! The key insight is that fork-safety is a transitive property through the import
+//! graph. A module that imports a toxic module becomes toxic itself, because the
+//! side effects of the imported module will execute when Python loads it.
+//!
+//! # Why Toxicity Matters for Snapshot/Reset
+//!
+//! Tach uses memory snapshots (via userfaultfd) to reset workers between tests.
+//! However, certain operations cannot be safely reset via memory manipulation:
+//!
+//! 1. **Thread pools**: Background threads survive fork() but their locks are
+//!    in undefined states (the "fork() safety paradox")
+//! 2. **Network sockets**: File descriptors are duplicated, but socket state
+//!    (TCP sequence numbers, SSL sessions) is corrupted
+//! 3. **Native code (ctypes/cffi)**: C libraries may hold global state in .bss
+//!    that isn't visible to Python's memory manager
+//! 4. **GPU contexts**: CUDA/OpenCL contexts are process-specific and corrupt
+//!    after fork
+//!
+//! # Algorithm Overview
+//!
+//! This module performs **per-file toxicity analysis** via AST walking:
+//!
+//! 1. Parse Python source using `rustpython_parser`
+//! 2. Walk ALL statements (including function/class bodies)
+//! 3. Track imports and check against blocklists
+//! 4. Detect dynamic imports (`__import__`, `exec`, `importlib.import_module`)
+//! 5. Return a `ToxicityReport` with status, reasons, and import list
+//!
+//! The import list is used by a separate module to build the dependency graph
+//! and compute **transitive toxicity** (if A imports B and B is toxic, A is toxic).
+//!
+//! # Key Design Decisions
+//!
+//! - **Star imports from toxic modules = Toxic** (aggressive stance)
+//! - **Dynamic imports = Toxic** (unpredictable code loading)
+//! - **Imports inside functions are NOT ignored** (Tach's worker recycling may
+//!   execute these during test runs, unlike cold-start analysis)
+//! - **Any toxic token ANYWHERE in the file triggers Isolation Mode**
+//! - **TYPE_CHECKING blocks are skipped** (never executed at runtime)
 
 use rustpython_ast as ast;
 use rustpython_parser::Parse;
@@ -18,8 +61,28 @@ use std::path::Path;
 // =============================================================================
 // Blocklists
 // =============================================================================
+//
+// These blocklists define which modules are considered "toxic" (fork-unsafe).
+//
+// From the research paper:
+// > "The visitor flags a module as Tier 3 [toxic] if it encounters:
+// > Network I/O, Concurrency, System Mutation, or Global Locks"
+//
+// Tier classification:
+// - Tier 1 (Safe): Pure Python, no global state, no I/O
+// - Tier 2 (Cautious): May have state, but reset via sys.modules cleanup
+// - Tier 3 (Toxic): Global C state, threads, or network - requires fork/kill
+// =============================================================================
 
-/// Toxic standard library modules that spawn threads, processes, or use native code
+/// Toxic standard library modules that spawn threads, processes, or use native code.
+///
+/// These modules create resources that cannot be safely reset via memory snapshots:
+/// - `threading`, `_thread`: Create OS threads that survive fork() with corrupted locks
+/// - `multiprocessing`: Spawns child processes with shared state
+/// - `socket`: Creates file descriptors with kernel-side TCP/IP state
+/// - `ctypes`: Direct access to C libraries with opaque global state
+/// - `signal`: Installs signal handlers that persist across memory reset
+/// - `concurrent.futures`: Thread/process pools with complex synchronization
 const TOXIC_STD_LIB: &[&str] = &[
     "threading",
     "_thread",
@@ -30,7 +93,16 @@ const TOXIC_STD_LIB: &[&str] = &[
     "concurrent.futures",
 ];
 
-/// Toxic external packages with native dependencies or thread pools
+/// Toxic external packages with native dependencies or thread pools.
+///
+/// These packages are marked toxic because they:
+/// - Use OpenMP/OpenBLAS thread pools (`pandas`, `numpy` internals)
+/// - Hold GPU/accelerator contexts (`tensorflow`, `torch`, `cv2`)
+/// - Use greenlet/coroutine stacks that corrupt after fork (`gevent`)
+/// - Interface with C libraries via FFI (`grpc`, `cffi`)
+///
+/// The GPU context issue is particularly severe: CUDA/OpenCL contexts are
+/// per-process, and fork() duplicates the process but not the GPU driver state.
 const TOXIC_EXTERNAL_MODULES: &[&str] = &[
     "grpc",
     "pandas",     // OpenMP threads
@@ -45,14 +117,43 @@ const TOXIC_EXTERNAL_MODULES: &[&str] = &[
 // Data Structures
 // =============================================================================
 
-/// Result of toxicity analysis for a single file
+/// Result of toxicity analysis for a single file.
+///
+/// This struct represents the output of the per-file toxicity scan. It contains:
+/// - A boolean flag indicating whether any toxic patterns were found
+/// - Human-readable reasons explaining why the file is toxic (for diagnostics)
+/// - A list of all imports found (used to build the dependency graph)
+///
+/// # Transitive Toxicity
+///
+/// The `imports` field is critical for computing transitive toxicity. A separate
+/// module uses these imports to build a dependency graph:
+///
+/// ```text
+/// File A imports: [B, C]
+/// File B imports: [threading]  <- B is directly toxic
+/// File C imports: []           <- C is safe
+///
+/// Transitive analysis:
+///   A -> B -> threading (toxic)
+///   Therefore: A is transitively toxic
+/// ```
+///
+/// The fixed-point algorithm for transitive toxicity:
+/// 1. Mark all files with direct toxicity as toxic
+/// 2. For each non-toxic file, check if any import is toxic
+/// 3. If yes, mark the file as toxic and repeat step 2
+/// 4. Continue until no new files are marked (fixed point reached)
 #[derive(Debug, Clone, Default)]
 pub struct ToxicityReport {
-    /// Whether the file contains toxic patterns
+    /// Whether the file contains toxic patterns (direct toxicity).
+    /// Transitive toxicity is computed separately using the import graph.
     pub is_toxic: bool,
-    /// Human-readable reasons for toxicity
+    /// Human-readable reasons for toxicity (e.g., "Imported 'threading'").
+    /// Used for diagnostic output and debugging.
     pub reasons: Vec<String>,
-    /// All imports found (for graph construction)
+    /// All imports found in this file (for dependency graph construction).
+    /// Includes both `import X` and `from X import Y` statements.
     pub imports: Vec<String>,
 }
 
