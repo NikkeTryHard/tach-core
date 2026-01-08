@@ -185,10 +185,27 @@ fn truncate_test_id(id: &str, max_width: usize) -> String {
 }
 
 /// Get the current terminal width, with a fallback default.
+///
+/// Checks `TACH_TERM_WIDTH` environment variable first for testing,
+/// then falls back to actual terminal size detection.
 fn get_terminal_width() -> usize {
+    // Check env override for testing narrow terminal behavior
+    if let Ok(width_str) = std::env::var("TACH_TERM_WIDTH") {
+        if let Ok(width) = width_str.parse::<usize>() {
+            return width.max(20); // Minimum 20 columns
+        }
+    }
     terminal_size::terminal_size()
         .map(|(w, _)| w.0 as usize)
         .unwrap_or(80)
+}
+
+/// Determine if the terminal is too narrow for progress bar.
+///
+/// Returns true if terminal width is below the threshold for progress bar
+/// display (< 40 columns). In this case, DotsReporter should be used instead.
+pub fn is_narrow_terminal() -> bool {
+    get_terminal_width() < 40
 }
 
 /// Format a traceback message according to the specified style.
@@ -595,38 +612,38 @@ impl ProgressReporter {
     pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         let term_width = get_terminal_width();
 
-        // Calculate responsive bar width:
-        // - Spinner + space: 2
-        // - [elapsed_precise]: 12 (HH:MM:SS.mmm in brackets)
-        // - Space: 1
-        // - [bar]: variable
-        // - Space: 1
-        // - pos/len: ~10
-        // - Space: 1
-        // - msg: ~20
-        // Total overhead: ~47 chars
-        let bar_width = if term_width < 60 {
-            // Very narrow: minimal bar
-            10
-        } else if term_width < 80 {
-            // Narrow: small bar
-            20
-        } else if term_width < 120 {
-            // Normal: medium bar
-            40
+        // Calculate max ID width for truncation (for messages)
+        // For narrow terminals, give more space to the counter
+        let max_id_width = if term_width < 60 {
+            term_width.saturating_sub(20).max(10)
         } else {
-            // Wide: larger bar
-            60
+            term_width.saturating_sub(50).max(20)
         };
 
-        // Calculate max ID width for truncation (for messages)
-        let max_id_width = term_width.saturating_sub(50).max(20);
-
         let bar = ProgressBar::new(0);
-        let template = format!(
-            "{{spinner:.green}} [{{elapsed_precise}}] [{{bar:{}.cyan/blue}}] {{pos}}/{{len}} {{msg}}",
-            bar_width
-        );
+
+        // Choose template based on terminal width:
+        // - Very narrow (< 60): Minimal mode - just counter and short message
+        // - Narrow (< 80): Small bar with condensed format
+        // - Normal (< 120): Medium bar with full format
+        // - Wide (>= 120): Large bar with full format
+        let template = if term_width < 60 {
+            // Minimal mode: [42/100] test_name
+            // No spinner, no elapsed time, no progress bar
+            "{pos}/{len} {msg}".to_string()
+        } else if term_width < 80 {
+            // Narrow mode: Small bar (20 chars)
+            "{spinner:.green} [{bar:20.cyan/blue}] {pos}/{len} {msg}".to_string()
+        } else if term_width < 120 {
+            // Normal mode: Medium bar (40 chars)
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}"
+                .to_string()
+        } else {
+            // Wide mode: Large bar (60 chars)
+            "{spinner:.green} [{elapsed_precise}] [{bar:60.cyan/blue}] {pos}/{len} {msg}"
+                .to_string()
+        };
+
         bar.set_style(
             ProgressStyle::default_bar()
                 .template(&template)
@@ -1175,6 +1192,60 @@ mod tests {
         // Should return a reasonable value (or fallback)
         let width = get_terminal_width();
         assert!(width >= 20, "Terminal width should be at least 20");
+    }
+
+    #[test]
+    fn test_get_terminal_width_env_override() {
+        // Test TACH_TERM_WIDTH environment variable override
+        // SAFETY: This test runs in isolation and restores the env var afterward
+        unsafe { std::env::set_var("TACH_TERM_WIDTH", "50") };
+        let width = get_terminal_width();
+        unsafe { std::env::remove_var("TACH_TERM_WIDTH") };
+        assert_eq!(width, 50, "Should respect TACH_TERM_WIDTH env var");
+    }
+
+    #[test]
+    fn test_get_terminal_width_env_minimum() {
+        // Test that env override respects minimum of 20
+        // SAFETY: This test runs in isolation and restores the env var afterward
+        unsafe { std::env::set_var("TACH_TERM_WIDTH", "10") };
+        let width = get_terminal_width();
+        unsafe { std::env::remove_var("TACH_TERM_WIDTH") };
+        assert_eq!(width, 20, "Should enforce minimum width of 20");
+    }
+
+    #[test]
+    fn test_get_terminal_width_env_invalid() {
+        // Test that invalid env values fall back to terminal detection
+        // SAFETY: This test runs in isolation and restores the env var afterward
+        unsafe { std::env::set_var("TACH_TERM_WIDTH", "invalid") };
+        let width = get_terminal_width();
+        unsafe { std::env::remove_var("TACH_TERM_WIDTH") };
+        // Should fall back to terminal size or 80
+        assert!(
+            width >= 20,
+            "Should fall back to reasonable width for invalid env"
+        );
+    }
+
+    #[test]
+    fn test_is_narrow_terminal_narrow() {
+        // Test is_narrow_terminal returns true for narrow terminals
+        // SAFETY: This test runs in isolation and restores the env var afterward
+        unsafe { std::env::set_var("TACH_TERM_WIDTH", "30") };
+        let result = super::is_narrow_terminal();
+        unsafe { std::env::remove_var("TACH_TERM_WIDTH") };
+        assert!(result, "Should return true for terminal < 40 columns");
+    }
+
+    #[test]
+    fn test_is_narrow_terminal_wide() {
+        // Test is_narrow_terminal returns false for wide terminals
+        // SAFETY: This test runs in isolation and restores the env var afterward
+        unsafe { std::env::set_var("TACH_TERM_WIDTH", "80") };
+        let result = super::is_narrow_terminal();
+        unsafe { std::env::remove_var("TACH_TERM_WIDTH") };
+        assert!(!result, "Should return false for terminal >= 40 columns");
     }
 
     #[test]
