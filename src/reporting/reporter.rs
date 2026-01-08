@@ -15,6 +15,7 @@
 
 use crate::config::TracebackStyle;
 use serde::Serialize;
+use std::io::IsTerminal;
 
 // Re-export TracebackStyle for convenience
 pub use crate::config::TracebackStyle as TbStyle;
@@ -492,7 +493,7 @@ impl ProgressReporter {
 
     /// Check if we should use progress bar (interactive terminal)
     pub fn should_use_progress_bar() -> bool {
-        atty::is(atty::Stream::Stderr) && std::env::var("CI").is_err()
+        std::io::stderr().is_terminal() && std::env::var("CI").is_err()
     }
 }
 

@@ -71,7 +71,6 @@ serde_json = "1.0"
 # Reporting
 quick-xml = { version = "0.38", features = ["serialize"] }
 indicatif = "0.18"
-atty = "0.2"
 terminal_size = "0.4"
 
 # Watch mode

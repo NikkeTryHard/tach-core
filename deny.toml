@@ -9,8 +9,6 @@ yanked = "warn"
 # Ignore unmaintained/unsound advisories for transitive dependencies
 # These are pulled in by rustpython-parser and other deps, not direct usage
 ignore = [
-    { id = "RUSTSEC-2021-0145", reason = "atty unsound on Windows only, we target Linux" },
-    { id = "RUSTSEC-2024-0375", reason = "atty unmaintained, transitive dep" },
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, transitive dep" },
     { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained, transitive dep" },
     { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained, transitive dep" },
@@ -18,6 +16,7 @@ ignore = [
     { id = "RUSTSEC-2025-0090", reason = "unic-emoji-char unmaintained, transitive dep" },
     { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained, transitive dep" },
     { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained, transitive dep" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained, v3 API incompatible" },
 ]
 
 [licenses]
