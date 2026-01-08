@@ -106,7 +106,7 @@ docker run \
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup default stable
 
-# Python 3.12+ (PyO3 requires 3.8+, but 3.12+ recommended for sys.monitoring)
+# Python 3.12+ (Tach requires 3.10+; 3.12+ recommended for PEP 669 coverage)
 sudo apt install python3.12 python3.12-venv python3.12-dev
 
 # Build essentials

@@ -244,7 +244,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 #### Python Compatibility
 
 - [ ] Test against Python 3.14 beta (when available)
-- [ ] Verify Python 3.8 still works (MSRV)
+- [x] Verify Python 3.10+ compatibility (MSRV updated)
 - [ ] Test with PyPy (experimental)
 - [x] Document Python version compatibility matrix
   > See [docs/python-compatibility.md](docs/python-compatibility.md) for the complete compatibility matrix.

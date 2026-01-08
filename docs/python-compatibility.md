@@ -156,12 +156,9 @@ PyO3 0.23+ provides experimental support for free-threaded Python:
 
 ## Python 3.14
 
-Python 3.14 is currently in development (as of January 2025). Tach compatibility will be tested once beta releases become available.
+Python 3.14 was released in October 2025. Tach compatibility testing is ongoing.
 
-Expected timeline:
-
-- Python 3.14 beta: May 2025
-- Python 3.14 release: October 2025
+See the [Python release schedule](https://peps.python.org/pep-0745/) for current development status.
 
 ---
 
