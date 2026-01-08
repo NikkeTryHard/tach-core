@@ -171,6 +171,7 @@ Detailed technical documentation for each subsystem:
 | **Reference**                                                           |                                                 |
 | [Configuration](docs/configuration.md)                                  | CLI, pyproject.toml, environment variables      |
 | [Development](docs/development.md)                                      | Build, test, project structure                  |
+| [Python Compatibility](docs/python-compatibility.md)                    | Python version matrix and PEP 703 notes         |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common issues and debug commands                |
 | [API Reference](docs/api-reference.md)                                  | FFI functions and data structures               |
 | **Decisions**                                                           |                                                 |

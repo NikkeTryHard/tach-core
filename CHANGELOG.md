@@ -246,9 +246,11 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [ ] Test against Python 3.14 beta (when available)
 - [ ] Verify Python 3.8 still works (MSRV)
 - [ ] Test with PyPy (experimental)
-- [ ] Document Python version compatibility matrix
-- [ ] Research PEP 703 (Free-Threading) implications for worker model
+- [x] Document Python version compatibility matrix
+  > See [docs/python-compatibility.md](docs/python-compatibility.md) for the complete compatibility matrix.
+- [x] Research PEP 703 (Free-Threading) implications for worker model
   > **Ref**: [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) — No-GIL Python changes isolation assumptions
+  > See [docs/python-compatibility.md](docs/python-compatibility.md) for detailed analysis.
 
 ---
 
