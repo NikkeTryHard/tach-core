@@ -3,8 +3,8 @@
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST, MSG_PONG, MSG_READY, MSG_WORKER_READY, TestPayload,
-    TestResult, encode_with_length,
+    CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST, MAX_PAYLOAD_SIZE, MSG_PONG, MSG_READY,
+    MSG_WORKER_READY, TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::snapshot::send_fd;
 use anyhow::Result;
@@ -368,18 +368,25 @@ fn worker_loop(socket: UnixStream) {
                 }
                 let len = u32::from_le_bytes(len_buf) as usize;
 
-                // Read payload
-                let mut payload_buf = vec![0u8; len];
-                if socket.read_exact(&mut payload_buf).is_err() {
+                // OOM protection: Validate size BEFORE allocating
+                if len > MAX_PAYLOAD_SIZE {
+                    eprintln!(
+                        "[worker] Rejecting oversized payload: {} bytes > {} limit",
+                        len, MAX_PAYLOAD_SIZE
+                    );
+                    break;
+                }
+
+                // Allocate buffer for length prefix + payload
+                let mut full_buf = vec![0u8; 4 + len];
+                full_buf[..4].copy_from_slice(&len_buf);
+                if socket.read_exact(&mut full_buf[4..]).is_err() {
                     eprintln!("[worker] Failed to read payload");
                     break;
                 }
 
-                let payload: TestPayload = match bincode::serde::decode_from_slice(
-                    &payload_buf,
-                    bincode::config::standard(),
-                ) {
-                    Ok((p, _)) => p,
+                let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
+                    Ok(p) => p,
                     Err(e) => {
                         eprintln!("[worker] Deserialize error: {}", e);
                         break;
@@ -722,14 +729,22 @@ except Exception as e:
                 cmd_socket.read_exact(&mut len_buf)?;
                 let len = u32::from_le_bytes(len_buf) as usize;
 
-                let mut payload_buf = vec![0u8; len];
-                cmd_socket.read_exact(&mut payload_buf)?;
+                // OOM protection: Validate size BEFORE allocating
+                if len > MAX_PAYLOAD_SIZE {
+                    eprintln!(
+                        "[zygote] Rejecting oversized payload: {} bytes > {} limit",
+                        len, MAX_PAYLOAD_SIZE
+                    );
+                    continue;
+                }
 
-                let payload: TestPayload = match bincode::serde::decode_from_slice(
-                    &payload_buf,
-                    bincode::config::standard(),
-                ) {
-                    Ok((p, _)) => p,
+                // Allocate buffer for length prefix + payload
+                let mut full_buf = vec![0u8; 4 + len];
+                full_buf[..4].copy_from_slice(&len_buf);
+                cmd_socket.read_exact(&mut full_buf[4..])?;
+
+                let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
+                    Ok(p) => p,
                     Err(e) => {
                         eprintln!("[zygote] Deserialize error: {}", e);
                         continue;
@@ -781,7 +796,7 @@ except Exception as e:
                     let dispatch_ok = (|| -> std::io::Result<()> {
                         worker.socket.write_all(&[CMD_RUN_TEST])?;
                         worker.socket.write_all(&len_buf)?;
-                        worker.socket.write_all(&payload_buf)?;
+                        worker.socket.write_all(&full_buf[4..])?; // Send payload only (without length prefix)
                         Ok(())
                     })();
 
