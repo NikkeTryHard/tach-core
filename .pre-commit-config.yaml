@@ -1,5 +1,5 @@
 # Pre-commit configuration for tach-core
-# Install: pip install pre-commit && pre-commit install
+# Install: pip install pre-commit && pre-commit install && pre-commit install --hook-type pre-push
 # Run manually: pre-commit run --all-files
 # Docs: https://pre-commit.com
 
@@ -10,8 +10,10 @@ repos:
     hooks:
       - id: trailing-whitespace
         exclude: ^(target/|coverage/)
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
       - id: end-of-file-fixer
         exclude: ^(target/|coverage/)
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
@@ -28,6 +30,7 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
 
       - id: cargo-clippy
         name: cargo clippy
@@ -61,6 +64,7 @@ repos:
         language: script
         files: ^docs/.*\.md$
         pass_filenames: false
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
 
   # Python hooks (for gauntlet tests)
   - repo: https://github.com/psf/black
@@ -69,12 +73,14 @@ repos:
       - id: black
         language_version: python3
         files: ^tests/
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
 
   - repo: https://github.com/PyCQA/isort
     rev: 5.13.2
     hooks:
       - id: isort
         files: ^tests/
+        stages: [pre-commit] # Only on commit, not push (auto-fixes files)
 
 # CI configuration
 ci:
