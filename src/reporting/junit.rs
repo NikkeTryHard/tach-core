@@ -10,7 +10,18 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 /// Strip ANSI color codes from strings (Boss Refinement #1)
-fn strip_ansi_codes(s: &str) -> String {
+///
+/// This function removes ANSI escape sequences (like color codes) from strings
+/// to produce clean output for XML reports. It handles:
+/// - CSI sequences: `\x1b[...m` (colors, formatting)
+/// - Null bytes: stripped to avoid XML issues
+///
+/// # Arguments
+/// * `s` - The input string potentially containing ANSI escape sequences
+///
+/// # Returns
+/// A new string with all ANSI escape sequences and null bytes removed
+pub fn strip_ansi_codes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 

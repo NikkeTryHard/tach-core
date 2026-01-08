@@ -100,3 +100,10 @@ path = "fuzz_targets/fuzz_toxicity_ast.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_ansi_stripper"
+path = "fuzz_targets/fuzz_ansi_stripper.rs"
+test = false
+doc = false
+bench = false
