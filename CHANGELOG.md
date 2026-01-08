@@ -1,6 +1,6 @@
 # Changelog
 
-> **Future Roadmap:** See [docs/roadmap.md](docs/roadmap.md) for planned versions 0.2.x through 1.0.0+.
+> **Future Roadmap:** See [docs/research/roadmap.md](docs/research/roadmap.md) for planned versions 0.2.x through 1.0.0+.
 
 ---
 
