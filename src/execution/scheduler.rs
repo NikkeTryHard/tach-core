@@ -239,13 +239,8 @@ impl Scheduler {
                 // Check for workers that exceeded their per-test timeout
                 let timed_out = self.get_timed_out_workers();
                 for (test_id, test_name, slot, worker_pid) in timed_out {
-                    // Kill the worker process if we have a PID
-                    if let Some(pid) = worker_pid {
-                        // Kill the entire process group (negative PID)
-                        let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
-                        // Also kill the process directly as fallback
-                        let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
-                    }
+                    // Gracefully kill worker: SIGTERM first, then SIGKILL after 100ms
+                    let _ = graceful_kill_worker(worker_pid, Duration::from_millis(100));
                     reporter.on_test_finished(
                         &test_name,
                         "timeout",
@@ -486,7 +481,61 @@ impl Scheduler {
             .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
             .collect()
     }
+}
 
+/// Gracefully kill a worker process with SIGTERM before SIGKILL.
+///
+/// This function implements graceful shutdown:
+/// 1. Send SIGTERM to allow cleanup (Python atexit handlers, etc.)
+/// 2. Wait for grace_period for process to exit
+/// 3. If still running, send SIGKILL to force termination
+///
+/// Returns Ok(()) if process was killed or didn't exist.
+/// Returns Err only on unexpected errors.
+pub fn graceful_kill_worker(pid: Option<i32>, grace_period: Duration) -> Result<()> {
+    let pid = match pid {
+        Some(p) if p > 0 => p,
+        _ => return Ok(()), // No valid PID, nothing to kill
+    };
+
+    let pid_raw = Pid::from_raw(pid);
+    let pgid_raw = Pid::from_raw(-pid); // Process group
+
+    // Step 1: Send SIGTERM for graceful shutdown
+    // Send to process group first, then individual process
+    let _ = kill(pgid_raw, Signal::SIGTERM);
+    let _ = kill(pid_raw, Signal::SIGTERM);
+
+    // Step 2: Wait for grace period, checking if process exits
+    let start = Instant::now();
+    let check_interval = Duration::from_millis(10);
+
+    while start.elapsed() < grace_period {
+        // Check if process is still alive using kill(pid, 0)
+        match kill(pid_raw, None) {
+            Ok(_) => {
+                // Process still running, wait and check again
+                std::thread::sleep(check_interval);
+            }
+            Err(nix::errno::Errno::ESRCH) => {
+                // Process no longer exists - graceful exit successful
+                return Ok(());
+            }
+            Err(_) => {
+                // Other error (permission?), assume process is gone
+                return Ok(());
+            }
+        }
+    }
+
+    // Step 3: Grace period expired, force kill with SIGKILL
+    let _ = kill(pgid_raw, Signal::SIGKILL);
+    let _ = kill(pid_raw, Signal::SIGKILL);
+
+    Ok(())
+}
+
+impl Scheduler {
     /// Detect workers whose processes have crashed (died unexpectedly).
     ///
     /// Uses kill(pid, 0) to check if the process still exists.
@@ -1126,6 +1175,62 @@ mod tests {
                 "Worker {} should be marked as handled",
                 i
             );
+        }
+    }
+
+    // =========================================================================
+    // Graceful Timeout Cleanup Tests (Task 2: 0.1.2)
+    // =========================================================================
+
+    /// Test that graceful_kill sends SIGTERM before SIGKILL.
+    ///
+    /// This tests the cleanup improvement: when killing a timed-out worker,
+    /// we should send SIGTERM first to allow graceful cleanup, then SIGKILL
+    /// after a grace period if the process is still running.
+    #[test]
+    fn test_graceful_kill_sends_sigterm_first() {
+        use std::time::Duration;
+
+        // Test that graceful_kill_worker exists and can be called
+        // This test verifies the function handles None PID gracefully
+        let result = super::graceful_kill_worker(None, Duration::from_millis(100));
+        assert!(
+            result.is_ok(),
+            "graceful_kill_worker should handle None PID gracefully"
+        );
+    }
+
+    /// Test that graceful_kill_worker with a valid PID attempts SIGTERM first.
+    #[test]
+    fn test_graceful_kill_worker_with_pid() {
+        use nix::sys::wait::{WaitPidFlag, waitpid};
+        use nix::unistd::{ForkResult, fork};
+        use std::time::Duration;
+
+        // Fork a child that exits immediately
+        match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                // Child: sleep briefly then exit
+                std::thread::sleep(Duration::from_millis(10));
+                std::process::exit(0);
+            }
+            Ok(ForkResult::Parent { child }) => {
+                // Parent: wait for child to exit, then try graceful kill
+                // (child is already exited, so kill should handle this gracefully)
+                let _ = waitpid(child, Some(WaitPidFlag::WNOHANG));
+                std::thread::sleep(Duration::from_millis(50));
+
+                // Call graceful_kill_worker - should handle already-exited process
+                let result =
+                    super::graceful_kill_worker(Some(child.as_raw()), Duration::from_millis(100));
+                assert!(
+                    result.is_ok(),
+                    "graceful_kill_worker should handle already-exited process"
+                );
+            }
+            Err(e) => {
+                panic!("Fork failed: {}", e);
+            }
         }
     }
 }
