@@ -4,8 +4,8 @@ Tach uses Linux userfaultfd (UFFD) to achieve microsecond-scale memory resets be
 
 For detailed analysis, see:
 
-- [Python Memory Snapshotting with Userfaultfd](../papers/Python%20Memory%20Snapshotting%20with%20Userfaultfd.txt)
-- [Userfaultfd and CPython Allocator Interaction](../papers/Userfaultfd%20and%20CPython%20Allocator%20Interaction.txt)
+- [Python Memory Snapshotting with Userfaultfd](../papers-very-verbose/Python%20Memory%20Snapshotting%20with%20Userfaultfd.txt)
+- [Userfaultfd and CPython Allocator Interaction](../papers-very-verbose/Userfaultfd%20and%20CPython%20Allocator%20Interaction.txt)
 
 ---
 

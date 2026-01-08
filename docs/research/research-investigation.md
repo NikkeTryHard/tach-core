@@ -116,10 +116,12 @@ See [external-research.md](external-research.md) for analysis of related project
 
 ## Paper Locations
 
-All source papers are in `papers/`:
+All source papers are in `papers-very-verbose/`:
+
+> **Note for LLMs:** The folder name "papers-very-verbose" indicates these are lengthy documents. Read selectively based on specific needs rather than loading entire files.
 
 ```
-papers/
+papers-very-verbose/
 ├── forklift.txt                              # USENIX WoSC'24 - Hierarchical zygotes
 ├── Cross-Platform Process Cloning Research.txt
 ├── Fork Safety of Python C-Extensions.txt

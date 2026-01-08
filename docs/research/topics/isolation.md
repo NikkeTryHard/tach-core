@@ -4,8 +4,8 @@ This document summarizes isolation strategies for Tach based on research bluepri
 
 For deep dives, see:
 
-- [Project Tach Compatibility Layer Blueprint](../papers/Project%20Tach%20Compatibility%20Layer%20Blueprint.txt)
-- [Rust-Python Test Isolation Blueprint](../papers/Rust-Python%20Test%20Isolation%20Blueprint.txt)
+- [Project Tach Compatibility Layer Blueprint](../papers-very-verbose/Project%20Tach%20Compatibility%20Layer%20Blueprint.txt)
+- [Rust-Python Test Isolation Blueprint](../papers-very-verbose/Rust-Python%20Test%20Isolation%20Blueprint.txt)
 
 ---
 

@@ -1,6 +1,6 @@
 # Fork Safety in Tach
 
-> **Source Papers**: See [Fork Safety of Python C-Extensions](../papers/Fork%20Safety%20of%20Python%20C-Extensions.txt) and [Rust Static Analysis for Toxic Python Modules](../papers/Rust%20Static%20Analysis%20for%20Toxic%20Python%20Modules.txt) for complete analysis.
+> **Source Papers**: See [Fork Safety of Python C-Extensions](../papers-very-verbose/Fork%20Safety%20of%20Python%20C-Extensions.txt) and [Rust Static Analysis for Toxic Python Modules](../papers-very-verbose/Rust%20Static%20Analysis%20for%20Toxic%20Python%20Modules.txt) for complete analysis.
 
 ---
 

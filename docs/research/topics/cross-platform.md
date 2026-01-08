@@ -1,7 +1,7 @@
 # Cross-Platform Process Cloning
 
 > **Status:** Future work (CHANGELOG 0.8.x+)
-> **Deep Dive:** [Cross-Platform Process Cloning Research](../papers/Cross-Platform%20Process%20Cloning%20Research.txt)
+> **Deep Dive:** [Cross-Platform Process Cloning Research](../papers-very-verbose/Cross-Platform%20Process%20Cloning%20Research.txt)
 
 ---
 
