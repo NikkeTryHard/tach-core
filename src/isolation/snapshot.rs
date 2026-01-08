@@ -2561,4 +2561,427 @@ mod tests {
             "Should contain 'second'"
         );
     }
+
+    // =========================================================================
+    // Error Path Tests (Regression Prevention)
+    // =========================================================================
+
+    #[test]
+    fn test_restore_region_creation() {
+        let data = vec![0xde, 0xad, 0xbe, 0xef];
+        let region = RestoreRegion::new(0x7f1234560000, data.clone(), "test_region");
+
+        assert_eq!(region.remote_addr, 0x7f1234560000);
+        assert_eq!(region.data, data);
+        assert_eq!(region.name, "test_region");
+        assert_eq!(region.len(), 4);
+        assert!(!region.is_empty());
+    }
+
+    #[test]
+    fn test_restore_region_empty() {
+        let region = RestoreRegion::new(0x1000, vec![], "empty_region");
+
+        assert_eq!(region.len(), 0);
+        assert!(region.is_empty());
+    }
+
+    #[test]
+    fn test_restore_region_large_data() {
+        // Test with page-sized data
+        let data = vec![0xAB; PAGE_SIZE];
+        let region = RestoreRegion::new(0x1000, data, "page_region");
+
+        assert_eq!(region.len(), PAGE_SIZE);
+        assert!(!region.is_empty());
+    }
+
+    #[test]
+    fn test_vectorized_restore_result_fields() {
+        let result = VectorizedRestoreResult {
+            bytes_written: 12288,
+            regions_restored: 3,
+            duration_us: 150,
+            region_details: vec![
+                ("TLS".to_string(), 4096),
+                ("Stack".to_string(), 4096),
+                ("BSS".to_string(), 4096),
+            ],
+        };
+
+        assert_eq!(result.bytes_written, 12288);
+        assert_eq!(result.regions_restored, 3);
+        assert_eq!(result.duration_us, 150);
+        assert_eq!(result.region_details.len(), 3);
+    }
+
+    #[test]
+    fn test_vectorized_restore_result_empty() {
+        let result = VectorizedRestoreResult {
+            bytes_written: 0,
+            regions_restored: 0,
+            duration_us: 0,
+            region_details: vec![],
+        };
+
+        assert_eq!(result.bytes_written, 0);
+        assert!(result.region_details.is_empty());
+    }
+
+    #[test]
+    fn test_libpython_info_struct() {
+        let info = LibpythonInfo {
+            path: PathBuf::from("/usr/lib/libpython3.12.so"),
+            base_addr: 0x7f1234560000,
+            is_static: false,
+        };
+
+        assert_eq!(info.path, PathBuf::from("/usr/lib/libpython3.12.so"));
+        assert_eq!(info.base_addr, 0x7f1234560000);
+        assert!(!info.is_static);
+    }
+
+    #[test]
+    fn test_libpython_info_static() {
+        let info = LibpythonInfo {
+            path: PathBuf::from("/usr/bin/python"),
+            base_addr: 0x400000,
+            is_static: true,
+        };
+
+        assert!(info.is_static);
+    }
+
+    #[test]
+    fn test_parse_memory_maps_nonexistent_pid() {
+        // Test error handling for nonexistent PID
+        let fake_pid = Pid::from_raw(999999999);
+        let result = parse_memory_maps(fake_pid);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("999999999") || err_msg.contains("Failed to read"),
+            "Error should mention the PID or file read failure: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_find_libpython_nonexistent_pid() {
+        // Test error handling when trying to find libpython for nonexistent PID
+        let fake_pid = Pid::from_raw(999999999);
+        let result = find_libpython(fake_pid);
+
+        assert!(result.is_err());
+        // The error should be about reading the maps file, not about missing libpython
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("999999999") || err_msg.contains("Failed"),
+            "Error should mention the PID or failure: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_find_tls_region_nonexistent_pid() {
+        // Test error handling for nonexistent PID in find_tls_region
+        let fake_pid = Pid::from_raw(999999999);
+        let result = find_tls_region(fake_pid, 0x7f1234560000);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_aligned_segment_is_empty_true() {
+        // Test is_empty for a zero-length segment
+        let seg = AlignedSegment {
+            start: 0x1000,
+            end: 0x1000,
+            description: "zero_len".to_string(),
+        };
+
+        assert!(seg.is_empty());
+        assert_eq!(seg.len(), 0);
+        assert_eq!(seg.page_count(), 0);
+    }
+
+    #[test]
+    fn test_memory_region_should_snapshot_executable_excluded() {
+        // Executable-only regions should be excluded (no write permission)
+        let exec_region = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "r-xp".to_string(),
+            name: "/lib/libc.so".to_string(),
+        };
+        assert!(
+            !exec_region.should_snapshot(),
+            "Executable-only regions should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_memory_region_should_snapshot_all_permissions() {
+        // Region with all permissions should be included if writable
+        let all_perms = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "rwxp".to_string(),
+            name: "[heap]".to_string(),
+        };
+        assert!(
+            all_perms.should_snapshot(),
+            "Writable heap should be included"
+        );
+    }
+
+    #[test]
+    fn test_parse_elf_writable_segments_nonexistent_file() {
+        // Test error handling for nonexistent ELF file
+        let fake_path = PathBuf::from("/nonexistent/path/to/libpython.so");
+        let result = parse_elf_writable_segments(&fake_path, 0x7f1234560000);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nonexistent") || err_msg.contains("Failed to read"),
+            "Error should mention the file or read failure: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_snapshot_manager_reset_worker_not_registered() {
+        // Test error handling when resetting an unregistered worker
+        let mgr = SnapshotManager::new().unwrap();
+
+        // Skip if UFFD is not available (returns Ok in fallback mode)
+        if !mgr.available {
+            eprintln!("[test] UFFD unavailable, skipping reset_worker test");
+            return;
+        }
+
+        let fake_pid = Pid::from_raw(99999);
+        let result = mgr.reset_worker(fake_pid);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("99999") || err_msg.contains("not registered"),
+            "Error should mention the PID or registration status: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_snapshot_manager_handle_fault_not_registered() {
+        // Test error handling when handling fault for unregistered worker
+        let mgr = SnapshotManager::new().unwrap();
+
+        let fake_pid = Pid::from_raw(99999);
+        let result = mgr.handle_fault(fake_pid, 0x7f1234560000);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("99999") || err_msg.contains("not registered"),
+            "Error should mention the PID or registration status: {}",
+            err_msg
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_snapshot_manager_restore_worker_tls_not_registered() {
+        // Test error handling when restoring TLS for unregistered worker
+        let mgr = SnapshotManager::new().unwrap();
+
+        // Skip if UFFD is not available (returns Ok in fallback mode)
+        if !mgr.available {
+            eprintln!("[test] UFFD unavailable, skipping restore_worker_tls test");
+            return;
+        }
+
+        let fake_pid = Pid::from_raw(99999);
+        let result = mgr.restore_worker_tls(fake_pid);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("99999") || err_msg.contains("not registered"),
+            "Error should mention the PID or registration status: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_snapshot_manager_remove_nonexistent_worker() {
+        // Removing a nonexistent worker should be a no-op (no panic)
+        let mut mgr = SnapshotManager::new().unwrap();
+        let fake_pid = Pid::from_raw(99999);
+
+        // This should not panic
+        mgr.remove_worker(fake_pid);
+
+        // Verify no workers exist
+        assert!(mgr.worker_pids().is_empty());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_snapshot_manager_calibration_state() {
+        // Test calibration state methods
+        let mgr = SnapshotManager::new().unwrap();
+
+        // Before calibration, should not be calibrated
+        assert!(!mgr.is_calibrated());
+        assert!(mgr.calibrated_offset().is_none());
+    }
+
+    #[test]
+    fn test_aligned_segment_eq_trait() {
+        // Test PartialEq and Eq derivation
+        let seg1 = AlignedSegment::new(0x1000, 0x2000, "test");
+        let seg2 = AlignedSegment::new(0x1000, 0x2000, "test");
+        let seg3 = AlignedSegment::new(0x1000, 0x3000, "test");
+
+        assert_eq!(seg1, seg2);
+        assert_ne!(seg1, seg3);
+    }
+
+    #[test]
+    fn test_aligned_segment_clone_trait() {
+        // Test Clone derivation
+        let seg1 = AlignedSegment::new(0x1000, 0x2000, "test");
+        let seg2 = seg1.clone();
+
+        assert_eq!(seg1, seg2);
+        assert_eq!(seg1.description, seg2.description);
+    }
+
+    #[test]
+    fn test_memory_region_clone_trait() {
+        // Test Clone derivation for MemoryRegion
+        let region1 = MemoryRegion {
+            start: 0x1000,
+            end: 0x2000,
+            len: 0x1000,
+            perms: "rw-p".to_string(),
+            name: "test".to_string(),
+        };
+        let region2 = region1.clone();
+
+        assert_eq!(region1.start, region2.start);
+        assert_eq!(region1.name, region2.name);
+    }
+
+    #[test]
+    fn test_tls_snapshot_clone_trait() {
+        // Test Clone derivation for TlsSnapshot
+        let snapshot1 = TlsSnapshot {
+            fs_base: 0x7f1234560000,
+            tls_data: vec![1, 2, 3, 4],
+            tls_region_start: 0x7f1234550000,
+            tls_region_end: 0x7f1234570000,
+        };
+        let snapshot2 = snapshot1.clone();
+
+        assert_eq!(snapshot1.fs_base, snapshot2.fs_base);
+        assert_eq!(snapshot1.tls_data, snapshot2.tls_data);
+    }
+
+    #[test]
+    fn test_restore_region_clone_trait() {
+        // Test Clone derivation for RestoreRegion
+        let region1 = RestoreRegion::new(0x1000, vec![0xAB; 100], "test");
+        let region2 = region1.clone();
+
+        assert_eq!(region1.remote_addr, region2.remote_addr);
+        assert_eq!(region1.data, region2.data);
+        assert_eq!(region1.name, region2.name);
+    }
+
+    #[test]
+    fn test_aligned_segment_not_overlapping() {
+        // Test non-overlapping segments with a gap
+        let a = AlignedSegment::new(0x1000, 0x2000, "a");
+        let c = AlignedSegment::new(0x4000, 0x5000, "c");
+
+        // A and C have a gap between them
+        assert!(!a.overlaps_or_adjacent(&c));
+        assert!(!c.overlaps_or_adjacent(&a));
+    }
+
+    #[test]
+    fn test_aligned_segment_contained() {
+        // Test when one segment is completely contained in another
+        let outer = AlignedSegment::new(0x1000, 0x5000, "outer");
+        let inner = AlignedSegment::new(0x2000, 0x3000, "inner");
+
+        assert!(outer.overlaps_or_adjacent(&inner));
+        assert!(inner.overlaps_or_adjacent(&outer));
+
+        let merged = outer.merge(&inner);
+        assert_eq!(merged.start, 0x1000);
+        assert_eq!(merged.end, 0x5000);
+    }
+
+    #[test]
+    fn test_page_alignment_boundary() {
+        // Test alignment at exact page boundaries
+        assert_eq!(align_to_page(PAGE_SIZE - 1), 0);
+        assert_eq!(align_to_page(PAGE_SIZE), PAGE_SIZE);
+        assert_eq!(align_to_page(PAGE_SIZE + 1), PAGE_SIZE);
+
+        assert_eq!(align_to_page_up(PAGE_SIZE - 1), PAGE_SIZE);
+        assert_eq!(align_to_page_up(PAGE_SIZE), PAGE_SIZE);
+        assert_eq!(align_to_page_up(PAGE_SIZE + 1), PAGE_SIZE * 2);
+    }
+
+    #[test]
+    fn test_region_filtering_memfd_variants() {
+        // Test various memfd naming patterns that should be excluded
+        let variants = [
+            "memfd:tach_coverage",
+            "/memfd:tach_coverage (deleted)",
+            "memfd:tach_coverage (deleted)",
+            "/dev/shm/tach_coverage",
+        ];
+
+        for name in &variants[..3] {
+            // First 3 should be excluded
+            let region = MemoryRegion {
+                start: 0x1000,
+                end: 0x2000,
+                len: 0x1000,
+                perms: "rw-s".to_string(),
+                name: name.to_string(),
+            };
+            assert!(
+                !region.should_snapshot(),
+                "Region with name '{}' should be excluded",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_handle_pending_faults_not_registered() {
+        // Test error handling when handling pending faults for unregistered worker
+        let mut mgr = SnapshotManager::new().unwrap();
+
+        let fake_pid = Pid::from_raw(99999);
+        let result = mgr.handle_pending_faults(fake_pid);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("99999") || err_msg.contains("not registered"),
+            "Error should mention the PID or registration status: {}",
+            err_msg
+        );
+    }
 }
