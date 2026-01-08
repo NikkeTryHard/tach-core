@@ -34,6 +34,29 @@ When `fork()` duplicates a multi-threaded process, only the calling thread survi
 
 **Common Victim**: The `logging` module. If a background thread is writing to a log file during `fork()`, the logging lock is inherited in "acquired" state, deadlocking the first log call in the child.
 
+### Fork-Safety Decision Flow
+
+```mermaid
+flowchart TD
+    A[Module Import] --> B{Contains toxic patterns?}
+    B -->|threading.Thread| C[TOXIC]
+    B -->|multiprocessing.Pool| C
+    B -->|socket.socket| C
+    B -->|ctypes.CDLL| C
+    B -->|No toxic patterns| D{Imports toxic module?}
+    D -->|Yes| C
+    D -->|No| E[SAFE]
+
+    C --> F[Toxic Worker Mode]
+    E --> G[Safe Worker Mode]
+
+    F --> H[Landlock Only]
+    F --> I[Exit After Test]
+
+    G --> J[Full Iron Dome]
+    G --> K[Worker Reuse OK]
+```
+
 ---
 
 ## Toxic Module Detection

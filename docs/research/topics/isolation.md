@@ -42,6 +42,35 @@ let flags = CloneFlags::CLONE_NEWNS   // Mount namespace isolation
 
 > Source: "Port 8080 in worker #5 is separate from port 8080 in worker #12" - Project Tach Compatibility Layer Blueprint
 
+### Namespace Architecture
+
+```mermaid
+graph TB
+    subgraph Supervisor["Supervisor Process"]
+        S[Scheduler]
+    end
+
+    subgraph Worker1["Worker 1 (Namespace)"]
+        W1[Test Runner]
+        M1[Mount NS]
+        N1[Net NS]
+    end
+
+    subgraph Worker2["Worker 2 (Namespace)"]
+        W2[Test Runner]
+        M2[Mount NS]
+        N2[Net NS]
+    end
+
+    S -->|fork + CLONE_NEWNS| W1
+    S -->|fork + CLONE_NEWNET| W1
+    S -->|fork + CLONE_NEWNS| W2
+    S -->|fork + CLONE_NEWNET| W2
+
+    M1 -.->|OverlayFS| FS[Host Filesystem]
+    M2 -.->|OverlayFS| FS
+```
+
 **CLONE_NEWUSER:** Allows unprivileged mount operations inside the namespace.
 
 > Source: "The User namespace allows a non-root process to map its user ID to root (0) inside the namespace" - Rust-Python Test Isolation Blueprint
