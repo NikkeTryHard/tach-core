@@ -190,6 +190,7 @@ jobs:
           pytest tests/gauntlet_restoration/ -v --tb=short
           pytest tests/gauntlet_plugin/ -v --tb=short
           pytest tests/gauntlet_concurrent/ -v --tb=short
+          pytest tests/gauntlet_013/ -v --tb=short
         timeout-minutes: 15
 
   # Only runs when code changes

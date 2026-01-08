@@ -6,8 +6,8 @@ This document provides a comprehensive reference for all Tach error codes, their
 
 Error codes follow the pattern `EXXX` where:
 
-- **E001-E004, E010**: User errors (test code, configuration)
-- **E005-E009, E011-E016**: System errors (kernel, permissions, resources)
+- **E001-E004, E010, E012**: User errors (test code, configuration, Python version)
+- **E005-E009, E011, E013-E016**: System errors (kernel, permissions, resources)
 - **E017-E020**: Extended user errors (syntax, fixtures, test status)
 
 ## User Errors
