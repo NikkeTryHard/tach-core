@@ -376,4 +376,237 @@ mod tests {
         assert!(reporter.cases[2].failure.is_none());
         assert!(reporter.cases[2].skipped.is_some());
     }
+
+    // =========================================================================
+    // ANSI Stripper Edge Case Tests (Regression Prevention)
+    // =========================================================================
+
+    #[test]
+    fn test_strip_ansi_incomplete_escape() {
+        // Incomplete escape sequence: \x1b[ without a terminating letter
+        // This should NOT cause an infinite loop or panic
+        let input = "\x1b[";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "",
+            "Incomplete CSI sequence should produce empty output"
+        );
+
+        // Incomplete escape with text before
+        let input = "before\x1b[";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "before",
+            "Text before incomplete sequence should be preserved"
+        );
+
+        // Incomplete escape with partial parameters
+        let input = "text\x1b[31";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "text", "Partial CSI with digits but no terminator");
+
+        // Incomplete escape with semicolons but no terminator
+        let input = "text\x1b[1;2;3";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "text", "CSI with parameters but no terminator");
+    }
+
+    #[test]
+    fn test_strip_ansi_very_long_sequence() {
+        // Very long parameter list (stress test)
+        let params = (1..=20)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        let input = format!("\x1b[{}mColored Text\x1b[0m", params);
+        let output = strip_ansi_codes(&input);
+        assert_eq!(
+            output, "Colored Text",
+            "Very long CSI sequence should be stripped"
+        );
+
+        // Extremely long sequence (100 parameters)
+        let long_params = (1..=100)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        let input = format!("prefix\x1b[{}msuffix", long_params);
+        let output = strip_ansi_codes(&input);
+        assert_eq!(
+            output, "prefixsuffix",
+            "Extremely long CSI sequence should be handled"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_osc_sequences() {
+        // OSC (Operating System Command) sequences use \x1b] instead of \x1b[
+        // Current implementation only handles CSI (\x1b[), so OSC opener is stripped
+        // but the rest of the sequence may remain
+
+        // Lone escape without [ - should just strip the escape
+        let input = "\x1bhello";
+        let output = strip_ansi_codes(input);
+        // The \x1b is stripped, 'h' is NOT consumed because peek != '['
+        assert_eq!(
+            output, "hello",
+            "Non-CSI escape should strip only the ESC byte"
+        );
+
+        // OSC sequence: \x1b]...BEL or \x1b]...\x1b\\
+        // The implementation strips \x1b but leaves ] and content
+        let input = "\x1b]0;window title\x07normal";
+        let output = strip_ansi_codes(input);
+        // This is current behavior - OSC content is NOT fully stripped
+        // The output will contain "]0;window title\x07normal" after stripping \x1b
+        assert!(
+            !output.contains('\x1b'),
+            "ESC byte should be stripped from OSC sequence"
+        );
+
+        // Multiple non-CSI escapes
+        let input = "\x1b=\x1b>";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "=>",
+            "Non-CSI escapes strip only ESC, leave next char"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_mixed_with_unicode() {
+        // Unicode emoji mixed with ANSI codes
+        let input = "\x1b[32m✓\x1b[0m passed";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "✓ passed", "Unicode emoji should be preserved");
+
+        // Multi-byte unicode characters
+        let input = "\x1b[31m日本語\x1b[0m text";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "日本語 text", "CJK characters should be preserved");
+
+        // Emoji with skin tone modifiers (multi-codepoint)
+        let input = "\x1b[33m👋🏽\x1b[0m hello";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "👋🏽 hello", "Complex emoji should be preserved");
+
+        // Mix of unicode and multiple ANSI sequences
+        let input = "\x1b[1m\x1b[31mError:\x1b[0m 文件 'test.py' 不存在 ❌";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "Error: 文件 'test.py' 不存在 ❌",
+            "Mixed unicode and multiple ANSI should work"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_escape_at_end() {
+        // Trailing escape character (lone \x1b at end)
+        let input = "text\x1b";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "text", "Trailing lone ESC should be stripped");
+
+        // Trailing CSI start (\x1b[ at end)
+        let input = "text\x1b[";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "text", "Trailing CSI start should be stripped");
+
+        // Trailing partial CSI with digits
+        let input = "text\x1b[31";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "text", "Trailing partial CSI should be stripped");
+    }
+
+    #[test]
+    fn test_strip_ansi_nested_or_overlapping() {
+        // Back-to-back CSI sequences (not truly nested, but adjacent)
+        let input = "\x1b[1m\x1b[31m\x1b[40mtext\x1b[0m\x1b[0m\x1b[0m";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "text",
+            "Multiple adjacent sequences should be stripped"
+        );
+
+        // Malformed: ESC inside CSI parameters (adversarial input)
+        // \x1b[31\x1b[32mtext - second ESC appears in middle of first sequence
+        let input = "\x1b[31\x1b[32mtext\x1b[0m";
+        let output = strip_ansi_codes(input);
+        // The first CSI starts, consumes '3', '1', then hits \x1b
+        // \x1b is not alphabetic, so loop continues, consuming \x1b
+        // Then '[', '3', '2', 'm' - 'm' is alphabetic, breaks
+        // Result: text is preserved
+        assert_eq!(
+            output, "text",
+            "Overlapping CSI sequences should be handled"
+        );
+
+        // Empty CSI (no parameters)
+        let input = "\x1b[mtext";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "text",
+            "Empty CSI (just ESC [ m) should be stripped"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_adversarial_inputs() {
+        // Very long string of just escapes (DoS prevention)
+        let input = "\x1b[31m".repeat(1000);
+        let output = strip_ansi_codes(&input);
+        assert_eq!(
+            output, "",
+            "Many consecutive ANSI codes should produce empty output"
+        );
+
+        // Alternating escape and text
+        let input = "a\x1b[1mb\x1b[0mc\x1b[31md\x1b[0m";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "abcd",
+            "Alternating text and ANSI should preserve text"
+        );
+
+        // String of only escape bytes
+        let input = "\x1b\x1b\x1b\x1b\x1b";
+        let output = strip_ansi_codes(input);
+        assert_eq!(output, "", "Multiple lone ESC bytes should all be stripped");
+
+        // Mix of null bytes and ANSI
+        let input = "\x00\x1b[31m\x00text\x00\x1b[0m\x00";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "text",
+            "Null bytes and ANSI should both be stripped"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_empty_and_whitespace() {
+        // Empty string
+        assert_eq!(strip_ansi_codes(""), "", "Empty string should return empty");
+
+        // Only whitespace
+        assert_eq!(
+            strip_ansi_codes("   "),
+            "   ",
+            "Whitespace should be preserved"
+        );
+
+        // Whitespace with ANSI
+        let input = "  \x1b[31m  \x1b[0m  ";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "      ",
+            "Whitespace around ANSI should be preserved"
+        );
+
+        // Newlines and tabs with ANSI
+        let input = "\n\t\x1b[32mtext\x1b[0m\n\t";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "\n\ttext\n\t",
+            "Newlines and tabs should be preserved"
+        );
+    }
 }
