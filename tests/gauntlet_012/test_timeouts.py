@@ -3,6 +3,8 @@
 
 import time
 
+import pytest
+
 
 class TestTimeoutMarkerParsing:
     """Tests that verify @pytest.mark.timeout markers are correctly parsed.
@@ -20,6 +22,21 @@ class TestTimeoutMarkerParsing:
         """A fast test that should pass."""
         result = 1 + 1
         assert result == 2
+
+    @pytest.mark.timeout(60)
+    def test_c_with_explicit_timeout(self):
+        """Verify timeout marker is parsed and used."""
+        assert True
+
+    @pytest.mark.timeout(seconds=120)
+    def test_d_with_keyword_timeout(self):
+        """Verify keyword-style timeout marker is parsed."""
+        assert True
+
+    @pytest.mark.timeout(0)
+    def test_e_with_zero_timeout(self):
+        """Verify timeout=0 means no timeout (pytest-timeout convention)."""
+        assert True
 
 
 class TestTimeoutBehavior:

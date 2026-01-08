@@ -650,7 +650,8 @@ fn is_timeout_decorator(expr: &ast::Expr) -> bool {
 /// - @pytest.mark.timeout(30) - positional argument
 /// - @pytest.mark.timeout(seconds=30) - keyword argument
 ///
-/// Returns None if no timeout marker found or value is not a static literal
+/// Returns None if no timeout marker found, value is not a static literal,
+/// or value is 0 (which means "no timeout" in pytest-timeout)
 fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
     for decorator in decorators {
         if !is_timeout_decorator(decorator) {
@@ -664,6 +665,10 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
                 if let ast::Constant::Int(i) = &c.value {
                     // Convert BigInt to u64
                     if let Ok(val) = i.to_string().parse::<u64>() {
+                        // 0 means "no timeout" in pytest-timeout
+                        if val == 0 {
+                            return None;
+                        }
                         return Some(val);
                     }
                 }
@@ -677,6 +682,10 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
                         if let ast::Expr::Constant(c) = &keyword.value {
                             if let ast::Constant::Int(i) = &c.value {
                                 if let Ok(val) = i.to_string().parse::<u64>() {
+                                    // 0 means "no timeout" in pytest-timeout
+                                    if val == 0 {
+                                        return None;
+                                    }
                                     return Some(val);
                                 }
                             }
@@ -1211,5 +1220,35 @@ async def test_async_with_timeout():
         assert_eq!(module.tests.len(), 1);
         assert!(module.tests[0].is_async);
         assert_eq!(module.tests[0].timeout_secs, Some(45));
+    }
+
+    #[test]
+    fn test_parse_timeout_zero_means_no_timeout() {
+        let source = r#"
+import pytest
+
+@pytest.mark.timeout(0)
+def test_with_zero_timeout():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        // timeout=0 means "no timeout" in pytest-timeout, so it should be None
+        assert_eq!(module.tests[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn test_parse_timeout_zero_keyword_means_no_timeout() {
+        let source = r#"
+import pytest
+
+@pytest.mark.timeout(seconds=0)
+def test_with_zero_keyword_timeout():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        // timeout=0 means "no timeout" in pytest-timeout, so it should be None
+        assert_eq!(module.tests[0].timeout_secs, None);
     }
 }

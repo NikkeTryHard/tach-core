@@ -10,6 +10,8 @@ use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
 use crate::signals;
 use anyhow::Result;
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::Pid;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -24,6 +26,8 @@ struct ActiveWorker {
     start_time: Instant,
     /// Per-test timeout in seconds (from @pytest.mark.timeout or global config)
     timeout_secs: u64,
+    /// Worker process PID for termination on timeout
+    worker_pid: Option<i32>,
 }
 
 /// Scheduler with crash detection and dual-path execution
@@ -196,7 +200,14 @@ impl Scheduler {
             } else {
                 // Check for workers that exceeded their per-test timeout
                 let timed_out = self.get_timed_out_workers();
-                for (test_id, test_name, slot) in timed_out {
+                for (test_id, test_name, slot, worker_pid) in timed_out {
+                    // Kill the worker process if we have a PID
+                    if let Some(pid) = worker_pid {
+                        // Kill the entire process group (negative PID)
+                        let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+                        // Also kill the process directly as fallback
+                        let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+                    }
                     reporter.on_test_finished(
                         &test_name,
                         "timeout",
@@ -321,6 +332,7 @@ impl Scheduler {
 
         let mut pid_buf = [0u8; 4];
         self.cmd_socket.read_exact(&mut pid_buf)?;
+        let worker_pid = i32::from_le_bytes(pid_buf);
 
         // Determine effective timeout: per-test timeout or global timeout
         let effective_timeout = test.timeout_secs.unwrap_or(self.global_timeout);
@@ -335,6 +347,11 @@ impl Scheduler {
                     slot,
                     start_time: Instant::now(),
                     timeout_secs: effective_timeout,
+                    worker_pid: if worker_pid > 0 {
+                        Some(worker_pid)
+                    } else {
+                        None
+                    },
                 },
             );
 
@@ -404,9 +421,9 @@ impl Scheduler {
 
     /// Get workers that have exceeded their per-test timeout
     ///
-    /// Returns (test_id, test_name, slot) for each timed-out worker.
+    /// Returns (test_id, test_name, slot, worker_pid) for each timed-out worker.
     /// Each worker's timeout is checked against its individual timeout_secs setting.
-    fn get_timed_out_workers(&self) -> Vec<(u32, String, usize)> {
+    fn get_timed_out_workers(&self) -> Vec<(u32, String, usize, Option<i32>)> {
         let workers = self
             .active_workers
             .lock()
@@ -417,7 +434,7 @@ impl Scheduler {
                 let timeout = Duration::from_secs(w.timeout_secs);
                 w.start_time.elapsed() > timeout
             })
-            .map(|(id, w)| (*id, w.test_name.clone(), w.slot))
+            .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
             .collect()
     }
 
@@ -745,11 +762,13 @@ mod tests {
             slot: 3,
             start_time: Instant::now(),
             timeout_secs: 60,
+            worker_pid: Some(12345),
         };
 
         assert_eq!(worker.test_name, "test_example");
         assert_eq!(worker.slot, 3);
         assert_eq!(worker.timeout_secs, 60);
+        assert_eq!(worker.worker_pid, Some(12345));
         // start_time should be very recent
         assert!(worker.start_time.elapsed() < Duration::from_secs(1));
     }
