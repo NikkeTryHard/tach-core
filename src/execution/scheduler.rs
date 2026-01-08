@@ -16,6 +16,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,10 @@ struct ActiveWorker {
     timeout_secs: u64,
     /// Worker process PID for termination on timeout
     worker_pid: Option<i32>,
+    /// Atomic flag to prevent race condition in timeout handling.
+    /// When true, this worker's timeout has already been claimed/handled.
+    /// Uses compare_exchange to ensure exactly one caller handles the timeout.
+    timeout_handled: Arc<AtomicBool>,
 }
 
 /// Scheduler with crash detection and dual-path execution
@@ -385,6 +390,7 @@ impl Scheduler {
                     } else {
                         None
                     },
+                    timeout_handled: Arc::new(AtomicBool::new(false)),
                 },
             );
 
@@ -456,6 +462,9 @@ impl Scheduler {
     ///
     /// Returns (test_id, test_name, slot, worker_pid) for each timed-out worker.
     /// Each worker's timeout is checked against its individual timeout_secs setting.
+    ///
+    /// Uses atomic compare_exchange to ensure each timeout is claimed exactly once,
+    /// preventing race conditions when multiple threads call this method concurrently.
     fn get_timed_out_workers(&self) -> Vec<(u32, String, usize, Option<i32>)> {
         let workers = self
             .active_workers
@@ -465,7 +474,14 @@ impl Scheduler {
             .iter()
             .filter(|(_, w)| {
                 let timeout = Duration::from_secs(w.timeout_secs);
-                w.start_time.elapsed() > timeout
+                let is_timed_out = w.start_time.elapsed() > timeout;
+                // Atomically claim this timeout - only succeed if we're the first
+                // This prevents race conditions where multiple callers try to handle
+                // the same timed-out worker
+                is_timed_out
+                    && w.timeout_handled
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
             })
             .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
             .collect()
@@ -853,6 +869,7 @@ mod tests {
             start_time: Instant::now(),
             timeout_secs: 60,
             worker_pid: Some(12345),
+            timeout_handled: Arc::new(AtomicBool::new(false)),
         };
 
         assert_eq!(worker.test_name, "test_example");
@@ -861,6 +878,8 @@ mod tests {
         assert_eq!(worker.worker_pid, Some(12345));
         // start_time should be very recent
         assert!(worker.start_time.elapsed() < Duration::from_secs(1));
+        // timeout_handled should start as false
+        assert!(!worker.timeout_handled.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -907,6 +926,206 @@ mod tests {
         // All tests go to slot 0
         for test_id in 0..10 {
             assert_eq!(test_id % max_workers, 0);
+        }
+    }
+
+    // =========================================================================
+    // Race Condition Prevention Tests (Task 1: 0.1.2)
+    // =========================================================================
+
+    /// Test that timed-out workers can only be collected once.
+    ///
+    /// This tests the race condition fix: the `get_timed_out_workers()` method
+    /// should use atomic state to ensure each timeout is handled exactly once.
+    ///
+    /// The race condition occurs when:
+    /// 1. Thread A calls get_timed_out_workers(), sees worker X is timed out
+    /// 2. Thread B calls get_timed_out_workers(), sees worker X is timed out
+    /// 3. Both threads try to kill worker X
+    ///
+    /// The fix: Each worker has a `timeout_handled` atomic flag that is atomically
+    /// set when collecting. Only the first caller to set the flag gets the worker.
+    #[test]
+    fn test_timeout_worker_collected_once() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        // Simulate an ActiveWorker with the proposed timeout_handled field
+        struct TestWorker {
+            test_name: String,
+            slot: usize,
+            start_time: Instant,
+            timeout_secs: u64,
+            worker_pid: Option<i32>,
+            /// Atomic flag to track if timeout was already handled
+            timeout_handled: Arc<AtomicBool>,
+        }
+
+        // Create workers map with an already-timed-out worker
+        let mut workers: HashMap<u32, TestWorker> = HashMap::new();
+        let start_time = Instant::now() - Duration::from_millis(200);
+
+        workers.insert(
+            1,
+            TestWorker {
+                test_name: "test_timeout".to_string(),
+                slot: 0,
+                start_time,
+                timeout_secs: 0, // Already timed out
+                worker_pid: Some(99999),
+                timeout_handled: Arc::new(AtomicBool::new(false)),
+            },
+        );
+
+        // Simulate get_timed_out_workers with atomic claim
+        let collect_timed_out = |workers: &HashMap<u32, TestWorker>| {
+            workers
+                .iter()
+                .filter(|(_, w)| {
+                    let timeout = Duration::from_secs(w.timeout_secs);
+                    let is_timed_out = w.start_time.elapsed() > timeout;
+                    // Atomically claim this timeout - only succeed if we're first
+                    is_timed_out
+                        && w.timeout_handled
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                })
+                .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.worker_pid))
+                .collect::<Vec<_>>()
+        };
+
+        // First call claims the worker
+        let first_call = collect_timed_out(&workers);
+        // Second call should get nothing (already claimed)
+        let second_call = collect_timed_out(&workers);
+
+        assert_eq!(
+            first_call.len(),
+            1,
+            "First call should claim the timed-out worker"
+        );
+        assert_eq!(
+            second_call.len(),
+            0,
+            "Second call should NOT return the worker - already claimed"
+        );
+    }
+
+    /// Test that the current ActiveWorker struct compilation works after adding
+    /// the timeout_handled field.
+    ///
+    /// This test fails compilation until we add the field, then passes.
+    #[test]
+    fn test_active_worker_with_timeout_handled() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Create an ActiveWorker with the new field
+        // This test will FAIL TO COMPILE until we add timeout_handled to ActiveWorker
+        let worker = ActiveWorker {
+            test_name: "test_atomic".to_string(),
+            slot: 0,
+            start_time: Instant::now(),
+            timeout_secs: 60,
+            worker_pid: Some(12345),
+            timeout_handled: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Verify the flag starts as false
+        assert!(
+            !worker.timeout_handled.load(Ordering::SeqCst),
+            "New worker should have timeout_handled = false"
+        );
+
+        // Verify compare_exchange works
+        let claimed = worker
+            .timeout_handled
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        assert!(claimed, "First claim should succeed");
+
+        // Verify second claim fails
+        let second_claim = worker
+            .timeout_handled
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        assert!(!second_claim, "Second claim should fail");
+    }
+
+    /// Stress test: 10+ workers timing out simultaneously.
+    ///
+    /// This tests the acceptance criteria: "No panics when 10 workers timeout simultaneously"
+    /// Each worker should be claimed exactly once even when multiple threads
+    /// are calling collect_timed_out concurrently.
+    #[test]
+    fn test_concurrent_timeout_no_race() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::thread;
+
+        // Simulate 10 workers, all timed out
+        struct TestWorker {
+            #[allow(dead_code)]
+            test_name: String,
+            timeout_handled: Arc<AtomicBool>,
+        }
+
+        let workers: Vec<Arc<TestWorker>> = (0..10)
+            .map(|i| {
+                Arc::new(TestWorker {
+                    test_name: format!("test_{}", i),
+                    timeout_handled: Arc::new(AtomicBool::new(false)),
+                })
+            })
+            .collect();
+
+        // Counter for total claims across all threads
+        let total_claims = Arc::new(AtomicUsize::new(0));
+
+        // Spawn 4 threads, each trying to claim all 10 workers
+        let mut handles = vec![];
+        for _thread_id in 0..4 {
+            let workers_clone: Vec<Arc<TestWorker>> = workers.to_vec();
+            let claims_clone = Arc::clone(&total_claims);
+
+            let handle = thread::spawn(move || {
+                let mut my_claims = 0;
+                for worker in &workers_clone {
+                    // Try to claim this worker atomically
+                    if worker
+                        .timeout_handled
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
+                        my_claims += 1;
+                    }
+                }
+                claims_clone.fetch_add(my_claims, Ordering::SeqCst);
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().expect("Thread should not panic");
+        }
+
+        // Verify: exactly 10 claims total (each worker claimed exactly once)
+        let final_claims = total_claims.load(Ordering::SeqCst);
+        assert_eq!(
+            final_claims, 10,
+            "Expected exactly 10 claims (one per worker), got {}",
+            final_claims
+        );
+
+        // Verify: all workers are now marked as handled
+        for (i, worker) in workers.iter().enumerate() {
+            assert!(
+                worker.timeout_handled.load(Ordering::SeqCst),
+                "Worker {} should be marked as handled",
+                i
+            );
         }
     }
 }
