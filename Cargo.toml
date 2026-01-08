@@ -96,6 +96,11 @@ tempfile = "3"
 bincode = { version = "2.0", features = ["serde"] }
 wait-timeout = "0.2"
 proptest = "1.4"
+criterion = "0.5"
+
+[[bench]]
+name = "hot_paths"
+harness = false
 
 # Integration tests
 [[test]]
@@ -189,3 +194,59 @@ path = "rust_tests/restoration_invariant.rs"
 [[test]]
 name = "plugin_bridge_integration"
 path = "rust_tests/plugin_bridge_integration.rs"
+
+[[test]]
+name = "exit_code_tests"
+path = "rust_tests/exit_code_tests.rs"
+
+[[test]]
+name = "json_schema_tests"
+path = "rust_tests/json_schema_tests.rs"
+
+[[test]]
+name = "kernel_compat_tests"
+path = "rust_tests/kernel_compat_tests.rs"
+
+[[test]]
+name = "traceback_format_tests"
+path = "rust_tests/traceback_format_tests.rs"
+
+[[test]]
+name = "timeout_behavior_tests"
+path = "rust_tests/timeout_behavior_tests.rs"
+
+[[test]]
+name = "filter_expression_tests"
+path = "rust_tests/filter_expression_tests.rs"
+
+[[test]]
+name = "dry_run_accuracy_tests"
+path = "rust_tests/dry_run_accuracy_tests.rs"
+
+[[test]]
+name = "verbosity_level_tests"
+path = "rust_tests/verbosity_level_tests.rs"
+
+[[test]]
+name = "watch_mode_tests"
+path = "rust_tests/watch_mode_tests.rs"
+
+[[test]]
+name = "junit_xml_tests"
+path = "rust_tests/junit_xml_tests.rs"
+
+[[test]]
+name = "worker_count_tests"
+path = "rust_tests/worker_count_tests.rs"
+
+[[test]]
+name = "exit_behavior_tests"
+path = "rust_tests/exit_behavior_tests.rs"
+
+[[test]]
+name = "coverage_flag_tests"
+path = "rust_tests/coverage_flag_tests.rs"
+
+[[test]]
+name = "durations_flag_tests"
+path = "rust_tests/durations_flag_tests.rs"

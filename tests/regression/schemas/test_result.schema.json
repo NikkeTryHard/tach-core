@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tach Core JSON Output Event",
+  "description": "Schema for JSON events emitted by tach-core with --format json. Output is NDJSON (one event per line).",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Run start event - emitted at the beginning of a test run",
+      "properties": {
+        "event": { "const": "run_start" },
+        "count": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["event", "count"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Test start event - emitted when a test begins execution",
+      "properties": {
+        "event": { "const": "test_start" },
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 }
+      },
+      "required": ["event", "id", "file"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Test finished event - emitted when a test completes",
+      "properties": {
+        "event": { "const": "test_finished" },
+        "id": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["pass", "fail", "skip"] },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "message": { "type": "string" }
+      },
+      "required": ["event", "id", "status", "duration_ms"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Run finished event - emitted at the end of a test run",
+      "properties": {
+        "event": { "const": "run_finished" },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["event", "passed", "failed", "skipped", "duration_ms"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Error event - emitted on fatal errors",
+      "properties": {
+        "event": { "const": "error" },
+        "message": { "type": "string" }
+      },
+      "required": ["event", "message"],
+      "additionalProperties": false
+    }
+  ]
+}
