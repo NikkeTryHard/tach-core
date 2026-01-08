@@ -243,3 +243,11 @@ path = "rust_tests/worker_count_tests.rs"
 [[test]]
 name = "exit_behavior_tests"
 path = "rust_tests/exit_behavior_tests.rs"
+
+[[test]]
+name = "coverage_flag_tests"
+path = "rust_tests/coverage_flag_tests.rs"
+
+[[test]]
+name = "durations_flag_tests"
+path = "rust_tests/durations_flag_tests.rs"
