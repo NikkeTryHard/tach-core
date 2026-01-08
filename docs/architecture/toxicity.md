@@ -359,6 +359,8 @@ This implementation is informed by the following research papers (see `docs/pdfs
 | **Rust Static Analysis for Toxic Python Modules** | Taxonomy of import-time toxicity, `ruff_python_parser` integration, fixed-point iteration |
 | **Python Monorepo Zygote Tree Design**            | Toxicity propagation rules, contagion model ("if A imports toxic B, A is toxic")          |
 
+> **Implementation Note:** Tach uses `rustpython-parser` for AST analysis. The research paper analyzed `ruff_python_parser` as an alternative but the implementation chose `rustpython-parser` for API stability.
+
 ### Key Technical Details from Research
 
 - **Orphaned Locks**: `fork()` only clones the calling thread - background threads (BLAS workers, gRPC pollers) vanish, leaving mutexes permanently locked
