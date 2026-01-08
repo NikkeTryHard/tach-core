@@ -925,29 +925,3 @@ fn run_tests(
 
     Ok(())
 }
-
-// =============================================================================
-// Error Display Utilities
-// =============================================================================
-
-/// Print a user-friendly error message with context-aware suggestions.
-///
-/// This function is used to display errors in a helpful format when
-/// Tach encounters failures. It analyzes the error and provides
-/// actionable suggestions based on the current system context.
-#[allow(dead_code)]
-fn print_error_with_suggestions(err: &anyhow::Error) {
-    let cat_error = CategorizedError::from_anyhow(err);
-    // Try to enhance with context-aware suggestions
-    let enhanced = cat_error.with_context_aware_suggestion();
-    enhanced.print_to_stderr();
-}
-
-/// Analyze an error and return a helpful suggestion if available.
-///
-/// This can be used to add suggestions to error messages displayed
-/// by other parts of the system.
-#[allow(dead_code)]
-fn get_error_suggestion(error_msg: &str) -> Option<String> {
-    suggestions::suggest_for_error(error_msg)
-}

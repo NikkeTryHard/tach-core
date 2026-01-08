@@ -94,6 +94,10 @@ impl SuggestionContext {
     ///
     /// This performs various system checks to understand the runtime
     /// environment. The detection is designed to be fast and non-blocking.
+    ///
+    /// Note: pytest availability is NOT detected here to avoid subprocess
+    /// overhead (100-500ms). Use `detect_pytest_available()` lazily when
+    /// actually needed for pytest-related error suggestions.
     pub fn detect() -> Self {
         Self {
             kernel_version: detect_kernel_version(),
@@ -101,7 +105,7 @@ impl SuggestionContext {
             in_container: detect_in_container(),
             container_runtime: detect_container_runtime(),
             fd_limit: detect_fd_limit(),
-            pytest_available: detect_pytest_available(),
+            pytest_available: false, // Lazy: don't spawn subprocess during context detection
             python_path: detect_python_path(),
             jemalloc_active: detect_jemalloc_active(),
         }
@@ -237,7 +241,13 @@ fn detect_fd_limit() -> Option<u64> {
     None
 }
 
-/// Check if pytest is available
+/// Check if pytest is available.
+///
+/// Note: This function spawns a subprocess and can take 100-500ms.
+/// It is NOT called during `SuggestionContext::detect()` to avoid
+/// slowing down context detection. Call it lazily only when needed
+/// for pytest-related error suggestions.
+#[allow(dead_code)]
 fn detect_pytest_available() -> bool {
     let python_path = std::env::var("PYO3_PYTHON")
         .or_else(|_| std::env::var("PYTHON"))
