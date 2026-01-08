@@ -219,3 +219,15 @@ path = "rust_tests/timeout_behavior_tests.rs"
 [[test]]
 name = "filter_expression_tests"
 path = "rust_tests/filter_expression_tests.rs"
+
+[[test]]
+name = "dry_run_accuracy_tests"
+path = "rust_tests/dry_run_accuracy_tests.rs"
+
+[[test]]
+name = "verbosity_level_tests"
+path = "rust_tests/verbosity_level_tests.rs"
+
+[[test]]
+name = "watch_mode_tests"
+path = "rust_tests/watch_mode_tests.rs"
