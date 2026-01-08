@@ -22,6 +22,8 @@ struct ActiveWorker {
     test_name: String,
     slot: usize,
     start_time: Instant,
+    /// Per-test timeout in seconds (from @pytest.mark.timeout or global config)
+    timeout_secs: u64,
 }
 
 /// Scheduler with crash detection and dual-path execution
@@ -39,6 +41,8 @@ pub struct Scheduler {
     //  Dual queues for priority dispatch
     safe_queue: VecDeque<(u32, RunnableTest)>,
     toxic_queue: VecDeque<(u32, RunnableTest)>,
+    /// Global timeout in seconds (used when test has no per-test timeout)
+    global_timeout: u64,
 }
 
 impl Scheduler {
@@ -47,6 +51,23 @@ impl Scheduler {
         result_socket: UnixStream,
         log_capture: LogCapture,
         debug_socket_path: PathBuf,
+    ) -> Result<Self> {
+        Self::with_timeout(
+            cmd_socket,
+            result_socket,
+            log_capture,
+            debug_socket_path,
+            60,
+        )
+    }
+
+    /// Create a scheduler with a specific global timeout
+    pub fn with_timeout(
+        cmd_socket: UnixStream,
+        result_socket: UnixStream,
+        log_capture: LogCapture,
+        debug_socket_path: PathBuf,
+        global_timeout: u64,
     ) -> Result<Self> {
         let max_workers = log_capture.slot_count();
 
@@ -63,6 +84,7 @@ impl Scheduler {
             //  Initialize empty queues (populated in run())
             safe_queue: VecDeque::new(),
             toxic_queue: VecDeque::new(),
+            global_timeout,
         })
     }
 
@@ -172,10 +194,15 @@ impl Scheduler {
                 }
                 collected += 1;
             } else {
-                // Check for stale workers (possible crashes)
-                let stale = self.get_stale_workers(Duration::from_secs(3));
-                for (test_id, test_name, slot) in stale {
-                    reporter.on_test_finished(&test_name, "fail", 0, Some("CRASHED - no response"));
+                // Check for workers that exceeded their per-test timeout
+                let timed_out = self.get_timed_out_workers();
+                for (test_id, test_name, slot) in timed_out {
+                    reporter.on_test_finished(
+                        &test_name,
+                        "timeout",
+                        0,
+                        Some("Test exceeded timeout limit"),
+                    );
                     let _ = self
                         .log_capture
                         .lock()
@@ -282,6 +309,7 @@ impl Scheduler {
             log_fd,
             debug_socket_path: self.debug_socket_path.to_string_lossy().to_string(),
             is_toxic: test.is_toxic,
+            timeout_secs: test.timeout_secs,
         };
 
         let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())?;
@@ -294,6 +322,9 @@ impl Scheduler {
         let mut pid_buf = [0u8; 4];
         self.cmd_socket.read_exact(&mut pid_buf)?;
 
+        // Determine effective timeout: per-test timeout or global timeout
+        let effective_timeout = test.timeout_secs.unwrap_or(self.global_timeout);
+
         self.active_workers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -303,6 +334,7 @@ impl Scheduler {
                     test_name: test.test_name.clone(),
                     slot,
                     start_time: Instant::now(),
+                    timeout_secs: effective_timeout,
                 },
             );
 
@@ -370,6 +402,26 @@ impl Scheduler {
         None
     }
 
+    /// Get workers that have exceeded their per-test timeout
+    ///
+    /// Returns (test_id, test_name, slot) for each timed-out worker.
+    /// Each worker's timeout is checked against its individual timeout_secs setting.
+    fn get_timed_out_workers(&self) -> Vec<(u32, String, usize)> {
+        let workers = self
+            .active_workers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        workers
+            .iter()
+            .filter(|(_, w)| {
+                let timeout = Duration::from_secs(w.timeout_secs);
+                w.start_time.elapsed() > timeout
+            })
+            .map(|(id, w)| (*id, w.test_name.clone(), w.slot))
+            .collect()
+    }
+
+    #[allow(dead_code)] // Kept for backward compatibility
     fn get_stale_workers(&self, timeout: Duration) -> Vec<(u32, String, usize)> {
         let workers = self
             .active_workers
@@ -418,6 +470,7 @@ mod tests {
             is_async: false,
             fixtures: vec![],
             is_toxic,
+            timeout_secs: None,
         }
     }
 
@@ -672,6 +725,7 @@ mod tests {
                 },
             ],
             is_toxic: false,
+            timeout_secs: Some(30),
         };
 
         assert_eq!(test.test_name, "test_with_fixtures");
@@ -690,10 +744,12 @@ mod tests {
             test_name: "test_example".to_string(),
             slot: 3,
             start_time: Instant::now(),
+            timeout_secs: 60,
         };
 
         assert_eq!(worker.test_name, "test_example");
         assert_eq!(worker.slot, 3);
+        assert_eq!(worker.timeout_secs, 60);
         // start_time should be very recent
         assert!(worker.start_time.elapsed() < Duration::from_secs(1));
     }

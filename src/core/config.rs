@@ -237,6 +237,13 @@ pub struct Cli {
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
 
+    /// Global timeout in seconds for each test (default: 60).
+    ///
+    /// Tests running longer than this will be killed with SIGTERM.
+    /// Per-test timeouts via @pytest.mark.timeout(N) override this.
+    #[arg(long, value_name = "SECONDS", env = "TACH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     // =========================================================================
     // Dry Run / Collect Only (pytest compatible)
     // =========================================================================
@@ -475,6 +482,9 @@ impl MergedConfig {
         // Get coverage config or default
         let cov_config = file_config.coverage.clone().unwrap_or_default();
 
+        // CLI timeout takes precedence over file config
+        let timeout = cli.timeout.unwrap_or_else(|| file_config.timeout());
+
         Self {
             format: cli.format.clone(),
             junit_xml: cli.junit_xml.clone(),
@@ -483,7 +493,7 @@ impl MergedConfig {
             coverage,
             path: cli.path.clone(),
             test_pattern: file_config.test_pattern().to_string(),
-            timeout: file_config.timeout(),
+            timeout,
             workers: file_config.workers(),
             isolation_strategy: file_config.isolation_strategy().to_string(),
             coverage_source: cov_config.source.unwrap_or_default(),

@@ -18,6 +18,7 @@ pub const STATUS_SKIP: u8 = 2;
 pub const STATUS_CRASH: u8 = 3;
 pub const STATUS_ERROR: u8 = 4;
 pub const STATUS_HARNESS_ERROR: u8 = 5;
+pub const STATUS_TIMEOUT: u8 = 6;
 
 /// Payload sent to Zygote with fork command
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +35,9 @@ pub struct TestPayload {
     /// Whether this test is toxic (requires fork/kill instead of reset)
     ///  Toxic tests exit after run, Safe tests reset and loop
     pub is_toxic: bool,
+    /// Per-test timeout in seconds from @pytest.mark.timeout(N)
+    /// None means use global timeout
+    pub timeout_secs: Option<u64>,
 }
 
 /// Fixture info for payload
@@ -95,6 +99,15 @@ impl TestResult {
         }
     }
 
+    pub fn timeout(test_id: u32, duration_ns: u64) -> Self {
+        Self {
+            test_id,
+            status: STATUS_TIMEOUT,
+            duration_ns,
+            message: "Test exceeded timeout limit".to_string(),
+        }
+    }
+
     pub fn status_str(&self) -> &'static str {
         match self.status {
             STATUS_PASS => "PASS",
@@ -103,6 +116,7 @@ impl TestResult {
             STATUS_CRASH => "CRASH",
             STATUS_ERROR => "ERROR",
             STATUS_HARNESS_ERROR => "HARNESS_ERROR",
+            STATUS_TIMEOUT => "TIMEOUT",
             _ => "UNKNOWN",
         }
     }
@@ -115,6 +129,7 @@ impl TestResult {
             STATUS_CRASH => "💥",
             STATUS_ERROR => "!",
             STATUS_HARNESS_ERROR => "⚠",
+            STATUS_TIMEOUT => "⏱",
             _ => "?",
         }
     }
@@ -252,6 +267,7 @@ mod tests {
             log_fd: -1,
             debug_socket_path: String::new(),
             is_toxic: false,
+            timeout_secs: Some(30),
         };
 
         let encoded = encode_with_length(&payload).unwrap();

@@ -16,6 +16,9 @@ pub struct RunnableTest {
     /// Whether this test is toxic (requires fork/kill instead of reset)
     /// Set by toxicity analysis
     pub is_toxic: bool,
+    /// Per-test timeout in seconds from @pytest.mark.timeout(N)
+    /// None means use global timeout
+    pub timeout_secs: Option<u64>,
 }
 
 /// A resolved fixture with full context
@@ -251,6 +254,7 @@ impl<'a> Resolver<'a> {
             is_async: test.is_async,
             fixtures: resolved_fixtures,
             is_toxic: false, // Set later by ToxicityGraph
+            timeout_secs: test.timeout_secs,
         })
     }
 
@@ -346,6 +350,7 @@ mod tests {
             is_async: false,
             line_number: 1,
             parametrized_args: vec![],
+            timeout_secs: None,
         }
     }
 

@@ -45,6 +45,9 @@ pub struct TestCase {
     /// Arguments provided by @pytest.mark.parametrize (NOT fixtures)
     /// These should be excluded from fixture resolution
     pub parametrized_args: Vec<String>,
+    /// Per-test timeout in seconds from @pytest.mark.timeout(N)
+    /// None means use global timeout
+    pub timeout_secs: Option<u64>,
 }
 
 /// A Python test module (.py file)
@@ -213,6 +216,7 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                             &func.decorator_list,
                             &extract_args_from_arguments(&func.args),
                         ),
+                        timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -256,6 +260,9 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                                         &func.decorator_list,
                                         &extract_args_from_arguments(&func.args),
                                     ),
+                                    timeout_secs: extract_timeout_from_decorators(
+                                        &func.decorator_list,
+                                    ),
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
@@ -284,6 +291,9 @@ fn parse_module(path: &Path) -> Result<TestModule> {
                                     parametrized_args: extract_injected_args(
                                         &func.decorator_list,
                                         &extract_args_from_arguments(&func.args),
+                                    ),
+                                    timeout_secs: extract_timeout_from_decorators(
+                                        &func.decorator_list,
                                     ),
                                 });
                             }
@@ -323,6 +333,7 @@ fn analyze_function(
                 &func.decorator_list,
                 &extract_args_from_arguments(&func.args),
             ),
+            timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
         });
     }
 
@@ -618,6 +629,67 @@ fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<
 }
 
 // =============================================================================
+// @pytest.mark.timeout Extraction
+// =============================================================================
+
+/// Check if a decorator is @pytest.mark.timeout
+fn is_timeout_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_timeout_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            // Check for pattern: X.timeout (e.g., pytest.mark.timeout or mark.timeout)
+            attr.attr.as_str() == "timeout"
+        }
+        _ => false,
+    }
+}
+
+/// Extract timeout value from @pytest.mark.timeout(N) decorators
+///
+/// Handles:
+/// - @pytest.mark.timeout(30) - positional argument
+/// - @pytest.mark.timeout(seconds=30) - keyword argument
+///
+/// Returns None if no timeout marker found or value is not a static literal
+fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
+    for decorator in decorators {
+        if !is_timeout_decorator(decorator) {
+            continue;
+        }
+
+        // Get the call expression
+        if let ast::Expr::Call(call) = decorator {
+            // Check positional argument first (most common: @pytest.mark.timeout(30))
+            if let Some(ast::Expr::Constant(c)) = call.args.first() {
+                if let ast::Constant::Int(i) = &c.value {
+                    // Convert BigInt to u64
+                    if let Ok(val) = i.to_string().parse::<u64>() {
+                        return Some(val);
+                    }
+                }
+            }
+
+            // Check keyword argument (e.g., @pytest.mark.timeout(seconds=30))
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg {
+                    // Accept both "seconds" and "timeout" keyword args
+                    if arg.as_str() == "seconds" || arg.as_str() == "timeout" {
+                        if let ast::Expr::Constant(c) = &keyword.value {
+                            if let ast::Constant::Int(i) = &c.value {
+                                if let Ok(val) = i.to_string().parse::<u64>() {
+                                    return Some(val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// =============================================================================
 // Unit Tests
 
 // =============================================================================
@@ -653,6 +725,7 @@ mod tests {
                             is_async: false,
                             line_number: 1,
                             parametrized_args: vec![],
+                            timeout_secs: None,
                         },
                         TestCase {
                             name: "test_2".into(),
@@ -660,6 +733,7 @@ mod tests {
                             is_async: true,
                             line_number: 1,
                             parametrized_args: vec![],
+                            timeout_secs: None,
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -679,6 +753,7 @@ mod tests {
                         is_async: false,
                         line_number: 1,
                         parametrized_args: vec![],
+                        timeout_secs: None,
                     }],
                     fixtures: vec![],
                     is_toxic: false,
@@ -1031,5 +1106,110 @@ class TestDecorated:
         let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
         assert!(test_names.contains(&"TestDecorated::test_slow_method"));
         assert!(test_names.contains(&"TestDecorated::test_parametrized"));
+    }
+
+    // =========================================================================
+    // @pytest.mark.timeout Parsing Tests (0.1.2-D)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_timeout_marker_positional() {
+        let source = r#"
+import pytest
+
+@pytest.mark.timeout(30)
+def test_with_timeout():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].timeout_secs, Some(30));
+    }
+
+    #[test]
+    fn test_parse_timeout_marker_keyword() {
+        let source = r#"
+import pytest
+
+@pytest.mark.timeout(seconds=60)
+def test_with_timeout_keyword():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].timeout_secs, Some(60));
+    }
+
+    #[test]
+    fn test_parse_no_timeout_marker() {
+        let source = r#"
+def test_without_timeout():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn test_parse_timeout_in_class() {
+        let source = r#"
+import pytest
+
+class TestWithTimeout:
+    @pytest.mark.timeout(10)
+    def test_method_with_timeout(self):
+        pass
+
+    def test_method_without_timeout(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let with_timeout = module
+            .tests
+            .iter()
+            .find(|t| t.name.contains("with_timeout"))
+            .unwrap();
+        assert_eq!(with_timeout.timeout_secs, Some(10));
+
+        let without_timeout = module
+            .tests
+            .iter()
+            .find(|t| t.name.contains("without_timeout"))
+            .unwrap();
+        assert_eq!(without_timeout.timeout_secs, None);
+    }
+
+    #[test]
+    fn test_parse_timeout_with_other_markers() {
+        let source = r#"
+import pytest
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+@pytest.mark.skip(reason="not ready")
+def test_multiple_markers():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn test_parse_timeout_async_function() {
+        let source = r#"
+import pytest
+
+@pytest.mark.timeout(45)
+async def test_async_with_timeout():
+    await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert!(module.tests[0].is_async);
+        assert_eq!(module.tests[0].timeout_secs, Some(45));
     }
 }

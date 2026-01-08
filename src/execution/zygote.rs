@@ -1596,6 +1596,7 @@ mod tests {
             log_fd: -1,
             debug_socket_path: String::new(),
             is_toxic: false,
+            timeout_secs: None,
         };
 
         let encoded = bincode::serde::encode_to_vec(&original, bincode::config::standard())
@@ -1636,6 +1637,7 @@ mod tests {
             log_fd: 5,
             debug_socket_path: "/tmp/debug.sock".to_string(),
             is_toxic: true,
+            timeout_secs: Some(120),
         };
 
         let encoded = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();

@@ -18,6 +18,8 @@ fn test_testcase_has_line_number() {
         dependencies: vec![],
         is_async: false,
         line_number: 42,
+        parametrized_args: vec![],
+        timeout_secs: None,
     };
     assert_eq!(test.line_number, 42);
 }
@@ -31,12 +33,16 @@ fn test_line_number_not_always_one() {
         dependencies: vec![],
         is_async: false,
         line_number: 5,
+        parametrized_args: vec![],
+        timeout_secs: None,
     };
     let test2 = TestCase {
         name: "test_second".to_string(),
         dependencies: vec![],
         is_async: false,
         line_number: 15,
+        parametrized_args: vec![],
+        timeout_secs: None,
     };
 
     assert_ne!(test1.line_number, test2.line_number);
@@ -74,12 +80,16 @@ fn test_discovery_result_with_line_numbers() {
                     dependencies: vec![],
                     is_async: false,
                     line_number: 5,
+                    parametrized_args: vec![],
+                    timeout_secs: None,
                 },
                 TestCase {
                     name: "test_second".to_string(),
                     dependencies: vec![],
                     is_async: true,
                     line_number: 20,
+                    parametrized_args: vec![],
+                    timeout_secs: None,
                 },
             ],
             fixtures: vec![],

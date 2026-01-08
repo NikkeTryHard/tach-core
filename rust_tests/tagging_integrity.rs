@@ -96,6 +96,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     is_async: false,
                     line_number: 1,
                     parametrized_args: vec![],
+                    timeout_secs: None,
                 }],
                 fixtures: vec![],
                 is_toxic: false, // Will be tagged by graph
@@ -108,6 +109,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     is_async: false,
                     line_number: 1,
                     parametrized_args: vec![],
+                    timeout_secs: None,
                 }],
                 fixtures: vec![],
                 is_toxic: false,
@@ -164,6 +166,7 @@ fn test_toxicity_survives_serialization_roundtrip() {
         log_fd: -1,
         debug_socket_path: String::new(),
         is_toxic: true, // <-- THE CRITICAL FLAG
+        timeout_secs: None,
     };
 
     // Create a safe TestPayload
@@ -176,6 +179,7 @@ fn test_toxicity_survives_serialization_roundtrip() {
         log_fd: -1,
         debug_socket_path: String::new(),
         is_toxic: false, // <-- THE CRITICAL FLAG
+        timeout_secs: None,
     };
 
     // Serialize using bincode (same as scheduler.rs)
@@ -250,6 +254,7 @@ def test_network_stuff():
                 is_async: false,
                 line_number: 1,
                 parametrized_args: vec![],
+                timeout_secs: None,
             }],
             fixtures: vec![],
             is_toxic: false,
@@ -285,6 +290,7 @@ def test_network_stuff():
         log_fd: -1,
         debug_socket_path: String::new(),
         is_toxic: runnable.is_toxic, // <-- PROPAGATED FROM RUNNABLE
+        timeout_secs: runnable.timeout_secs,
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)
@@ -347,6 +353,7 @@ fn test_transitive_toxicity_propagation() {
                 is_async: false,
                 line_number: 1,
                 parametrized_args: vec![],
+                timeout_secs: None,
             }],
             fixtures: vec![],
             is_toxic: false,
