@@ -191,6 +191,10 @@ fn truncate_message(msg: String) -> String {
     }
 }
 
+/// Maximum allowed payload size for IPC messages (16 MiB)
+/// This prevents OOM attacks from malicious payloads claiming huge sizes
+pub const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
+
 /// Encode a struct to bincode bytes with length prefix
 pub fn encode_with_length<T: serde::Serialize>(
     value: &T,
@@ -201,6 +205,105 @@ pub fn encode_with_length<T: serde::Serialize>(
     result.extend_from_slice(&len.to_le_bytes());
     result.extend_from_slice(&payload);
     Ok(result)
+}
+
+/// Error type for decode_with_limit
+#[derive(Debug)]
+pub enum DecodeWithLimitError {
+    /// Payload claims size larger than allowed limit
+    PayloadTooLarge { claimed: usize, limit: usize },
+    /// Not enough data in buffer
+    InsufficientData { needed: usize, available: usize },
+    /// Bincode decoding error
+    Bincode(bincode::error::DecodeError),
+}
+
+impl std::fmt::Display for DecodeWithLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PayloadTooLarge { claimed, limit } => {
+                write!(
+                    f,
+                    "payload claims {} bytes, exceeds limit of {}",
+                    claimed, limit
+                )
+            }
+            Self::InsufficientData { needed, available } => {
+                write!(f, "need {} bytes but only {} available", needed, available)
+            }
+            Self::Bincode(e) => write!(f, "bincode decode error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for DecodeWithLimitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Bincode(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// Decode a length-prefixed bincode payload with size limit protection
+///
+/// Checks the length prefix against `max_size` before allocating memory,
+/// preventing OOM attacks from malicious payloads that claim huge sizes.
+///
+/// # Arguments
+/// * `data` - Raw bytes containing the length-prefixed bincode payload
+/// * `max_size` - Maximum allowed payload size in bytes
+///
+/// # Returns
+/// * `Ok(T)` - Successfully decoded value
+/// * `Err(DecodeWithLimitError)` - Decoding failed or payload exceeds limit
+///
+/// # Example
+/// ```ignore
+/// let encoded = encode_with_length(&payload)?;
+/// let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE)?;
+/// ```
+pub fn decode_with_limit<T: serde::de::DeserializeOwned>(
+    data: &[u8],
+    max_size: usize,
+) -> Result<T, DecodeWithLimitError> {
+    // Need at least 4 bytes for length prefix
+    if data.len() < 4 {
+        return Err(DecodeWithLimitError::InsufficientData {
+            needed: 4,
+            available: data.len(),
+        });
+    }
+
+    // Read length prefix (little-endian u32)
+    let len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+
+    // Check against size limit BEFORE any allocation
+    if len > max_size {
+        return Err(DecodeWithLimitError::PayloadTooLarge {
+            claimed: len,
+            limit: max_size,
+        });
+    }
+
+    // Verify we have enough bytes
+    if data.len() < 4 + len {
+        return Err(DecodeWithLimitError::InsufficientData {
+            needed: 4 + len,
+            available: data.len(),
+        });
+    }
+
+    // Safe to decode now - size is within limit
+    // Note: bincode's with_limit requires a const generic, not a runtime value.
+    // Since we've validated the outer message size, and TestPayload has fixed-size
+    // fields (u16, u64, String), the internal structure cannot claim more bytes
+    // than the validated payload size allows.
+    let (value, _): (T, usize) =
+        bincode::serde::decode_from_slice(&data[4..4 + len], bincode::config::standard())
+            .map_err(DecodeWithLimitError::Bincode)?;
+
+    Ok(value)
 }
 
 // =============================================================================
@@ -405,5 +508,140 @@ mod tests {
         assert_eq!(result.status, STATUS_TIMEOUT);
         assert_eq!(result.status_str(), "TIMEOUT");
         assert_eq!(result.status_icon(), "⏱");
+    }
+
+    #[test]
+    fn test_decode_with_limit_accepts_valid_payload() {
+        let payload = TestPayload {
+            test_id: 42,
+            file_path: "test.py".to_string(),
+            test_name: "test_foo".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+
+        assert_eq!(decoded.test_id, 42);
+        assert_eq!(decoded.file_path, "test.py");
+        assert_eq!(decoded.test_name, "test_foo");
+        assert!(!decoded.is_async);
+        assert!(decoded.fixtures.is_empty());
+    }
+
+    #[test]
+    fn test_decode_with_limit_rejects_oversized_payload() {
+        // Create a valid encoded payload
+        let payload = TestPayload {
+            test_id: 1,
+            file_path: "test.py".to_string(),
+            test_name: "test".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+        };
+        let encoded = encode_with_length(&payload).unwrap();
+
+        // Set limit smaller than the actual payload
+        let tiny_limit = 10; // Way smaller than any valid payload
+
+        let result: Result<TestPayload, _> = decode_with_limit(&encoded, tiny_limit);
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            DecodeWithLimitError::PayloadTooLarge { claimed, limit } => {
+                assert!(claimed > limit);
+                assert_eq!(limit, tiny_limit);
+            }
+            other => panic!("Expected PayloadTooLarge, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_decode_with_limit_handles_insufficient_data() {
+        // Empty buffer
+        let result: Result<TestPayload, _> = decode_with_limit(&[], MAX_PAYLOAD_SIZE);
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 4,
+                available: 0
+            })
+        ));
+
+        // Only 2 bytes (less than 4-byte header)
+        let result: Result<TestPayload, _> = decode_with_limit(&[0, 0], MAX_PAYLOAD_SIZE);
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 4,
+                available: 2
+            })
+        ));
+
+        // Header claims 100 bytes but only 10 available
+        let mut data = vec![100, 0, 0, 0]; // length prefix = 100
+        data.extend_from_slice(&[0; 6]); // only 6 more bytes, not 100
+        let result: Result<TestPayload, _> = decode_with_limit(&data, MAX_PAYLOAD_SIZE);
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 104,
+                available: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn test_decode_with_limit_roundtrip_with_fixtures() {
+        let payload = TestPayload {
+            test_id: 999,
+            file_path: "tests/integration/test_db.py".to_string(),
+            test_name: "test_complex_query".to_string(),
+            is_async: true,
+            fixtures: vec![
+                FixtureInfo {
+                    name: "db".to_string(),
+                    scope: "module".to_string(),
+                },
+                FixtureInfo {
+                    name: "client".to_string(),
+                    scope: "function".to_string(),
+                },
+            ],
+            log_fd: 42,
+            debug_socket_path: "/tmp/debug.sock".to_string(),
+            is_toxic: true,
+            timeout_secs: Some(120),
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+
+        assert_eq!(decoded.test_id, payload.test_id);
+        assert_eq!(decoded.file_path, payload.file_path);
+        assert_eq!(decoded.test_name, payload.test_name);
+        assert_eq!(decoded.is_async, payload.is_async);
+        assert_eq!(decoded.fixtures.len(), 2);
+        assert_eq!(decoded.fixtures[0].name, "db");
+        assert_eq!(decoded.fixtures[1].scope, "function");
+        assert_eq!(decoded.log_fd, 42);
+        assert_eq!(decoded.debug_socket_path, "/tmp/debug.sock");
+        assert!(decoded.is_toxic);
+        assert_eq!(decoded.timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn test_max_payload_size_constant() {
+        // Verify the constant is 16 MiB
+        assert_eq!(MAX_PAYLOAD_SIZE, 16 * 1024 * 1024);
     }
 }
