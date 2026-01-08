@@ -13,7 +13,9 @@
 //! 1. **Kernel Version**: Verify Linux 5.15+ for Landlock ABI v1
 //! 2. **Sysctl**: Check `vm.unprivileged_userfaultfd == 1`
 //! 3. **Capabilities**: Attempt micro-ptrace to verify CAP_SYS_PTRACE
-//! 4. **Physics Heartbeat**: Run a 10ms snapshot/restore cycle
+//! 4. **File Descriptors**: Check ulimit for adequate FD limits
+//! 5. **Shared Memory**: Verify /dev/shm availability and space
+//! 6. **Physics Heartbeat**: Run a 10ms snapshot/restore cycle
 //!
 //! # Example Usage
 //!
@@ -32,6 +34,8 @@
 //! [PASS] Landlock: ABI v4 supported
 //! [PASS] Seccomp: BPF filters available
 //! [PASS] Jemalloc: 5.3.0 active
+//! [PASS] File Descriptors: soft=65536, hard=65536
+//! [PASS] Shared Memory: /dev/shm available (1024MB free)
 //! [PASS] Physics Heartbeat: 10ms restore cycle OK
 //!
 //! All checks passed. Tach is ready to run.
@@ -635,6 +639,146 @@ pub fn check_architecture() -> DiagnosticResult {
     }
 }
 
+/// Check file descriptor limits
+///
+/// Tach requires a reasonable number of available file descriptors for:
+/// - Worker sockets (2 per worker)
+/// - memfd for log capture
+/// - userfaultfd per worker
+/// - Test file handles
+///
+/// Recommended minimum: 1024 (hard limit should be higher)
+pub fn check_fd_limits() -> DiagnosticResult {
+    // Read /proc/self/limits to get FD limits
+    match fs::read_to_string("/proc/self/limits") {
+        Ok(content) => {
+            // Parse the limits file to find "Max open files"
+            for line in content.lines() {
+                if line.starts_with("Max open files") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    // Format: "Max open files  <soft>  <hard>  files"
+                    if parts.len() >= 5 {
+                        let soft: u64 = parts[3].parse().unwrap_or(0);
+                        let hard: u64 = parts[4].parse().unwrap_or(0);
+
+                        if soft >= 1024 {
+                            return DiagnosticResult::pass(
+                                "File Descriptors",
+                                format!("soft={}, hard={}", soft, hard),
+                            );
+                        } else {
+                            return DiagnosticResult::warn(
+                                "File Descriptors",
+                                format!("soft={} (recommend >= 1024)", soft),
+                            )
+                            .with_details("Low FD limit may cause issues with many workers")
+                            .with_remediation(
+                                Remediation::with_command(
+                                    "Increase file descriptor limit for better parallel performance",
+                                    "ulimit -n 65536",
+                                )
+                                .with_docs_url(
+                                    "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e014",
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            DiagnosticResult::warn("File Descriptors", "Could not parse limits")
+        }
+        Err(_) => {
+            // Fallback: try to get via getrlimit
+            let mut rlim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) };
+            if result == 0 {
+                if rlim.rlim_cur >= 1024 {
+                    DiagnosticResult::pass(
+                        "File Descriptors",
+                        format!("soft={}, hard={}", rlim.rlim_cur, rlim.rlim_max),
+                    )
+                } else {
+                    DiagnosticResult::warn(
+                        "File Descriptors",
+                        format!("soft={} (recommend >= 1024)", rlim.rlim_cur),
+                    )
+                    .with_details("Low FD limit may cause issues with many workers")
+                    .with_remediation(
+                        Remediation::with_command(
+                            "Increase file descriptor limit for better parallel performance",
+                            "ulimit -n 65536",
+                        )
+                        .with_docs_url(
+                            "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e014",
+                        ),
+                    )
+                }
+            } else {
+                DiagnosticResult::warn("File Descriptors", "Could not determine limit")
+            }
+        }
+    }
+}
+
+/// Check shared memory availability
+///
+/// Tach uses shared memory (via memfd_create or /dev/shm) for:
+/// - Coverage ring buffers
+/// - IPC between supervisor and workers
+/// - Log capture buffers
+///
+/// Checks that /dev/shm is mounted and has sufficient space.
+pub fn check_shared_memory() -> DiagnosticResult {
+    // Check if /dev/shm exists and is writable
+    let shm_path = std::path::Path::new("/dev/shm");
+
+    if !shm_path.exists() {
+        return DiagnosticResult::warn("Shared Memory", "/dev/shm not found")
+            .with_details("Shared memory may not be available")
+            .with_remediation(Remediation::new(
+                "Ensure tmpfs is mounted at /dev/shm (usually automatic on modern Linux)",
+            ));
+    }
+
+    // Try to create a test file to verify write access
+    let test_path = shm_path.join(".tach_shm_test");
+    match fs::write(&test_path, b"test") {
+        Ok(_) => {
+            let _ = fs::remove_file(&test_path);
+
+            // Check available space using statfs
+            let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+            let path_cstr = std::ffi::CString::new("/dev/shm").unwrap();
+            let result = unsafe { libc::statfs(path_cstr.as_ptr(), &mut stat) };
+
+            if result == 0 {
+                let available_mb = (stat.f_bavail * stat.f_bsize as u64) / (1024 * 1024);
+                if available_mb >= 64 {
+                    DiagnosticResult::pass(
+                        "Shared Memory",
+                        format!("/dev/shm available ({}MB free)", available_mb),
+                    )
+                } else {
+                    DiagnosticResult::warn(
+                        "Shared Memory",
+                        format!("/dev/shm low space ({}MB free)", available_mb),
+                    )
+                    .with_details("Coverage collection may fail with insufficient shared memory")
+                }
+            } else {
+                DiagnosticResult::pass("Shared Memory", "/dev/shm writable")
+            }
+        }
+        Err(e) => {
+            DiagnosticResult::warn("Shared Memory", format!("Cannot write to /dev/shm: {}", e))
+                .with_details("Coverage collection and IPC may be affected")
+        }
+    }
+}
+
 /// Check fork overhead performance
 pub fn check_fork_overhead() -> DiagnosticResult {
     use nix::sys::wait::waitpid;
@@ -763,6 +907,15 @@ pub fn run_and_print_diagnose() -> bool {
     print_diagnose_line("  pytest", &pytest_result);
     eprintln!();
 
+    // --- RESOURCES SECTION ---
+    eprintln!("Resources:");
+    let fd_result = check_fd_limits();
+    print_diagnose_line("  File Descriptors", &fd_result);
+
+    let shm_result = check_shared_memory();
+    print_diagnose_line("  Shared Memory", &shm_result);
+    eprintln!();
+
     // --- PERFORMANCE SECTION ---
     eprintln!("Performance:");
     let heartbeat_result = check_physics_heartbeat();
@@ -783,6 +936,8 @@ pub fn run_and_print_diagnose() -> bool {
         python_result,
         libpython_result,
         pytest_result,
+        fd_result,
+        shm_result,
         heartbeat_result,
         fork_result,
     ];
@@ -1045,5 +1200,95 @@ mod tests {
         assert_eq!(parse_python_version(""), None);
         assert_eq!(parse_python_version("invalid"), None);
         assert_eq!(parse_python_version("Python"), None);
+    }
+
+    // =========================================================================
+    // Resource Diagnostic Tests
+    // =========================================================================
+
+    #[test]
+    fn test_check_fd_limits() {
+        // This should work on any Linux system
+        let result = check_fd_limits();
+        // Should produce a valid result (pass or warn)
+        assert!(!result.name.is_empty());
+        assert!(!result.message.is_empty());
+        // FD limits should not be required (warn, not fail)
+        // The result should contain numeric information
+        assert!(
+            result.message.contains("soft=") || result.message.contains("Could not"),
+            "FD limit result should contain soft limit or error message"
+        );
+    }
+
+    #[test]
+    fn test_check_fd_limits_has_remediation_when_low() {
+        // We can't easily test low FD limits, but we can verify the structure
+        let result = check_fd_limits();
+        // If it's a warning, it should have remediation
+        if !result.passed {
+            assert!(
+                result.remediation.is_some(),
+                "Low FD limit warning should include remediation"
+            );
+        }
+    }
+
+    #[test]
+    fn test_check_shared_memory() {
+        // This should work on any Linux system with /dev/shm
+        let result = check_shared_memory();
+        // Should produce a valid result
+        assert!(!result.name.is_empty());
+        assert!(!result.message.is_empty());
+        // Should be checking for /dev/shm
+        assert!(
+            result.message.contains("/dev/shm")
+                || result.message.contains("Shared Memory")
+                || result.message.contains("available")
+                || result.message.contains("writable")
+                || result.message.contains("not found"),
+            "Shared memory result should reference /dev/shm or availability: {}",
+            result.message
+        );
+    }
+
+    #[test]
+    fn test_check_shared_memory_passes_on_linux() {
+        // On a standard Linux system, /dev/shm should exist
+        let shm_path = std::path::Path::new("/dev/shm");
+        if shm_path.exists() {
+            let result = check_shared_memory();
+            // If /dev/shm exists and is writable, should pass
+            // (unless there's a permission or space issue)
+            assert!(
+                result.passed || !result.required,
+                "Shared memory check should pass or warn on standard Linux"
+            );
+        }
+    }
+
+    #[test]
+    fn test_check_fd_limits_not_required() {
+        let result = check_fd_limits();
+        // FD limit check is informational - should warn, not fail
+        if !result.passed {
+            assert!(
+                !result.required,
+                "FD limit check should be a warning, not a hard failure"
+            );
+        }
+    }
+
+    #[test]
+    fn test_check_shared_memory_not_required() {
+        let result = check_shared_memory();
+        // Shared memory check is informational - should warn, not fail
+        if !result.passed {
+            assert!(
+                !result.required,
+                "Shared memory check should be a warning, not a hard failure"
+            );
+        }
     }
 }

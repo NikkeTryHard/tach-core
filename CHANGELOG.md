@@ -98,6 +98,8 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 **Target**: Better onboarding experience for new users.
 
+**Status**: Mostly Complete (~85%)
+
 #### Documentation
 
 - [ ] Create `examples/` directory with sample projects
@@ -112,29 +114,29 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   - [ ] First test run walkthrough
   - [ ] Comparison with pytest workflow
   - [ ] Migration guide from pytest
-- [ ] Add inline code comments for complex algorithms
-  - [ ] Toxicity propagation in `discovery/analysis.rs`
+- [x] Add inline code comments for complex algorithms
+  - [x] Toxicity propagation in `discovery/analysis.rs`
     > **Ref**: "Toxicity is contagious. If Module A imports Module B, and Module B opens a database connection, then importing Module A effectively opens a database connection" — _Python Monorepo Zygote Tree Design_
-  - [ ] Fixture resolution in `discovery/resolver.rs`
-  - [ ] Snapshot mechanics in `isolation/snapshot.rs`
+  - [x] Fixture resolution in `discovery/resolver.rs`
+  - [x] Snapshot mechanics in `snapshot.rs`
     > **Ref**: "The kernel iterates over the Page Table Entries corresponding to the address range. It clears the 'Present' bit, effectively unmapping the physical pages" — _Python Memory Snapshotting with Userfaultfd_
-  - [ ] Seccomp filter generation in `isolation/sandbox.rs`
+  - [x] Seccomp filter generation in `sandbox.rs`
 
 #### CLI Improvements
 
-- [ ] Improve `--help` text with examples for each flag
-- [ ] Add `tach --version --verbose` for detailed system info
-- [ ] Better error messages when Python environment is misconfigured
-- [ ] Add shell completion scripts (bash, zsh, fish)
-- [ ] Add `--dry-run` flag to show what would be executed
+- [x] Improve `--help` text with examples for each flag
+- [x] Add `tach --version --verbose` for detailed system info
+- [x] Better error messages when Python environment is misconfigured
+- [x] Add shell completion scripts (bash, zsh, fish)
+- [x] Add `--dry-run` flag to show what would be executed
   > **Ref**: "Kineton uses a Rust-based Abstract Syntax Tree (AST) parser to statically identify test entry points... discovery phase is decoupled from the runtime cost" — _Python Testing Engine Rust Breakthroughs_
-- [ ] Add `--collect-only` as alias for `list` command
+- [x] Add `--collect-only` as alias for `list` command
 
 #### Bug Fixes
 
-- [ ] Fix edge cases in AST discovery for decorated test functions
+- [x] Fix edge cases in AST discovery for decorated test functions
   > **Ref**: "The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest **init**.py or namespace root" — _Python Monorepo Zygote Tree Design_
-- [ ] Handle `conftest.py` files in nested directories correctly
+- [x] Handle `conftest.py` files in nested directories correctly
 - [ ] Fix path resolution for symlinked test directories
 - [ ] Handle tests with very long names gracefully
 - [ ] Fix progress bar rendering on narrow terminals
@@ -143,44 +145,46 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 **Target**: Better compatibility with existing pytest test patterns.
 
+**Status**: Mostly Complete (~60%)
+
 #### Assertion Handling
 
-- [ ] Support `pytest.raises()` context manager pattern
-- [ ] Handle `pytest.warns()` for warning assertions
-- [ ] Improve `assert` statement introspection for better failure messages
-- [ ] Support `pytest.approx()` for floating point comparisons
-- [ ] Support `pytest.fail()` and `pytest.skip()` functions
-- [ ] Handle `pytest.xfail()` expected failures
-- [ ] Support `pytest.importorskip()` for optional dependencies
+- [x] Support `pytest.raises()` context manager pattern
+- [x] Handle `pytest.warns()` for warning assertions
+- [x] Improve `assert` statement introspection for better failure messages
+- [x] Support `pytest.approx()` for floating point comparisons
+- [x] Support `pytest.fail()` and `pytest.skip()` functions
+- [x] Handle `pytest.xfail()` expected failures
+- [x] Support `pytest.importorskip()` for optional dependencies
 
 #### Stack Trace Improvements
 
-- [ ] Format tracebacks in pytest-compatible style
-- [ ] Show relevant local variables in failure output
-- [ ] Truncate long values intelligently (dicts, lists)
-- [ ] Highlight the failing assertion line
-- [ ] Support `--tb=short`, `--tb=long`, `--tb=line`, `--tb=native`
-- [ ] Color-code different parts of tracebacks
-- [ ] Show source context around failures
+- [x] Format tracebacks in pytest-compatible style
+- [x] Show relevant local variables in failure output
+- [x] Truncate long values intelligently (dicts, lists)
+- [x] Highlight the failing assertion line
+- [x] Support `--tb=short`, `--tb=long`, `--tb=line`, `--tb=native`
+- [x] Color-code different parts of tracebacks
+- [x] Show source context around failures
 
 #### Timeout Handling
 
 - [ ] Fix race condition in worker timeout detection
-- [ ] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
+- [x] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
 - [ ] Improve cleanup when test times out mid-execution
 - [ ] Handle tests that spawn threads which outlive the test
   > **Ref**: "If a background thread holds a mutex or lock at the precise nanosecond fork() is invoked, that lock is copied into the child process's memory in a 'locked' state" — _Fork Safety of Python C-Extensions_
-- [ ] Add global timeout configuration in pyproject.toml
+- [x] Add global timeout configuration in pyproject.toml
 - [ ] Support timeout callback hooks
 
 #### Worker Lifecycle
 
-- [ ] Improve worker cleanup on SIGTERM/SIGKILL
-- [ ] Fix orphan process detection on abnormal exit
+- [x] Improve worker cleanup on SIGTERM/SIGKILL
+- [x] Fix orphan process detection on abnormal exit
   > **Ref**: "All other threads in the process are instantly terminated in the child process, without executing any cleanup handlers or stack unwinding" — _Fork Safety of Python C-Extensions_
-- [ ] Add worker health checks between test batches
-- [ ] Handle worker crash during fixture setup
-- [ ] Implement worker recycling for long test sessions
+- [x] Add worker health checks between test batches
+- [x] Handle worker crash during fixture setup
+- [x] Implement worker recycling for long test sessions
   > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
 - [ ] Add worker memory usage monitoring
 
