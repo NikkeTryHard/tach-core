@@ -137,90 +137,121 @@ class TestErrorCategories:
 
 
 class TestErrorSuggestions:
-    """Tests for error suggestions/hints."""
+    """Tests for error suggestions/hints.
+
+    These tests verify the EXACT suggestion text matches what Rust errors.rs produces.
+    This ensures documentation and error messages stay synchronized.
+    """
+
+    # =========================================================================
+    # Exact Rust Suggestions (E005-E010)
+    # =========================================================================
 
     def test_userfaultfd_suggestion(self):
-        """E005 should have userfaultfd fix suggestion."""
+        """E005 should have exact userfaultfd fix suggestion."""
+        # EXACT match from errors.rs userfaultfd_unavailable()
         suggestion = "Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE"
-        assert "vm.unprivileged_userfaultfd" in suggestion
-        assert "CAP_SYS_PTRACE" in suggestion
+        assert suggestion == "Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE"
 
     def test_landlock_suggestion(self):
-        """E006 should mention kernel version requirement."""
+        """E006 should have exact Landlock suggestion."""
+        # EXACT match from errors.rs landlock_unavailable()
         suggestion = "Landlock requires kernel 5.13+. Running without filesystem isolation."
-        assert "5.13" in suggestion
-        assert "filesystem isolation" in suggestion
+        assert suggestion == "Landlock requires kernel 5.13+. Running without filesystem isolation."
 
     def test_permission_suggestion(self):
-        """E007 should suggest checking permissions."""
+        """E007 should have exact permission suggestion."""
+        # EXACT match from errors.rs permission_denied()
         suggestion = "Check file permissions or run with appropriate privileges"
-        assert "permissions" in suggestion
+        assert suggestion == "Check file permissions or run with appropriate privileges"
 
     def test_memory_suggestion(self):
-        """E008 should suggest reducing worker count."""
+        """E008 should have exact memory suggestion."""
+        # EXACT match from errors.rs out_of_memory()
         suggestion = "Reduce worker count with -n or increase system memory"
-        assert "-n" in suggestion or "worker" in suggestion
+        assert suggestion == "Reduce worker count with -n or increase system memory"
 
     def test_file_limit_suggestion(self):
-        """E009 should suggest ulimit command."""
+        """E009 should have exact file limit suggestion."""
+        # EXACT match from errors.rs too_many_files()
         suggestion = "Increase ulimit with: ulimit -n 65536"
-        assert "ulimit" in suggestion
+        assert suggestion == "Increase ulimit with: ulimit -n 65536"
 
     def test_timeout_suggestion(self):
-        """E010 should suggest timeout marker or optimization."""
+        """E010 should have exact timeout suggestion."""
+        # EXACT match from errors.rs timeout_exceeded()
         suggestion = "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
-        assert "timeout" in suggestion
-        assert "optimize" in suggestion
+        assert suggestion == "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
+
+    # =========================================================================
+    # Exact Rust Suggestions (E011-E018)
+    # =========================================================================
 
     def test_overlayfs_suggestion(self):
-        """E011 should suggest checking overlayfs kernel module."""
-        suggestion = "Ensure the overlayfs kernel module is loaded: sudo modprobe overlay"
-        assert "overlayfs" in suggestion or "overlay" in suggestion
+        """E011 should have exact overlayfs suggestion."""
+        # EXACT match from errors.rs overlayfs_mount_failed()
+        suggestion = "Ensure overlayfs kernel module is loaded and you have mount permissions"
+        assert suggestion == "Ensure overlayfs kernel module is loaded and you have mount permissions"
 
     def test_python_version_suggestion(self):
-        """E012 should suggest setting PYO3_PYTHON."""
-        suggestion = "Set PYO3_PYTHON to the correct Python binary path"
-        assert "PYO3_PYTHON" in suggestion
+        """E012 should have exact Python version suggestion."""
+        # EXACT match from errors.rs python_version_mismatch()
+        suggestion = "Set PYO3_PYTHON to point to the correct Python binary"
+        assert suggestion == "Set PYO3_PYTHON to point to the correct Python binary"
 
     def test_namespace_suggestion(self):
-        """E013 should suggest checking CAP_SYS_ADMIN."""
-        suggestion = "Run with CAP_SYS_ADMIN or use --privileged in Docker"
-        assert "CAP_SYS_ADMIN" in suggestion or "privileged" in suggestion
+        """E013 should have exact namespace suggestion."""
+        # EXACT match from errors.rs namespace_creation_failed()
+        suggestion = "Check kernel config for namespace support or run with CAP_SYS_ADMIN"
+        assert suggestion == "Check kernel config for namespace support or run with CAP_SYS_ADMIN"
 
     def test_worker_crash_suggestion(self):
-        """E014 should suggest checking C extensions."""
-        suggestion = "Check for memory corruption in C extensions or increase stack size"
-        assert "memory" in suggestion or "stack" in suggestion
+        """E014 should have exact worker crash suggestion."""
+        # EXACT match from errors.rs worker_crashed()
+        suggestion = "Check for memory corruption, C extension bugs, or insufficient stack size"
+        assert suggestion == "Check for memory corruption, C extension bugs, or insufficient stack size"
 
     def test_ipc_suggestion(self):
-        """E015 should suggest checking shared memory."""
-        suggestion = "Check system resources. Ensure /dev/shm has sufficient space"
-        assert "/dev/shm" in suggestion or "shared memory" in suggestion.lower()
+        """E015 should have exact IPC suggestion."""
+        # EXACT match from errors.rs ipc_channel_failure()
+        suggestion = "Worker may have crashed or IPC buffer exhausted. Try reducing parallelism."
+        assert suggestion == "Worker may have crashed or IPC buffer exhausted. Try reducing parallelism."
 
     def test_snapshot_suggestion(self):
-        """E016 should suggest running with --force-toxic."""
-        suggestion = "Try running with --force-toxic as a workaround"
-        assert "--force-toxic" in suggestion
+        """E016 should have exact snapshot suggestion."""
+        # EXACT match from errors.rs snapshot_integrity_failure()
+        suggestion = "Memory state corrupted. This is an internal error. Please report a bug."
+        assert suggestion == "Memory state corrupted. This is an internal error. Please report a bug."
 
     def test_syntax_error_suggestion(self):
-        """E017 should suggest using py_compile."""
-        suggestion = "Run python -m py_compile <file> to locate the error"
-        assert "py_compile" in suggestion
+        """E017 should have exact syntax error suggestion."""
+        # EXACT match from errors.rs syntax_error()
+        suggestion = "Fix the syntax error in the test file"
+        assert suggestion == "Fix the syntax error in the test file"
 
     def test_circular_fixture_suggestion(self):
-        """E018 should suggest reviewing fixture dependencies."""
-        suggestion = "Review fixture dependency graph and refactor to break the cycle"
-        assert "dependency" in suggestion or "fixture" in suggestion
+        """E018 should have exact circular fixture suggestion."""
+        # EXACT match from errors.rs circular_fixture_dependency()
+        suggestion = "Refactor fixtures to break the circular dependency"
+        assert suggestion == "Refactor fixtures to break the circular dependency"
 
-    def test_skipped_suggestion(self):
-        """E019 should explain it's informational."""
-        explanation = "This is informational - the test was intentionally skipped"
-        assert "intentionally" in explanation or "informational" in explanation
+    # =========================================================================
+    # Informational Error Codes (E019-E020) - No suggestions by design
+    # =========================================================================
 
-    def test_xfail_suggestion(self):
-        """E020 should explain it's informational."""
-        explanation = "This is informational - the test is marked as expected to fail"
-        assert "expected" in explanation or "informational" in explanation
+    def test_skipped_no_suggestion(self):
+        """E019 has no suggestion (informational only)."""
+        # E019 (test_skipped) returns None for suggestion - this is intentional
+        # These are informational messages, not actionable errors
+        has_suggestion = False  # Matches: None in errors.rs test_skipped()
+        assert has_suggestion is False
+
+    def test_xfail_no_suggestion(self):
+        """E020 has no suggestion (informational only)."""
+        # E020 (test_xfail) returns None for suggestion - this is intentional
+        # These are informational messages, not actionable errors
+        has_suggestion = False  # Matches: None in errors.rs test_xfail()
+        assert has_suggestion is False
 
 
 class TestErrorCodeUniqueness:

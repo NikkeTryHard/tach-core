@@ -152,6 +152,22 @@ fn main() -> Result<()> {
     let is_json = cli.format == OutputFormat::Json;
     let is_watch = cli.watch;
 
+    // --- DEBUG/TRACE MODE ---
+    // Set environment variables for debug/trace logging so all components can check
+    if cli.trace {
+        // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
+        // This is called during initialization before any worker threads spawn.
+        unsafe { std::env::set_var("TACH_LOG_LEVEL", "trace") };
+        if !is_json {
+            eprintln!("[supervisor] Trace logging enabled (maximum verbosity)");
+        }
+    } else if cli.debug {
+        unsafe { std::env::set_var("TACH_LOG_LEVEL", "debug") };
+        if !is_json {
+            eprintln!("[supervisor] Debug logging enabled");
+        }
+    }
+
     // Set TACH_NO_ISOLATION env var from CLI flag (inherits to all children)
     if cli.no_isolation {
         // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.

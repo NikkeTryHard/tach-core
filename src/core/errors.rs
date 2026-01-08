@@ -1586,7 +1586,8 @@ mod tests {
 
     #[test]
     fn test_syntax_error_with_line() {
-        let err = CategorizedError::syntax_error("tests/test_foo.py", Some(42), "unexpected indent");
+        let err =
+            CategorizedError::syntax_error("tests/test_foo.py", Some(42), "unexpected indent");
         assert_eq!(err.code, error_codes::E017);
         assert!(err.is_user_error());
         assert!(err.message.contains("tests/test_foo.py"));

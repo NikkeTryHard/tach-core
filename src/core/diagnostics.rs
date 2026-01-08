@@ -216,7 +216,9 @@ impl DiagnosticReport {
                 }
             }
             // Print remediation info for failed checks
-            if !result.passed && let Some(remediation) = &result.remediation {
+            if !result.passed
+                && let Some(remediation) = &result.remediation
+            {
                 eprintln!("       Remediation: {}", remediation.explanation);
                 if let Some(cmd) = &remediation.command {
                     eprintln!("       Command: {}", cmd);
@@ -840,7 +842,9 @@ fn print_diagnose_line(prefix: &str, result: &DiagnosticResult) {
     eprintln!("{}: {} ({})", prefix, result.message, icon);
 
     // Print remediation info for failed checks
-    if !result.passed && let Some(remediation) = &result.remediation {
+    if !result.passed
+        && let Some(remediation) = &result.remediation
+    {
         eprintln!("       Remediation: {}", remediation.explanation);
         if let Some(cmd) = &remediation.command {
             eprintln!("       Command: {}", cmd);
@@ -887,8 +891,8 @@ mod tests {
 
     #[test]
     fn test_remediation_with_docs_url() {
-        let remediation = Remediation::new("Check documentation")
-            .with_docs_url("https://example.com/docs");
+        let remediation =
+            Remediation::new("Check documentation").with_docs_url("https://example.com/docs");
         assert_eq!(remediation.explanation, "Check documentation");
         assert!(remediation.command.is_none());
         assert_eq!(
@@ -899,8 +903,11 @@ mod tests {
 
     #[test]
     fn test_remediation_full_chain() {
-        let remediation = Remediation::with_command("Enable userfaultfd", "sudo sysctl -w vm.unprivileged_userfaultfd=1")
-            .with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005");
+        let remediation = Remediation::with_command(
+            "Enable userfaultfd",
+            "sudo sysctl -w vm.unprivileged_userfaultfd=1",
+        )
+        .with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005");
         assert_eq!(remediation.explanation, "Enable userfaultfd");
         assert_eq!(
             remediation.command,
@@ -908,16 +915,16 @@ mod tests {
         );
         assert_eq!(
             remediation.docs_url,
-            Some("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005".to_string())
+            Some(
+                "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005"
+                    .to_string()
+            )
         );
     }
 
     #[test]
     fn test_diagnostic_result_with_remediation() {
-        let remediation = Remediation::with_command(
-            "Increase file limit",
-            "ulimit -n 65536",
-        );
+        let remediation = Remediation::with_command("Increase file limit", "ulimit -n 65536");
         let result = DiagnosticResult::fail("File Descriptors", "Too many open files")
             .with_remediation(remediation);
 

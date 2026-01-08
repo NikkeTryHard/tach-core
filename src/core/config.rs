@@ -121,7 +121,13 @@ pub struct Cli {
     ///
     /// Use 'auto' (or 0) to auto-detect based on CPU count.
     /// Default: auto
-    #[arg(short = 'n', long, value_name = "WORKERS", default_value = "auto", env = "TACH_WORKERS")]
+    #[arg(
+        short = 'n',
+        long,
+        value_name = "WORKERS",
+        default_value = "auto",
+        env = "TACH_WORKERS"
+    )]
     pub workers: String,
 
     // =========================================================================
@@ -249,23 +255,17 @@ pub struct Cli {
     #[arg(long)]
     pub diagnose: bool,
 
-    /// Enable debug logging (verbose syscall traces).
+    /// Enable debug logging (verbose output).
     ///
-    /// Enables detailed debug output including syscall traces, worker
-    /// lifecycle events, and IPC message logging. Useful for troubleshooting.
-    ///
-    /// Note: Full logging integration pending. Currently increases verbosity
-    /// for diagnostic output. Future: will set RUST_LOG=debug equivalent.
+    /// Sets TACH_LOG_LEVEL=debug for detailed diagnostic output including
+    /// worker lifecycle events and IPC message logging. Useful for troubleshooting.
     #[arg(long)]
     pub debug: bool,
 
     /// Enable trace logging (maximum verbosity).
     ///
-    /// Enables maximum verbosity including all debug output plus memory
-    /// operations, snapshot details, and internal state dumps.
-    ///
-    /// Note: Full logging integration pending. Currently enables maximum
-    /// diagnostic output. Future: will set RUST_LOG=trace equivalent.
+    /// Sets TACH_LOG_LEVEL=trace for maximum verbosity including all debug
+    /// output plus memory operations, snapshot details, and internal state dumps.
     #[arg(long)]
     pub trace: bool,
 
@@ -446,7 +446,10 @@ impl TachConfig {
 
     /// Check if coverage is enabled
     pub fn coverage_enabled(&self) -> bool {
-        self.coverage.as_ref().and_then(|c| c.enabled).unwrap_or(false)
+        self.coverage
+            .as_ref()
+            .and_then(|c| c.enabled)
+            .unwrap_or(false)
     }
 }
 
@@ -722,7 +725,10 @@ select = ["E", "F"]
 "#;
         let pyproject: PyProject = toml::from_str(toml_content).unwrap();
         let env_vars = pyproject.tool.unwrap().pytest_env.unwrap();
-        assert_eq!(env_vars.get("DB_URL"), Some(&"sqlite:///:memory:".to_string()));
+        assert_eq!(
+            env_vars.get("DB_URL"),
+            Some(&"sqlite:///:memory:".to_string())
+        );
     }
 
     #[test]
@@ -941,7 +947,19 @@ Ld_Library_Path = "/malicious/path"
     #[test]
     fn test_env_denylist_all_blocked_vars() {
         // Verify all blocked variables are in the denylist
-        let blocked_vars = ["LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONMALLOC", "PATH", "HOME", "USER"];
+        let blocked_vars = [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "LD_DEBUG",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "PYTHONMALLOC",
+            "PATH",
+            "HOME",
+            "USER",
+        ];
 
         // Just verify the count matches what we expect
         assert_eq!(blocked_vars.len(), 11);

@@ -211,8 +211,8 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   - [x] Check file descriptor limits
   - [x] Verify shared memory availability
 - [x] Improve `tach self-test` output with remediation suggestions
-- [x] Add `--debug` flag for verbose syscall logging (CLI defined, full logging pending)
-- [x] Add `--trace` flag for maximum verbosity (CLI defined, full logging pending)
+- [x] Add `--debug` flag for verbose logging (sets TACH_LOG_LEVEL=debug)
+- [x] Add `--trace` flag for maximum verbosity (sets TACH_LOG_LEVEL=trace)
 
 #### Common Failure Suggestions
 
