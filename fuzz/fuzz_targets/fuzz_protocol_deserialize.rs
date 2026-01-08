@@ -33,6 +33,7 @@ fuzz_target!(|data: &[u8]| {
             log_fd: -1,
             debug_socket_path: String::new(),
             is_toxic: false,
+            timeout_secs: None,
         };
 
         let serialized = bincode::serde::encode_to_vec(&test_payload, bincode::config::standard()).unwrap();
