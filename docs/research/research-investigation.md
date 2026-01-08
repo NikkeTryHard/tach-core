@@ -85,8 +85,8 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 
 | Component      | Requirement                    | Source                |
 | :------------- | :----------------------------- | :-------------------- |
-| Rust Toolchain | 1.75+                          | _Rust Breakthroughs_  |
-| Python         | 3.12+                          | _Execution Blueprint_ |
+| Rust Toolchain | 1.85+ (2024 Edition)           | Cargo.toml            |
+| Python         | 3.10+ (3.12+ for coverage)     | CLAUDE.md             |
 | Linux Kernel   | 5.10+ (userfaultfd)            | _Memory Snapshotting_ |
 | Allocator      | jemalloc 5+ (for tcache flush) | _Memory Snapshotting_ |
 
