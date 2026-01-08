@@ -21,7 +21,6 @@ from typing import Dict, Set
 
 import pytest
 
-
 # Directory containing this test file
 TEST_DIR = Path(__file__).parent
 SAMPLE_TESTS_DIR = TEST_DIR / "sample_tests"
@@ -261,11 +260,17 @@ def parse_tach_output(output: str) -> RunResult:
 
             # Handle different group orders
             if groups[0].upper() in ("PASS", "PASSED"):
-                passed.add(normalize_test_name(groups[1] if len(groups) > 1 else groups[0]))
+                passed.add(
+                    normalize_test_name(groups[1] if len(groups) > 1 else groups[0])
+                )
             elif groups[0].upper() in ("FAIL", "FAILED"):
-                failed.add(normalize_test_name(groups[1] if len(groups) > 1 else groups[0]))
+                failed.add(
+                    normalize_test_name(groups[1] if len(groups) > 1 else groups[0])
+                )
             elif groups[0].upper() == "SKIPPED":
-                skipped.add(normalize_test_name(groups[1] if len(groups) > 1 else groups[0]))
+                skipped.add(
+                    normalize_test_name(groups[1] if len(groups) > 1 else groups[0])
+                )
             elif len(groups) > 1:
                 test_name = normalize_test_name(groups[0])
                 outcome = groups[1].upper()
@@ -385,12 +390,16 @@ class TestPytestComparison:
 
         # Verify pytest found tests
         pytest_total = len(pytest_result.passed) + len(pytest_result.failed)
-        assert pytest_total > 0, f"pytest didn't find any tests. Output:\n{pytest_result.raw_output}"
+        assert (
+            pytest_total > 0
+        ), f"pytest didn't find any tests. Output:\n{pytest_result.raw_output}"
 
         # Verify tach found tests
         tach_total = len(tach_result.passed) + len(tach_result.failed)
         if tach_total == 0:
-            pytest.skip(f"tach-core output parsing needs adjustment. Raw output:\n{tach_result.raw_output[:2000]}")
+            pytest.skip(
+                f"tach-core output parsing needs adjustment. Raw output:\n{tach_result.raw_output[:2000]}"
+            )
 
         # Compare outcomes
         differences = compare_outcomes(pytest_result, tach_result, "pytest.raises")
@@ -399,13 +408,21 @@ class TestPytestComparison:
         error_parts = []
 
         if differences["pytest_passed_tach_failed"]:
-            error_parts.append(f"Tests that PASS in pytest but FAIL in tach:\n  {differences['pytest_passed_tach_failed']}")
+            error_parts.append(
+                f"Tests that PASS in pytest but FAIL in tach:\n  {differences['pytest_passed_tach_failed']}"
+            )
 
         if differences["pytest_failed_tach_passed"]:
-            error_parts.append(f"Tests that FAIL in pytest but PASS in tach:\n  {differences['pytest_failed_tach_passed']}")
+            error_parts.append(
+                f"Tests that FAIL in pytest but PASS in tach:\n  {differences['pytest_failed_tach_passed']}"
+            )
 
         if error_parts:
-            pytest.fail("pytest.raises API drift detected!\n\n" + "\n\n".join(error_parts) + f"\n\npytest: {len(pytest_result.passed)} passed, {len(pytest_result.failed)} failed\ntach: {len(tach_result.passed)} passed, {len(tach_result.failed)} failed")
+            pytest.fail(
+                "pytest.raises API drift detected!\n\n"
+                + "\n\n".join(error_parts)
+                + f"\n\npytest: {len(pytest_result.passed)} passed, {len(pytest_result.failed)} failed\ntach: {len(tach_result.passed)} passed, {len(tach_result.failed)} failed"
+            )
 
     def test_approx_compatibility(self):
         """Compare pytest.approx behavior between pytest and tach-core."""
@@ -419,12 +436,16 @@ class TestPytestComparison:
 
         # Verify pytest found tests
         pytest_total = len(pytest_result.passed) + len(pytest_result.failed)
-        assert pytest_total > 0, f"pytest didn't find any tests. Output:\n{pytest_result.raw_output}"
+        assert (
+            pytest_total > 0
+        ), f"pytest didn't find any tests. Output:\n{pytest_result.raw_output}"
 
         # Verify tach found tests
         tach_total = len(tach_result.passed) + len(tach_result.failed)
         if tach_total == 0:
-            pytest.skip(f"tach-core output parsing needs adjustment. Raw output:\n{tach_result.raw_output[:2000]}")
+            pytest.skip(
+                f"tach-core output parsing needs adjustment. Raw output:\n{tach_result.raw_output[:2000]}"
+            )
 
         # Compare outcomes
         differences = compare_outcomes(pytest_result, tach_result, "pytest.approx")
@@ -433,13 +454,21 @@ class TestPytestComparison:
         error_parts = []
 
         if differences["pytest_passed_tach_failed"]:
-            error_parts.append(f"Tests that PASS in pytest but FAIL in tach:\n  {differences['pytest_passed_tach_failed']}")
+            error_parts.append(
+                f"Tests that PASS in pytest but FAIL in tach:\n  {differences['pytest_passed_tach_failed']}"
+            )
 
         if differences["pytest_failed_tach_passed"]:
-            error_parts.append(f"Tests that FAIL in pytest but PASS in tach:\n  {differences['pytest_failed_tach_passed']}")
+            error_parts.append(
+                f"Tests that FAIL in pytest but PASS in tach:\n  {differences['pytest_failed_tach_passed']}"
+            )
 
         if error_parts:
-            pytest.fail("pytest.approx API drift detected!\n\n" + "\n\n".join(error_parts) + f"\n\npytest: {len(pytest_result.passed)} passed, {len(pytest_result.failed)} failed\ntach: {len(tach_result.passed)} passed, {len(tach_result.failed)} failed")
+            pytest.fail(
+                "pytest.approx API drift detected!\n\n"
+                + "\n\n".join(error_parts)
+                + f"\n\npytest: {len(pytest_result.passed)} passed, {len(pytest_result.failed)} failed\ntach: {len(tach_result.passed)} passed, {len(tach_result.failed)} failed"
+            )
 
     def test_sample_tests_discoverable(self):
         """Verify sample test files are valid and pytest can discover them."""
@@ -455,7 +484,14 @@ class TestPytestComparison:
 
         for test_file in [raises_file, approx_file]:
             result = subprocess.run(
-                [str(VENV_PYTHON), "-m", "pytest", str(test_file), "--collect-only", "-q"],
+                [
+                    str(VENV_PYTHON),
+                    "-m",
+                    "pytest",
+                    str(test_file),
+                    "--collect-only",
+                    "-q",
+                ],
                 capture_output=True,
                 text=True,
                 cwd=str(PROJECT_ROOT),
@@ -464,7 +500,9 @@ class TestPytestComparison:
             )
 
             # Should find some tests
-            assert "test_" in result.stdout.lower(), f"No tests found in {test_file.name}:\n{result.stdout}\n{result.stderr}"
+            assert (
+                "test_" in result.stdout.lower()
+            ), f"No tests found in {test_file.name}:\n{result.stdout}\n{result.stderr}"
 
     def test_expected_outcomes(self):
         """Verify that sample tests have expected pass/fail outcomes."""

@@ -64,14 +64,19 @@ fn test_tb_short_truncates_traceback() {
 
     // Short style should have traceback but be concise
     // It should NOT have the full "during handling of the above exception" chains
+    // in the TEST OUTPUT section (after "[tach] Running")
     let long_chain_indicator = "During handling of the above exception";
-    let has_long_chain = combined.contains(long_chain_indicator);
+
+    // Find the test output section (after loader/discovery)
+    let test_output = combined.split("[tach] Running").nth(1).unwrap_or(&combined);
+
+    let has_long_chain = test_output.contains(long_chain_indicator);
 
     // Short should either have no traceback or a truncated one
-    // The key is it shouldn't have verbose exception chains
+    // The key is it shouldn't have verbose exception chains in test output
     assert!(
         !has_long_chain,
-        "--tb short should not include verbose exception chains. Output:\n{}",
+        "--tb short should not include verbose exception chains in test output. Output:\n{}",
         combined
     );
 }
@@ -117,13 +122,16 @@ fn test_tb_no_suppresses_traceback() {
     let (stdout, stderr, _code) = run_with_tb_style("no");
     let combined = format!("{}\n{}", stdout, stderr);
 
-    // "no" style should suppress traceback entirely
-    // Should NOT contain "Traceback (most recent call last)"
-    let has_full_traceback = combined.contains("Traceback (most recent call last)");
+    // "no" style should suppress traceback entirely in TEST OUTPUT
+    // Find the test output section (after loader/discovery)
+    let test_output = combined.split("[tach] Running").nth(1).unwrap_or(&combined);
+
+    // Should NOT contain "Traceback (most recent call last)" in test output
+    let has_full_traceback = test_output.contains("Traceback (most recent call last)");
 
     assert!(
         !has_full_traceback,
-        "--tb no should suppress full traceback. Output:\n{}",
+        "--tb no should suppress full traceback in test output. Output:\n{}",
         combined
     );
 
@@ -223,8 +231,10 @@ fn test_tb_flag_overrides_env_var() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // With --tb no, should not have full traceback (flag overrides env)
-    let has_full_traceback = combined.contains("Traceback (most recent call last)");
+    // With --tb no, should not have full traceback in TEST OUTPUT (flag overrides env)
+    // Find the test output section (after loader/discovery)
+    let test_output = combined.split("[tach] Running").nth(1).unwrap_or(&combined);
+    let has_full_traceback = test_output.contains("Traceback (most recent call last)");
 
     assert!(
         !has_full_traceback,
@@ -282,9 +292,11 @@ fn test_tb_with_passing_tests_no_traceback() {
             continue;
         }
 
-        // Should not have traceback for passing tests
+        // Should not have traceback for passing tests in TEST OUTPUT
+        // Find the test output section (after loader/discovery)
+        let test_output = combined.split("[tach] Running").nth(1).unwrap_or(&combined);
         assert!(
-            !combined.contains("Traceback (most recent call last)"),
+            !test_output.contains("Traceback (most recent call last)"),
             "--tb {} should not show traceback for passing tests. Output:\n{}",
             style,
             combined

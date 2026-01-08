@@ -13,9 +13,9 @@ Version Matrix:
 | 3.14   | No   | Yes            | TBD           |
 """
 
-import sys
 import platform
 import re
+import sys
 
 
 class TestPythonVersionDetection:
@@ -62,7 +62,11 @@ class TestPythonVersionFeatures:
     def test_exception_groups_3_11_plus(self):
         """ExceptionGroup should be available in Python 3.11+."""
         version = sys.version_info
-        has_exception_groups = "ExceptionGroup" in dir(__builtins__) if isinstance(__builtins__, dict) else hasattr(__builtins__, "ExceptionGroup")
+        has_exception_groups = (
+            "ExceptionGroup" in dir(__builtins__)
+            if isinstance(__builtins__, dict)
+            else hasattr(__builtins__, "ExceptionGroup")
+        )
 
         if version.minor >= 11:
             assert has_exception_groups or True  # May need different check
@@ -109,7 +113,13 @@ class TestPythonBuildInfo:
     def test_python_platform(self):
         """Platform should be detectable."""
         plat = sys.platform
-        assert plat in ["linux", "darwin", "win32", "cygwin", "freebsd"], f"Unexpected platform: {plat}"
+        assert plat in [
+            "linux",
+            "darwin",
+            "win32",
+            "cygwin",
+            "freebsd",
+        ], f"Unexpected platform: {plat}"
 
 
 class TestPythonGIL:

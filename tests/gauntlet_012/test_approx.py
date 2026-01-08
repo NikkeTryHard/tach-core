@@ -1,8 +1,8 @@
 # test_approx.py - Tests for pytest.approx compatibility
 # Tests the approx class for floating point comparison in tach_harness.py
 
-import sys
 import os
+import sys
 
 # Add src to path for importing tach_harness
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))

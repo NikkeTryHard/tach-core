@@ -108,7 +108,7 @@ fn test_json_reporter_implements_reporter() {
     accepts_reporter(JsonReporter);
 }
 
-/// Test that HumanReporter implements Reporter trait  
+/// Test that HumanReporter implements Reporter trait
 #[test]
 fn test_human_reporter_implements_reporter() {
     fn accepts_reporter<T: Reporter>(_r: T) {}

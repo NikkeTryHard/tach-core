@@ -1,19 +1,19 @@
 # Forklift: Fitting Zygote Trees for Faster Package Initialization
 
-**Yuanzhuo Yang**  
-University of Wisconsin-Madison  
+**Yuanzhuo Yang**
+University of Wisconsin-Madison
 Madison, WI, USA
 
-**Kwangjong Choi**  
-University of Wisconsin-Madison  
+**Kwangjong Choi**
+University of Wisconsin-Madison
 Madison, WI, USA
 
-**Keting Chen**  
-University of Wisconsin-Madison  
+**Keting Chen**
+University of Wisconsin-Madison
 Madison, WI, USA
 
-**Tyler Caraza-Harter**  
-University of Wisconsin-Madison  
+**Tyler Caraza-Harter**
+University of Wisconsin-Madison
 Madison, WI, USA
 
 ---
@@ -21,13 +21,13 @@ Madison, WI, USA
 ### Abstract
 Fast cold start is critical for many serverless applications. For Python, startup is typically dominated by module initialization. In this work, we analyze the dependencies of 9,678 Python applications and create ReqBench, a new benchmark for stressing module initialization. Informed by our findings, we design Forklift, a new algorithm for training zygote trees based on invocation history. Each zygote pre-imports some modules and can be forked to create other zygotes or function instances. We integrate Forklift with OpenLambda, improving median invocation latency by about 5× while using only a modest memory footprint (<6 GB).
 
-**CCS Concepts**  
+**CCS Concepts**
 • **Computer systems organization** → **Cloud computing.**
 
-**Keywords**  
+**Keywords**
 function-as-a-service, dependency support, zygote initialization
 
-**ACM Reference Format:**  
+**ACM Reference Format:**
 Yuanzhuo Yang, Kwangjong Choi, Keting Chen, and Tyler Caraza-Harter. 2024. Forklift: Fitting Zygote Trees for Faster Package Initialization. In *10th International Workshop on Serverless Computing (WoSC ’24), December 2–6, 2024, Hong Kong, Hong Kong.* ACM, New York, NY, USA, 6 pages. https://doi.org/10.1145/3702634.3702952
 
 ---
@@ -36,10 +36,10 @@ Yuanzhuo Yang, Kwangjong Choi, Keting Chen, and Tyler Caraza-Harter. 2024. Forkl
 
 As serverless platforms [1, 2, 4, 5] become increasingly popular, fast startup becomes ever more important. Recently, there has been significant progress towards reducing the startup latency of containers [13], virtual machines [6, 8, 16, 19], and unikernels [10, 18, 23]. Lightweight sandboxing, however, is only half of the solution; the other half is initializing processes inside these sandboxes. Popular languages such as Python and JavaScript have corresponding package repositories. Tools such as pip and npm make it easy for developers to construct applications that build upon libraries in these repositories; the libraries, in turn, frequently depend on other libraries. Unfortunately, importing these resources introduces significant startup latency [20]. When many applications have the same dependencies, these startup costs are paid repeatedly.
 
-> **Figure 1: Example Zygote Trees.** Nodes correspond to processes, labels indicate imported packages, and arrows point from parents to forked children.  
-> (A) Python root with children F and G2.  
-> (B) Python root with children G1 and G2.  
-> (C) Python root with child G2, and G2 has child F.  
+> **Figure 1: Example Zygote Trees.** Nodes correspond to processes, labels indicate imported packages, and arrows point from parents to forked children.
+> (A) Python root with children F and G2.
+> (B) Python root with children G1 and G2.
+> (C) Python root with child G2, and G2 has child F.
 > (D) Python root with child F, and F has child G2.
 
 One popular solution is zygote initialization [3, 7, 9, 11, 17, 20]. With this approach, a zygote process pre-imports frequently-used modules, but does not run any specific application. Applications needing those modules provision the processes by creating copy-on-write clones of the zygote. This approach is fast (child processes already have resources imported), efficient (physical memory containing code is shared across different processes), and isolated (processes attempting to modify shared pages trigger copy on write).
@@ -188,7 +188,7 @@ Figure 8 show a CDF of invocation latency for a single run of the workload. We s
 > - Single-package+Time-based Weight
 > - Multi-package+Uniform Weight
 > - Multi-package+Time-based Weight
-> 
+>
 > Markers represent tree sizes: 1-node, 40-node, 80-node, 160-node, 320-node, and 640-node. The baseline (38 Ops/Sec) is shown as a dashed red line.
 
 > **Figure 8: Latency CDF For multi-package time-based Forklift tree.**
@@ -228,26 +228,26 @@ We thank Remzi H. Arpaci-Dusseau and the anonymous WoSC reviewers for their valu
 
 ## References
 
-[1] 2024. AWS Lambda. https://aws.amazon.com/lambda/.  
-[2] 2024. Azure Functions. https://azure.microsoft.com/en-us/services/functions/.  
-[3] 2024. Cinder. https://github.com/facebookincubator/cinder.  
-[4] 2024. Google Cloud Functions. https://cloud.google.com/functions/docs/.  
-[5] 2024. IBM OpenWhisk. https://developer.ibm.com/openwhisk/.  
-[6] 2024. The speed of containers, the security of VMs. https://katacontainers.io/.  
-[7] Istemi Ekin Akkus, Ruichuan Chen, Ivica Rimac, Manuel Stein, Klaus Satzke, Andre Beck, Paarijaat Aditya, and Volker Hilt. 2018. SAND: Towards High Performance serverless computing. In *2018 Usenix Annual Technical Conference (USENIX ATC 18).* 923–935.  
-[8] Jeff Barr. 2018. Firecracker – Lightweight Virtualization for Serverless Computing. https://aws.amazon.com/blogs/aws/firecracker-lightweight-virtualization-for-serverless-computing/.  
-[9] Dan Bornstein. 2008. Dalvik VM Internals. https://www.kandroid.org/board/data/board/AndroidBeginner/file_in_body/1/2008-05-29-Presentation-Of-Dalvik-VM-Internals.pdf.  
-[10] James Cadden, Thomas Unger, Yara Awad, Han Dong, Orran Krieger, and Jonathan Appavoo. 2020. SEUSS: skip redundant paths to make serverless fast. In *Proceedings of the Fifteenth European Conference on Computer Systems.* 1–15.  
-[11] Dong Du, Tianyi Yu, Yubin Xia, Binyu Zang, Guanglu Yan, Chenggang Qin, Qixuan Wu, and Haibo Chen. 2020. Catalyzer: Sub-millisecond Startup for Serverless Computing with Initialization-less Booting. In *Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems.* 467–481.  
-[12] GitHub. 2022. GitHub Repos Public Dataset. https://console.cloud.google.com/marketplace/product/github/github-repos  
-[13] Tyler Harter, Brandon Salmon, Rose Liu, Andrea C. Arpaci-Dusseau, and Remzi H. Arpaci-Dusseau. 2016. Slacker: Fast Distribution with Lazy Docker Containers. In *14th USENIX Conference on File and Storage Technologies (FAST 16).* USENIX Association, Santa Clara, CA, 181–195. https://www.usenix.org/conference/fast16/technical-sessions/presentation/harter  
-[14] Scott Hendrickson, Stephen Sturdevant, Tyler Harter, Venkateshwaran Venkataramani, Andrea C Arpaci-Dusseau, and Remzi H Arpaci-Dusseau. 2016. Serverless Computation with OpenLambda. In *8th USENIX Workshop on Hot Topics in Cloud Computing (HotCloud 16).*  
-[15] Byoungyoung Lee, Long Lu, Tielei Wang, Taesoo Kim, and Wenke Lee. 2014. From Zygote to Morula: Fortifying Weakened ASLR on Android. In *2014 IEEE Symposium on Security and Privacy.* IEEE, 424–439.  
-[16] Zijun Li, Jiagan Cheng, Quan Chen, Eryu Guan, Zizheng Bian, Yi Tao, Bin Zha, Qiang Wang, Weidong Han, and Minyi Guo. 2022. RunD: A Lightweight Secure Container Runtime for High-density Deployment and High-concurrency Startup in Serverless Computing. In *2022 USENIX Annual Technical Conference (USENIX ATC 22).* 53–68.  
-[17] Zijun Li, Linsong Guo, Quan Chen, Jiagan Cheng, Chuhao Xu, Deze Zeng, Zhuo Song, Tao Ma, Yong Yang, Chao Li, et al. 2022. Help Rather Than Recycle: Alleviating Cold Startup in Serverless Computing Through Inter-Function Container Sharing. In *2022 USENIX Annual Technical Conference (USENIX ATC 22).* 69–84.  
-[18] Anil Madhavapeddy, Thomas Leonard, Magnus Skjegstad, Thomas Gazagnaire, David Sheets, Dave Scott, Richard Mortier, Amir Chaudhry, Balraj Singh, Jon Ludlam, et al. 2015. Jitsu: Just-In-Time Summoning of Unikernels. In *12th USENIX Symposium on Networked Systems Design and Implementation (NSDI 15).* 559–573.  
-[19] Filipe Manco, Costin Lupu, Florian Schmidt, Jose Mendes, Simon Kuenzer, Sumit Sati, Kenichi Yasukata, Costin Raiciu, and Felipe Huici. 2017. My VM is Lighter (and Safer) than your Container. In *Proceedings of the 26th Symposium on Operating Systems Principles (SOSP ’17).* Association for Computing Machinery, New York, NY, USA, 218–233.  
-[20] Edward Oakes, Leon Yang, Dennis Zhou, Kevin Houck, Tyler Harter, Andrea Arpaci-Dusseau, and Remzi Arpaci-Dusseau. 2018. SOCK: Rapid Task Provisioning with Serverless-Optimized Containers. In *2018 USENIX annual technical conference (USENIX ATC 18).* 57–70.  
-[21] The pip-tools Contributors. 2023. pip-tools documentation v7.3.0. https://pip-tools.readthedocs.io/en/stable/  
-[22] Nikolai Philipp Tschacher. 2016. *Typosquatting in Programming Language Package Managers.* Ph. D. Dissertation. Universität Hamburg, Fachbereich Informatik.  
+[1] 2024. AWS Lambda. https://aws.amazon.com/lambda/.
+[2] 2024. Azure Functions. https://azure.microsoft.com/en-us/services/functions/.
+[3] 2024. Cinder. https://github.com/facebookincubator/cinder.
+[4] 2024. Google Cloud Functions. https://cloud.google.com/functions/docs/.
+[5] 2024. IBM OpenWhisk. https://developer.ibm.com/openwhisk/.
+[6] 2024. The speed of containers, the security of VMs. https://katacontainers.io/.
+[7] Istemi Ekin Akkus, Ruichuan Chen, Ivica Rimac, Manuel Stein, Klaus Satzke, Andre Beck, Paarijaat Aditya, and Volker Hilt. 2018. SAND: Towards High Performance serverless computing. In *2018 Usenix Annual Technical Conference (USENIX ATC 18).* 923–935.
+[8] Jeff Barr. 2018. Firecracker – Lightweight Virtualization for Serverless Computing. https://aws.amazon.com/blogs/aws/firecracker-lightweight-virtualization-for-serverless-computing/.
+[9] Dan Bornstein. 2008. Dalvik VM Internals. https://www.kandroid.org/board/data/board/AndroidBeginner/file_in_body/1/2008-05-29-Presentation-Of-Dalvik-VM-Internals.pdf.
+[10] James Cadden, Thomas Unger, Yara Awad, Han Dong, Orran Krieger, and Jonathan Appavoo. 2020. SEUSS: skip redundant paths to make serverless fast. In *Proceedings of the Fifteenth European Conference on Computer Systems.* 1–15.
+[11] Dong Du, Tianyi Yu, Yubin Xia, Binyu Zang, Guanglu Yan, Chenggang Qin, Qixuan Wu, and Haibo Chen. 2020. Catalyzer: Sub-millisecond Startup for Serverless Computing with Initialization-less Booting. In *Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems.* 467–481.
+[12] GitHub. 2022. GitHub Repos Public Dataset. https://console.cloud.google.com/marketplace/product/github/github-repos
+[13] Tyler Harter, Brandon Salmon, Rose Liu, Andrea C. Arpaci-Dusseau, and Remzi H. Arpaci-Dusseau. 2016. Slacker: Fast Distribution with Lazy Docker Containers. In *14th USENIX Conference on File and Storage Technologies (FAST 16).* USENIX Association, Santa Clara, CA, 181–195. https://www.usenix.org/conference/fast16/technical-sessions/presentation/harter
+[14] Scott Hendrickson, Stephen Sturdevant, Tyler Harter, Venkateshwaran Venkataramani, Andrea C Arpaci-Dusseau, and Remzi H Arpaci-Dusseau. 2016. Serverless Computation with OpenLambda. In *8th USENIX Workshop on Hot Topics in Cloud Computing (HotCloud 16).*
+[15] Byoungyoung Lee, Long Lu, Tielei Wang, Taesoo Kim, and Wenke Lee. 2014. From Zygote to Morula: Fortifying Weakened ASLR on Android. In *2014 IEEE Symposium on Security and Privacy.* IEEE, 424–439.
+[16] Zijun Li, Jiagan Cheng, Quan Chen, Eryu Guan, Zizheng Bian, Yi Tao, Bin Zha, Qiang Wang, Weidong Han, and Minyi Guo. 2022. RunD: A Lightweight Secure Container Runtime for High-density Deployment and High-concurrency Startup in Serverless Computing. In *2022 USENIX Annual Technical Conference (USENIX ATC 22).* 53–68.
+[17] Zijun Li, Linsong Guo, Quan Chen, Jiagan Cheng, Chuhao Xu, Deze Zeng, Zhuo Song, Tao Ma, Yong Yang, Chao Li, et al. 2022. Help Rather Than Recycle: Alleviating Cold Startup in Serverless Computing Through Inter-Function Container Sharing. In *2022 USENIX Annual Technical Conference (USENIX ATC 22).* 69–84.
+[18] Anil Madhavapeddy, Thomas Leonard, Magnus Skjegstad, Thomas Gazagnaire, David Sheets, Dave Scott, Richard Mortier, Amir Chaudhry, Balraj Singh, Jon Ludlam, et al. 2015. Jitsu: Just-In-Time Summoning of Unikernels. In *12th USENIX Symposium on Networked Systems Design and Implementation (NSDI 15).* 559–573.
+[19] Filipe Manco, Costin Lupu, Florian Schmidt, Jose Mendes, Simon Kuenzer, Sumit Sati, Kenichi Yasukata, Costin Raiciu, and Felipe Huici. 2017. My VM is Lighter (and Safer) than your Container. In *Proceedings of the 26th Symposium on Operating Systems Principles (SOSP ’17).* Association for Computing Machinery, New York, NY, USA, 218–233.
+[20] Edward Oakes, Leon Yang, Dennis Zhou, Kevin Houck, Tyler Harter, Andrea Arpaci-Dusseau, and Remzi Arpaci-Dusseau. 2018. SOCK: Rapid Task Provisioning with Serverless-Optimized Containers. In *2018 USENIX annual technical conference (USENIX ATC 18).* 57–70.
+[21] The pip-tools Contributors. 2023. pip-tools documentation v7.3.0. https://pip-tools.readthedocs.io/en/stable/
+[22] Nikolai Philipp Tschacher. 2016. *Typosquatting in Programming Language Package Managers.* Ph. D. Dissertation. Universität Hamburg, Fachbereich Informatik.
 [23] Yiming Zhang, Jon Crowcroft, Dongsheng Li, Chengfen Zhang, Huiba Li, Yaozheng Wang, Kai Yu, Yongqiang Xiong, and Guihai Chen. 2018. KylinX: A Dynamic Library Operating System for Simplified and Efficient Cloud Virtualization. In *2018 USENIX Annual Technical Conference (USENIX ATC 18).* 173–186.

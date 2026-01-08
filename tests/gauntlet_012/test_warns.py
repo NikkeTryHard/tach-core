@@ -6,9 +6,9 @@ These tests use the standard pytest.warns API and should pass
 both when run through pytest directly and through tach.
 """
 
-import pytest
 import warnings
 
+import pytest
 
 # =============================================================================
 # Basic Warning Capture

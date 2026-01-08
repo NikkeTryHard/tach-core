@@ -1,6 +1,6 @@
 # Tach-Core Complete Documentation
 
-> Auto-generated from docs/\*.md files. Do not edit directly.
+> Auto-generated from docs/*.md files. Do not edit directly.
 > Regenerate with: `./scripts/build-docs.sh`
 
 ---
@@ -8,7 +8,6 @@
 ## Table of Contents
 
 ### Architecture
-
 - [Allocator (Jemalloc)](#allocator-jemalloc)
 - [Coverage System](#coverage-system)
 - [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
@@ -27,28 +26,26 @@
 - [Zygote Lifecycle](#zygote-lifecycle)
 
 ### Security
-
 - [Sandbox Enforcement: The EPERM Doctrine](#sandbox-enforcement-the-eperm-doctrine)
 
 ### Operations
-
 - [Self-Hosted Runner Requirements](#self-hosted-runner-requirements)
 
 ### Decisions
-
 - [Rust 2024 Edition Migration Analysis](#rust-2024-edition-migration-analysis)
 
 ### Reference
-
 - [API Reference](#api-reference)
 - [Configuration Reference](#configuration-reference)
 - [Development Guide](#development-guide)
+- [Python Compatibility](#python-compatibility)
 - [Troubleshooting Guide](#troubleshooting-guide)
 - [WSL2 Setup Guide for tach-core](#wsl2-setup-guide-for-tach-core)
 
 ---
 
 # Architecture Documentation
+
 
 # Allocator (Jemalloc)
 
@@ -291,7 +288,9 @@ goblin = "0.10"
 - [Zygote Lifecycle](zygote.md) - When quiesce is called
 - [Troubleshooting](../troubleshooting.md) - Jemalloc build issues
 
+
 ---
+
 
 # Coverage System
 
@@ -585,7 +584,9 @@ Validated by comprehensive unit tests for alignment/wrapping and stress tests fo
 - [API Reference](../api-reference.md) - FFI signatures
 - [Configuration](../configuration.md) - Coverage options
 
+
 ---
+
 
 # TTY Proxy for Interactive Debugging
 
@@ -1101,7 +1102,9 @@ fn main() -> Result<()> {
 - [Zygote Lifecycle](zygote.md) - Worker process management
 - [Isolation](isolation.md) - How workers are isolated
 
+
 ---
+
 
 # Discovery Engine
 
@@ -1404,7 +1407,9 @@ See [Toxicity Analysis](toxicity.md) for details.
 - [Toxicity Analysis](toxicity.md) - How discovered modules are analyzed for safety
 - [Fixture Resolver](resolver.md) - How fixture dependencies are resolved
 
+
 ---
+
 
 # Internal Architecture: The Physics of Restoration
 
@@ -1899,7 +1904,9 @@ _"The Iron Dome is only as strong as its weakest pointer."_
 
 _Project Tach Internal Architecture Standard_
 
+
 ---
+
 
 # Isolation Architecture (Namespaces and OverlayFS)
 
@@ -2249,7 +2256,9 @@ cargo test --lib isolation::namespace -- --nocapture
 - [Configuration](../configuration.md) - `--no-isolation` CLI flag
 - [README](../../README.md) - Project architecture overview
 
+
 ---
+
 
 # Zero-Copy Loader
 
@@ -2794,6 +2803,29 @@ unsafe {
 
 ---
 
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                        | Key Contribution                                                     |
+| :------------------------------------------- | :------------------------------------------------------------------- |
+| **Zero-Copy Python Module Loading**          | `sys.meta_path` bypass, `mmap` of `.pyc` artifacts, header stripping |
+| **Python Testing Engine Rust Breakthroughs** | Content-addressable logic, eliminating the "Import Tax"              |
+
+### Key Technical Details from Research
+
+- **Stat Storm Elimination**: Traditional `importlib` performs ~10 stat calls per import - bypassing it eliminates this overhead
+- **16-Byte Header**: `.pyc` files have a 16-byte header (magic + timestamp + size) that must be stripped before `PyMarshal_ReadObjectFromString`
+- **mmap Workflow**: `mmap(pyc_file)` -> skip 16 bytes -> `PyMarshal_ReadObjectFromString` -> `PyImport_ExecCodeModuleObject`
+- **Relative Import Hazard**: Must manually set `__package__` and `__path__` attributes or relative imports will fail
+- **sys.modules Injection**: Use `PyImport_ExecCodeModuleObject` (preferred over `PyImport_ExecCodeModule`) for full control over module attributes
+
+See [Research Investigation](../research-investigation.md) for complete analysis.
+
+
+---
+
+
 # Architecture Overview
 
 This document provides a high-level view of Tach's architecture and how its components interact.
@@ -3054,7 +3086,9 @@ See [README.md](../../README.md#project-structure) for complete source file orga
 - [Zero-Copy Loader](loader.md) - How modules are loaded
 - [Toxicity Analysis](toxicity.md) - How unsafe code is detected
 
+
 ---
+
 
 # IPC Protocol
 
@@ -3384,7 +3418,9 @@ sequenceDiagram
 - [Zygote Lifecycle](zygote.md) - Command loop implementation
 - [Physics Engine](snapshot.md) - UFFD handshake details
 
+
 ---
+
 
 # Reporter
 
@@ -3799,7 +3835,9 @@ scheduler.run(&mut multi)?;
 - [Scheduler](scheduler.md) - How results are collected
 - [Configuration](../configuration.md) - --format and --junit-xml flags
 
+
 ---
+
 
 # Fixture Resolver
 
@@ -4157,7 +4195,9 @@ def run_test(file_path, test_name, fixtures):
 - [Zygote Lifecycle](zygote.md) - Fixture execution
 - [IPC Protocol](protocol.md) - FixtureInfo in TestPayload
 
+
 ---
+
 
 # Iron Dome (Sandbox)
 
@@ -4454,7 +4494,9 @@ The Iron Dome logs warnings and continues with reduced protection on older kerne
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
 - [Configuration](../configuration.md) - pyproject.toml settings
 
+
 ---
+
 
 # Scheduler Architecture
 
@@ -4752,7 +4794,9 @@ sequenceDiagram
 - [Sandbox](sandbox.md)
 - [Coverage](coverage.md)
 
+
 ---
+
 
 # Physics Engine (Snapshot)
 
@@ -5212,6 +5256,29 @@ fn should_snapshot(region: &MemoryRegion) -> bool {
 
 ---
 
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                             | Key Contribution                                                                        |
+| :------------------------------------------------ | :-------------------------------------------------------------------------------------- |
+| **Python Memory Snapshotting with Userfaultfd**   | Core UFFD architecture, `UFFDIO_COPY` workflow, O(N) cost model where N = touched pages |
+| **Userfaultfd and CPython Allocator Interaction** | TLS restoration requirements, `mi_heap_t` synchronization, GC race conditions           |
+| **Rust-Python Test Isolation Blueprint**          | `MADV_DONTNEED` reset loop, stack restoration requirements                              |
+
+### Key Technical Details from Research
+
+- **Page Fault Lifecycle**: `handle_mm_fault` -> UFFD-managed VMA check -> thread suspension -> `UFFD_EVENT_PAGEFAULT` -> supervisor `UFFDIO_COPY` -> thread wake
+- **TLB Shootdown Cost**: `MADV_DONTNEED` triggers Inter-Processor Interrupts (IPIs) to flush TLBs across all cores - this is the primary performance bottleneck
+- **setjmp/longjmp Limitation**: `longjmp` restores RSP but NOT stack contents - full stack memory must be tracked and restored
+- **mimalloc TLS Hazard**: Python 3.13+ stores `mi_heap_t` pointers in TLS via `fs_base` - must use `arch_prctl(ARCH_GET_FS)` to capture
+
+See [Research Investigation](../research-investigation.md) for complete analysis.
+
+
+---
+
+
 # Toxicity Analysis
 
 The Toxicity Analyzer identifies modules that cannot be safely snapshotted and restored.
@@ -5562,6 +5629,30 @@ Toxic workers skip Seccomp because they may legitimately need:
 - [Scheduler](scheduler.md) - How tests are dispatched
 
 ---
+
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                             | Key Contribution                                                                          |
+| :------------------------------------------------ | :---------------------------------------------------------------------------------------- |
+| **Fork Safety of Python C-Extensions**            | Orphaned lock scenarios, async-signal-safety, "Poison Fork" triggers (OpenMP, CUDA, gRPC) |
+| **Rust Static Analysis for Toxic Python Modules** | Taxonomy of import-time toxicity, `ruff_python_parser` integration, fixed-point iteration |
+| **Python Monorepo Zygote Tree Design**            | Toxicity propagation rules, contagion model ("if A imports toxic B, A is toxic")          |
+
+### Key Technical Details from Research
+
+- **Orphaned Locks**: `fork()` only clones the calling thread - background threads (BLAS workers, gRPC pollers) vanish, leaving mutexes permanently locked
+- **POSIX Constraint**: Post-fork, only async-signal-safe functions are safe to call - Python interpreter is NOT async-signal-safe
+- **Detection Patterns**: `threading.Thread().start()`, `ssl.create_default_context()`, `multiprocessing.Pool()` at module scope (depth=0)
+- **C-Extension Blindspot**: Static analysis cannot see into compiled `.so` files - consider `ld-linux.so` auditing for thread spawning detection
+- **if **name** == "**main**" Guard**: Must not flag code inside this guard as toxic (only runs when executed as main)
+
+See [Research Investigation](../research-investigation.md) for complete analysis.
+
+
+---
+
 
 # Zygote Lifecycle
 
@@ -6020,7 +6111,33 @@ def run_django_test(test_func):
 
 ---
 
+## Research References
+
+This implementation is informed by the following research papers (see `docs/pdfs/txt/` for full text):
+
+| Paper                                       | Key Contribution                                                                             |
+| :------------------------------------------ | :------------------------------------------------------------------------------------------- |
+| **Python Monorepo Zygote Tree Design**      | Hierarchical zygote trees, DAAC clustering algorithm, tiered warm-up                         |
+| **Forklift: Fitting Zygote Trees**          | Original research on hierarchical zygotes, 5x latency improvement, top-15 package preloading |
+| **Cross-Platform Process Cloning Research** | macOS `mach_vm_remap`, Windows NT process cloning, platform-specific spawning                |
+
+### Key Technical Details from Research
+
+- **DAAC Algorithm**: Dependency-Aware Agglomerative Clustering groups tests by shared "Safe" dependencies using Jaccard similarity
+- **Tiered Architecture**: Root Zygote (bare Python) -> Specialized Zygotes (framework-specific) -> Leaf Workers
+- **Merge Gain Formula**: `gain = memory_saved / (latency_increase + epsilon)` for tree pruning decisions
+- **Top-15 Optimization**: Pre-importing the top 15 most common packages (requests, numpy, django, etc.) improves median latency by 5x
+- **Tree Depth Limit**: Deep trees (depth > 3) increase OS scheduler latency - prefer wider, shallower trees
+- **macOS Alternative**: Use `mach_vm_remap` with `VM_FLAGS_OVERWRITE` + `copy=TRUE` for CoW semantics without fork()
+
+See [Research Investigation](../research-investigation.md) for complete analysis.
+
+
+---
+
+
 # Security Documentation
+
 
 # Sandbox Enforcement: The EPERM Doctrine
 
@@ -6381,9 +6498,12 @@ _"A sandbox is not secure until the kernel says no."_
 
 _The EPERM Doctrine - Project Tach Security Standard_
 
+
 ---
 
+
 # Operations Documentation
+
 
 # Self-Hosted Runner Requirements
 
@@ -6493,7 +6613,7 @@ docker run \
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup default stable
 
-# Python 3.12+ (PyO3 requires 3.8+, but 3.12+ recommended for sys.monitoring)
+# Python 3.12+ (Tach requires 3.10+; 3.12+ recommended for PEP 669 coverage)
 sudo apt install python3.12 python3.12-venv python3.12-dev
 
 # Build essentials
@@ -6739,9 +6859,12 @@ _"The Iron Dome requires an iron foundation."_
 
 _Project Tach CI Infrastructure Standard_
 
+
 ---
 
+
 # Architecture Decision Records
+
 
 # Rust 2024 Edition Migration Analysis
 
@@ -7038,9 +7161,12 @@ _"Safety is not an optional feature."_
 
 _Project Tach - Rust Edition Migration Analysis_
 
+
 ---
 
+
 # Reference Documentation
+
 
 # API Reference
 
@@ -7676,7 +7802,9 @@ end_of_record
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
 - [Configuration](configuration.md) - Configuration options
 
+
 ---
+
 
 # Configuration Reference
 
@@ -7735,12 +7863,13 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 #### Output Control
 
-| Flag                | Description                        | Default |
-| :------------------ | :--------------------------------- | :------ |
-| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`) | normal  |
-| `-q, --quiet`       | Decrease verbosity (quiet mode)    | false   |
-| `--format <FORMAT>` | Output format: `human` or `json`   | `human` |
-| `--durations <N>`   | Show timing for slowest N tests    | -       |
+| Flag                | Description                                              | Default |
+| :------------------ | :------------------------------------------------------- | :------ |
+| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`)                       | normal  |
+| `-q, --quiet`       | Decrease verbosity (quiet mode)                          | false   |
+| `--format <FORMAT>` | Output format: `human` or `json`                         | `human` |
+| `--tb <STYLE>`      | Traceback style: `short`, `long`, `line`, `native`, `no` | `long`  |
+| `--durations <N>`   | Show timing for slowest N tests                          | -       |
 
 #### Coverage
 
@@ -7759,6 +7888,8 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 | Flag             | Description                                        | Default |
 | :--------------- | :------------------------------------------------- | :------ |
+| `--timeout <N>`  | Global timeout in seconds for each test            | `60`    |
+| `--dry-run`      | Show what would run without executing Python code  | false   |
 | `--no-isolation` | Disable namespace/sandbox isolation                | false   |
 | `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
 
@@ -7790,18 +7921,22 @@ tach-core self-test                  # Verify kernel support
 
 ## Environment Variables
 
-| Variable               | Description                       | Default |
-| :--------------------- | :-------------------------------- | :------ |
-| `TACH_WORKERS`         | Number of parallel workers        | `auto`  |
-| `TACH_FORMAT`          | Output format (`human` or `json`) | `human` |
-| `TACH_JUNIT_XML`       | Path to JUnit XML output          | -       |
-| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   | -       |
-| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)   | -       |
-| `TACH_TARGET_PATH`     | Test path (set internally)        | `.`     |
-| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally) | -       |
-| `CI`                   | Detected for reporter selection   | -       |
-| `PYO3_PYTHON`          | Python interpreter path for build | -       |
-| `MALLOC_CONF`          | Jemalloc configuration            | -       |
+| Variable               | Description                                               | Default         |
+| :--------------------- | :-------------------------------------------------------- | :-------------- |
+| `TACH_WORKERS`         | Number of parallel workers                                | `auto`          |
+| `TACH_FORMAT`          | Output format (`human` or `json`)                         | `human`         |
+| `TACH_TB`              | Traceback style (`short`, `long`, `line`, `native`, `no`) | `long`          |
+| `TACH_TIMEOUT`         | Global timeout per test in seconds                        | `60`            |
+| `TACH_JUNIT_XML`       | Path to JUnit XML output                                  | -               |
+| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)                           | -               |
+| `TACH_COVERAGE_OUTPUT` | Path to save coverage report                              | `coverage.lcov` |
+| `TACH_COVERAGE_FORMAT` | Coverage format (`lcov`, `html`, `json`)                  | `lcov`          |
+| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)                           | -               |
+| `TACH_TARGET_PATH`     | Test path (set internally)                                | `.`             |
+| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally)                         | -               |
+| `CI`                   | Detected for reporter selection                           | -               |
+| `PYO3_PYTHON`          | Python interpreter path for build                         | -               |
+| `MALLOC_CONF`          | Jemalloc configuration                                    | -               |
 
 ### Examples
 
@@ -8048,7 +8183,9 @@ test:
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details
 
+
 ---
+
 
 # Development Guide
 
@@ -8113,11 +8250,15 @@ cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib  # Full CI
 
 ## Testing
 
-| Category        | Command                         |
-| :-------------- | :------------------------------ |
-| Unit Tests      | `cargo test --lib`              |
-| Integration     | `cargo test --test '*'`         |
-| Python Gauntlet | `pytest tests/gauntlet_phase*/` |
+| Category        | Command                           | Purpose                   |
+| :-------------- | :-------------------------------- | :------------------------ |
+| Unit Tests      | `cargo test --lib`                | Pure logic, no OS mocking |
+| Integration     | `cargo test --test '*'`           | Real Zygotes/Workers      |
+| Property Tests  | `cargo test --test 'proptest*'`   | Randomized input fuzzing  |
+| Fuzz Tests      | `cargo fuzz run <target>`         | Crash/panic discovery     |
+| Golden Tests    | `pytest tests/regression/golden/` | Output stability          |
+| Perf Regression | `pytest tests/regression/perf/`   | Timing/memory baselines   |
+| Python Gauntlet | `pytest tests/gauntlet*/`         | End-to-end through tach   |
 
 ### Rust Unit Tests
 
@@ -8139,7 +8280,18 @@ cargo test --lib reporter::         # Progress bar/reporter
 ```bash
 cargo test --test '*'                                    # All
 cargo test --test phase4_integration                     # Specific test
+cargo test --test sandbox_enforcement                    # Sandbox only
+cargo test --test 'proptest*'                            # Property tests
 sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo)
+```
+
+### Fuzz Tests
+
+```bash
+# Requires nightly toolchain
+cargo +nightly fuzz run fuzz_config_toml -- -max_total_time=60
+cargo +nightly fuzz run fuzz_protocol_deserialize
+cargo +nightly fuzz run fuzz_scanner_paths
 ```
 
 ### Python Gauntlet Tests
@@ -8150,6 +8302,8 @@ pytest tests/gauntlet_db/ -v       # Database integration
 pytest tests/gauntlet_numpy/ -v    # NumPy compatibility
 pytest tests/gauntlet_coverage/ -v # Coverage tests
 pytest tests/gauntlet_phase*/ -v   # All phase tests
+pytest tests/gauntlet_012/ -v      # Version-specific (0.1.2)
+pytest tests/regression/ -v        # Regression suite
 ```
 
 **Jemalloc tests** (disabled by default for WSL2 stability):
@@ -8365,7 +8519,240 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 - [Troubleshooting](troubleshooting.md)
 - [API Reference](api-reference.md)
 
+
 ---
+
+
+# Python Compatibility
+
+This document describes Python version compatibility for Tach.
+
+---
+
+## Version Matrix
+
+| Python Version    | Status       | Notes                            |
+| :---------------- | :----------- | :------------------------------- |
+| **3.10**          | Supported    | Minimum supported version        |
+| **3.11**          | Supported    | Full feature support             |
+| **3.12**          | Supported    | Required for PEP 669 coverage    |
+| **3.13**          | Supported    | Includes mimalloc TLS handling   |
+| **3.13t**         | Experimental | Free-threading build (see below) |
+| **3.14**          | Untested     | Beta not yet available           |
+| **3.9 and below** | Unsupported  | May work but not tested          |
+
+### Feature Availability by Version
+
+| Feature                  | Minimum Version | Notes                                |
+| :----------------------- | :-------------- | :----------------------------------- |
+| Core test execution      | 3.10            | Basic functionality                  |
+| Zero-overhead coverage   | 3.12            | Uses PEP 669 (Low-Impact Monitoring) |
+| mimalloc TLS restoration | 3.13            | Self-calibrating offset discovery    |
+
+---
+
+## PyO3 Compatibility
+
+Tach uses [PyO3](https://pyo3.rs/) 0.27 for Rust-Python integration.
+
+### PyO3 0.27 Support Matrix
+
+| Implementation | Version              | Status            |
+| :------------- | :------------------- | :---------------- |
+| **CPython**    | 3.7+                 | Supported by PyO3 |
+| **PyPy**       | 7.3 (Python 3.11+)   | Experimental      |
+| **GraalPy**    | 24.0+ (Python 3.10+) | Untested          |
+
+> **Note**: While PyO3 supports CPython 3.7+, Tach requires Python 3.10+ for its own functionality.
+
+---
+
+## Alternative Python Implementations
+
+### PyPy (Experimental)
+
+PyPy is an alternative Python implementation with a JIT compiler. PyO3 0.27 provides experimental support for PyPy 7.3 (targeting Python 3.11+).
+
+**Current Status**: Untested with Tach.
+
+**Known Considerations**:
+
+- PyPy has a different memory model than CPython
+- The userfaultfd-based snapshot/restore may behave differently
+- C extension compatibility varies
+- JIT compilation may interact unexpectedly with Tach's isolation model
+
+**Recommendation**: PyPy support is experimental. If you need to test PyPy-based projects, consider using `--no-isolation` mode and report any issues encountered.
+
+### GraalPy
+
+GraalPy is the GraalVM-based Python implementation.
+
+**Current Status**: Untested with Tach.
+
+GraalPy has a fundamentally different runtime architecture that may not be compatible with Tach's low-level process manipulation.
+
+---
+
+## PEP 703: Free-Threading (No-GIL Python)
+
+### Overview
+
+[PEP 703](https://peps.python.org/pep-0703/) introduces a build configuration (`--disable-gil`) that allows CPython to run without the Global Interpreter Lock (GIL). This is available as an experimental feature starting with Python 3.13.
+
+Free-threaded Python builds are identified as `python3.13t` (the "t" suffix indicates free-threading).
+
+### Key Changes in Free-Threading Mode
+
+1. **No Global Interpreter Lock**: Multiple threads can execute Python bytecode simultaneously
+2. **Memory Model**: Uses biased reference counting instead of the traditional reference counting
+3. **Allocator**: Replaces pymalloc with mimalloc for thread-safe memory allocation
+4. **C Extensions**: Must explicitly declare thread-safety; otherwise, the GIL is re-enabled
+
+### Implications for Tach
+
+#### Worker Model Impact
+
+Tach's current architecture relies on several assumptions that may be affected:
+
+```mermaid
+flowchart TB
+    subgraph Current["CURRENT MODEL (GIL-based)"]
+        direction TB
+        A[Zygote Process] --> B[Fork Workers]
+        B --> C[Memory Snapshot]
+        C --> D[Test Execution]
+        D --> E[Memory Restore]
+
+        note1["GIL ensures single-threaded<br/>Python execution per process"]
+    end
+
+    subgraph FreeThreaded["FREE-THREADING CONSIDERATIONS"]
+        direction TB
+        F[Multiple Threads] --> G[Concurrent Execution]
+        G --> H[Memory Contention]
+        H --> I[Snapshot Complexity]
+
+        note2["No GIL means true<br/>concurrent Python threads"]
+    end
+```
+
+**Considerations**:
+
+| Aspect             | Current (GIL)              | Free-Threading                       |
+| :----------------- | :------------------------- | :----------------------------------- |
+| Thread Safety      | GIL serializes access      | Explicit synchronization required    |
+| Memory Snapshots   | Single-threaded state      | Must handle concurrent modifications |
+| Reference Counting | Simple increment/decrement | Biased reference counting            |
+| Allocator          | pymalloc/jemalloc          | mimalloc (thread-local)              |
+| C Extensions       | Assume GIL protection      | Must declare `Py_mod_gil`            |
+
+#### Specific Technical Concerns
+
+1. **Snapshot Timing**: Without the GIL, determining a safe point to capture memory state becomes more complex. Multiple threads may be modifying Python objects concurrently.
+
+2. **Reference Count Integrity**: The biased reference counting system in free-threaded Python uses deferred reference counting for some objects, which may affect snapshot consistency.
+
+3. **mimalloc Thread-Local State**: Free-threaded Python uses mimalloc with thread-local allocation buffers (TLABs). Tach already handles mimalloc TLS restoration for Python 3.13+, but concurrent thread allocation patterns may introduce new edge cases.
+
+4. **Extension Compatibility**: PyO3-based extensions (including Tach itself) must declare free-threading compatibility using `#[pymodule(gil_used = false)]` or the GIL will be re-enabled at runtime.
+
+#### Recommended Approach
+
+For free-threaded Python support in Tach:
+
+1. **Phase 1 (Current)**: Document implications and monitor Python 3.13t ecosystem maturity
+2. **Phase 2 (Future)**: Test basic functionality with `--no-isolation` mode
+3. **Phase 3 (Future)**: Investigate snapshot-safe synchronization primitives
+4. **Phase 4 (Future)**: Implement full free-threading support if demand exists
+
+### PyO3 Free-Threading Support
+
+PyO3 0.23+ provides experimental support for free-threaded Python:
+
+- Use `#[pymodule(gil_used = false)]` to declare thread-safety
+- Use `Py_GIL_DISABLED` for conditional compilation
+- Replace `static mut` with `PyOnceLock` or `Mutex` for shared state
+- abi3 (limited API) is not compatible with free-threading
+
+**Note**: Extensions that do not explicitly declare free-threading support will cause the interpreter to re-enable the GIL at runtime, effectively falling back to the traditional model.
+
+---
+
+## Python 3.14
+
+Python 3.14 was released in October 2025. Tach compatibility testing is ongoing.
+
+See the [Python release schedule](https://peps.python.org/pep-0745/) for current development status.
+
+---
+
+## Version Detection
+
+Tach automatically detects the Python version at runtime:
+
+```bash
+# Check Python version
+python --version
+
+# Verify Tach sees the correct Python
+./target/release/tach-core self-test
+```
+
+The `self-test` command reports the detected Python version and validates system compatibility.
+
+---
+
+## Troubleshooting
+
+### Wrong Python Version Detected
+
+If Tach uses the wrong Python version:
+
+1. Ensure `PYO3_PYTHON` is set during build:
+
+   ```bash
+   export PYO3_PYTHON=$(which python)
+   cargo build --release
+   ```
+
+2. Verify the virtual environment is active:
+   ```bash
+   source .venv/bin/activate
+   which python
+   ```
+
+### Coverage Not Working
+
+Coverage requires Python 3.12+ for PEP 669 support:
+
+```bash
+python --version  # Must be 3.12+
+./target/release/tach-core --coverage .
+```
+
+If using Python 3.10 or 3.11, coverage collection is disabled.
+
+### mimalloc Issues on Python 3.13+
+
+Python 3.13 switched from pymalloc to mimalloc. If you encounter memory-related issues:
+
+1. Verify Tach version supports Python 3.13
+2. Check for TLS restoration errors in verbose output (`-vv`)
+3. Report issues with detailed system information
+
+---
+
+## Related Documentation
+
+- [Development Guide](development.md) - Build and test instructions
+- [Configuration](configuration.md) - Runtime configuration options
+- [Troubleshooting](troubleshooting.md) - Common issues and solutions
+- [Architecture: Snapshot](architecture/snapshot.md) - Memory snapshot internals
+
+
+---
+
 
 # Troubleshooting Guide
 
@@ -8953,7 +9340,9 @@ When reporting issues, include:
 - [Sandbox](architecture/sandbox.md) - Security architecture
 - [Snapshot](architecture/snapshot.md) - Memory snapshot details
 
+
 ---
+
 
 # WSL2 Setup Guide for tach-core
 
@@ -9238,4 +9627,6 @@ cargo build
 - [Landlock Documentation](https://docs.kernel.org/userspace-api/landlock.html)
 - [userfaultfd Documentation](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)
 
+
 ---
+

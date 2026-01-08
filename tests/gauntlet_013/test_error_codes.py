@@ -66,7 +66,9 @@ class TestErrorMessageFormat:
         # Expected format: [E005] System Error: userfaultfd not available
         example_output = "[E005] System Error: userfaultfd not available"
         pattern = re.compile(r"^\[E\d{3}\] (User|System) Error: .+$")
-        assert pattern.match(example_output), "Error format does not match expected pattern"
+        assert pattern.match(
+            example_output
+        ), "Error format does not match expected pattern"
 
     def test_hint_format(self):
         """Hint lines should be properly indented."""
@@ -117,7 +119,9 @@ class TestErrorSuggestions:
 
     def test_landlock_suggestion(self):
         """E006 should mention kernel version requirement."""
-        suggestion = "Landlock requires kernel 5.13+. Running without filesystem isolation."
+        suggestion = (
+            "Landlock requires kernel 5.13+. Running without filesystem isolation."
+        )
         assert "5.13" in suggestion
         assert "filesystem isolation" in suggestion
 
@@ -138,7 +142,9 @@ class TestErrorSuggestions:
 
     def test_timeout_suggestion(self):
         """E010 should suggest timeout marker or optimization."""
-        suggestion = "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
+        suggestion = (
+            "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
+        )
         assert "timeout" in suggestion
         assert "optimize" in suggestion
 
@@ -148,17 +154,50 @@ class TestErrorCodeUniqueness:
 
     def test_all_codes_unique(self):
         """All error codes should be unique."""
-        codes = ["E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008", "E009", "E010"]
+        codes = [
+            "E001",
+            "E002",
+            "E003",
+            "E004",
+            "E005",
+            "E006",
+            "E007",
+            "E008",
+            "E009",
+            "E010",
+        ]
         assert len(codes) == len(set(codes)), "Duplicate error codes found"
 
     def test_code_count(self):
         """Should have exactly 10 error codes defined."""
-        codes = ["E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008", "E009", "E010"]
+        codes = [
+            "E001",
+            "E002",
+            "E003",
+            "E004",
+            "E005",
+            "E006",
+            "E007",
+            "E008",
+            "E009",
+            "E010",
+        ]
         assert len(codes) == 10, f"Expected 10 error codes, got {len(codes)}"
 
     def test_no_gaps_in_sequence(self):
         """Error codes should be sequential (E001-E010)."""
-        codes = ["E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008", "E009", "E010"]
+        codes = [
+            "E001",
+            "E002",
+            "E003",
+            "E004",
+            "E005",
+            "E006",
+            "E007",
+            "E008",
+            "E009",
+            "E010",
+        ]
         expected_nums = list(range(1, 11))
         actual_nums = [int(code[1:]) for code in codes]
         assert actual_nums == expected_nums, "Error codes have gaps in sequence"

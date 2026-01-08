@@ -118,7 +118,7 @@ static inline int _is_sideeffect_path(const char *path) {
     return (strncmp(path, "/tmp", 4) == 0 ||
             strncmp(path, "/var/tmp", 8) == 0 ||
             strncmp(path, "/dev/shm", 8) == 0 ||
-            (getenv("TACH_ISOLATE_HOME") && strncmp(path, getenv("HOME"), 
+            (getenv("TACH_ISOLATE_HOME") && strncmp(path, getenv("HOME"),
             strlen(getenv("HOME"))) == 0));
 }
 
@@ -460,7 +460,7 @@ use nix::sched::{clone, CloneFlags};
 use nix::unistd::{fork, ForkResult};
 use std::process::Command;
 
-pub fn spawn_worker(test_path: &str, worker_id: u32, snapshot: &PtraceSnapshot) 
+pub fn spawn_worker(test_path: &str, worker_id: u32, snapshot: &PtraceSnapshot)
 -> Result<u32, Box<dyn std::error::Error>>
 {
     // Namespace setup: must happen BEFORE clone
@@ -723,7 +723,7 @@ class TachPluginInterceptor:
                 self.recorder.record_runtest_setup(kwargs['item'])
 
             return result
-        
+
         # Replace the hook
         setattr(self.original_pluginmanager.hook, hook_name, wrapped_hook)
 

@@ -890,10 +890,10 @@ def derived_fixture(base_fixture, db):
 class TestMyClass:
     def test_method_one(self):
         pass
-    
+
     def test_method_two(self, db):
         pass
-    
+
     def helper_not_a_test(self):
         pass
 "#;
@@ -958,7 +958,7 @@ class MyClass:
 class TestWithSelf:
     def test_method(self, db, cache):
         pass
-    
+
     @classmethod
     def test_classmethod(cls, db):
         pass

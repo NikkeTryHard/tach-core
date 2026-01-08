@@ -10,8 +10,8 @@ Features:
 - Async/await features
 """
 
-import sys
 import os
+import sys
 
 
 class TestCoverageBackend:

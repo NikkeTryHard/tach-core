@@ -1,21 +1,14 @@
 # test_skip_xfail.py - Tests for pytest.fail, skip, xfail, importorskip compatibility
 # Tests the assertion helpers in tach_harness.py
 
-import sys
 import os
+import sys
 
 # Add src to path for importing tach_harness
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from tach_harness import (
-    SkipException,
-    XFailException,
-    fail,
-    skip,
-    xfail,
-    importorskip,
-    _parse_version,
-)
+from tach_harness import (SkipException, XFailException, _parse_version, fail,
+                          importorskip, skip, xfail)
 
 
 class TestFailFunction:

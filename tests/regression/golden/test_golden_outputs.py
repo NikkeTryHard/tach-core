@@ -32,7 +32,6 @@ from typing import Optional
 
 import pytest
 
-
 # Directory containing this test file
 TEST_DIR = Path(__file__).parent
 SNAPSHOTS_DIR = TEST_DIR / "snapshots"
@@ -151,10 +150,14 @@ def normalize_output(output: str, output_type: str = "stdout") -> str:
             sorted_matches = sorted(matches, key=lambda x: x[1])
             # Replace the testsuite content with sorted testcases
             # Find testsuite opening and closing
-            testsuite_match = re.search(r"(<testsuite[^>]*>)(.*?)(</testsuite>)", normalized, re.DOTALL)
+            testsuite_match = re.search(
+                r"(<testsuite[^>]*>)(.*?)(</testsuite>)", normalized, re.DOTALL
+            )
             if testsuite_match:
                 sorted_content = "".join(m[0] for m in sorted_matches)
-                normalized = testsuite_match.group(1) + sorted_content + testsuite_match.group(3)
+                normalized = (
+                    testsuite_match.group(1) + sorted_content + testsuite_match.group(3)
+                )
                 # Re-wrap in testsuites if present
                 if "<testsuites>" in output:
                     normalized = "<testsuites>" + normalized + "</testsuites>"
@@ -168,7 +171,14 @@ def normalize_output(output: str, output_type: str = "stdout") -> str:
 
         for line in lines:
             # Detect worker/zygote log lines that may appear in any order
-            is_worker_line = any(marker in line for marker in ["[zygote] Worker", "[zygote] Reusing", "[config] Set env:"])
+            is_worker_line = any(
+                marker in line
+                for marker in [
+                    "[zygote] Worker",
+                    "[zygote] Reusing",
+                    "[config] Set env:",
+                ]
+            )
 
             if is_worker_line:
                 in_worker_section = True
@@ -222,7 +232,9 @@ def normalize_output(output: str, output_type: str = "stdout") -> str:
     cleaned_lines = []
     for line in lines:
         # Strip progress indicators from beginning and end of log lines
-        if line.startswith("[") or any(line.startswith(prefix) for prefix in ["STDOUT:", "STDERR:", "RETURNCODE:"]):
+        if line.startswith("[") or any(
+            line.startswith(prefix) for prefix in ["STDOUT:", "STDERR:", "RETURNCODE:"]
+        ):
             cleaned_lines.append(line)
         else:
             # This might be a progress line - normalize dots/F patterns
@@ -358,7 +370,9 @@ def compare_or_update(
 
     # Read and compare
     if not golden_path.exists():
-        raise AssertionError(f"Golden file does not exist: {golden_path}\nRun with UPDATE_GOLDEN=1 to create it.\nActual output (normalized):\n{normalized_actual[:500]}...")
+        raise AssertionError(
+            f"Golden file does not exist: {golden_path}\nRun with UPDATE_GOLDEN=1 to create it.\nActual output (normalized):\n{normalized_actual[:500]}..."
+        )
 
     expected = golden_path.read_text(encoding="utf-8")
 
@@ -412,8 +426,12 @@ def compare_or_update(
 
             if actual_tests == expected_tests:
                 # Test names match, check overall structure
-                actual_counts = re.search(r'tests="(\d+)"[^>]*failures="(\d+)"', normalized_actual)
-                expected_counts = re.search(r'tests="(\d+)"[^>]*failures="(\d+)"', expected)
+                actual_counts = re.search(
+                    r'tests="(\d+)"[^>]*failures="(\d+)"', normalized_actual
+                )
+                expected_counts = re.search(
+                    r'tests="(\d+)"[^>]*failures="(\d+)"', expected
+                )
 
                 if actual_counts and expected_counts:
                     if actual_counts.groups() == expected_counts.groups():
@@ -423,7 +441,9 @@ def compare_or_update(
             extra = actual_tests - expected_tests
 
             if missing or extra:
-                raise AssertionError(f"JUnit test mismatch: {golden_path}\nRun with UPDATE_GOLDEN=1 to update.\n\n--- Missing tests: {missing}\n--- Extra tests: {extra}")
+                raise AssertionError(
+                    f"JUnit test mismatch: {golden_path}\nRun with UPDATE_GOLDEN=1 to update.\n\n--- Missing tests: {missing}\n--- Extra tests: {extra}"
+                )
             return
 
         # Find first difference for debugging
@@ -462,7 +482,9 @@ class TestGoldenOutputs:
     def setup_class(cls):
         """Verify tach-core binary exists before running tests."""
         if not TACH_BINARY.exists():
-            raise RuntimeError(f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build")
+            raise RuntimeError(
+                f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build"
+            )
 
     def test_gauntlet_stdout(self):
         """Test stdout output for gauntlet tests."""
@@ -561,4 +583,8 @@ class TestGoldenOutputs:
         # Verify output contains evidence of crash handling
         combined = stdout + stderr
         # Tach should report on crash tests, not die silently
-        assert "test_" in combined.lower() or "passed" in combined.lower() or "failed" in combined.lower(), "Output should contain test information"
+        assert (
+            "test_" in combined.lower()
+            or "passed" in combined.lower()
+            or "failed" in combined.lower()
+        ), "Output should contain test information"

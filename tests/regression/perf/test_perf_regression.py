@@ -30,7 +30,6 @@ from typing import Dict, Optional, Tuple
 
 import pytest
 
-
 # Directory containing this test file
 TEST_DIR = Path(__file__).parent
 BASELINES_DIR = TEST_DIR / "baselines"
@@ -41,7 +40,11 @@ TACH_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
 
 # Check for skip/update modes
 SKIP_PERF_TESTS = os.environ.get("SKIP_PERF_TESTS", "").lower() in ("1", "true", "yes")
-UPDATE_BASELINE = os.environ.get("UPDATE_PERF_BASELINE", "").lower() in ("1", "true", "yes")
+UPDATE_BASELINE = os.environ.get("UPDATE_PERF_BASELINE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # Thresholds
 TIMING_THRESHOLD = 0.10  # 10% slower triggers failure
@@ -180,19 +183,30 @@ def check_regression(
         Tuple of (is_ok, message)
     """
     if baseline < min_value:
-        return True, f"{name}: Baseline {metric} {baseline:.2f} below minimum {min_value}, skipping comparison"
+        return (
+            True,
+            f"{name}: Baseline {metric} {baseline:.2f} below minimum {min_value}, skipping comparison",
+        )
 
     if current <= baseline:
         pct_change = ((baseline - current) / baseline) * 100
-        return True, f"{name}: {metric} improved by {pct_change:.1f}% ({current:.2f} vs baseline {baseline:.2f})"
+        return (
+            True,
+            f"{name}: {metric} improved by {pct_change:.1f}% ({current:.2f} vs baseline {baseline:.2f})",
+        )
 
     pct_increase = ((current - baseline) / baseline) * 100
     allowed_pct = threshold * 100
 
     if pct_increase > allowed_pct:
-        return False, (f"{name}: {metric} regression detected!\n  Current:  {current:.2f}\n  Baseline: {baseline:.2f}\n  Increase: {pct_increase:.1f}% (threshold: {allowed_pct:.0f}%)")
+        return False, (
+            f"{name}: {metric} regression detected!\n  Current:  {current:.2f}\n  Baseline: {baseline:.2f}\n  Increase: {pct_increase:.1f}% (threshold: {allowed_pct:.0f}%)"
+        )
 
-    return True, f"{name}: {metric} within threshold ({pct_increase:.1f}% < {allowed_pct:.0f}%)"
+    return (
+        True,
+        f"{name}: {metric} within threshold ({pct_increase:.1f}% < {allowed_pct:.0f}%)",
+    )
 
 
 # =============================================================================
@@ -229,7 +243,9 @@ class TestTimingRegression:
     def setup_class(cls):
         """Verify tach-core binary exists before running tests."""
         if not TACH_BINARY.exists():
-            raise RuntimeError(f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build")
+            raise RuntimeError(
+                f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build"
+            )
         cls.baselines = load_baselines(cls.BASELINES_FILE)
         cls.new_measurements = {}
 
@@ -266,7 +282,9 @@ class TestTimingRegression:
 
         # Check against baseline
         if name not in self.baselines:
-            pytest.skip(f"No timing baseline for {name}. Run with UPDATE_PERF_BASELINE=1")
+            pytest.skip(
+                f"No timing baseline for {name}. Run with UPDATE_PERF_BASELINE=1"
+            )
 
         baseline = self.baselines[name]["timing_ms"]
         is_ok, message = check_regression(
@@ -291,7 +309,9 @@ class TestMemoryRegression:
     def setup_class(cls):
         """Verify tach-core binary exists before running tests."""
         if not TACH_BINARY.exists():
-            raise RuntimeError(f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build")
+            raise RuntimeError(
+                f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build"
+            )
         cls.baselines = load_baselines(cls.BASELINES_FILE)
         cls.new_measurements = {}
 
@@ -323,12 +343,16 @@ class TestMemoryRegression:
         }
 
         if UPDATE_BASELINE:
-            print(f"[perf] Recorded memory for {name}: {measurement.memory_kb:.2f}KB ({measurement.memory_kb / 1024:.2f}MB)")
+            print(
+                f"[perf] Recorded memory for {name}: {measurement.memory_kb:.2f}KB ({measurement.memory_kb / 1024:.2f}MB)"
+            )
             return
 
         # Check against baseline
         if name not in self.baselines:
-            pytest.skip(f"No memory baseline for {name}. Run with UPDATE_PERF_BASELINE=1")
+            pytest.skip(
+                f"No memory baseline for {name}. Run with UPDATE_PERF_BASELINE=1"
+            )
 
         baseline = self.baselines[name]["memory_kb"]
         is_ok, message = check_regression(
@@ -369,7 +393,9 @@ class TestCombinedPerf:
             if name in memory_baselines:
                 memory = memory_baselines[name]
                 mem_mb = memory["memory_kb"] / 1024
-                print(f"  Memory: {memory['memory_kb']:.2f}KB ({mem_mb:.2f}MB) (baseline)")
+                print(
+                    f"  Memory: {memory['memory_kb']:.2f}KB ({mem_mb:.2f}MB) (baseline)"
+                )
 
             if name not in timing_baselines and name not in memory_baselines:
                 print("  (no baselines recorded)")

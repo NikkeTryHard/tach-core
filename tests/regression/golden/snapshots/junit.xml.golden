@@ -1,7 +1,7 @@
 <testsuites><testsuites><testcase name="test_fs_destruction" classname="test_fs_destruction" time="{DURATION}"><failure message="Test failed">def test_fs_destruction():
         """Attempt hostile operations - should be blocked by Iron Dome."""
         errors = []
-    
+
         # 1. Try to write to /etc/passwd - MUST FAIL (RO filesystem)
         try:
             with open("/etc/passwd", "a") as f:
@@ -10,7 +10,7 @@
         except OSError as e:
             # Expected: "Read-only file system" or "Permission denied"
             print(f"GOOD: /etc/passwd protected: {e}")
-    
+
         # 2. Write to /tmp - MUST SUCCEED (overlay)
         try:
             with open("/tmp/survivor.txt", "w") as f:
@@ -18,7 +18,7 @@
             print("GOOD: /tmp is writable")
         except OSError as e:
             errors.append(f"ERROR: /tmp not writable: {e}")
-    
+
         # 3. Write to CWD (project root) - MUST SUCCEED (overlay)
         try:
             with open("test_output.txt", "w") as f:
@@ -27,7 +27,7 @@
             os.remove("test_output.txt")
         except OSError as e:
             errors.append(f"ERROR: CWD not writable: {e}")
-    
+
         # Report all errors
         if errors:
             for err in errors:
@@ -46,12 +46,12 @@ E       assert False
 tests/gauntlet/test_segfault.py:15: AssertionError</failure></testcase><testcase name="test_port_00" classname="test_port_00" time="{DURATION}"><failure message="Test failed">def test_port_00():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:23: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:23:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -75,12 +75,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_01" classname="test_port_01" time="{DURATION}"><failure message="Test failed">def test_port_01():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:27: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:27:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -104,12 +104,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_02" classname="test_port_02" time="{DURATION}"><failure message="Test failed">def test_port_02():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:31: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:31:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -133,12 +133,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_03" classname="test_port_03" time="{DURATION}"><failure message="Test failed">def test_port_03():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:35: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:35:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -162,12 +162,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_04" classname="test_port_04" time="{DURATION}"><failure message="Test failed">def test_port_04():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:39: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:39:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -191,12 +191,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_05" classname="test_port_05" time="{DURATION}"><failure message="Test failed">def test_port_05():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:43: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:43:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -220,12 +220,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_06" classname="test_port_06" time="{DURATION}"><failure message="Test failed">def test_port_06():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:47: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:47:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -249,12 +249,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_07" classname="test_port_07" time="{DURATION}"><failure message="Test failed">def test_port_07():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:51: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:51:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -278,12 +278,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_08" classname="test_port_08" time="{DURATION}"><failure message="Test failed">def test_port_08():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:55: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:55:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -307,12 +307,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_09" classname="test_port_09" time="{DURATION}"><failure message="Test failed">def test_port_09():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:59: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:59:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -336,12 +336,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_10" classname="test_port_10" time="{DURATION}"><failure message="Test failed">def test_port_10():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:63: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:63:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -365,12 +365,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_11" classname="test_port_11" time="{DURATION}"><failure message="Test failed">def test_port_11():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:67: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:67:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -394,12 +394,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_12" classname="test_port_12" time="{DURATION}"><failure message="Test failed">def test_port_12():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:71: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:71:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -423,12 +423,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_13" classname="test_port_13" time="{DURATION}"><failure message="Test failed">def test_port_13():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:75: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -452,12 +452,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_14" classname="test_port_14" time="{DURATION}"><failure message="Test failed">def test_port_14():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:79: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:79:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -481,12 +481,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_15" classname="test_port_15" time="{DURATION}"><failure message="Test failed">def test_port_15():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:83: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:83:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -510,12 +510,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_16" classname="test_port_16" time="{DURATION}"><failure message="Test failed">def test_port_16():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:87: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:87:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -539,12 +539,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_17" classname="test_port_17" time="{DURATION}"><failure message="Test failed">def test_port_17():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:91: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:91:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -568,12 +568,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_18" classname="test_port_18" time="{DURATION}"><failure message="Test failed">def test_port_18():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:95: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:95:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;
@@ -597,12 +597,12 @@ E       PermissionError: [Errno 1] Operation not permitted
 /usr/lib/python3.12/socket.py:233: PermissionError</failure></testcase><testcase name="test_port_19" classname="test_port_19" time="{DURATION}"><failure message="Test failed">def test_port_19():
 &gt;       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:99: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:99:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = &lt;socket.socket fd=-1, family=0, type=0, proto=0&gt;
 family = &lt;AddressFamily.AF_INET: 2&gt;, type = &lt;SocketKind.SOCK_STREAM: 1&gt;

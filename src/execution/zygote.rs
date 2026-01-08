@@ -542,12 +542,12 @@ import sys
 
 try:
     import django
-    
+
     # Check if DJANGO_SETTINGS_MODULE is already set
     if 'DJANGO_SETTINGS_MODULE' in os.environ:
         django.setup()
         print(f'[zygote] Django initialized: {os.environ["DJANGO_SETTINGS_MODULE"]}', file=sys.stderr)
-        
+
         # CRITICAL: Warm up DB connections before forking
         # File descriptors must exist in Zygote to be inherited by workers
         try:

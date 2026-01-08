@@ -14,7 +14,6 @@ Directory structure:
 
 import pytest
 
-
 # This file tests nested conftest fixture inheritance
 # The fixtures used here are defined in the conftest.py files
 

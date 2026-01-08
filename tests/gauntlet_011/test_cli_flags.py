@@ -11,8 +11,8 @@ Tests for the new CLI flags introduced in 0.1.1:
 import os
 import subprocess
 import sys
-import pytest
 
+import pytest
 
 # Get the path to the tach-core binary
 TACH_BINARY = os.path.join(
@@ -38,7 +38,9 @@ def run_tach(*args, check=True, capture_stderr=True):
         check=False,
     )
     if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, result.stdout, result.stderr
+        )
     # Combine stdout and stderr for easier testing
     output = result.stderr if capture_stderr else result.stdout
     return output, result.returncode
@@ -165,7 +167,9 @@ class TestFlagCombinations:
 
     def test_l_dry_run_with_json_format(self):
         """Verify --dry-run works with --format json."""
-        output, code = run_tach("--dry-run", "--format", "json", "tests/gauntlet_011", capture_stderr=False)
+        output, code = run_tach(
+            "--dry-run", "--format", "json", "tests/gauntlet_011", capture_stderr=False
+        )
         # JSON goes to stdout
         print(output, file=sys.stderr)
 

@@ -7,7 +7,6 @@ Decorated tests with @pytest.mark.* or custom decorators should be found.
 
 import pytest
 
-
 # =============================================================================
 # Basic pytest.mark decorators
 # =============================================================================

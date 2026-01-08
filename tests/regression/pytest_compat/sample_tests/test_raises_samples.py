@@ -10,7 +10,6 @@ Test naming convention:
 
 import pytest
 
-
 # =============================================================================
 # Tests that should PASS (exception is correctly raised and caught)
 # =============================================================================

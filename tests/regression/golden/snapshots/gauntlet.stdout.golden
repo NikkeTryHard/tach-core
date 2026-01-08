@@ -234,12 +234,12 @@ test_port_05
 def test_port_05():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:43: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:43:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -257,12 +257,12 @@ test_port_04
 def test_port_04():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:39: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:39:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -280,12 +280,12 @@ test_port_01
 def test_port_01():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:27: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:27:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -303,12 +303,12 @@ test_port_02
 def test_port_02():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:31: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:31:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -326,12 +326,12 @@ test_port_00
 def test_port_00():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:23: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:23:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -349,12 +349,12 @@ test_port_07
 def test_port_07():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:51: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:51:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -372,12 +372,12 @@ test_port_06
 def test_port_06():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:47: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:47:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -395,12 +395,12 @@ test_port_08
 def test_port_08():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:55: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:55:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -418,12 +418,12 @@ test_port_03
 def test_port_03():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:35: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:35:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -441,12 +441,12 @@ test_port_09
 def test_port_09():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:59: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:59:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -464,12 +464,12 @@ test_port_10
 def test_port_10():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:63: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:63:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -487,12 +487,12 @@ test_port_11
 def test_port_11():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:67: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:67:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -510,12 +510,12 @@ test_port_12
 def test_port_12():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:71: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:71:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -533,12 +533,12 @@ test_port_13
 def test_port_13():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:75: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -556,12 +556,12 @@ test_port_14
 def test_port_14():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:79: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:79:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -579,12 +579,12 @@ test_port_15
 def test_port_15():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:83: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:83:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -602,12 +602,12 @@ test_port_16
 def test_port_16():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:87: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:87:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -625,12 +625,12 @@ test_port_17
 def test_port_17():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:91: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:91:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -648,12 +648,12 @@ test_port_18
 def test_port_18():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:95: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:95:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -671,12 +671,12 @@ test_port_19
 def test_port_19():
 >       _bind_port_8080()
 
-tests/gauntlet/test_port_storm.py:99: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gauntlet/test_port_storm.py:99:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/gauntlet/test_port_storm.py:13: in _bind_port_8080
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <socket.socket fd=-1, family=0, type=0, proto=0>
 family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
@@ -694,7 +694,7 @@ test_fs_destruction
 def test_fs_destruction():
         """Attempt hostile operations - should be blocked by Iron Dome."""
         errors = []
-    
+
         # 1. Try to write to /etc/passwd - MUST FAIL (RO filesystem)
         try:
             with open("/etc/passwd", "a") as f:
@@ -703,7 +703,7 @@ def test_fs_destruction():
         except OSError as e:
             # Expected: "Read-only file system" or "Permission denied"
             print(f"GOOD: /etc/passwd protected: {e}")
-    
+
         # 2. Write to /tmp - MUST SUCCEED (overlay)
         try:
             with open("/tmp/survivor.txt", "w") as f:

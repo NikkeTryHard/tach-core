@@ -10,11 +10,10 @@ The --diagnose flag runs comprehensive system diagnostics:
 - Performance: Snapshot/restore cycle, Fork overhead
 """
 
-import subprocess
-import sys
 import os
 import re
-
+import subprocess
+import sys
 
 # =============================================================================
 # Binary Path Helper
@@ -84,7 +83,13 @@ class TestDiagnoseOutput:
     def test_diagnose_expected_sections(self):
         """Diagnostic output should include key sections."""
         # These are the expected section names in the formatted output
-        expected_sections = ["System", "Kernel", "Architecture", "Capabilities", "Python"]
+        expected_sections = [
+            "System",
+            "Kernel",
+            "Architecture",
+            "Capabilities",
+            "Python",
+        ]
         for section in expected_sections:
             # Validate the section names are reasonable strings
             assert isinstance(section, str) and len(section) > 0
@@ -129,7 +134,13 @@ class TestDiagnoseChecks:
         import platform
 
         arch = platform.machine()
-        assert arch in ["x86_64", "aarch64", "arm64", "i686", "i386"], f"Unexpected architecture: {arch}"
+        assert arch in [
+            "x86_64",
+            "aarch64",
+            "arm64",
+            "i686",
+            "i386",
+        ], f"Unexpected architecture: {arch}"
 
     def test_python_version_detection(self):
         """Python version should be detectable."""
@@ -186,11 +197,15 @@ class TestDiagnoseVsSelfTest:
             pytest.skip("tach-core binary not built")
 
         # --diagnose should work
-        result_diagnose = subprocess.run([binary, "--diagnose"], capture_output=True, timeout=30)
+        result_diagnose = subprocess.run(
+            [binary, "--diagnose"], capture_output=True, timeout=30
+        )
         assert result_diagnose.returncode in [0, 1]
 
         # self-test subcommand should work
-        result_selftest = subprocess.run([binary, "self-test"], capture_output=True, timeout=30)
+        result_selftest = subprocess.run(
+            [binary, "self-test"], capture_output=True, timeout=30
+        )
         assert result_selftest.returncode in [0, 1]
 
     def test_diagnose_has_categorized_sections(self):

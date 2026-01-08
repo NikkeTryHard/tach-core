@@ -8,7 +8,6 @@ both when run through pytest directly and through tach.
 
 import pytest
 
-
 # =============================================================================
 # Basic Exception Capture
 # =============================================================================

@@ -11,8 +11,8 @@ import os
 import subprocess
 import sys
 import tempfile
-import pytest
 
+import pytest
 
 # Path to tach-core binary
 TACH_BINARY = os.path.join(
@@ -28,7 +28,9 @@ def run_tach(*args, check=True, cwd=None):
     env = os.environ.copy()
     env["PYO3_PYTHON"] = sys.executable
     cmd = [TACH_BINARY] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False, cwd=cwd)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, env=env, check=False, cwd=cwd
+    )
     return result.stdout, result.stderr, result.returncode
 
 
@@ -43,11 +45,13 @@ class TestSymlinkDiscovery:
 
         # Create a simple test file
         test_file = real_dir / "test_example.py"
-        test_file.write_text('''
+        test_file.write_text(
+            '''
 def test_from_symlink():
     """Test discovered through symlink."""
     assert True
-''')
+'''
+        )
 
         # Create a symlink to the directory
         symlink_dir = tmp_path / "symlink_tests"
@@ -59,17 +63,21 @@ def test_from_symlink():
 
         # Should find the test
         assert code == 0, f"tach list should succeed, got: {output}"
-        assert "test_from_symlink" in output, f"Should find test through symlink: {output}"
+        assert (
+            "test_from_symlink" in output
+        ), f"Should find test through symlink: {output}"
 
     def test_b_discover_symlinked_file(self, tmp_path):
         """Test that symlinked test files are discovered."""
         # Create a real test file
         real_file = tmp_path / "real_test.py"
-        real_file.write_text('''
+        real_file.write_text(
+            '''
 def test_symlinked_file():
     """Test in a symlinked file."""
     assert True
-''')
+'''
+        )
 
         # Create a test directory with a symlink to the file
         test_dir = tmp_path / "tests"
@@ -83,7 +91,9 @@ def test_symlinked_file():
 
         # Should find the test
         assert code == 0, f"tach list should succeed: {output}"
-        assert "test_symlinked_file" in output, f"Should find symlinked test file: {output}"
+        assert (
+            "test_symlinked_file" in output
+        ), f"Should find symlinked test file: {output}"
 
     def test_c_nested_symlinks(self, tmp_path):
         """Test discovery with nested directory structures containing symlinks."""
@@ -95,11 +105,13 @@ def test_symlinked_file():
 
         # Create test file in nested dir
         test_file = nested / "test_nested.py"
-        test_file.write_text('''
+        test_file.write_text(
+            '''
 def test_in_nested():
     """Test in nested directory."""
     assert True
-''')
+'''
+        )
 
         # Create symlink at top level pointing to base
         symlink = tmp_path / "link_to_base"
@@ -110,7 +122,9 @@ def test_in_nested():
         output = stdout + stderr
 
         assert code == 0, f"Should succeed: {output}"
-        assert "test_in_nested" in output, f"Should find test in nested symlinked dir: {output}"
+        assert (
+            "test_in_nested" in output
+        ), f"Should find test in nested symlinked dir: {output}"
 
 
 class TestSymlinkEdgeCases:
@@ -127,10 +141,12 @@ class TestSymlinkEdgeCases:
 
         # Create a valid test file
         valid = test_dir / "test_valid.py"
-        valid.write_text("""
+        valid.write_text(
+            """
 def test_valid():
     assert True
-""")
+"""
+        )
 
         # Run tach list - should not crash
         stdout, stderr, code = run_tach("list", cwd=str(test_dir))
@@ -151,14 +167,18 @@ def test_valid():
 
         # Create a valid test
         valid = test_dir / "test_circular.py"
-        valid.write_text("""
+        valid.write_text(
+            """
 def test_with_circular_link():
     assert True
-""")
+"""
+        )
 
         # Run tach list - should complete without hanging
         stdout, stderr, code = run_tach("list", cwd=str(test_dir))
         output = stdout + stderr
 
         # Should succeed (may warn but shouldn't crash or hang)
-        assert "test_with_circular_link" in output or code == 0, f"Should handle circular symlinks: {output}"
+        assert (
+            "test_with_circular_link" in output or code == 0
+        ), f"Should handle circular symlinks: {output}"
