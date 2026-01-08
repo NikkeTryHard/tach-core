@@ -211,3 +211,7 @@ path = "rust_tests/kernel_compat_tests.rs"
 [[test]]
 name = "traceback_format_tests"
 path = "rust_tests/traceback_format_tests.rs"
+
+[[test]]
+name = "timeout_behavior_tests"
+path = "rust_tests/timeout_behavior_tests.rs"
