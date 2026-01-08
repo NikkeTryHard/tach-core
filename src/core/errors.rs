@@ -594,6 +594,36 @@ pub mod error_codes {
 
     /// Timeout exceeded.
     pub const E010: &str = "E010";
+
+    /// OverlayFS mount failed.
+    pub const E011: &str = "E011";
+
+    /// Python binary/version mismatch.
+    pub const E012: &str = "E012";
+
+    /// Namespace creation failed.
+    pub const E013: &str = "E013";
+
+    /// Worker crash (SIGSEGV/SIGBUS).
+    pub const E014: &str = "E014";
+
+    /// IPC channel failure.
+    pub const E015: &str = "E015";
+
+    /// Snapshot integrity failure.
+    pub const E016: &str = "E016";
+
+    /// Syntax error in test file.
+    pub const E017: &str = "E017";
+
+    /// Circular fixture dependency.
+    pub const E018: &str = "E018";
+
+    /// Skipped test (info, not error).
+    pub const E019: &str = "E019";
+
+    /// Xfail test (expected failure).
+    pub const E020: &str = "E020";
 }
 
 /// Categorized error with error code for user-facing output.
@@ -783,6 +813,141 @@ impl CategorizedError {
             ErrorCategory::System,
             message,
             Some("Increase ulimit with: ulimit -n 65536".to_string()),
+        )
+    }
+
+    // =========================================================================
+    // Extended System Error Constructors (E011-E016)
+    // =========================================================================
+
+    /// E011: OverlayFS mount failed.
+    pub fn overlayfs_mount_failed(reason: &str) -> Self {
+        Self::new(
+            error_codes::E011,
+            ErrorCategory::System,
+            format!("OverlayFS mount failed: {}", reason),
+            Some(
+                "Ensure overlayfs kernel module is loaded and you have mount permissions"
+                    .to_string(),
+            ),
+        )
+    }
+
+    /// E012: Python binary/version mismatch.
+    pub fn python_version_mismatch(expected: &str, actual: &str) -> Self {
+        Self::new(
+            error_codes::E012,
+            ErrorCategory::User,
+            format!(
+                "Python version mismatch: expected {}, found {}",
+                expected, actual
+            ),
+            Some("Set PYO3_PYTHON to point to the correct Python binary".to_string()),
+        )
+    }
+
+    /// E013: Namespace creation failed.
+    pub fn namespace_creation_failed(namespace: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E013,
+            ErrorCategory::System,
+            format!("Failed to create {} namespace: {}", namespace, reason),
+            Some("Check kernel config for namespace support or run with CAP_SYS_ADMIN".to_string()),
+        )
+    }
+
+    /// E014: Worker crash (SIGSEGV/SIGBUS).
+    pub fn worker_crashed(pid: i32, signal: i32, signal_name: &str) -> Self {
+        Self::new(
+            error_codes::E014,
+            ErrorCategory::System,
+            format!(
+                "Worker {} crashed with signal {} ({})",
+                pid, signal, signal_name
+            ),
+            Some(
+                "Check for memory corruption, C extension bugs, or insufficient stack size"
+                    .to_string(),
+            ),
+        )
+    }
+
+    /// E015: IPC channel failure.
+    pub fn ipc_channel_failure(pid: i32, reason: &str) -> Self {
+        Self::new(
+            error_codes::E015,
+            ErrorCategory::System,
+            format!("IPC channel to worker {} failed: {}", pid, reason),
+            Some(
+                "Worker may have crashed or IPC buffer exhausted. Try reducing parallelism."
+                    .to_string(),
+            ),
+        )
+    }
+
+    /// E016: Snapshot integrity failure.
+    pub fn snapshot_integrity_failure(reason: &str) -> Self {
+        Self::new(
+            error_codes::E016,
+            ErrorCategory::System,
+            format!("Snapshot integrity check failed: {}", reason),
+            Some(
+                "Memory state corrupted. This is an internal error. Please report a bug."
+                    .to_string(),
+            ),
+        )
+    }
+
+    // =========================================================================
+    // Extended User Error Constructors (E017-E020)
+    // =========================================================================
+
+    /// E017: Syntax error in test file.
+    pub fn syntax_error(path: &str, line: Option<u32>, reason: &str) -> Self {
+        let message = if let Some(line_num) = line {
+            format!("Syntax error in {} at line {}: {}", path, line_num, reason)
+        } else {
+            format!("Syntax error in {}: {}", path, reason)
+        };
+        Self::new(
+            error_codes::E017,
+            ErrorCategory::User,
+            message,
+            Some("Fix the syntax error in the test file".to_string()),
+        )
+    }
+
+    /// E018: Circular fixture dependency.
+    pub fn circular_fixture_dependency(fixture: &str, cycle: &[String]) -> Self {
+        Self::new(
+            error_codes::E018,
+            ErrorCategory::User,
+            format!(
+                "Circular dependency detected for fixture '{}': {}",
+                fixture,
+                cycle.join(" -> ")
+            ),
+            Some("Refactor fixtures to break the circular dependency".to_string()),
+        )
+    }
+
+    /// E019: Skipped test (info, not error).
+    pub fn test_skipped(test_name: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E019,
+            ErrorCategory::User,
+            format!("Test '{}' skipped: {}", test_name, reason),
+            None, // No suggestion needed for skipped tests
+        )
+    }
+
+    /// E020: Xfail test (expected failure).
+    pub fn test_xfail(test_name: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E020,
+            ErrorCategory::User,
+            format!("Test '{}' expected to fail: {}", test_name, reason),
+            None, // No suggestion needed for expected failures
         )
     }
 
@@ -1222,6 +1387,16 @@ mod tests {
         assert_eq!(error_codes::E008, "E008");
         assert_eq!(error_codes::E009, "E009");
         assert_eq!(error_codes::E010, "E010");
+        assert_eq!(error_codes::E011, "E011");
+        assert_eq!(error_codes::E012, "E012");
+        assert_eq!(error_codes::E013, "E013");
+        assert_eq!(error_codes::E014, "E014");
+        assert_eq!(error_codes::E015, "E015");
+        assert_eq!(error_codes::E016, "E016");
+        assert_eq!(error_codes::E017, "E017");
+        assert_eq!(error_codes::E018, "E018");
+        assert_eq!(error_codes::E019, "E019");
+        assert_eq!(error_codes::E020, "E020");
     }
 
     // =========================================================================

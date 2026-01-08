@@ -46,6 +46,46 @@ use std::time::{Duration, Instant};
 // Diagnostic Result Types
 // =============================================================================
 
+/// Remediation information for a failed diagnostic check.
+///
+/// Provides actionable steps to fix a failed diagnostic, including
+/// optional commands to run and documentation links.
+#[derive(Debug, Clone)]
+pub struct Remediation {
+    /// Shell command to fix the issue (if applicable).
+    pub command: Option<String>,
+    /// URL to relevant documentation.
+    pub docs_url: Option<String>,
+    /// Human-readable explanation of how to fix the issue.
+    pub explanation: String,
+}
+
+impl Remediation {
+    /// Create a new remediation with just an explanation.
+    pub fn new(explanation: impl Into<String>) -> Self {
+        Self {
+            command: None,
+            docs_url: None,
+            explanation: explanation.into(),
+        }
+    }
+
+    /// Create a remediation with a command to run.
+    pub fn with_command(explanation: impl Into<String>, command: impl Into<String>) -> Self {
+        Self {
+            command: Some(command.into()),
+            docs_url: None,
+            explanation: explanation.into(),
+        }
+    }
+
+    /// Add a documentation URL.
+    pub fn with_docs_url(mut self, url: impl Into<String>) -> Self {
+        self.docs_url = Some(url.into());
+        self
+    }
+}
+
 /// Result of a single diagnostic check
 #[derive(Debug, Clone)]
 pub struct DiagnosticResult {
@@ -59,6 +99,8 @@ pub struct DiagnosticResult {
     pub details: Option<String>,
     /// Is this check required for Tach to function?
     pub required: bool,
+    /// Remediation steps for failed checks
+    pub remediation: Option<Remediation>,
 }
 
 impl DiagnosticResult {
@@ -70,6 +112,7 @@ impl DiagnosticResult {
             message: message.into(),
             details: None,
             required: true,
+            remediation: None,
         }
     }
 
@@ -81,6 +124,7 @@ impl DiagnosticResult {
             message: message.into(),
             details: None,
             required: true,
+            remediation: None,
         }
     }
 
@@ -92,12 +136,19 @@ impl DiagnosticResult {
             message: message.into(),
             details: None,
             required: false,
+            remediation: None,
         }
     }
 
     /// Add details to the result
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
         self.details = Some(details.into());
+        self
+    }
+
+    /// Add remediation steps to the result
+    pub fn with_remediation(mut self, remediation: Remediation) -> Self {
+        self.remediation = Some(remediation);
         self
     }
 
@@ -162,6 +213,18 @@ impl DiagnosticReport {
             if let Some(details) = &result.details {
                 for line in details.lines() {
                     eprintln!("       {}", line);
+                }
+            }
+            // Print remediation info for failed checks
+            if !result.passed {
+                if let Some(remediation) = &result.remediation {
+                    eprintln!("       Remediation: {}", remediation.explanation);
+                    if let Some(cmd) = &remediation.command {
+                        eprintln!("       Command: {}", cmd);
+                    }
+                    if let Some(url) = &remediation.docs_url {
+                        eprintln!("       Docs: {}", url);
+                    }
                 }
             }
         }
@@ -271,14 +334,12 @@ pub fn check_userfaultfd() -> DiagnosticResult {
                 // Check if we can still use it via CAP_SYS_PTRACE
                 match try_create_userfaultfd() {
                     Ok(_) => DiagnosticResult::pass("userfaultfd", "Enabled via CAP_SYS_PTRACE"),
-                    Err(_) => DiagnosticResult::fail(
-                        "userfaultfd",
-                        "Disabled (sysctl=0, no CAP_SYS_PTRACE)",
-                    )
-                    .with_details(
-                        "Fix: sudo sysctl vm.unprivileged_userfaultfd=1\n\
+                    Err(_) => DiagnosticResult::fail("userfaultfd", "Disabled (sysctl=0, no CAP_SYS_PTRACE)")
+                        .with_details(
+                            "Fix: sudo sysctl vm.unprivileged_userfaultfd=1\n\
                          Or: Run with CAP_SYS_PTRACE capability",
-                    ),
+                        )
+                        .with_remediation(Remediation::with_command("Enable unprivileged userfaultfd to allow memory snapshots", "sudo sysctl -w vm.unprivileged_userfaultfd=1").with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005")),
                 }
             }
         }
@@ -286,7 +347,16 @@ pub fn check_userfaultfd() -> DiagnosticResult {
             // Sysctl file doesn't exist, try direct creation
             match try_create_userfaultfd() {
                 Ok(_) => DiagnosticResult::pass("userfaultfd", "Available (direct syscall)"),
-                Err(e) => DiagnosticResult::fail("userfaultfd", format!("Unavailable: {}", e)),
+                Err(e) => DiagnosticResult::fail("userfaultfd", format!("Unavailable: {}", e))
+                    .with_remediation(
+                    Remediation::with_command(
+                        "Enable unprivileged userfaultfd to allow memory snapshots",
+                        "sudo sysctl -w vm.unprivileged_userfaultfd=1",
+                    )
+                    .with_docs_url(
+                        "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005",
+                    ),
+                ),
             }
         }
     }
@@ -769,6 +839,19 @@ fn print_diagnose_line(prefix: &str, result: &DiagnosticResult) {
         "!"
     };
     eprintln!("{}: {} ({})", prefix, result.message, icon);
+
+    // Print remediation info for failed checks
+    if !result.passed {
+        if let Some(remediation) = &result.remediation {
+            eprintln!("       Remediation: {}", remediation.explanation);
+            if let Some(cmd) = &remediation.command {
+                eprintln!("       Command: {}", cmd);
+            }
+            if let Some(url) = &remediation.docs_url {
+                eprintln!("       Docs: {}", url);
+            }
+        }
+    }
 }
 
 // =============================================================================

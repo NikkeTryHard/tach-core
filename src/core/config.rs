@@ -255,6 +255,20 @@ pub struct Cli {
     #[arg(long)]
     pub diagnose: bool,
 
+    /// Enable debug logging (verbose syscall traces).
+    ///
+    /// Enables detailed debug output including syscall traces, worker
+    /// lifecycle events, and IPC message logging. Useful for troubleshooting.
+    #[arg(long)]
+    pub debug: bool,
+
+    /// Enable trace logging (maximum verbosity).
+    ///
+    /// Enables maximum verbosity including all debug output plus memory
+    /// operations, snapshot details, and internal state dumps.
+    #[arg(long)]
+    pub trace: bool,
+
     // =========================================================================
     // Dry Run / Collect Only (pytest compatible)
     // =========================================================================
