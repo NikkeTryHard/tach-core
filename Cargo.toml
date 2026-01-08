@@ -215,3 +215,7 @@ path = "rust_tests/traceback_format_tests.rs"
 [[test]]
 name = "timeout_behavior_tests"
 path = "rust_tests/timeout_behavior_tests.rs"
+
+[[test]]
+name = "filter_expression_tests"
+path = "rust_tests/filter_expression_tests.rs"
