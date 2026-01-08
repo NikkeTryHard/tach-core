@@ -26,7 +26,9 @@ The "Kineton" architecture treats tests as content-addressable execution units.
 
 ### Static Discovery
 
-Tach uses `ruff_python_parser` for AST-based test discovery without executing Python:
+Tach uses `rustpython-parser` for AST-based test discovery without executing Python.
+
+> **Implementation Note:** Tach uses `rustpython-parser` for AST analysis. Research papers referenced `ruff_python_parser` as an alternative approach.
 
 > Source: "ruff_python_parser, the Rust-based parsing engine powering the Ruff linter. This parser is designed for extreme performance, capable of processing gigabytes of source code per second" -- _Rust-CPython Execution Blueprint Research_
 
@@ -142,7 +144,7 @@ The CHANGELOG maps research concepts to version milestones:
 
 ### 0.1.x - Kineton Foundation (Current)
 
-- `ruff_python_parser` for static AST analysis
+- `rustpython-parser` for static AST analysis
 - Fixture dependency graph construction
 - Zygote fork-server pattern
 
@@ -160,13 +162,13 @@ The CHANGELOG maps research concepts to version milestones:
 ### Primary Papers
 
 1. **Python Testing Engine Rust Breakthroughs** - Kineton, semantic hashing, PEP 523
-   - [Full paper](../papers/Python%20Testing%20Engine%20Rust%20Breakthroughs.txt)
+   - [Full paper](../papers-very-verbose/Python%20Testing%20Engine%20Rust%20Breakthroughs.txt)
 
 2. **Rust-CPython Execution Blueprint Research** - PEP 684, PEP 669, Tokio
-   - [Full paper](../papers/Rust-CPython%20Execution%20Blueprint%20Research.txt)
+   - [Full paper](../papers-very-verbose/Rust-CPython%20Execution%20Blueprint%20Research.txt)
 
 3. **Zero-Copy Python Module Loading** - mmap, PyMarshal, importlib bypass
-   - [Full paper](../papers/Zero-Copy%20Python%20Module%20Loading.txt)
+   - [Full paper](../papers-very-verbose/Zero-Copy%20Python%20Module%20Loading.txt)
 
 ### External References
 
