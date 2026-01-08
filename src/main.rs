@@ -176,6 +176,12 @@ fn main() -> Result<()> {
         }
     }
 
+    // --- DIAGNOSE FLAG (can be combined with any command) ---
+    // Handle --diagnose flag: run diagnostics and exit
+    if cli.diagnose {
+        return handle_diagnose_command();
+    }
+
     // --- COLLECT-ONLY MODE (pytest compatibility) ---
     // Alias for 'tach list' command
     if cli.collect_only {
@@ -420,6 +426,19 @@ fn execute_session(
 /// Handle the `self-test` subcommand
 fn handle_self_test_command() -> Result<()> {
     let success = tach_core::diagnostics::run_and_print_diagnostics();
+    if success {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
+}
+
+/// Handle the `--diagnose` flag
+///
+/// Runs comprehensive system diagnostics with a user-friendly output format.
+/// This is an alias for `self-test` with enhanced formatting.
+fn handle_diagnose_command() -> Result<()> {
+    let success = tach_core::diagnostics::run_and_print_diagnose();
     if success {
         Ok(())
     } else {
