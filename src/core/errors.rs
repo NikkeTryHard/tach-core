@@ -1514,4 +1514,127 @@ mod tests {
         // We can't easily capture stderr in tests, but we can ensure no panic
         err.print_to_stderr();
     }
+
+    // =========================================================================
+    // E011-E020 Constructor Tests
+    // =========================================================================
+
+    #[test]
+    fn test_overlayfs_mount_failed() {
+        let err = CategorizedError::overlayfs_mount_failed("no such device");
+        assert_eq!(err.code, error_codes::E011);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("OverlayFS mount failed"));
+        assert!(err.message.contains("no such device"));
+        assert!(err.suggestion.is_some());
+        let suggestion = err.suggestion.unwrap();
+        assert!(suggestion.contains("modprobe overlay") || suggestion.contains("overlayfs"));
+    }
+
+    #[test]
+    fn test_python_version_mismatch() {
+        let err = CategorizedError::python_version_mismatch("3.12", "3.10");
+        assert_eq!(err.code, error_codes::E012);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("Python version mismatch"));
+        assert!(err.message.contains("3.12"));
+        assert!(err.message.contains("3.10"));
+    }
+
+    #[test]
+    fn test_namespace_creation_failed() {
+        let err = CategorizedError::namespace_creation_failed("user", "EPERM");
+        assert_eq!(err.code, error_codes::E013);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("user namespace"));
+        assert!(err.message.contains("EPERM"));
+        assert!(err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_worker_crashed() {
+        let err = CategorizedError::worker_crashed(1234, 11, "SIGSEGV");
+        assert_eq!(err.code, error_codes::E014);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("1234"));
+        assert!(err.message.contains("11"));
+        assert!(err.message.contains("SIGSEGV"));
+        assert!(err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_ipc_channel_failure() {
+        let err = CategorizedError::ipc_channel_failure(5678, "connection reset");
+        assert_eq!(err.code, error_codes::E015);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("5678"));
+        assert!(err.message.contains("connection reset"));
+        assert!(err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_snapshot_integrity_failure() {
+        let err = CategorizedError::snapshot_integrity_failure("checksum mismatch");
+        assert_eq!(err.code, error_codes::E016);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("Snapshot integrity"));
+        assert!(err.message.contains("checksum mismatch"));
+        assert!(err.suggestion.is_some());
+        let suggestion = err.suggestion.unwrap();
+        assert!(suggestion.contains("--force-toxic") || suggestion.contains("report a bug"));
+    }
+
+    #[test]
+    fn test_syntax_error_with_line() {
+        let err = CategorizedError::syntax_error("tests/test_foo.py", Some(42), "unexpected indent");
+        assert_eq!(err.code, error_codes::E017);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("tests/test_foo.py"));
+        assert!(err.message.contains("line 42"));
+        assert!(err.message.contains("unexpected indent"));
+        assert!(err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_syntax_error_without_line() {
+        let err = CategorizedError::syntax_error("tests/test_bar.py", None, "invalid syntax");
+        assert_eq!(err.code, error_codes::E017);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("tests/test_bar.py"));
+        assert!(!err.message.contains("line"));
+        assert!(err.message.contains("invalid syntax"));
+    }
+
+    #[test]
+    fn test_circular_fixture_dependency() {
+        let cycle = vec!["db".to_string(), "session".to_string(), "db".to_string()];
+        let err = CategorizedError::circular_fixture_dependency("db", &cycle);
+        assert_eq!(err.code, error_codes::E018);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("Circular dependency"));
+        assert!(err.message.contains("db"));
+        assert!(err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_test_skipped() {
+        let err = CategorizedError::test_skipped("test_database", "requires postgres");
+        assert_eq!(err.code, error_codes::E019);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("test_database"));
+        assert!(err.message.contains("skipped"));
+        assert!(err.message.contains("requires postgres"));
+        assert!(err.suggestion.is_none()); // No suggestion for skipped tests
+    }
+
+    #[test]
+    fn test_test_xfail() {
+        let err = CategorizedError::test_xfail("test_broken_feature", "known bug #123");
+        assert_eq!(err.code, error_codes::E020);
+        assert!(err.is_user_error());
+        assert!(err.message.contains("test_broken_feature"));
+        assert!(err.message.contains("expected to fail"));
+        assert!(err.message.contains("known bug #123"));
+        assert!(err.suggestion.is_none()); // No suggestion for xfail tests
+    }
 }

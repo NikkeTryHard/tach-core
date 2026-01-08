@@ -216,15 +216,13 @@ impl DiagnosticReport {
                 }
             }
             // Print remediation info for failed checks
-            if !result.passed {
-                if let Some(remediation) = &result.remediation {
-                    eprintln!("       Remediation: {}", remediation.explanation);
-                    if let Some(cmd) = &remediation.command {
-                        eprintln!("       Command: {}", cmd);
-                    }
-                    if let Some(url) = &remediation.docs_url {
-                        eprintln!("       Docs: {}", url);
-                    }
+            if !result.passed && let Some(remediation) = &result.remediation {
+                eprintln!("       Remediation: {}", remediation.explanation);
+                if let Some(cmd) = &remediation.command {
+                    eprintln!("       Command: {}", cmd);
+                }
+                if let Some(url) = &remediation.docs_url {
+                    eprintln!("       Docs: {}", url);
                 }
             }
         }
@@ -842,15 +840,13 @@ fn print_diagnose_line(prefix: &str, result: &DiagnosticResult) {
     eprintln!("{}: {} ({})", prefix, result.message, icon);
 
     // Print remediation info for failed checks
-    if !result.passed {
-        if let Some(remediation) = &result.remediation {
-            eprintln!("       Remediation: {}", remediation.explanation);
-            if let Some(cmd) = &remediation.command {
-                eprintln!("       Command: {}", cmd);
-            }
-            if let Some(url) = &remediation.docs_url {
-                eprintln!("       Docs: {}", url);
-            }
+    if !result.passed && let Some(remediation) = &result.remediation {
+        eprintln!("       Remediation: {}", remediation.explanation);
+        if let Some(cmd) = &remediation.command {
+            eprintln!("       Command: {}", cmd);
+        }
+        if let Some(url) = &remediation.docs_url {
+            eprintln!("       Docs: {}", url);
         }
     }
 }
@@ -862,6 +858,79 @@ fn print_diagnose_line(prefix: &str, result: &DiagnosticResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // =========================================================================
+    // Remediation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_remediation_new() {
+        let remediation = Remediation::new("Fix by updating the kernel");
+        assert_eq!(remediation.explanation, "Fix by updating the kernel");
+        assert!(remediation.command.is_none());
+        assert!(remediation.docs_url.is_none());
+    }
+
+    #[test]
+    fn test_remediation_with_command() {
+        let remediation = Remediation::with_command(
+            "Enable unprivileged userfaultfd",
+            "sudo sysctl -w vm.unprivileged_userfaultfd=1",
+        );
+        assert_eq!(remediation.explanation, "Enable unprivileged userfaultfd");
+        assert_eq!(
+            remediation.command,
+            Some("sudo sysctl -w vm.unprivileged_userfaultfd=1".to_string())
+        );
+        assert!(remediation.docs_url.is_none());
+    }
+
+    #[test]
+    fn test_remediation_with_docs_url() {
+        let remediation = Remediation::new("Check documentation")
+            .with_docs_url("https://example.com/docs");
+        assert_eq!(remediation.explanation, "Check documentation");
+        assert!(remediation.command.is_none());
+        assert_eq!(
+            remediation.docs_url,
+            Some("https://example.com/docs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remediation_full_chain() {
+        let remediation = Remediation::with_command("Enable userfaultfd", "sudo sysctl -w vm.unprivileged_userfaultfd=1")
+            .with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005");
+        assert_eq!(remediation.explanation, "Enable userfaultfd");
+        assert_eq!(
+            remediation.command,
+            Some("sudo sysctl -w vm.unprivileged_userfaultfd=1".to_string())
+        );
+        assert_eq!(
+            remediation.docs_url,
+            Some("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005".to_string())
+        );
+    }
+
+    #[test]
+    fn test_diagnostic_result_with_remediation() {
+        let remediation = Remediation::with_command(
+            "Increase file limit",
+            "ulimit -n 65536",
+        );
+        let result = DiagnosticResult::fail("File Descriptors", "Too many open files")
+            .with_remediation(remediation);
+
+        assert!(!result.passed);
+        assert!(result.remediation.is_some());
+        let rem = result.remediation.unwrap();
+        assert_eq!(rem.explanation, "Increase file limit");
+        assert_eq!(rem.command, Some("ulimit -n 65536".to_string()));
+    }
+
+    // =========================================================================
+    // DiagnosticResult Tests
+    // =========================================================================
 
     #[test]
     fn test_diagnostic_result_pass() {
