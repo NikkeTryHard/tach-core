@@ -29,6 +29,7 @@
 //! }
 //! ```
 
+use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -525,6 +526,381 @@ impl From<nix::Error> for TachError {
 }
 
 // =============================================================================
+// Error Categorization (User-Facing Error Codes)
+// =============================================================================
+
+/// Error category for user-facing error messages.
+///
+/// Categorization helps users understand whether an error is:
+/// - Something they can fix (User errors)
+/// - A system/environment issue (System errors)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    /// User errors: Test failures, import errors, fixture errors.
+    /// These are typically fixable by modifying test code or configuration.
+    User,
+
+    /// System errors: Kernel issues, permissions, OOM.
+    /// These require system-level fixes (kernel config, permissions, resources).
+    System,
+}
+
+impl fmt::Display for ErrorCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrorCategory::User => write!(f, "User Error"),
+            ErrorCategory::System => write!(f, "System Error"),
+        }
+    }
+}
+
+// =============================================================================
+// Error Codes Registry
+// =============================================================================
+
+/// Error code constants for categorized errors.
+///
+/// Error codes follow the pattern `E###` where:
+/// - E001-E099: User errors (test code, configuration)
+/// - E100-E199: Reserved for future user error categories
+/// - E001-E010: Currently defined error codes
+pub mod error_codes {
+    /// Test assertion failed.
+    pub const E001: &str = "E001";
+
+    /// Import error in test file.
+    pub const E002: &str = "E002";
+
+    /// Fixture not found.
+    pub const E003: &str = "E003";
+
+    /// Invalid marker expression.
+    pub const E004: &str = "E004";
+
+    /// userfaultfd not available.
+    pub const E005: &str = "E005";
+
+    /// Landlock not supported.
+    pub const E006: &str = "E006";
+
+    /// Permission denied.
+    pub const E007: &str = "E007";
+
+    /// Out of memory.
+    pub const E008: &str = "E008";
+
+    /// Too many open files.
+    pub const E009: &str = "E009";
+
+    /// Timeout exceeded.
+    pub const E010: &str = "E010";
+}
+
+/// Categorized error with error code for user-facing output.
+///
+/// This struct provides a standardized format for displaying errors to users
+/// with actionable information:
+/// - Error code for quick identification and documentation lookup
+/// - Category to indicate who can fix it (user vs system admin)
+/// - Clear message describing what went wrong
+/// - Optional suggestion for how to fix it
+///
+/// # Example Output
+///
+/// ```text
+/// [E005] System Error: userfaultfd not available
+///   Hint: Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE
+/// ```
+#[derive(Debug, Clone)]
+pub struct CategorizedError {
+    /// Error code (e.g., "E001", "E005").
+    pub code: &'static str,
+
+    /// Category of the error (User or System).
+    pub category: ErrorCategory,
+
+    /// Human-readable error message.
+    pub message: String,
+
+    /// Optional suggestion for how to fix the error.
+    pub suggestion: Option<String>,
+}
+
+impl fmt::Display for CategorizedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}: {}", self.code, self.category, self.message)?;
+        if let Some(ref hint) = self.suggestion {
+            write!(f, "\n  Hint: {}", hint)?;
+        }
+        Ok(())
+    }
+}
+
+impl CategorizedError {
+    /// Create a new categorized error.
+    pub fn new(
+        code: &'static str,
+        category: ErrorCategory,
+        message: impl Into<String>,
+        suggestion: Option<String>,
+    ) -> Self {
+        Self {
+            code,
+            category,
+            message: message.into(),
+            suggestion,
+        }
+    }
+
+    // =========================================================================
+    // User Error Constructors (E001-E004, E010)
+    // =========================================================================
+
+    /// E001: Test assertion failed.
+    pub fn assertion_failed(test_name: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E001,
+            ErrorCategory::User,
+            format!("Test '{}' assertion failed: {}", test_name, reason),
+            Some("Check the test assertions and expected values".to_string()),
+        )
+    }
+
+    /// E002: Import error in test file.
+    pub fn import_error(path: &str, module: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E002,
+            ErrorCategory::User,
+            format!("Failed to import '{}' in {}: {}", module, path, reason),
+            Some("Ensure the module is installed and the import path is correct".to_string()),
+        )
+    }
+
+    /// E003: Fixture not found.
+    pub fn fixture_not_found(test_name: &str, fixture_name: &str) -> Self {
+        Self::new(
+            error_codes::E003,
+            ErrorCategory::User,
+            format!(
+                "Fixture '{}' not found for test '{}'",
+                fixture_name, test_name
+            ),
+            Some(
+                "Define the fixture in conftest.py or the test file, or check for typos"
+                    .to_string(),
+            ),
+        )
+    }
+
+    /// E004: Invalid marker expression.
+    pub fn invalid_marker(expression: &str, reason: &str) -> Self {
+        Self::new(
+            error_codes::E004,
+            ErrorCategory::User,
+            format!("Invalid marker expression '{}': {}", expression, reason),
+            Some("Check the marker syntax. Example: -m 'slow and not integration'".to_string()),
+        )
+    }
+
+    /// E010: Timeout exceeded.
+    pub fn timeout_exceeded(test_name: &str, timeout_secs: u64) -> Self {
+        Self::new(
+            error_codes::E010,
+            ErrorCategory::User,
+            format!(
+                "Test '{}' timed out after {} seconds",
+                test_name, timeout_secs
+            ),
+            Some(
+                "Increase the timeout with @pytest.mark.timeout(N) or optimize the test"
+                    .to_string(),
+            ),
+        )
+    }
+
+    // =========================================================================
+    // System Error Constructors (E005-E009)
+    // =========================================================================
+
+    /// E005: userfaultfd not available.
+    pub fn userfaultfd_unavailable(reason: &str) -> Self {
+        Self::new(
+            error_codes::E005,
+            ErrorCategory::System,
+            format!("userfaultfd not available: {}", reason),
+            Some("Set vm.unprivileged_userfaultfd=1 or run with CAP_SYS_PTRACE".to_string()),
+        )
+    }
+
+    /// E006: Landlock not supported.
+    pub fn landlock_unavailable(kernel_version: &str) -> Self {
+        Self::new(
+            error_codes::E006,
+            ErrorCategory::System,
+            format!("Landlock not supported on kernel {}", kernel_version),
+            Some(
+                "Landlock requires kernel 5.13+. Running without filesystem isolation.".to_string(),
+            ),
+        )
+    }
+
+    /// E007: Permission denied.
+    pub fn permission_denied(operation: &str, path: Option<&str>) -> Self {
+        let message = if let Some(p) = path {
+            format!("Permission denied: {} on '{}'", operation, p)
+        } else {
+            format!("Permission denied: {}", operation)
+        };
+        Self::new(
+            error_codes::E007,
+            ErrorCategory::System,
+            message,
+            Some("Check file permissions or run with appropriate privileges".to_string()),
+        )
+    }
+
+    /// E008: Out of memory.
+    pub fn out_of_memory(context: &str) -> Self {
+        Self::new(
+            error_codes::E008,
+            ErrorCategory::System,
+            format!("Out of memory: {}", context),
+            Some("Reduce worker count with -n or increase system memory".to_string()),
+        )
+    }
+
+    /// E009: Too many open files.
+    pub fn too_many_files(current: Option<u64>, required: Option<u64>) -> Self {
+        let message = match (current, required) {
+            (Some(c), Some(r)) => format!(
+                "Too many open files: current limit {}, need at least {}",
+                c, r
+            ),
+            _ => "Too many open files".to_string(),
+        };
+        Self::new(
+            error_codes::E009,
+            ErrorCategory::System,
+            message,
+            Some("Increase ulimit with: ulimit -n 65536".to_string()),
+        )
+    }
+
+    // =========================================================================
+    // Conversion from TachError
+    // =========================================================================
+
+    /// Convert a TachError to a categorized error for user display.
+    ///
+    /// This provides a user-friendly view of internal errors with
+    /// actionable suggestions.
+    pub fn from_tach_error(err: &TachError) -> Self {
+        match err {
+            TachError::Restoration(e) => Self::new(
+                error_codes::E008,
+                ErrorCategory::System,
+                format!("Memory restoration failed: {}", e),
+                Some("This is an internal error. Please report a bug.".to_string()),
+            ),
+
+            TachError::Isolation(IsolationError::LandlockUnavailable { kernel_version }) => {
+                Self::landlock_unavailable(kernel_version)
+            }
+
+            TachError::Isolation(IsolationError::CapabilityMissing) => Self::new(
+                error_codes::E007,
+                ErrorCategory::System,
+                "CAP_SYS_ADMIN required for namespace isolation".to_string(),
+                Some(
+                    "Run with elevated privileges or in a container with --privileged".to_string(),
+                ),
+            ),
+
+            TachError::Isolation(e) => Self::new(
+                error_codes::E007,
+                ErrorCategory::System,
+                format!("Isolation setup failed: {}", e),
+                Some("Check kernel capabilities and permissions".to_string()),
+            ),
+
+            TachError::Discovery(DiscoveryError::MissingFixture { test, fixture }) => {
+                Self::fixture_not_found(test, fixture)
+            }
+
+            TachError::Discovery(DiscoveryError::ParseFailed { path, reason }) => Self::new(
+                error_codes::E002,
+                ErrorCategory::User,
+                format!("Failed to parse {}: {}", path.display(), reason),
+                Some("Check the test file for syntax errors".to_string()),
+            ),
+
+            TachError::Discovery(e) => Self::new(
+                error_codes::E002,
+                ErrorCategory::User,
+                format!("Test discovery failed: {}", e),
+                None,
+            ),
+
+            TachError::Scheduler(SchedulerError::WorkerTimeout { pid, timeout_ms }) => Self::new(
+                error_codes::E010,
+                ErrorCategory::User,
+                format!("Worker {} timed out after {}ms", pid, timeout_ms),
+                Some("Increase timeout or check for infinite loops".to_string()),
+            ),
+
+            TachError::Scheduler(e) => Self::new(
+                error_codes::E008,
+                ErrorCategory::System,
+                format!("Scheduler error: {}", e),
+                Some("Check system resources and try reducing worker count".to_string()),
+            ),
+
+            TachError::System(e) => {
+                // Map common IO errors to specific codes
+                match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => {
+                        Self::permission_denied(&e.to_string(), None)
+                    }
+                    std::io::ErrorKind::OutOfMemory => Self::out_of_memory(&e.to_string()),
+                    _ => Self::new(
+                        error_codes::E007,
+                        ErrorCategory::System,
+                        format!("System error: {}", e),
+                        None,
+                    ),
+                }
+            }
+
+            TachError::Other(msg) => {
+                Self::new(error_codes::E001, ErrorCategory::User, msg.clone(), None)
+            }
+
+            _ => Self::new(
+                error_codes::E007,
+                ErrorCategory::System,
+                format!("{}", err),
+                None,
+            ),
+        }
+    }
+
+    /// Check if this is a user error (something the user can fix).
+    pub fn is_user_error(&self) -> bool {
+        self.category == ErrorCategory::User
+    }
+
+    /// Check if this is a system error (requires system-level fix).
+    pub fn is_system_error(&self) -> bool {
+        self.category == ErrorCategory::System
+    }
+
+    /// Get the error code.
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
+
+// =============================================================================
 // Unit Tests
 // =============================================================================
 
@@ -592,5 +968,147 @@ mod tests {
         let msg = format!("{}", err);
         assert!(msg.contains("dup2(5, 3)"));
         assert!(msg.contains("9"));
+    }
+
+    // =========================================================================
+    // Error Categorization Tests
+    // =========================================================================
+
+    #[test]
+    fn test_error_category_display() {
+        assert_eq!(format!("{}", ErrorCategory::User), "User Error");
+        assert_eq!(format!("{}", ErrorCategory::System), "System Error");
+    }
+
+    #[test]
+    fn test_categorized_error_display_with_hint() {
+        let err = CategorizedError::userfaultfd_unavailable("EPERM");
+        let display = format!("{}", err);
+        assert!(display.contains("[E005]"));
+        assert!(display.contains("System Error"));
+        assert!(display.contains("userfaultfd not available"));
+        assert!(display.contains("Hint:"));
+        assert!(display.contains("vm.unprivileged_userfaultfd=1"));
+    }
+
+    #[test]
+    fn test_categorized_error_display_without_hint() {
+        let err =
+            CategorizedError::new(error_codes::E001, ErrorCategory::User, "Test failed", None);
+        let display = format!("{}", err);
+        assert!(display.contains("[E001]"));
+        assert!(display.contains("User Error"));
+        assert!(display.contains("Test failed"));
+        assert!(!display.contains("Hint:"));
+    }
+
+    #[test]
+    fn test_user_error_constructors() {
+        // E001: Assertion failed
+        let err = CategorizedError::assertion_failed("test_foo", "expected 1, got 2");
+        assert_eq!(err.code, error_codes::E001);
+        assert!(err.is_user_error());
+        assert!(!err.is_system_error());
+        assert!(err.message.contains("test_foo"));
+
+        // E002: Import error
+        let err = CategorizedError::import_error("test_bar.py", "numpy", "No module named numpy");
+        assert_eq!(err.code, error_codes::E002);
+        assert!(err.is_user_error());
+
+        // E003: Fixture not found
+        let err = CategorizedError::fixture_not_found("test_baz", "db_connection");
+        assert_eq!(err.code, error_codes::E003);
+        assert!(err.is_user_error());
+
+        // E004: Invalid marker
+        let err = CategorizedError::invalid_marker("slow and", "unexpected end of expression");
+        assert_eq!(err.code, error_codes::E004);
+        assert!(err.is_user_error());
+
+        // E010: Timeout
+        let err = CategorizedError::timeout_exceeded("test_slow", 30);
+        assert_eq!(err.code, error_codes::E010);
+        assert!(err.is_user_error());
+    }
+
+    #[test]
+    fn test_system_error_constructors() {
+        // E005: userfaultfd unavailable
+        let err = CategorizedError::userfaultfd_unavailable("EPERM");
+        assert_eq!(err.code, error_codes::E005);
+        assert!(err.is_system_error());
+        assert!(!err.is_user_error());
+
+        // E006: Landlock unavailable
+        let err = CategorizedError::landlock_unavailable("5.10");
+        assert_eq!(err.code, error_codes::E006);
+        assert!(err.is_system_error());
+
+        // E007: Permission denied
+        let err = CategorizedError::permission_denied("read", Some("/etc/shadow"));
+        assert_eq!(err.code, error_codes::E007);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("/etc/shadow"));
+
+        // E007: Permission denied without path
+        let err = CategorizedError::permission_denied("mount", None);
+        assert_eq!(err.code, error_codes::E007);
+        assert!(!err.message.contains("'"));
+
+        // E008: Out of memory
+        let err = CategorizedError::out_of_memory("worker allocation");
+        assert_eq!(err.code, error_codes::E008);
+        assert!(err.is_system_error());
+
+        // E009: Too many files
+        let err = CategorizedError::too_many_files(Some(1024), Some(4096));
+        assert_eq!(err.code, error_codes::E009);
+        assert!(err.is_system_error());
+        assert!(err.message.contains("1024"));
+        assert!(err.message.contains("4096"));
+    }
+
+    #[test]
+    fn test_categorized_error_from_tach_error() {
+        // Test conversion from IsolationError::LandlockUnavailable
+        let tach_err = TachError::Isolation(IsolationError::LandlockUnavailable {
+            kernel_version: "5.10".to_string(),
+        });
+        let cat_err = CategorizedError::from_tach_error(&tach_err);
+        assert_eq!(cat_err.code, error_codes::E006);
+        assert!(cat_err.is_system_error());
+
+        // Test conversion from DiscoveryError::MissingFixture
+        let tach_err = TachError::Discovery(DiscoveryError::MissingFixture {
+            test: "test_foo".to_string(),
+            fixture: "db".to_string(),
+        });
+        let cat_err = CategorizedError::from_tach_error(&tach_err);
+        assert_eq!(cat_err.code, error_codes::E003);
+        assert!(cat_err.is_user_error());
+
+        // Test conversion from SchedulerError::WorkerTimeout
+        let tach_err = TachError::Scheduler(SchedulerError::WorkerTimeout {
+            pid: 1234,
+            timeout_ms: 5000,
+        });
+        let cat_err = CategorizedError::from_tach_error(&tach_err);
+        assert_eq!(cat_err.code, error_codes::E010);
+        assert!(cat_err.is_user_error());
+    }
+
+    #[test]
+    fn test_error_codes_values() {
+        assert_eq!(error_codes::E001, "E001");
+        assert_eq!(error_codes::E002, "E002");
+        assert_eq!(error_codes::E003, "E003");
+        assert_eq!(error_codes::E004, "E004");
+        assert_eq!(error_codes::E005, "E005");
+        assert_eq!(error_codes::E006, "E006");
+        assert_eq!(error_codes::E007, "E007");
+        assert_eq!(error_codes::E008, "E008");
+        assert_eq!(error_codes::E009, "E009");
+        assert_eq!(error_codes::E010, "E010");
     }
 }

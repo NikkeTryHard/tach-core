@@ -55,12 +55,13 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 #### Output Control
 
-| Flag                | Description                        | Default |
-| :------------------ | :--------------------------------- | :------ |
-| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`) | normal  |
-| `-q, --quiet`       | Decrease verbosity (quiet mode)    | false   |
-| `--format <FORMAT>` | Output format: `human` or `json`   | `human` |
-| `--durations <N>`   | Show timing for slowest N tests    | -       |
+| Flag                | Description                                              | Default |
+| :------------------ | :------------------------------------------------------- | :------ |
+| `-v, --verbose`     | Increase verbosity (`-v` or `-vv`)                       | normal  |
+| `-q, --quiet`       | Decrease verbosity (quiet mode)                          | false   |
+| `--format <FORMAT>` | Output format: `human` or `json`                         | `human` |
+| `--tb <STYLE>`      | Traceback style: `short`, `long`, `line`, `native`, `no` | `long`  |
+| `--durations <N>`   | Show timing for slowest N tests                          | -       |
 
 #### Coverage
 
@@ -79,6 +80,8 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 | Flag             | Description                                        | Default |
 | :--------------- | :------------------------------------------------- | :------ |
+| `--timeout <N>`  | Global timeout in seconds for each test            | `60`    |
+| `--dry-run`      | Show what would run without executing Python code  | false   |
 | `--no-isolation` | Disable namespace/sandbox isolation                | false   |
 | `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
 
@@ -110,18 +113,22 @@ tach-core self-test                  # Verify kernel support
 
 ## Environment Variables
 
-| Variable               | Description                       | Default |
-| :--------------------- | :-------------------------------- | :------ |
-| `TACH_WORKERS`         | Number of parallel workers        | `auto`  |
-| `TACH_FORMAT`          | Output format (`human` or `json`) | `human` |
-| `TACH_JUNIT_XML`       | Path to JUnit XML output          | -       |
-| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)   | -       |
-| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)   | -       |
-| `TACH_TARGET_PATH`     | Test path (set internally)        | `.`     |
-| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally) | -       |
-| `CI`                   | Detected for reporter selection   | -       |
-| `PYO3_PYTHON`          | Python interpreter path for build | -       |
-| `MALLOC_CONF`          | Jemalloc configuration            | -       |
+| Variable               | Description                                               | Default         |
+| :--------------------- | :-------------------------------------------------------- | :-------------- |
+| `TACH_WORKERS`         | Number of parallel workers                                | `auto`          |
+| `TACH_FORMAT`          | Output format (`human` or `json`)                         | `human`         |
+| `TACH_TB`              | Traceback style (`short`, `long`, `line`, `native`, `no`) | `long`          |
+| `TACH_TIMEOUT`         | Global timeout per test in seconds                        | `60`            |
+| `TACH_JUNIT_XML`       | Path to JUnit XML output                                  | -               |
+| `TACH_COVERAGE`        | Enable coverage (`1` or `true`)                           | -               |
+| `TACH_COVERAGE_OUTPUT` | Path to save coverage report                              | `coverage.lcov` |
+| `TACH_COVERAGE_FORMAT` | Coverage format (`lcov`, `html`, `json`)                  | `lcov`          |
+| `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)                           | -               |
+| `TACH_TARGET_PATH`     | Test path (set internally)                                | `.`             |
+| `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally)                         | -               |
+| `CI`                   | Detected for reporter selection                           | -               |
+| `PYO3_PYTHON`          | Python interpreter path for build                         | -               |
+| `MALLOC_CONF`          | Jemalloc configuration                                    | -               |
 
 ### Examples
 

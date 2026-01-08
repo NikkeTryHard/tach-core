@@ -61,11 +61,15 @@ cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib  # Full CI
 
 ## Testing
 
-| Category        | Command                         |
-| :-------------- | :------------------------------ |
-| Unit Tests      | `cargo test --lib`              |
-| Integration     | `cargo test --test '*'`         |
-| Python Gauntlet | `pytest tests/gauntlet_phase*/` |
+| Category        | Command                           | Purpose                   |
+| :-------------- | :-------------------------------- | :------------------------ |
+| Unit Tests      | `cargo test --lib`                | Pure logic, no OS mocking |
+| Integration     | `cargo test --test '*'`           | Real Zygotes/Workers      |
+| Property Tests  | `cargo test --test 'proptest*'`   | Randomized input fuzzing  |
+| Fuzz Tests      | `cargo fuzz run <target>`         | Crash/panic discovery     |
+| Golden Tests    | `pytest tests/regression/golden/` | Output stability          |
+| Perf Regression | `pytest tests/regression/perf/`   | Timing/memory baselines   |
+| Python Gauntlet | `pytest tests/gauntlet*/`         | End-to-end through tach   |
 
 ### Rust Unit Tests
 
@@ -87,7 +91,18 @@ cargo test --lib reporter::         # Progress bar/reporter
 ```bash
 cargo test --test '*'                                    # All
 cargo test --test phase4_integration                     # Specific test
+cargo test --test sandbox_enforcement                    # Sandbox only
+cargo test --test 'proptest*'                            # Property tests
 sudo -E cargo test --test physics_check -- --ignored    # Physics (requires sudo)
+```
+
+### Fuzz Tests
+
+```bash
+# Requires nightly toolchain
+cargo +nightly fuzz run fuzz_config_toml -- -max_total_time=60
+cargo +nightly fuzz run fuzz_protocol_deserialize
+cargo +nightly fuzz run fuzz_scanner_paths
 ```
 
 ### Python Gauntlet Tests
@@ -98,6 +113,8 @@ pytest tests/gauntlet_db/ -v       # Database integration
 pytest tests/gauntlet_numpy/ -v    # NumPy compatibility
 pytest tests/gauntlet_coverage/ -v # Coverage tests
 pytest tests/gauntlet_phase*/ -v   # All phase tests
+pytest tests/gauntlet_012/ -v      # Version-specific (0.1.2)
+pytest tests/regression/ -v        # Regression suite
 ```
 
 **Jemalloc tests** (disabled by default for WSL2 stability):

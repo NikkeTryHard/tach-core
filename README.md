@@ -91,53 +91,6 @@ export PYO3_PYTHON=$(which python) && cargo build --release
 
 ---
 
-## Project Structure
-
-Tach uses a modular architecture organized into 5 domain-based subdirectories:
-
-```
-src/
-├── core/           # Infrastructure
-│   ├── allocator.rs    # Jemalloc integration
-│   ├── config.rs       # Configuration engine
-│   ├── environment.rs  # Environment variable handling
-│   ├── lifecycle.rs    # Process lifecycle management
-│   ├── protocol.rs     # Binary IPC protocol
-│   └── signals.rs      # Signal handling
-│
-├── discovery/      # Test discovery
-│   ├── scanner.rs      # AST-based test scanning
-│   ├── resolver.rs     # Fixture resolution
-│   ├── loader.rs       # Zero-copy bytecode loading
-│   ├── graph.rs        # Dependency graph (petgraph)
-│   └── analysis.rs     # Toxicity analysis
-│
-├── execution/      # Test execution
-│   ├── scheduler.rs    # Dual-queue test scheduler
-│   ├── watch.rs        # File watch mode
-│   └── zygote.rs       # Process spawning and worker pool
-│
-├── isolation/      # Process isolation
-│   ├── namespace.rs    # Linux namespaces
-│   ├── sandbox.rs      # Landlock + Seccomp (Iron Dome)
-│   └── snapshot.rs     # userfaultfd memory snapshots
-│
-├── reporting/      # Result reporting
-│   ├── reporter.rs     # Progress and output formatting
-│   ├── junit.rs        # JUnit XML generation
-│   ├── logcapture.rs   # stdout/stderr capture
-│   ├── debugger.rs     # Debug output
-│   └── coverage.rs     # PEP 669 coverage collection
-│
-├── lib.rs          # Library entry point (re-exports all modules)
-├── main.rs         # CLI entry point
-└── tach_harness.py # Python test harness
-```
-
-All modules are re-exported at the top level via `lib.rs` for backward compatibility.
-
----
-
 ## Architecture
 
 Tach consists of 5 domain modules with interconnected subsystems:
@@ -250,6 +203,9 @@ tach-core -v .
 # List tests without running
 tach-core list .
 
+# Dry run - show what would run without executing
+tach-core --dry-run .
+
 # Self-test kernel support
 tach-core self-test
 
@@ -259,8 +215,14 @@ tach-core --coverage .
 # JSON output
 tach-core --format json .
 
+# Traceback formatting
+tach-core --tb short .
+
 # JUnit XML report
 tach-core --junit-xml results.xml .
+
+# Test timeout (seconds)
+tach-core --timeout 30 .
 
 # Disable sandbox (development)
 tach-core --no-isolation .

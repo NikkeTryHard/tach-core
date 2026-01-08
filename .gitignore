@@ -10,3 +10,6 @@ __pycache__/
 .claude/settings.local.json
 CLAUDE.md
 .ignore
+
+# Git worktrees
+.worktrees/
