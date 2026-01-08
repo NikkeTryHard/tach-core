@@ -98,22 +98,22 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 **Target**: Better onboarding experience for new users.
 
-**Status**: Complete (documentation deferred to 0.2.x)
+**Status**: Complete
 
 #### Documentation
 
-- [ ] Create `examples/` directory with sample projects
-  - [ ] `examples/simple/` - Basic test suite with fixtures
-  - [ ] `examples/django/` - Django project with database tests
-  - [ ] `examples/async/` - Async test patterns
-  - [ ] `examples/parametrized/` - Complex parametrization examples
-  - [ ] `examples/markers/` - Custom markers and filtering
-  - [ ] `examples/conftest/` - Nested conftest patterns
-- [ ] Write quick-start tutorial in `docs/quickstart.md`
-  - [ ] Installation instructions for common distros
-  - [ ] First test run walkthrough
-  - [ ] Comparison with pytest workflow
-  - [ ] Migration guide from pytest
+- [x] Create `examples/` directory with sample projects
+  - [x] `examples/simple/` - Basic test suite with fixtures
+  - [x] `examples/django/` - Django project with database tests
+  - [x] `examples/async/` - Async test patterns
+  - [x] `examples/parametrized/` - Complex parametrization examples
+  - [x] `examples/markers/` - Custom markers and filtering
+  - [x] `examples/conftest/` - Nested conftest patterns
+- [x] Write quick-start tutorial in `docs/quickstart.md`
+  - [x] Installation instructions for common distros
+  - [x] First test run walkthrough
+  - [x] Comparison with pytest workflow
+  - [x] Migration guide from pytest
 - [x] Add inline code comments for complex algorithms
   - [x] Toxicity propagation in `discovery/analysis.rs`
     > **Ref**: "Toxicity is contagious. If Module A imports Module B, and Module B opens a database connection, then importing Module A effectively opens a database connection" — _Python Monorepo Zygote Tree Design_
