@@ -163,6 +163,7 @@ impl Scheduler {
         let mut passed = 0usize;
         let mut failed = 0usize;
         let mut collected = 0usize;
+        let mut memory_usage: Vec<(String, u64)> = Vec::new();
 
         //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
@@ -189,7 +190,7 @@ impl Scheduler {
                 >= self.max_workers
             {
                 // Try to collect a result
-                if let Some((test_name, status, duration_ms, msg, _memory_rss)) =
+                if let Some((test_name, status, duration_ms, msg, memory_rss)) =
                     self.try_collect_result_for_reporter()
                 {
                     reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
@@ -197,6 +198,10 @@ impl Scheduler {
                         passed += 1;
                     } else {
                         failed += 1;
+                    }
+                    // Track memory usage if available
+                    if let Some(rss) = memory_rss {
+                        memory_usage.push((test_name, rss));
                     }
                     collected += 1;
                 }
@@ -216,7 +221,7 @@ impl Scheduler {
         // Collect remaining results with timeout for crash detection
         let deadline = Instant::now() + Duration::from_secs(10);
         while collected < total && Instant::now() < deadline {
-            if let Some((test_name, status, duration_ms, msg, _memory_rss)) =
+            if let Some((test_name, status, duration_ms, msg, memory_rss)) =
                 self.try_collect_result_for_reporter()
             {
                 reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
@@ -224,6 +229,10 @@ impl Scheduler {
                     passed += 1;
                 } else {
                     failed += 1;
+                }
+                // Track memory usage if available
+                if let Some(rss) = memory_rss {
+                    memory_usage.push((test_name, rss));
                 }
                 collected += 1;
             } else {
@@ -303,6 +312,7 @@ impl Scheduler {
             passed,
             failed,
             duration_ms,
+            memory_usage,
         })
     }
 
@@ -719,6 +729,8 @@ pub struct SchedulerStats {
     pub passed: usize,
     pub failed: usize,
     pub duration_ms: u64,
+    /// Memory usage per test (test_name, memory_bytes) - only populated if memory tracking is enabled
+    pub memory_usage: Vec<(String, u64)>,
 }
 
 // =============================================================================
@@ -768,6 +780,7 @@ mod tests {
             passed: 8,
             failed: 2,
             duration_ms: 1234,
+            memory_usage: vec![],
         };
 
         let debug_str = format!("{:?}", stats);
@@ -784,6 +797,7 @@ mod tests {
             passed: 95,
             failed: 5,
             duration_ms: 5000,
+            memory_usage: vec![("test_a".to_string(), 1024 * 1024)],
         };
 
         assert_eq!(stats.total, 100);

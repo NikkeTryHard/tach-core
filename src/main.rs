@@ -243,6 +243,7 @@ fn main() -> Result<()> {
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
         let tb_style = cli.traceback;
+        let memory_flag = cli.memory;
 
         return watch::start_watch_loop(&cwd, move || {
             execute_session(
@@ -252,6 +253,7 @@ fn main() -> Result<()> {
                 &path_clone,
                 false,
                 tb_style,
+                memory_flag,
             )
         });
     }
@@ -264,6 +266,7 @@ fn main() -> Result<()> {
         &cli.path,
         cli.coverage,
         cli.traceback,
+        cli.memory,
     )
 }
 
@@ -276,6 +279,7 @@ fn execute_session(
     target_path: &str,
     coverage_enabled: bool,
     traceback_style: TracebackStyle,
+    memory_enabled: bool,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
@@ -457,6 +461,7 @@ fn execute_session(
         &mut reporter,
         is_json,
         coverage_enabled,
+        memory_enabled,
     )?;
 
     // Exit with code 1 if any tests failed
@@ -787,8 +792,12 @@ fn run_tests(
     reporter: &mut dyn Reporter,
     is_json: bool,
     coverage_enabled: bool,
+    memory_enabled: bool,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
+
+    // --- LOAD TACH CONFIG ---
+    let tach_config = config::load_tach_config(&cwd);
 
     // --- COVERAGE INITIALIZATION ---
     // Initialize coverage ring buffers BEFORE forking Zygote.
@@ -923,11 +932,16 @@ fn run_tests(
             }
 
             // --- SCHEDULER ---
-            let mut scheduler = Scheduler::new(
+            // Use with_config to pass timeout_hook from pyproject.toml
+            let global_timeout = tach_config.timeout();
+            let timeout_hook = tach_config.timeout_hook.clone();
+            let mut scheduler = Scheduler::with_config(
                 sup_cmd_sock,
                 sup_result_sock,
                 log_capture,
                 debug_socket_path,
+                global_timeout,
+                timeout_hook,
             )?;
 
             let stats = scheduler.run(runnable_tests, reporter)?;
@@ -938,6 +952,71 @@ fn run_tests(
 
             // Track failure count for exit code
             let failed_count = stats.failed;
+
+            // --- MEMORY REPORTING ---
+            // Display memory usage statistics if enabled
+            if memory_enabled && !is_json && !stats.memory_usage.is_empty() {
+                eprintln!();
+                eprintln!("[supervisor] Memory Usage:");
+
+                // Calculate statistics
+                let total_memory: u64 = stats.memory_usage.iter().map(|(_, m)| *m).sum();
+                let peak_memory = stats
+                    .memory_usage
+                    .iter()
+                    .map(|(_, m)| *m)
+                    .max()
+                    .unwrap_or(0);
+                let avg_memory = total_memory / stats.memory_usage.len() as u64;
+
+                // Format memory in human-readable units
+                let format_bytes = |bytes: u64| -> String {
+                    if bytes >= 1024 * 1024 * 1024 {
+                        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+                    } else if bytes >= 1024 * 1024 {
+                        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+                    } else if bytes >= 1024 {
+                        format!("{:.2} KB", bytes as f64 / 1024.0)
+                    } else {
+                        format!("{} B", bytes)
+                    }
+                };
+
+                eprintln!("  Total RSS: {}", format_bytes(total_memory));
+                eprintln!("  Peak RSS:  {} (single test)", format_bytes(peak_memory));
+                eprintln!("  Avg RSS:   {} (per test)", format_bytes(avg_memory));
+
+                // Show top 5 memory-heavy tests
+                let mut sorted_usage = stats.memory_usage.clone();
+                sorted_usage.sort_by(|a, b| b.1.cmp(&a.1));
+
+                if sorted_usage.len() > 1 {
+                    eprintln!();
+                    eprintln!("  Top {} memory users:", sorted_usage.len().min(5));
+                    for (test_name, memory) in sorted_usage.iter().take(5) {
+                        eprintln!("    {} - {}", format_bytes(*memory), test_name);
+                    }
+                }
+
+                // Warn if any test uses > 500MB
+                const MEMORY_WARNING_THRESHOLD: u64 = 500 * 1024 * 1024; // 500MB
+                let high_memory_tests: Vec<_> = stats
+                    .memory_usage
+                    .iter()
+                    .filter(|(_, m)| *m > MEMORY_WARNING_THRESHOLD)
+                    .collect();
+
+                if !high_memory_tests.is_empty() {
+                    eprintln!();
+                    eprintln!(
+                        "  WARNING: {} test(s) exceeded 500MB RSS:",
+                        high_memory_tests.len()
+                    );
+                    for (test_name, memory) in high_memory_tests.iter().take(3) {
+                        eprintln!("    {} - {}", format_bytes(*memory), test_name);
+                    }
+                }
+            }
 
             // --- COVERAGE FINALIZATION ---
             // Stop aggregator and report coverage statistics
