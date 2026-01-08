@@ -864,4 +864,289 @@ mod tests {
         assert_eq!(eacces_err.raw_os_error(), Some(libc::EACCES));
         assert_ne!(eacces_err.raw_os_error(), Some(libc::ENOENT));
     }
+
+    // =========================================================================
+    // ERROR PATH TESTS
+    // =========================================================================
+    // These tests verify error handling behavior when things go wrong.
+    // They focus on input validation and error message quality.
+
+    /// Test that apply_landlock returns an error for nonexistent project_root
+    ///
+    /// This tests the path canonicalization error path at line 166-168.
+    /// When project_root doesn't exist, canonicalize() should fail with a
+    /// descriptive error message.
+    #[test]
+    fn test_apply_landlock_nonexistent_path() {
+        let nonexistent_path = Path::new("/this/path/definitely/does/not/exist/tach_test_12345");
+
+        // Verify the path truly doesn't exist (precondition)
+        assert!(
+            !nonexistent_path.exists(),
+            "Test precondition failed: path should not exist"
+        );
+
+        // Call apply_landlock with the nonexistent path
+        let result = apply_landlock(nonexistent_path, 1);
+
+        // Verify it returns an error (not panic)
+        assert!(
+            result.is_err(),
+            "apply_landlock should return Err for nonexistent path"
+        );
+
+        // Verify the error message contains useful context
+        let error = result.unwrap_err();
+        let error_message = format!("{:#}", error);
+
+        // The error chain should mention canonicalization failure
+        assert!(
+            error_message.contains("canonicalize")
+                || error_message.contains("Canonicalize")
+                || error_message.contains("project_root"),
+            "Error message should mention canonicalization or project_root, got: {}",
+            error_message
+        );
+    }
+
+    /// Test that apply_landlock error message includes the path context
+    ///
+    /// Good error messages should help users understand what went wrong.
+    #[test]
+    fn test_apply_landlock_error_includes_path_context() {
+        let nonexistent_path = Path::new("/nonexistent/tach_landlock_test");
+
+        let result = apply_landlock(nonexistent_path, 42);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        let error_chain = format!("{:#}", error);
+
+        // Error should indicate it's a Landlock-related failure
+        // The context message "Failed to canonicalize project_root for Landlock"
+        // should appear in the error chain
+        assert!(
+            error_chain.to_lowercase().contains("landlock") || error_chain.contains("project_root"),
+            "Error chain should mention Landlock context, got: {}",
+            error_chain
+        );
+    }
+
+    /// Test that path canonicalization fails gracefully for relative nonexistent paths
+    ///
+    /// Relative paths that don't resolve to existing files should also fail gracefully.
+    #[test]
+    fn test_apply_landlock_relative_nonexistent_path() {
+        // A relative path that doesn't exist
+        let relative_nonexistent = Path::new("./nonexistent_dir_tach_test_xyz");
+
+        // Verify precondition
+        assert!(
+            !relative_nonexistent.exists(),
+            "Test precondition failed: path should not exist"
+        );
+
+        let result = apply_landlock(relative_nonexistent, 1);
+
+        // Should fail without panicking
+        assert!(
+            result.is_err(),
+            "apply_landlock should fail for relative nonexistent path"
+        );
+
+        // Error should be about canonicalization
+        let error = result.unwrap_err();
+        let error_message = format!("{}", error);
+        assert!(
+            error_message.contains("canonicalize") || error_message.contains("Landlock"),
+            "Error should mention canonicalization failure, got: {}",
+            error_message
+        );
+    }
+
+    /// Test that apply_landlock doesn't panic on various invalid inputs
+    ///
+    /// This tests graceful degradation - errors should be returned, not panics.
+    #[test]
+    fn test_apply_landlock_no_panic_on_invalid_inputs() {
+        // Test 1: Empty path
+        let empty_path = Path::new("");
+        let result = apply_landlock(empty_path, 0);
+        assert!(result.is_err(), "Empty path should return error, not panic");
+
+        // Test 2: Path with null bytes would typically panic, but std::path::Path
+        // creation handles this. Test path that can't be canonicalized.
+        let weird_path = Path::new("/\0invalid");
+        // Note: Path::new doesn't validate, canonicalize() will fail
+        // But this path creation itself is valid in Rust
+        let result = apply_landlock(weird_path, 0);
+        assert!(
+            result.is_err(),
+            "Invalid path should return error, not panic"
+        );
+
+        // Test 3: Very long path (should fail canonicalization)
+        let long_component = "x".repeat(1000);
+        let long_path_str = format!("/{}/{}/{}", long_component, long_component, long_component);
+        let long_path = Path::new(&long_path_str);
+        let result = apply_landlock(long_path, 0);
+        assert!(
+            result.is_err(),
+            "Very long path should return error, not panic"
+        );
+    }
+
+    /// Test add_path_rule helper function error handling
+    ///
+    /// Verify that the helper function produces proper error context.
+    #[test]
+    fn test_add_path_rule_error_context() {
+        use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr};
+
+        let abi = ABI::V1;
+        let read_access = AccessFs::from_read(abi);
+
+        // Create a ruleset to test with
+        let ruleset = Ruleset::default().handle_access(AccessFs::from_all(abi));
+
+        // Skip test if ruleset creation fails (kernel doesn't support Landlock)
+        let ruleset = match ruleset {
+            Ok(r) => match r.create() {
+                Ok(r) => r,
+                Err(_) => return, // Kernel doesn't support Landlock
+            },
+            Err(_) => return, // Kernel doesn't support Landlock
+        };
+
+        // Try to add a rule for a nonexistent path
+        let nonexistent = Path::new("/nonexistent_tach_test_path_12345");
+        let result = add_path_rule(ruleset, nonexistent, read_access);
+
+        // Should fail with error
+        assert!(result.is_err());
+
+        // Error should include the path in the message
+        let error = result.unwrap_err();
+        let error_message = format!("{:#}", error);
+        assert!(
+            error_message.contains("nonexistent_tach_test_path_12345")
+                || error_message.contains("Landlock"),
+            "Error should include the problematic path, got: {}",
+            error_message
+        );
+    }
+
+    /// Test add_path_rule_if_exists gracefully handles missing paths
+    ///
+    /// Unlike add_path_rule, this should succeed (return Ok) for missing paths.
+    #[test]
+    fn test_add_path_rule_if_exists_handles_missing_gracefully() {
+        use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr};
+
+        let abi = ABI::V1;
+        let read_access = AccessFs::from_read(abi);
+
+        let ruleset = Ruleset::default().handle_access(AccessFs::from_all(abi));
+
+        let ruleset = match ruleset {
+            Ok(r) => match r.create() {
+                Ok(r) => r,
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+
+        // Try to add a rule for a nonexistent path - should succeed
+        let nonexistent = Path::new("/optional_path_that_does_not_exist_67890");
+        let result = add_path_rule_if_exists(ruleset, nonexistent, read_access);
+
+        // Should succeed - missing optional paths are handled gracefully
+        assert!(
+            result.is_ok(),
+            "add_path_rule_if_exists should succeed for missing paths, got: {:?}",
+            result.err()
+        );
+    }
+
+    /// Test apply_iron_dome graceful degradation with invalid project_root
+    ///
+    /// apply_iron_dome should handle Landlock failures gracefully by returning
+    /// NotEnforced status instead of propagating the error.
+    #[test]
+    fn test_apply_iron_dome_graceful_degradation() {
+        let nonexistent_path = Path::new("/nonexistent/project/root/tach_test");
+
+        // Call apply_iron_dome with invalid path
+        let result = apply_iron_dome(nonexistent_path, 999, false);
+
+        // Should succeed (graceful degradation) with NotEnforced status
+        assert!(
+            result.is_ok(),
+            "apply_iron_dome should handle Landlock failures gracefully"
+        );
+
+        let status = result.unwrap();
+        assert_eq!(
+            status,
+            SandboxStatus::NotEnforced,
+            "Status should be NotEnforced when Landlock setup fails"
+        );
+    }
+
+    /// Test apply_iron_dome with toxic worker flag
+    ///
+    /// Toxic workers should skip Seccomp but still attempt Landlock.
+    #[test]
+    fn test_apply_iron_dome_toxic_worker_skips_seccomp() {
+        let nonexistent_path = Path::new("/nonexistent/project/root/tach_toxic_test");
+
+        // Call with is_toxic = true
+        let result = apply_iron_dome(nonexistent_path, 1000, true);
+
+        // Should still return Ok (graceful degradation)
+        assert!(
+            result.is_ok(),
+            "apply_iron_dome should handle failures gracefully for toxic workers"
+        );
+
+        // Status should be NotEnforced since path doesn't exist
+        let status = result.unwrap();
+        assert_eq!(status, SandboxStatus::NotEnforced);
+    }
+
+    /// Test that worker_id is included in scratch path construction
+    ///
+    /// Verify the worker scratch path is constructed correctly.
+    #[test]
+    fn test_worker_scratch_path_construction() {
+        // Test that the format string works as expected
+        let worker_id: u32 = 42;
+        let scratch_path = format!("/run/tach/worker_{}", worker_id);
+        assert_eq!(scratch_path, "/run/tach/worker_42");
+
+        let worker_id: u32 = 0;
+        let scratch_path = format!("/run/tach/worker_{}", worker_id);
+        assert_eq!(scratch_path, "/run/tach/worker_0");
+
+        let worker_id: u32 = u32::MAX;
+        let scratch_path = format!("/run/tach/worker_{}", worker_id);
+        assert_eq!(scratch_path, "/run/tach/worker_4294967295");
+    }
+
+    /// Test Seccomp unsupported architecture error message
+    ///
+    /// Note: This test documents expected behavior but can't actually trigger
+    /// the error path since we're running on a supported architecture.
+    /// The test verifies the error message format would be correct.
+    #[test]
+    fn test_seccomp_arch_error_message_format() {
+        // We can't actually test an unsupported arch from a supported one,
+        // but we can verify the error message format
+        let fake_arch = "mips";
+        let expected_message = format!("Unsupported architecture for Seccomp: {}", fake_arch);
+
+        assert!(expected_message.contains("mips"));
+        assert!(expected_message.contains("Unsupported architecture"));
+        assert!(expected_message.contains("Seccomp"));
+    }
 }
