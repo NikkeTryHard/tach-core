@@ -550,6 +550,16 @@ fn spawn_result_collector(
 
         // 2. Read result payload
         let result_len = u32::from_le_bytes(result_len_buf) as usize;
+
+        // OOM protection: Validate size BEFORE allocating
+        if result_len > MAX_PAYLOAD_SIZE {
+            eprintln!(
+                "[result_collector] Rejecting oversized result: {} bytes > {} limit. Terminating.",
+                result_len, MAX_PAYLOAD_SIZE
+            );
+            return;
+        }
+
         let mut result_buf = vec![0u8; result_len];
         if socket.read_exact(&mut result_buf).is_err() {
             eprintln!("[zygote] Worker {} crashed during result send", pid);
@@ -730,12 +740,18 @@ except Exception as e:
                 let len = u32::from_le_bytes(len_buf) as usize;
 
                 // OOM protection: Validate size BEFORE allocating
+                // CRITICAL: Return error instead of continue to avoid protocol desync.
+                // If we continue, the unread payload bytes will corrupt subsequent reads.
                 if len > MAX_PAYLOAD_SIZE {
                     eprintln!(
-                        "[zygote] Rejecting oversized payload: {} bytes > {} limit",
+                        "[zygote] FATAL: Rejecting oversized payload: {} bytes > {} limit. Protocol error.",
                         len, MAX_PAYLOAD_SIZE
                     );
-                    continue;
+                    return Err(anyhow::anyhow!(
+                        "Protocol error: payload too large ({} bytes > {} limit)",
+                        len,
+                        MAX_PAYLOAD_SIZE
+                    ));
                 }
 
                 // Allocate buffer for length prefix + payload

@@ -332,11 +332,14 @@ impl Scheduler {
             let len = u32::from_le_bytes(len_buf) as usize;
 
             // OOM protection: Validate size BEFORE allocating
+            // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
+            // This is a protocol violation from the Zygote - should never happen in normal operation.
             if len > MAX_PAYLOAD_SIZE {
                 eprintln!(
-                    "[scheduler] Rejecting oversized payload: {} bytes > {} limit",
+                    "[scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
                     len, MAX_PAYLOAD_SIZE
                 );
+                // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
                 return None;
             }
 
@@ -454,11 +457,14 @@ impl Scheduler {
             let len = u32::from_le_bytes(len_buf) as usize;
 
             // OOM protection: Validate size BEFORE allocating
+            // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
+            // This is a protocol violation from the Zygote - should never happen in normal operation.
             if len > MAX_PAYLOAD_SIZE {
                 eprintln!(
-                    "[scheduler] Rejecting oversized payload: {} bytes > {} limit",
+                    "[scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
                     len, MAX_PAYLOAD_SIZE
                 );
+                // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
                 return None;
             }
 
