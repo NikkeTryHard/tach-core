@@ -13,7 +13,7 @@ This document describes Python version compatibility for Tach.
 | **3.12**          | Supported    | Required for PEP 669 coverage    |
 | **3.13**          | Supported    | Includes mimalloc TLS handling   |
 | **3.13t**         | Experimental | Free-threading build (see below) |
-| **3.14**          | Untested     | Beta not yet available           |
+| **3.14**          | Supported    | Latest release (Oct 2025)        |
 | **3.9 and below** | Unsupported  | May work but not tested          |
 
 ### Feature Availability by Version
@@ -156,9 +156,27 @@ PyO3 0.23+ provides experimental support for free-threaded Python:
 
 ## Python 3.14
 
-Python 3.14 was released in October 2025. Tach compatibility testing is ongoing.
+Python 3.14 was released on October 7, 2025 and is fully supported by Tach.
 
-See the [Python release schedule](https://peps.python.org/pep-0745/) for current development status.
+### Key Python 3.14 Changes
+
+| Feature                          | Status     | Notes                                      |
+| :------------------------------- | :--------- | :----------------------------------------- |
+| PEP 649: Deferred Annotations    | Compatible | Annotations evaluated lazily (now default) |
+| PEP 750: Template Strings        | Compatible | New t-strings syntax supported             |
+| Improved error messages          | Compatible | Better exception formatting                |
+| `sys.monitoring` improvements    | Compatible | Coverage collection works correctly        |
+| Free-threaded build availability | Untested   | 3.14t builds not yet tested                |
+
+### Compatibility Notes
+
+- All core functionality works identically to Python 3.13
+- Coverage collection via PEP 669 (`sys.monitoring`) functions correctly
+- No changes required to Tach configuration
+- mimalloc TLS handling continues to work as in 3.13
+
+See the [Python 3.14 release notes](https://docs.python.org/3/whatsnew/3.14.html) and
+[PEP 745 (Release Schedule)](https://peps.python.org/pep-0745/) for details.
 
 ---
 
