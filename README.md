@@ -4,7 +4,7 @@
 
 **A Snapshot-Hypervisor for Python Tests**
 
-[![Version](https://img.shields.io/badge/Version-0.1.0_Alpha-red)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.1.4-blue)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)](https://www.python.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green?logo=linux)](https://kernel.org/)
