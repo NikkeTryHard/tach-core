@@ -1185,16 +1185,16 @@ mod tests {
         // Parse and validate timing is sensible (between 0ms and 1000ms)
         // Note: On fast systems, 100 memcpy cycles can complete in <1ms
         // Format is: "100-cycle restore OK (X.XXms)"
-        if let Some(start) = result.message.find('(') {
-            if let Some(end) = result.message.find("ms)") {
-                let timing_str = &result.message[start + 1..end];
-                if let Ok(timing_ms) = timing_str.parse::<f64>() {
-                    assert!(
-                        (0.0..1000.0).contains(&timing_ms),
-                        "Timing should be between 0 and 1000ms, got {}ms",
-                        timing_ms
-                    );
-                }
+        if let Some(start) = result.message.find('(')
+            && let Some(end) = result.message.find("ms)")
+        {
+            let timing_str = &result.message[start + 1..end];
+            if let Ok(timing_ms) = timing_str.parse::<f64>() {
+                assert!(
+                    (0.0..1000.0).contains(&timing_ms),
+                    "Timing should be between 0 and 1000ms, got {}ms",
+                    timing_ms
+                );
             }
         }
     }
@@ -1364,17 +1364,17 @@ mod tests {
             if result.passed && result.message.contains("MB") {
                 // Extract the MB value and verify it's sensible
                 // Message format: "/dev/shm available (123MB free)"
-                if let Some(mb_start) = result.message.find('(') {
-                    if let Some(mb_end) = result.message.find("MB") {
-                        let mb_str = &result.message[mb_start + 1..mb_end];
-                        if let Ok(mb_value) = mb_str.parse::<u64>() {
-                            // Shared memory should be at least 1MB, at most reasonable (1TB)
-                            assert!(
-                                (1..=1_000_000).contains(&mb_value),
-                                "Shared memory size should be sensible: {}MB",
-                                mb_value
-                            );
-                        }
+                if let Some(mb_start) = result.message.find('(')
+                    && let Some(mb_end) = result.message.find("MB")
+                {
+                    let mb_str = &result.message[mb_start + 1..mb_end];
+                    if let Ok(mb_value) = mb_str.parse::<u64>() {
+                        // Shared memory should be at least 1MB, at most reasonable (1TB)
+                        assert!(
+                            (1..=1_000_000).contains(&mb_value),
+                            "Shared memory size should be sensible: {}MB",
+                            mb_value
+                        );
                     }
                 }
             }

@@ -5,6 +5,13 @@
 //! - Lock-free atomic operations for minimal overhead
 //! - PEP 669 sys.monitoring callbacks (Python 3.12+)
 //!
+//! # Research Foundation
+//!
+//! - "employs PEP 669 (Low-Impact Monitoring) to achieve observability with
+//!   negligible overhead" — _Rust-CPython Execution Blueprint Research_
+//! - Ring buffer design informed by _Python Memory Snapshotting with Userfaultfd_
+//!   for lock-free concurrent access across forked processes.
+//!
 //! # Architecture
 //!
 //! ```text
@@ -263,8 +270,12 @@ pub struct CoverageRingBuffer {
     capacity: usize,
 }
 
-// Safety: The ring buffer uses atomic operations for synchronization
-// and is designed for concurrent access from multiple processes.
+// SAFETY: CoverageRingBuffer is safe to send and share between threads because:
+// 1. The raw pointer `ptr` points to mmap'd memory that outlives the buffer
+// 2. All access to shared state uses atomic operations (AtomicU64) with
+//    appropriate memory ordering (SeqCst for writes, Acquire for reads)
+// 3. The file descriptor is not closed while the mapping is active
+// 4. The memfd is created with proper size and will not be truncated
 unsafe impl Send for CoverageRingBuffer {}
 unsafe impl Sync for CoverageRingBuffer {}
 
@@ -518,7 +529,11 @@ pub struct MappingRingBuffer {
     capacity: usize,
 }
 
-// Safety: Same as CoverageRingBuffer - uses atomic operations
+// SAFETY: MappingRingBuffer has identical safety guarantees as CoverageRingBuffer:
+// 1. The raw pointer `ptr` points to mmap'd memory that outlives the buffer
+// 2. All access to shared state uses atomic operations (AtomicU64)
+// 3. The file descriptor is not closed while the mapping is active
+// 4. The memfd is created with proper size and will not be truncated
 unsafe impl Send for MappingRingBuffer {}
 unsafe impl Sync for MappingRingBuffer {}
 

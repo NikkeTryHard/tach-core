@@ -1,6 +1,6 @@
 # Tach-Core Complete Documentation
 
-> Auto-generated from docs/\*.md files. Do not edit directly.
+> Auto-generated from docs/*.md files. Do not edit directly.
 > Regenerate with: `./scripts/build-docs.sh`
 
 ---
@@ -8,7 +8,6 @@
 ## Table of Contents
 
 ### Architecture
-
 - [Allocator (Jemalloc)](#allocator-jemalloc)
 - [Coverage System](#coverage-system)
 - [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
@@ -27,29 +26,29 @@
 - [Zygote Lifecycle](#zygote-lifecycle)
 
 ### Security
-
 - [Sandbox Enforcement: The EPERM Doctrine](#sandbox-enforcement-the-eperm-doctrine)
 
 ### Operations
-
 - [Self-Hosted Runner Requirements](#self-hosted-runner-requirements)
 
 ### Decisions
-
 - [Rust 2024 Edition Migration Analysis](#rust-2024-edition-migration-analysis)
 
 ### Reference
-
 - [API Reference](#api-reference)
+- [Tach Performance Benchmarks](#tach-performance-benchmarks)
 - [Configuration Reference](#configuration-reference)
 - [Development Guide](#development-guide)
+- [Tach Error Reference](#tach-error-reference)
 - [Python Compatibility](#python-compatibility)
+- [Quickstart Guide](#quickstart-guide)
 - [Troubleshooting Guide](#troubleshooting-guide)
 - [WSL2 Setup Guide for tach-core](#wsl2-setup-guide-for-tach-core)
 
 ---
 
 # Architecture Documentation
+
 
 # Allocator (Jemalloc)
 
@@ -292,7 +291,9 @@ goblin = "0.10"
 - [Zygote Lifecycle](zygote.md) - When quiesce is called
 - [Troubleshooting](../troubleshooting.md) - Jemalloc build issues
 
+
 ---
+
 
 # Coverage System
 
@@ -586,7 +587,9 @@ Validated by comprehensive unit tests for alignment/wrapping and stress tests fo
 - [API Reference](../api-reference.md) - FFI signatures
 - [Configuration](../configuration.md) - Coverage options
 
+
 ---
+
 
 # TTY Proxy for Interactive Debugging
 
@@ -1102,7 +1105,9 @@ fn main() -> Result<()> {
 - [Zygote Lifecycle](zygote.md) - Worker process management
 - [Isolation](isolation.md) - How workers are isolated
 
+
 ---
+
 
 # Discovery Engine
 
@@ -1192,6 +1197,7 @@ pub struct TestCase {
     pub is_async: bool,
     pub line_number: usize,
     pub parametrized_args: Vec<String>,
+    pub timeout_secs: Option<u64>,
 }
 ```
 
@@ -1202,6 +1208,7 @@ pub struct TestCase {
 | `is_async`          | Whether it's an `async def`                                                  |
 | `line_number`       | 1-indexed line number for reporting                                          |
 | `parametrized_args` | Arguments from `@pytest.mark.parametrize` (excluded from fixture resolution) |
+| `timeout_secs`      | Per-test timeout from `@pytest.mark.timeout(N)`                              |
 
 ### TestModule
 
@@ -1405,7 +1412,9 @@ See [Toxicity Analysis](toxicity.md) for details.
 - [Toxicity Analysis](toxicity.md) - How discovered modules are analyzed for safety
 - [Fixture Resolver](resolver.md) - How fixture dependencies are resolved
 
+
 ---
+
 
 # Internal Architecture: The Physics of Restoration
 
@@ -1900,7 +1909,9 @@ _"The Iron Dome is only as strong as its weakest pointer."_
 
 _Project Tach Internal Architecture Standard_
 
+
 ---
+
 
 # Isolation Architecture (Namespaces and OverlayFS)
 
@@ -2250,7 +2261,9 @@ cargo test --lib isolation::namespace -- --nocapture
 - [Configuration](../configuration.md) - `--no-isolation` CLI flag
 - [README](../../README.md) - Project architecture overview
 
+
 ---
+
 
 # Zero-Copy Loader
 
@@ -2814,7 +2827,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Architecture Overview
 
@@ -3076,7 +3091,9 @@ See [README.md](../../README.md#project-structure) for complete source file orga
 - [Zero-Copy Loader](loader.md) - How modules are loaded
 - [Toxicity Analysis](toxicity.md) - How unsafe code is detected
 
+
 ---
+
 
 # IPC Protocol
 
@@ -3132,6 +3149,7 @@ pub struct TestPayload {
     pub log_fd: i32,
     pub debug_socket_path: String,
     pub is_toxic: bool,
+    pub timeout_secs: Option<u64>,
 }
 ```
 
@@ -3145,6 +3163,7 @@ pub struct TestPayload {
 | `log_fd`            | File descriptor for stdout/stderr capture |
 | `debug_socket_path` | Path for pdb tunneling                    |
 | `is_toxic`          | Determines worker lifecycle               |
+| `timeout_secs`      | Per-test timeout override (from marker)   |
 
 ### TestResult
 
@@ -3157,6 +3176,7 @@ pub struct TestResult {
     pub status: u8,
     pub duration_ns: u64,
     pub message: String,
+    pub memory_rss_bytes: Option<u64>,
 }
 ```
 
@@ -3181,8 +3201,10 @@ pub struct FixtureInfo {
 | `CMD_EXIT`         | 0x00  | Supervisor -> Zygote | Shutdown                    |
 | `CMD_FORK`         | 0x01  | Supervisor -> Zygote | Spawn/dispatch test         |
 | `CMD_RUN_TEST`     | 0x02  | Zygote -> Worker     | Run test on existing worker |
+| `CMD_PING`         | 0x03  | Supervisor -> Worker | Health check ping           |
 | `MSG_READY`        | 0x42  | Zygote -> Supervisor | Zygote initialized          |
 | `MSG_WORKER_READY` | 0x43  | Worker -> Zygote     | Worker reset complete       |
+| `MSG_PONG`         | 0x44  | Worker -> Supervisor | Health check response       |
 
 ---
 
@@ -3196,29 +3218,37 @@ pub struct FixtureInfo {
 | `STATUS_CRASH`         | 3     | Worker crashed          |
 | `STATUS_ERROR`         | 4     | Test error (exception)  |
 | `STATUS_HARNESS_ERROR` | 5     | Harness error           |
+| `STATUS_TIMEOUT`       | 6     | Test timed out          |
 
 ---
 
 ## Message Framing
 
-All structured messages use length-prefixed framing:
+All structured messages use an 8-byte header with magic bytes, version, and length:
 
 ```
-+----------------+------------------+
-| Length (4 bytes, LE u32) | Payload (bincode) |
-+----------------+------------------+
++--------+---------+----------+--------+------------------+
+| Magic  | Version | Reserved | Length | Payload          |
+| 2 bytes| 1 byte  | 1 byte   | 4 bytes| (bincode)        |
+| "TA"   | 0x01    | 0x00     | LE u32 |                  |
++--------+---------+----------+--------+------------------+
+
+Total header size: 8 bytes (HEADER_SIZE constant)
 ```
 
 ### Encoding
 
 ```rust
-/// Encode a struct to bincode bytes with length prefix
+/// Encode a struct to bincode bytes with protocol header
 pub fn encode_with_length<T: serde::Serialize>(
     value: &T,
 ) -> Result<Vec<u8>, bincode::error::EncodeError> {
     let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
-    let mut result = Vec::with_capacity(4 + payload.len());
+    let mut result = Vec::with_capacity(HEADER_SIZE + payload.len());
+    result.extend_from_slice(&PROTOCOL_MAGIC);  // "TA"
+    result.push(PROTOCOL_VERSION);              // 1
+    result.push(0);                             // Reserved
     result.extend_from_slice(&len.to_le_bytes());
     result.extend_from_slice(&payload);
     Ok(result)
@@ -3227,22 +3257,81 @@ pub fn encode_with_length<T: serde::Serialize>(
 
 ### Decoding
 
-Decoding is performed inline where needed using `bincode::serde::decode_from_slice`:
+Decoding uses `decode_with_limit` which validates the protocol header before parsing:
 
 ```rust
-// Read length prefix
-let mut len_buf = [0u8; 4];
-reader.read_exact(&mut len_buf)?;
-let len = u32::from_le_bytes(len_buf) as usize;
+// Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+let mut header_buf = [0u8; HEADER_SIZE];
+reader.read_exact(&mut header_buf)?;
 
-// Read payload and decode
-let mut payload = vec![0u8; len];
-reader.read_exact(&mut payload)?;
-let (decoded, _): (T, usize) =
-    bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
+// Extract length from bytes 4-7 (little-endian u32)
+let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
+
+// OOM protection: Validate size BEFORE allocating
+if len > MAX_PAYLOAD_SIZE {
+    return Err(ProtocolError::PayloadTooLarge);
+}
+
+// Allocate buffer for header + payload
+let mut full_buf = vec![0u8; HEADER_SIZE + len];
+full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+reader.read_exact(&mut full_buf[HEADER_SIZE..])?;
+
+// Decode with header validation
+let decoded: T = decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE)?;
 ```
 
-> **Note:** There is no `decode_with_length` helper function in the codebase. Decoding is done inline at call sites.
+> **Note:** `decode_with_limit` validates magic bytes and protocol version before decoding.
+
+---
+
+## Message Size Limits
+
+To prevent OOM attacks from malicious payloads, all IPC messages enforce size limits:
+
+| Limit              | Value  | Purpose                            |
+| ------------------ | ------ | ---------------------------------- |
+| `MAX_PAYLOAD_SIZE` | 16 MiB | Maximum serialized message size    |
+| Message truncation | 4 KiB  | Maximum error/output string length |
+
+### Enforcement
+
+Size validation occurs **before** memory allocation using `decode_with_limit`:
+
+```rust
+pub fn decode_with_limit<T: DeserializeOwned>(
+    data: &[u8],
+    max_size: usize,
+) -> Result<T, DecodeWithLimitError> {
+    // Validate minimum header size
+    if data.len() < HEADER_SIZE {
+        return Err(DecodeWithLimitError::InsufficientData { ... });
+    }
+
+    // Validate magic bytes
+    if data[0..2] != PROTOCOL_MAGIC {
+        return Err(DecodeWithLimitError::InvalidMagic);
+    }
+
+    // Validate protocol version
+    if data[2] != PROTOCOL_VERSION {
+        return Err(DecodeWithLimitError::VersionMismatch { ... });
+    }
+
+    // Extract length from bytes 4-7 (after magic, version, reserved)
+    let claimed_len = u32::from_le_bytes(data[4..8].try_into()?) as usize;
+
+    // Reject before allocating
+    if claimed_len > max_size {
+        return Err(DecodeWithLimitError::PayloadTooLarge { ... });
+    }
+    // ... proceed with decode
+}
+```
+
+This prevents a malicious actor from sending a crafted length prefix (e.g., `0xFFFFFFFF`) to trigger a 4GB allocation.
+
+> **Security Note:** The `decode_with_limit` function is used at all IPC boundaries where untrusted data is received (Supervisor ↔ Zygote, Zygote ↔ Worker).
 
 ---
 
@@ -3406,7 +3495,9 @@ sequenceDiagram
 - [Zygote Lifecycle](zygote.md) - Command loop implementation
 - [Physics Engine](snapshot.md) - UFFD handshake details
 
+
 ---
+
 
 # Reporter
 
@@ -3821,7 +3912,9 @@ scheduler.run(&mut multi)?;
 - [Scheduler](scheduler.md) - How results are collected
 - [Configuration](../configuration.md) - --format and --junit-xml flags
 
+
 ---
+
 
 # Fixture Resolver
 
@@ -4179,7 +4272,9 @@ def run_test(file_path, test_name, fixtures):
 - [Zygote Lifecycle](zygote.md) - Fixture execution
 - [IPC Protocol](protocol.md) - FixtureInfo in TestPayload
 
+
 ---
+
 
 # Iron Dome (Sandbox)
 
@@ -4476,7 +4571,9 @@ The Iron Dome logs warnings and continues with reduced protection on older kerne
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
 - [Configuration](../configuration.md) - pyproject.toml settings
 
+
 ---
+
 
 # Scheduler Architecture
 
@@ -4774,7 +4871,9 @@ sequenceDiagram
 - [Sandbox](sandbox.md)
 - [Coverage](coverage.md)
 
+
 ---
+
 
 # Physics Engine (Snapshot)
 
@@ -5253,7 +5352,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Toxicity Analysis
 
@@ -5616,6 +5717,8 @@ This implementation is informed by the following research papers (see `docs/pdfs
 | **Rust Static Analysis for Toxic Python Modules** | Taxonomy of import-time toxicity, `ruff_python_parser` integration, fixed-point iteration |
 | **Python Monorepo Zygote Tree Design**            | Toxicity propagation rules, contagion model ("if A imports toxic B, A is toxic")          |
 
+> **Implementation Note:** Tach uses `rustpython-parser` for AST analysis. The research paper analyzed `ruff_python_parser` as an alternative but the implementation chose `rustpython-parser` for API stability.
+
 ### Key Technical Details from Research
 
 - **Orphaned Locks**: `fork()` only clones the calling thread - background threads (BLAS workers, gRPC pollers) vanish, leaving mutexes permanently locked
@@ -5626,7 +5729,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Zygote Lifecycle
 
@@ -6106,9 +6211,12 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
 
+
 # Security Documentation
+
 
 # Sandbox Enforcement: The EPERM Doctrine
 
@@ -6469,9 +6577,12 @@ _"A sandbox is not secure until the kernel says no."_
 
 _The EPERM Doctrine - Project Tach Security Standard_
 
+
 ---
 
+
 # Operations Documentation
+
 
 # Self-Hosted Runner Requirements
 
@@ -6827,9 +6938,12 @@ _"The Iron Dome requires an iron foundation."_
 
 _Project Tach CI Infrastructure Standard_
 
+
 ---
 
+
 # Architecture Decision Records
+
 
 # Rust 2024 Edition Migration Analysis
 
@@ -7126,9 +7240,12 @@ _"Safety is not an optional feature."_
 
 _Project Tach - Rust Edition Migration Analysis_
 
+
 ---
 
+
 # Reference Documentation
+
 
 # API Reference
 
@@ -7201,6 +7318,7 @@ pub struct RunnableTest {
     pub is_async: bool,                  // Whether test is async
     pub fixtures: Vec<ResolvedFixture>,  // Resolved fixture chain
     pub is_toxic: bool,                  // Requires worker restart
+    pub timeout_secs: Option<u64>,       // Per-test timeout override
 }
 ```
 
@@ -7764,7 +7882,60 @@ end_of_record
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
 - [Configuration](configuration.md) - Configuration options
 
+
 ---
+
+
+# Tach Performance Benchmarks
+
+> **Status:** Benchmark framework established. Results pending systematic collection.
+
+## Methodology
+
+### Test Environment
+
+Benchmarks should be run on:
+
+- Clean system (no background processes)
+- Warm filesystem cache (run twice, report second)
+- Minimum 3 runs with median reported
+
+### Benchmark Suite
+
+| Benchmark        | Description            | Command                 |
+| ---------------- | ---------------------- | ----------------------- |
+| Cold Start       | First run, empty cache | `time tach tests/`      |
+| Warm Start       | Repeated run, cached   | `time tach tests/`      |
+| Parallel Scaling | 1-16 workers           | `tach -n {N} tests/`    |
+| Large Suite      | 1000+ tests            | `tach tests/benchmark/` |
+
+## Performance Targets
+
+Based on architecture design, expected improvements over pytest:
+
+| Metric       | pytest Baseline | Tach Target  | Mechanism                    |
+| ------------ | --------------- | ------------ | ---------------------------- |
+| Discovery    | 100%            | 10%          | Static AST vs runtime import |
+| Fork latency | ~50ms           | <1ms         | Zygote pre-initialization    |
+| Isolation    | N/A             | <5% overhead | Namespace + Landlock         |
+
+## Collected Results
+
+> **TODO:** Add actual benchmark results here after systematic collection.
+
+### How to Contribute Benchmarks
+
+1. Run: `./scripts/benchmark.sh` (when available)
+2. Include system specs in results
+3. Submit via PR to `docs/benchmarks.md`
+
+## Comparison with Other Tools
+
+See [docs/research/external-research.md](research/external-research.md#23-competitive-landscape) for competitive analysis.
+
+
+---
+
 
 # Configuration Reference
 
@@ -7790,12 +7961,13 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 ### Commands
 
-| Command     | Description                                   |
-| :---------- | :-------------------------------------------- |
-| `test`      | Run tests (default)                           |
-| `list`      | List discovered tests without running         |
-| `self-test` | Run self-diagnostics to verify kernel support |
-| `version`   | Show version and build information            |
+| Command       | Description                                                             |
+| :------------ | :---------------------------------------------------------------------- |
+| `test`        | Run tests (default)                                                     |
+| `list`        | List discovered tests without running                                   |
+| `self-test`   | Run self-diagnostics to verify kernel support                           |
+| `version`     | Show version and build information                                      |
+| `completions` | Generate shell completion scripts (bash, zsh, fish, powershell, elvish) |
 
 ### Options
 
@@ -7852,6 +8024,10 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 | `--dry-run`      | Show what would run without executing Python code  | false   |
 | `--no-isolation` | Disable namespace/sandbox isolation                | false   |
 | `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
+| `--memory`       | Show memory usage for each test                    | false   |
+| `--debug`        | Enable debug logging                               | false   |
+| `--trace`        | Enable trace-level logging                         | false   |
+| `--diagnose`     | Run system diagnostics and exit                    | false   |
 
 #### Passthrough Arguments
 
@@ -7892,6 +8068,7 @@ tach-core self-test                  # Verify kernel support
 | `TACH_COVERAGE_OUTPUT` | Path to save coverage report                              | `coverage.lcov` |
 | `TACH_COVERAGE_FORMAT` | Coverage format (`lcov`, `html`, `json`)                  | `lcov`          |
 | `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)                           | -               |
+| `TACH_LOG_LEVEL`       | Log verbosity level (`debug`, `trace`, `info`)            | `info`          |
 | `TACH_TARGET_PATH`     | Test path (set internally)                                | `.`             |
 | `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally)                         | -               |
 | `CI`                   | Detected for reporter selection                           | -               |
@@ -7937,6 +8114,9 @@ workers = 4
 # Isolation strategy: "auto", "fork", "snapshot"
 isolation_strategy = "auto"
 
+# Python callback for timeout events (optional)
+timeout_hook = "my_package.hooks:on_timeout"
+
 [tool.tach.coverage]
 # Enable coverage collection
 enabled = true
@@ -7956,12 +8136,13 @@ format = "lcov"
 
 ### [tool.tach] Options
 
-| Option               | Type    | Default       | Description                 |
-| :------------------- | :------ | :------------ | :-------------------------- |
-| `test_pattern`       | string  | `"test_*.py"` | Glob pattern for test files |
-| `timeout`            | integer | `60`          | Test timeout in seconds     |
-| `workers`            | integer | `num_cpus`    | Number of worker processes  |
-| `isolation_strategy` | string  | `"auto"`      | Isolation mode              |
+| Option               | Type    | Default       | Description                        |
+| :------------------- | :------ | :------------ | :--------------------------------- |
+| `test_pattern`       | string  | `"test_*.py"` | Glob pattern for test files        |
+| `timeout`            | integer | `60`          | Test timeout in seconds            |
+| `workers`            | integer | `num_cpus`    | Number of worker processes         |
+| `isolation_strategy` | string  | `"auto"`      | Isolation mode                     |
+| `timeout_hook`       | string  | -             | Python callback for timeout events |
 
 ### [tool.tach.coverage] Options
 
@@ -8143,7 +8324,9 @@ test:
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details
 
+
 ---
+
 
 # Development Guide
 
@@ -8155,7 +8338,7 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 
 | Requirement | Version                    | Notes                         |
 | :---------- | :------------------------- | :---------------------------- |
-| Rust        | 1.75+                      | Async traits, modern APIs     |
+| Rust        | 1.85+                      | Async traits, Rust 2024 Edition |
 | Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669         |
 | Linux       | Kernel 5.13+               | Landlock filesystem isolation |
 | Build tools | gcc, make, autoconf        | Jemalloc compilation          |
@@ -8477,7 +8660,358 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 - [Troubleshooting](troubleshooting.md)
 - [API Reference](api-reference.md)
 
+
 ---
+
+
+# Tach Error Reference
+
+This document provides a comprehensive reference for all Tach error codes, their causes, and remediation steps.
+
+## Error Code Overview
+
+Error codes follow the pattern `EXXX` where:
+
+- **E001-E004, E010, E012**: User errors (test code, configuration, Python version)
+- **E005-E009, E011, E013-E016**: System errors (kernel, permissions, resources)
+- **E017-E020**: Extended user errors (syntax, fixtures, test status)
+
+## User Errors
+
+### E001: Test Assertion Failed
+
+**Category:** User
+
+**Cause:** A test assertion failed during execution. The test's expected outcome did not match the actual result.
+
+**Solution:**
+
+1. Review the test assertion and expected values
+2. Check if the code under test has changed
+3. Verify test data and fixtures are correct
+
+---
+
+### E002: Import Error
+
+**Category:** User
+
+**Cause:** Failed to import a module in a test file. This could be a missing dependency or incorrect import path.
+
+**Solution:**
+
+1. Ensure the module is installed: `pip install <module>`
+2. Verify the import path is correct
+3. Check for circular imports
+4. Ensure `PYTHONPATH` is set correctly
+
+---
+
+### E003: Fixture Not Found
+
+**Category:** User
+
+**Cause:** A test requests a fixture that does not exist or is not accessible.
+
+**Solution:**
+
+1. Define the fixture in `conftest.py` or the test file
+2. Check for typos in the fixture name
+3. Ensure conftest.py is in the correct directory
+4. Verify fixture scope is appropriate
+
+---
+
+### E004: Invalid Marker Expression
+
+**Category:** User
+
+**Cause:** The marker expression passed via `-m` flag has invalid syntax.
+
+**Solution:**
+
+1. Check marker syntax: `-m "slow and not integration"`
+2. Use proper boolean operators: `and`, `or`, `not`
+3. Ensure marker names are valid identifiers
+
+---
+
+### E010: Timeout Exceeded
+
+**Category:** User
+
+**Cause:** A test exceeded the configured timeout limit.
+
+**Solution:**
+
+1. Increase timeout: `@pytest.mark.timeout(N)` on the test
+2. Increase global timeout: `--timeout N` CLI flag
+3. Optimize the test for better performance
+4. Check for infinite loops or deadlocks
+
+---
+
+### E012: Python Version Mismatch
+
+**Category:** User
+
+**Cause:** The Python binary used does not match the expected version.
+
+**Solution:**
+
+1. Set `PYO3_PYTHON` to the correct Python binary path
+2. Verify Python version: `python --version`
+3. Create a virtual environment with the correct version
+
+---
+
+### E017: Syntax Error in Test File
+
+**Category:** User
+
+**Cause:** A Python syntax error was found in a test file.
+
+**Solution:**
+
+1. Run `python -m py_compile <file>` to locate the error
+2. Fix the syntax error at the indicated line
+3. Check for missing colons, brackets, or indentation issues
+
+---
+
+### E018: Circular Fixture Dependency
+
+**Category:** User
+
+**Cause:** Fixtures have circular dependencies that cannot be resolved.
+
+**Solution:**
+
+1. Review fixture dependency graph
+2. Refactor fixtures to break the cycle
+3. Use factory patterns to defer fixture creation
+4. Consider using fixture scopes to avoid the cycle
+
+---
+
+### E019: Skipped Test
+
+**Category:** User (Informational)
+
+**Cause:** A test was skipped due to a skip marker or condition.
+
+**Note:** This is informational, not an error. The test was intentionally skipped.
+
+---
+
+### E020: Expected Failure (Xfail)
+
+**Category:** User (Informational)
+
+**Cause:** A test is marked as expected to fail (`@pytest.mark.xfail`).
+
+**Note:** This is informational, not an error. The test is known to fail and tracked.
+
+---
+
+## System Errors
+
+### E005: userfaultfd Not Available
+
+**Category:** System
+
+**Cause:** The userfaultfd system call is not available. This is required for Tach's memory snapshot feature.
+
+**Solution:**
+
+1. Enable unprivileged userfaultfd:
+   ```bash
+   sudo sysctl -w vm.unprivileged_userfaultfd=1
+   ```
+2. Make it persistent by adding to `/etc/sysctl.conf`:
+   ```
+   vm.unprivileged_userfaultfd=1
+   ```
+3. Alternatively, run with `CAP_SYS_PTRACE`:
+   ```bash
+   sudo setcap cap_sys_ptrace+ep ./tach-core
+   ```
+
+---
+
+### E006: Landlock Not Supported
+
+**Category:** System
+
+**Cause:** Landlock filesystem sandboxing is not available. Requires Linux kernel 5.13+.
+
+**Solution:**
+
+1. Upgrade to Linux kernel 5.13 or later
+2. Tach will run with degraded filesystem isolation
+3. Check kernel config: `CONFIG_SECURITY_LANDLOCK=y`
+
+---
+
+### E007: Permission Denied
+
+**Category:** System
+
+**Cause:** An operation was denied due to insufficient permissions.
+
+**Solution:**
+
+1. Check file and directory permissions
+2. Run with elevated privileges if necessary
+3. In containers, use `--privileged` flag
+4. Check SELinux/AppArmor policies
+
+---
+
+### E008: Out of Memory
+
+**Category:** System
+
+**Cause:** System ran out of memory during test execution.
+
+**Solution:**
+
+1. Reduce worker count: `-n 2`
+2. Increase system memory or swap
+3. Check for memory leaks in tests
+4. Use `--force-toxic` to reduce snapshot memory usage
+
+---
+
+### E009: Too Many Open Files
+
+**Category:** System
+
+**Cause:** The process exceeded the file descriptor limit.
+
+**Solution:**
+
+1. Increase file descriptor limit:
+   ```bash
+   ulimit -n 65536
+   ```
+2. Make permanent in `/etc/security/limits.conf`:
+   ```
+   * soft nofile 65536
+   * hard nofile 65536
+   ```
+3. Reduce worker count to use fewer file descriptors
+
+---
+
+### E011: OverlayFS Mount Failed
+
+**Category:** System
+
+**Cause:** Failed to mount an OverlayFS filesystem for test isolation.
+
+**Solution:**
+
+1. Ensure the overlayfs kernel module is loaded:
+   ```bash
+   sudo modprobe overlay
+   ```
+2. Check mount permissions
+3. Verify the work directory supports overlayfs
+
+---
+
+### E013: Namespace Creation Failed
+
+**Category:** System
+
+**Cause:** Failed to create a Linux namespace for process isolation.
+
+**Solution:**
+
+1. Check kernel configuration for namespace support
+2. Run with `CAP_SYS_ADMIN`:
+   ```bash
+   sudo setcap cap_sys_admin+ep ./tach-core
+   ```
+3. In Docker, use `--privileged` or specific capability flags
+
+---
+
+### E014: Worker Crash
+
+**Category:** System
+
+**Cause:** A worker process crashed with a signal (SIGSEGV, SIGBUS, etc.).
+
+**Solution:**
+
+1. Check for memory corruption in C extensions
+2. Increase stack size: `ulimit -s unlimited`
+3. Run with `--force-toxic` to isolate problematic tests
+4. Check for segfault-causing code in tests
+
+---
+
+### E015: IPC Channel Failure
+
+**Category:** System
+
+**Cause:** Communication between supervisor and worker failed.
+
+**Solution:**
+
+1. Check system resources (memory, file descriptors)
+2. Reduce worker count: `-n 2`
+3. Check for worker crashes in logs
+4. Ensure `/dev/shm` has sufficient space
+
+---
+
+### E016: Snapshot Integrity Failure
+
+**Category:** System
+
+**Cause:** Memory snapshot verification failed, indicating corruption.
+
+**Solution:**
+
+1. This is an internal error - please report a bug
+2. Try running with `--force-toxic` as a workaround
+3. Check for memory-corrupting C extensions
+4. Verify system memory is healthy: `memtest86+`
+
+---
+
+## Diagnostic Commands
+
+### Check System Compatibility
+
+```bash
+tach self-test
+```
+
+### Run with Maximum Verbosity
+
+```bash
+tach --debug --trace tests/
+```
+
+### Run Comprehensive Diagnostics
+
+```bash
+tach --diagnose
+```
+
+## See Also
+
+- [Configuration Reference](configuration.md)
+- [Troubleshooting Guide](troubleshooting.md)
+- [Development Guide](development.md)
+
+
+---
+
 
 # Python Compatibility
 
@@ -8494,7 +9028,7 @@ This document describes Python version compatibility for Tach.
 | **3.12**          | Supported    | Required for PEP 669 coverage    |
 | **3.13**          | Supported    | Includes mimalloc TLS handling   |
 | **3.13t**         | Experimental | Free-threading build (see below) |
-| **3.14**          | Untested     | Beta not yet available           |
+| **3.14**          | Supported    | Latest release (Oct 2025)        |
 | **3.9 and below** | Unsupported  | May work but not tested          |
 
 ### Feature Availability by Version
@@ -8637,9 +9171,27 @@ PyO3 0.23+ provides experimental support for free-threaded Python:
 
 ## Python 3.14
 
-Python 3.14 was released in October 2025. Tach compatibility testing is ongoing.
+Python 3.14 was released on October 7, 2025 and is fully supported by Tach.
 
-See the [Python release schedule](https://peps.python.org/pep-0745/) for current development status.
+### Key Python 3.14 Changes
+
+| Feature                          | Status     | Notes                                      |
+| :------------------------------- | :--------- | :----------------------------------------- |
+| PEP 649: Deferred Annotations    | Compatible | Annotations evaluated lazily (now default) |
+| PEP 750: Template Strings        | Compatible | New t-strings syntax supported             |
+| Improved error messages          | Compatible | Better exception formatting                |
+| `sys.monitoring` improvements    | Compatible | Coverage collection works correctly        |
+| Free-threaded build availability | Untested   | 3.14t builds not yet tested                |
+
+### Compatibility Notes
+
+- All core functionality works identically to Python 3.13
+- Coverage collection via PEP 669 (`sys.monitoring`) functions correctly
+- No changes required to Tach configuration
+- mimalloc TLS handling continues to work as in 3.13
+
+See the [Python 3.14 release notes](https://docs.python.org/3/whatsnew/3.14.html) and
+[PEP 745 (Release Schedule)](https://peps.python.org/pep-0745/) for details.
 
 ---
 
@@ -8706,7 +9258,365 @@ Python 3.13 switched from pymalloc to mimalloc. If you encounter memory-related 
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Architecture: Snapshot](architecture/snapshot.md) - Memory snapshot internals
 
+
 ---
+
+
+# Quickstart Guide
+
+Get started with Tach in minutes. This guide covers installation, running your first tests, and migrating from pytest.
+
+---
+
+## Installation
+
+Tach runs on Linux with kernel 5.13 or later. Choose your distribution below.
+
+### Ubuntu (22.04+)
+
+```bash
+# Install system dependencies
+sudo apt update
+sudo apt install -y build-essential python3-dev python3-venv
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Clone and build Tach
+git clone https://github.com/NikkeTryHard/tach-core.git
+cd tach-core
+
+# Create Python environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pytest
+
+# Build Tach
+export PYO3_PYTHON=$(which python)
+cargo build --release
+
+# Verify installation
+./target/release/tach-core --version
+./target/release/tach-core self-test
+```
+
+### Fedora (34+)
+
+```bash
+# Install system dependencies
+sudo dnf install -y gcc make python3-devel
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Clone and build Tach
+git clone https://github.com/NikkeTryHard/tach-core.git
+cd tach-core
+
+# Create Python environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pytest
+
+# Build Tach
+export PYO3_PYTHON=$(which python)
+cargo build --release
+
+# Verify installation
+./target/release/tach-core --version
+./target/release/tach-core self-test
+```
+
+### Arch Linux
+
+```bash
+# Install system dependencies
+sudo pacman -S base-devel python
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Clone and build Tach
+git clone https://github.com/NikkeTryHard/tach-core.git
+cd tach-core
+
+# Create Python environment
+python -m venv .venv
+source .venv/bin/activate
+pip install pytest
+
+# Build Tach
+export PYO3_PYTHON=$(which python)
+cargo build --release
+
+# Verify installation
+./target/release/tach-core --version
+./target/release/tach-core self-test
+```
+
+### Verifying Kernel Support
+
+After installation, verify your system supports Tach:
+
+```bash
+# Check kernel version (must be 5.13+)
+uname -r
+
+# Check Landlock support
+cat /sys/kernel/security/lsm | grep landlock
+
+# Run self-test for complete verification
+./target/release/tach-core self-test
+```
+
+---
+
+## First Test Run
+
+### Step 1: Create a Test File
+
+Create a simple test file to verify Tach works:
+
+```python
+# tests/test_example.py
+def test_addition():
+    assert 1 + 1 == 2
+
+def test_string():
+    assert "hello".upper() == "HELLO"
+
+def test_list():
+    items = [1, 2, 3]
+    assert len(items) == 3
+```
+
+### Step 2: Run with Tach
+
+```bash
+# Run tests
+./target/release/tach-core tests/
+
+# Expected output:
+# tests/test_example.py::test_addition PASSED
+# tests/test_example.py::test_string PASSED
+# tests/test_example.py::test_list PASSED
+#
+# 3 passed in 0.05s
+```
+
+### Step 3: Explore Options
+
+```bash
+# Verbose output
+./target/release/tach-core -v tests/
+
+# Run with 4 parallel workers
+./target/release/tach-core -n 4 tests/
+
+# Filter tests by keyword
+./target/release/tach-core -k "string" tests/
+
+# Stop on first failure
+./target/release/tach-core -x tests/
+
+# List tests without running
+./target/release/tach-core list tests/
+```
+
+---
+
+## Comparison with pytest
+
+Tach is designed as a drop-in replacement for pytest with better performance. Here is a side-by-side comparison.
+
+### Running Tests
+
+| Task               | pytest                   | Tach                                 |
+| :----------------- | :----------------------- | :----------------------------------- |
+| Run all tests      | `pytest .`               | `tach-core .`                        |
+| Run specific file  | `pytest tests/test_a.py` | `tach-core tests/test_a.py`          |
+| Parallel execution | `pytest -n 4`            | `tach-core -n 4`                     |
+| Verbose output     | `pytest -v`              | `tach-core -v`                       |
+| Stop on failure    | `pytest -x`              | `tach-core -x`                       |
+| Filter by keyword  | `pytest -k "pattern"`    | `tach-core -k "pattern"`             |
+| Filter by marker   | `pytest -m "slow"`       | `tach-core -m "slow"`                |
+| List tests         | `pytest --collect-only`  | `tach-core list` or `--collect-only` |
+
+### Coverage
+
+| Task            | pytest                   | Tach                             |
+| :-------------- | :----------------------- | :------------------------------- |
+| Enable coverage | `pytest --cov=src`       | `tach-core --coverage --cov=src` |
+| Coverage report | Generated via pytest-cov | Generated in LCOV format         |
+
+### Output Formats
+
+| Task            | pytest                     | Tach                          |
+| :-------------- | :------------------------- | :---------------------------- |
+| JUnit XML       | `pytest --junit-xml=r.xml` | `tach-core --junit-xml=r.xml` |
+| JSON output     | Requires plugins           | `tach-core --format json`     |
+| Traceback style | `pytest --tb=short`        | `tach-core --tb short`        |
+
+### Example Workflows
+
+**pytest workflow:**
+
+```bash
+# Traditional pytest with xdist for parallel execution
+pip install pytest pytest-xdist pytest-cov
+pytest tests/ -n 4 --cov=src --junit-xml=results.xml
+```
+
+**Tach workflow:**
+
+```bash
+# Tach with built-in parallelism and coverage
+./target/release/tach-core tests/ -n 4 --coverage --cov=src --junit-xml=results.xml
+```
+
+---
+
+## Migration Guide from pytest
+
+Migrating from pytest to Tach is straightforward. Most test suites work without modification.
+
+### What Stays the Same
+
+- **Test discovery** - `test_*.py` files and `test_*` functions work identically
+- **Assertions** - Standard Python assertions and pytest assertions work
+- **Fixtures** - pytest fixtures work (module, function, session scope)
+- **Markers** - `@pytest.mark.*` decorators are supported
+- **conftest.py** - Configuration files are recognized
+- **pyproject.toml** - pytest settings in `[tool.pytest.ini_options]` are read
+
+### What Changes
+
+| Aspect             | pytest                | Tach                         |
+| :----------------- | :-------------------- | :--------------------------- |
+| Parallel execution | Requires pytest-xdist | Built-in (`-n` flag)         |
+| Coverage           | Requires pytest-cov   | Built-in (`--coverage` flag) |
+| Process isolation  | Fork per test         | Memory snapshots             |
+| Platform support   | Windows, macOS, Linux | Linux only (kernel 5.13+)    |
+| Watch mode         | Requires pytest-watch | Built-in (`--watch` flag)    |
+
+### Migration Checklist
+
+1. **Verify kernel version**
+
+   ```bash
+   uname -r  # Must be 5.13 or later
+   ```
+
+2. **Run self-test**
+
+   ```bash
+   ./target/release/tach-core self-test
+   ```
+
+3. **Test with existing suite**
+
+   ```bash
+   # Run your existing tests with Tach
+   ./target/release/tach-core tests/
+   ```
+
+4. **Compare results**
+
+   ```bash
+   # Run with pytest for comparison
+   pytest tests/ -v > pytest_output.txt
+
+   # Run with Tach
+   ./target/release/tach-core tests/ -v > tach_output.txt
+
+   # Compare (test counts and results should match)
+   diff pytest_output.txt tach_output.txt
+   ```
+
+5. **Add Tach configuration** (optional)
+
+   ```toml
+   # pyproject.toml
+   [tool.tach]
+   test_pattern = "test_*.py"
+   timeout = 60
+   workers = 4
+   ```
+
+### Known Differences
+
+| Feature                 | pytest behavior          | Tach behavior                    |
+| :---------------------- | :----------------------- | :------------------------------- |
+| Plugin system           | Extensive plugin support | Limited (core features built-in) |
+| Subprocess tests        | Work normally            | Sandboxed (some restrictions)    |
+| Network access in tests | Allowed                  | Blocked by default (Seccomp)     |
+| Database connections    | Per-test setup           | Connection pooling preserved     |
+
+### Handling Incompatibilities
+
+**Network-dependent tests:**
+
+Tests that require network access will fail with Seccomp enabled. Disable sandboxing for these tests:
+
+```bash
+# Disable isolation (development only)
+./target/release/tach-core --no-isolation tests/
+```
+
+**Subprocess-heavy tests:**
+
+Tests marked as "toxic" (using subprocess, multiprocessing) run in a separate mode:
+
+```bash
+# Force toxic mode for all tests
+./target/release/tach-core --force-toxic tests/
+```
+
+---
+
+## Next Steps
+
+- [Configuration Reference](configuration.md) - Full CLI and pyproject.toml options
+- [Django Example](../examples/django/README.md) - Database testing example
+- [Development Guide](development.md) - Contributing and building
+- [Troubleshooting](troubleshooting.md) - Common issues and solutions
+
+---
+
+## Quick Reference
+
+```bash
+# Run all tests
+tach-core .
+
+# Parallel execution
+tach-core -n 4 .
+
+# Verbose with coverage
+tach-core -v --coverage .
+
+# Filter and fail fast
+tach-core -k "auth" -x .
+
+# JUnit output for CI
+tach-core --junit-xml results.xml .
+
+# List tests
+tach-core list .
+
+# Watch mode
+tach-core --watch .
+
+# Self-test
+tach-core self-test
+```
+
+
+---
+
 
 # Troubleshooting Guide
 
@@ -9272,7 +10182,7 @@ cat /sys/kernel/security/lsm
 cat /proc/sys/vm/unprivileged_userfaultfd
 
 # Run self-test
-./target/release/tach-core --self-test
+./target/release/tach-core self-test
 ```
 
 ### Report Issues
@@ -9294,7 +10204,9 @@ When reporting issues, include:
 - [Sandbox](architecture/sandbox.md) - Security architecture
 - [Snapshot](architecture/snapshot.md) - Memory snapshot details
 
+
 ---
+
 
 # WSL2 Setup Guide for tach-core
 
@@ -9579,4 +10491,6 @@ cargo build
 - [Landlock Documentation](https://docs.kernel.org/userspace-api/landlock.html)
 - [userfaultfd Documentation](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)
 
+
 ---
+

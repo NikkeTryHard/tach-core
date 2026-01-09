@@ -22,13 +22,13 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 ### Commands
 
-| Command       | Description                                         |
-| :------------ | :-------------------------------------------------- |
-| `test`        | Run tests (default)                                 |
-| `list`        | List discovered tests without running               |
-| `self-test`   | Run self-diagnostics to verify kernel support       |
-| `version`     | Show version and build information                  |
-| `completions` | Generate shell completion scripts (bash, zsh, fish) |
+| Command       | Description                                                             |
+| :------------ | :---------------------------------------------------------------------- |
+| `test`        | Run tests (default)                                                     |
+| `list`        | List discovered tests without running                                   |
+| `self-test`   | Run self-diagnostics to verify kernel support                           |
+| `version`     | Show version and build information                                      |
+| `completions` | Generate shell completion scripts (bash, zsh, fish, powershell, elvish) |
 
 ### Options
 
@@ -85,6 +85,10 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 | `--dry-run`      | Show what would run without executing Python code  | false   |
 | `--no-isolation` | Disable namespace/sandbox isolation                | false   |
 | `--force-toxic`  | Force toxic mode for all tests (no snapshot reuse) | false   |
+| `--memory`       | Show memory usage for each test                    | false   |
+| `--debug`        | Enable debug logging                               | false   |
+| `--trace`        | Enable trace-level logging                         | false   |
+| `--diagnose`     | Run system diagnostics and exit                    | false   |
 
 #### Passthrough Arguments
 
@@ -125,6 +129,7 @@ tach-core self-test                  # Verify kernel support
 | `TACH_COVERAGE_OUTPUT` | Path to save coverage report                              | `coverage.lcov` |
 | `TACH_COVERAGE_FORMAT` | Coverage format (`lcov`, `html`, `json`)                  | `lcov`          |
 | `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)                           | -               |
+| `TACH_LOG_LEVEL`       | Log verbosity level (`debug`, `trace`, `info`)            | `info`          |
 | `TACH_TARGET_PATH`     | Test path (set internally)                                | `.`             |
 | `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally)                         | -               |
 | `CI`                   | Detected for reporter selection                           | -               |
@@ -170,6 +175,9 @@ workers = 4
 # Isolation strategy: "auto", "fork", "snapshot"
 isolation_strategy = "auto"
 
+# Python callback for timeout events (optional)
+timeout_hook = "my_package.hooks:on_timeout"
+
 [tool.tach.coverage]
 # Enable coverage collection
 enabled = true
@@ -189,12 +197,13 @@ format = "lcov"
 
 ### [tool.tach] Options
 
-| Option               | Type    | Default       | Description                 |
-| :------------------- | :------ | :------------ | :-------------------------- |
-| `test_pattern`       | string  | `"test_*.py"` | Glob pattern for test files |
-| `timeout`            | integer | `60`          | Test timeout in seconds     |
-| `workers`            | integer | `num_cpus`    | Number of worker processes  |
-| `isolation_strategy` | string  | `"auto"`      | Isolation mode              |
+| Option               | Type    | Default       | Description                        |
+| :------------------- | :------ | :------------ | :--------------------------------- |
+| `test_pattern`       | string  | `"test_*.py"` | Glob pattern for test files        |
+| `timeout`            | integer | `60`          | Test timeout in seconds            |
+| `workers`            | integer | `num_cpus`    | Number of worker processes         |
+| `isolation_strategy` | string  | `"auto"`      | Isolation mode                     |
+| `timeout_hook`       | string  | -             | Python callback for timeout events |
 
 ### [tool.tach.coverage] Options
 

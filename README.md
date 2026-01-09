@@ -4,8 +4,8 @@
 
 **A Snapshot-Hypervisor for Python Tests**
 
-[![Version](https://img.shields.io/badge/Version-0.1.0_Alpha-red)](CHANGELOG.md)
-[![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/Version-0.1.4-blue)](CHANGELOG.md)
+[![Rust](https://img.shields.io/badge/Rust-1.88+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)](https://www.python.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green?logo=linux)](https://kernel.org/)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
@@ -86,7 +86,7 @@ export PYO3_PYTHON=$(which python) && cargo build --release
 | :------------- | :--------------------------------------------- |
 | **OS**         | Linux Kernel 5.13+ (Ubuntu 22.04+, Fedora 34+) |
 | **Python**     | 3.10+ (3.12+ for PEP 669 coverage)             |
-| **Rust**       | 1.75+                                          |
+| **Rust**       | 1.88+ (stable)                                 |
 | **Privileges** | `CAP_SYS_PTRACE` or root                       |
 
 ---

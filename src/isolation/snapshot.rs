@@ -775,8 +775,9 @@ pub fn build_restore_regions(snapshot: &WorkerSnapshot) -> Vec<RestoreRegion> {
     // allocator free list heads. Restoring them eagerly avoids the first
     // wave of userfaultfd faults.
     //
-    // TODO: Identify and extract critical BSS pages during capture
-    // For now, we rely on userfaultfd for BSS restoration
+    // Future: Identify and extract critical BSS pages during capture.
+    // This would improve snapshot efficiency by reducing restored page count.
+    // For now, we rely on userfaultfd for BSS restoration.
 
     regions
 }

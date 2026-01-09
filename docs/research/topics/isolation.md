@@ -217,6 +217,6 @@ If Namespaces + LD_PRELOAD fail:
 
 ## See Also
 
-- [Toxicity Classification](./toxicity.md) - Which tests need full isolation
-- [Snapshot Architecture](./snapshot.md) - Memory state restoration
-- [Zygote Hierarchy](./zygote.md) - Process cloning patterns
+- [Toxicity Classification](../../architecture/toxicity.md) - Which tests need full isolation
+- [Snapshot Architecture](../../architecture/snapshot.md) - Memory state restoration
+- [Zygote Hierarchy](../../architecture/zygote.md) - Process cloning patterns
