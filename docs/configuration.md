@@ -22,12 +22,13 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 
 ### Commands
 
-| Command     | Description                                   |
-| :---------- | :-------------------------------------------- |
-| `test`      | Run tests (default)                           |
-| `list`      | List discovered tests without running         |
-| `self-test` | Run self-diagnostics to verify kernel support |
-| `version`   | Show version and build information            |
+| Command       | Description                                         |
+| :------------ | :-------------------------------------------------- |
+| `test`        | Run tests (default)                                 |
+| `list`        | List discovered tests without running               |
+| `self-test`   | Run self-diagnostics to verify kernel support       |
+| `version`     | Show version and build information                  |
+| `completions` | Generate shell completion scripts (bash, zsh, fish) |
 
 ### Options
 
