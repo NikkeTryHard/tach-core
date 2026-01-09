@@ -121,24 +121,31 @@ pub struct FixtureInfo {
 
 ## Message Framing
 
-All structured messages use length-prefixed framing:
+All structured messages use an 8-byte header with magic bytes, version, and length:
 
 ```
-+----------------+------------------+
-| Length (4 bytes, LE u32) | Payload (bincode) |
-+----------------+------------------+
++--------+---------+----------+--------+------------------+
+| Magic  | Version | Reserved | Length | Payload          |
+| 2 bytes| 1 byte  | 1 byte   | 4 bytes| (bincode)        |
+| "TA"   | 0x01    | 0x00     | LE u32 |                  |
++--------+---------+----------+--------+------------------+
+
+Total header size: 8 bytes (HEADER_SIZE constant)
 ```
 
 ### Encoding
 
 ```rust
-/// Encode a struct to bincode bytes with length prefix
+/// Encode a struct to bincode bytes with protocol header
 pub fn encode_with_length<T: serde::Serialize>(
     value: &T,
 ) -> Result<Vec<u8>, bincode::error::EncodeError> {
     let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
-    let mut result = Vec::with_capacity(4 + payload.len());
+    let mut result = Vec::with_capacity(HEADER_SIZE + payload.len());
+    result.extend_from_slice(&PROTOCOL_MAGIC);  // "TA"
+    result.push(PROTOCOL_VERSION);              // 1
+    result.push(0);                             // Reserved
     result.extend_from_slice(&len.to_le_bytes());
     result.extend_from_slice(&payload);
     Ok(result)
@@ -147,22 +154,31 @@ pub fn encode_with_length<T: serde::Serialize>(
 
 ### Decoding
 
-Decoding is performed inline where needed using `bincode::serde::decode_from_slice`:
+Decoding uses `decode_with_limit` which validates the protocol header before parsing:
 
 ```rust
-// Read length prefix
-let mut len_buf = [0u8; 4];
-reader.read_exact(&mut len_buf)?;
-let len = u32::from_le_bytes(len_buf) as usize;
+// Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+let mut header_buf = [0u8; HEADER_SIZE];
+reader.read_exact(&mut header_buf)?;
 
-// Read payload and decode
-let mut payload = vec![0u8; len];
-reader.read_exact(&mut payload)?;
-let (decoded, _): (T, usize) =
-    bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
+// Extract length from bytes 4-7 (little-endian u32)
+let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
+
+// OOM protection: Validate size BEFORE allocating
+if len > MAX_PAYLOAD_SIZE {
+    return Err(ProtocolError::PayloadTooLarge);
+}
+
+// Allocate buffer for header + payload
+let mut full_buf = vec![0u8; HEADER_SIZE + len];
+full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+reader.read_exact(&mut full_buf[HEADER_SIZE..])?;
+
+// Decode with header validation
+let decoded: T = decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE)?;
 ```
 
-> **Note:** There is no `decode_with_length` helper function in the codebase. Decoding is done inline at call sites.
+> **Note:** `decode_with_limit` validates magic bytes and protocol version before decoding.
 
 ---
 
@@ -184,15 +200,27 @@ pub fn decode_with_limit<T: DeserializeOwned>(
     data: &[u8],
     max_size: usize,
 ) -> Result<T, DecodeWithLimitError> {
-    // Extract claimed length from first 4 bytes
-    let claimed_len = u32::from_le_bytes(data[..4].try_into()?) as usize;
+    // Validate minimum header size
+    if data.len() < HEADER_SIZE {
+        return Err(DecodeWithLimitError::InsufficientData { ... });
+    }
+
+    // Validate magic bytes
+    if data[0..2] != PROTOCOL_MAGIC {
+        return Err(DecodeWithLimitError::InvalidMagic);
+    }
+
+    // Validate protocol version
+    if data[2] != PROTOCOL_VERSION {
+        return Err(DecodeWithLimitError::VersionMismatch { ... });
+    }
+
+    // Extract length from bytes 4-7 (after magic, version, reserved)
+    let claimed_len = u32::from_le_bytes(data[4..8].try_into()?) as usize;
 
     // Reject before allocating
     if claimed_len > max_size {
-        return Err(DecodeWithLimitError::PayloadTooLarge {
-            claimed: claimed_len,
-            limit: max_size,
-        });
+        return Err(DecodeWithLimitError::PayloadTooLarge { ... });
     }
     // ... proceed with decode
 }
