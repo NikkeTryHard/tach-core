@@ -86,6 +86,7 @@ pub struct TestCase {
     pub is_async: bool,
     pub line_number: usize,
     pub parametrized_args: Vec<String>,
+    pub timeout_secs: Option<u64>,
 }
 ```
 
@@ -96,6 +97,7 @@ pub struct TestCase {
 | `is_async`          | Whether it's an `async def`                                                  |
 | `line_number`       | 1-indexed line number for reporting                                          |
 | `parametrized_args` | Arguments from `@pytest.mark.parametrize` (excluded from fixture resolution) |
+| `timeout_secs`      | Per-test timeout from `@pytest.mark.timeout(N)`                              |
 
 ### TestModule
 

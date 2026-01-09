@@ -52,6 +52,7 @@ pub struct TestPayload {
     pub log_fd: i32,
     pub debug_socket_path: String,
     pub is_toxic: bool,
+    pub timeout_secs: Option<u64>,
 }
 ```
 
@@ -65,6 +66,7 @@ pub struct TestPayload {
 | `log_fd`            | File descriptor for stdout/stderr capture |
 | `debug_socket_path` | Path for pdb tunneling                    |
 | `is_toxic`          | Determines worker lifecycle               |
+| `timeout_secs`      | Per-test timeout override (from marker)   |
 
 ### TestResult
 
@@ -77,6 +79,7 @@ pub struct TestResult {
     pub status: u8,
     pub duration_ns: u64,
     pub message: String,
+    pub memory_rss_bytes: Option<u64>,
 }
 ```
 
@@ -101,8 +104,10 @@ pub struct FixtureInfo {
 | `CMD_EXIT`         | 0x00  | Supervisor -> Zygote | Shutdown                    |
 | `CMD_FORK`         | 0x01  | Supervisor -> Zygote | Spawn/dispatch test         |
 | `CMD_RUN_TEST`     | 0x02  | Zygote -> Worker     | Run test on existing worker |
+| `CMD_PING`         | 0x03  | Supervisor -> Worker | Health check ping           |
 | `MSG_READY`        | 0x42  | Zygote -> Supervisor | Zygote initialized          |
 | `MSG_WORKER_READY` | 0x43  | Worker -> Zygote     | Worker reset complete       |
+| `MSG_PONG`         | 0x44  | Worker -> Supervisor | Health check response       |
 
 ---
 
@@ -116,6 +121,7 @@ pub struct FixtureInfo {
 | `STATUS_CRASH`         | 3     | Worker crashed          |
 | `STATUS_ERROR`         | 4     | Test error (exception)  |
 | `STATUS_HARNESS_ERROR` | 5     | Harness error           |
+| `STATUS_TIMEOUT`       | 6     | Test timed out          |
 
 ---
 
