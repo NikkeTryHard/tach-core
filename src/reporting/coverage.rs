@@ -5,6 +5,13 @@
 //! - Lock-free atomic operations for minimal overhead
 //! - PEP 669 sys.monitoring callbacks (Python 3.12+)
 //!
+//! # Research Foundation
+//!
+//! - "employs PEP 669 (Low-Impact Monitoring) to achieve observability with
+//!   negligible overhead" — _Rust-CPython Execution Blueprint Research_
+//! - Ring buffer design informed by _Python Memory Snapshotting with Userfaultfd_
+//!   for lock-free concurrent access across forked processes.
+//!
 //! # Architecture
 //!
 //! ```text
