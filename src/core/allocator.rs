@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_quiesce_does_not_panic() {
         if !is_jemalloc_active() {
-            eprintln!("[test] SKIPPED: jemalloc not active");
+            eprintln!("[tach:test] SKIPPED: jemalloc not active");
             return;
         }
 
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_quiesce_after_allocations() {
         if !is_jemalloc_active() {
-            eprintln!("[test] SKIPPED: jemalloc not active");
+            eprintln!("[tach:test] SKIPPED: jemalloc not active");
             return;
         }
 
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_multiple_quiesce_calls() {
         if !is_jemalloc_active() {
-            eprintln!("[test] SKIPPED: jemalloc not active");
+            eprintln!("[tach:test] SKIPPED: jemalloc not active");
             return;
         }
 
@@ -359,7 +359,7 @@ mod tests {
                 );
             }
             Err(_) => {
-                eprintln!("[test] SKIPPED: jemalloc not active");
+                eprintln!("[tach:test] SKIPPED: jemalloc not active");
             }
         }
     }
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn test_quiesce_with_many_allocations() {
         if !is_jemalloc_active() {
-            eprintln!("[test] SKIPPED: jemalloc not active");
+            eprintln!("[tach:test] SKIPPED: jemalloc not active");
             return;
         }
 
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn test_quiesce_after_free() {
         if !is_jemalloc_active() {
-            eprintln!("[test] SKIPPED: jemalloc not active");
+            eprintln!("[tach:test] SKIPPED: jemalloc not active");
             return;
         }
 

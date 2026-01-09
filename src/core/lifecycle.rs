@@ -136,7 +136,7 @@ impl Drop for CleanupGuard {
         // 2. Remove socket files
         self.cleanup_sockets();
 
-        eprintln!("[tach] Cleanup: Resources released.");
+        eprintln!("[tach:lifecycle] Cleanup: Resources released.");
     }
 }
 

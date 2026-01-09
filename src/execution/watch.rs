@@ -48,14 +48,14 @@ where
     watcher.watch(project_root, RecursiveMode::Recursive)?;
 
     eprintln!(
-        "[tach] 👁  Watching for changes in {}",
+        "[tach:watch] Watching for changes in {}",
         project_root.display()
     );
-    eprintln!("[tach] Press Ctrl+C to stop.\n");
+    eprintln!("[tach:watch] Press Ctrl+C to stop.\n");
 
     // Initial run
     if let Err(e) = run_session() {
-        eprintln!("[tach] Initial run failed: {}", e);
+        eprintln!("[tach:watch] Initial run failed: {}", e);
     }
 
     // Event loop
@@ -77,12 +77,12 @@ where
         // This respawns the Zygote to pick up new source code
         clear_screen();
         eprintln!(
-            "[tach] 🔄 Change detected in {} file(s). Reloading...\n",
+            "[tach:watch] Change detected in {} file(s). Reloading...\n",
             changed_paths.len()
         );
 
         if let Err(e) = run_session() {
-            eprintln!("[tach] Run failed: {}", e);
+            eprintln!("[tach:watch] Run failed: {}", e);
         }
     }
 

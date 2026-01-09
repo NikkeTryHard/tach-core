@@ -206,21 +206,21 @@ impl Reporter for JunitReporter {
                 match quick_xml::se::to_string(&root) {
                     Ok(xml) => {
                         if let Err(e) = writer.write_all(xml.as_bytes()) {
-                            eprintln!("[tach] Failed to write JUnit report: {}", e);
+                            eprintln!("[tach:junit] Failed to write JUnit report: {}", e);
                         } else {
                             eprintln!(
-                                "[tach] JUnit report written to {}",
+                                "[tach:junit] JUnit report written to {}",
                                 self.output_path.display()
                             );
                         }
                     }
                     Err(e) => {
-                        eprintln!("[tach] Failed to serialize JUnit report: {}", e);
+                        eprintln!("[tach:junit] Failed to serialize JUnit report: {}", e);
                     }
                 }
             }
             Err(e) => {
-                eprintln!("[tach] Failed to create JUnit report: {}", e);
+                eprintln!("[tach:junit] Failed to create JUnit report: {}", e);
             }
         }
     }

@@ -491,7 +491,7 @@ mod tests {
     fn test_get_fs_base() {
         let fs_base = get_fs_base().expect("Failed to get fs_base");
         assert!(fs_base > 0);
-        eprintln!("[test] fs_base = 0x{:016x}", fs_base);
+        eprintln!("[tach:test] fs_base = 0x{:016x}", fs_base);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -803,10 +803,13 @@ mod tests {
         assert!(result.is_ok(), "Calibration should succeed");
 
         let calibration = result.unwrap();
-        eprintln!("[test] Calibration result: {:?}", calibration);
+        eprintln!("[tach:test] Calibration result: {:?}", calibration);
 
         // On Python 3.13+, we should find heap pointers
         // On older Python, calibration may succeed but find no pointers (which is OK)
-        eprintln!("[test] Primary offset: {:?}", calibration.primary_offset());
+        eprintln!(
+            "[tach:test] Primary offset: {:?}",
+            calibration.primary_offset()
+        );
     }
 }

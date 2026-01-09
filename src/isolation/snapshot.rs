@@ -2347,7 +2347,7 @@ mod tests {
         // There should be at least one anonymous writable region
         // (TLS is typically in one of these)
         eprintln!(
-            "[test] Found {} potential TLS candidate regions",
+            "[tach:test] Found {} potential TLS candidate regions",
             tls_candidates.len()
         );
         assert!(
@@ -2772,7 +2772,7 @@ mod tests {
 
         // Skip if UFFD is not available (returns Ok in fallback mode)
         if !mgr.available {
-            eprintln!("[test] UFFD unavailable, skipping reset_worker test");
+            eprintln!("[tach:test] UFFD unavailable, skipping reset_worker test");
             return;
         }
 
@@ -2813,7 +2813,7 @@ mod tests {
 
         // Skip if UFFD is not available (returns Ok in fallback mode)
         if !mgr.available {
-            eprintln!("[test] UFFD unavailable, skipping restore_worker_tls test");
+            eprintln!("[tach:test] UFFD unavailable, skipping restore_worker_tls test");
             return;
         }
 

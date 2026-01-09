@@ -465,7 +465,7 @@ impl Default for HumanReporter {
 
 impl Reporter for HumanReporter {
     fn on_run_start(&mut self, count: usize) {
-        eprintln!("[tach] Running {} tests...\n", count);
+        eprintln!("[tach:reporter] Running {} tests...\n", count);
     }
 
     fn on_test_start(&mut self, id: &str, _file: &str) {
@@ -510,13 +510,13 @@ impl Reporter for HumanReporter {
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
         eprintln!();
         eprintln!(
-            "[tach] {} passed, {} failed, {} skipped in {}ms",
+            "[tach:reporter] {} passed, {} failed, {} skipped in {}ms",
             passed, failed, skipped, duration_ms
         );
     }
 
     fn on_error(&mut self, message: &str) {
-        eprintln!("[tach] FATAL ERROR: {}", message);
+        eprintln!("[tach:reporter] FATAL ERROR: {}", message);
     }
 }
 
@@ -862,7 +862,7 @@ impl Default for DotsReporter {
 
 impl Reporter for DotsReporter {
     fn on_run_start(&mut self, count: usize) {
-        eprintln!("[tach] Running {} tests...\n", count);
+        eprintln!("[tach:reporter] Running {} tests...\n", count);
     }
 
     fn on_test_start(&mut self, _id: &str, _file: &str) {
@@ -932,7 +932,7 @@ impl Reporter for DotsReporter {
         // Print summary
         let duration_secs = duration_ms as f64 / 1000.0;
         eprintln!(
-            "\n[tach] {} passed, {} failed, {} skipped in {:.2}s",
+            "\n[tach:reporter] {} passed, {} failed, {} skipped in {:.2}s",
             passed, failed, skipped, duration_secs
         );
 
@@ -947,12 +947,12 @@ impl Reporter for DotsReporter {
                 let mins = (saved_secs / 60.0).floor() as u64;
                 let secs = saved_secs % 60.0;
                 eprintln!(
-                    "[tach] (Saved {}m {:.0}s of initialization overhead)",
+                    "[tach:reporter] (Saved {}m {:.0}s of initialization overhead)",
                     mins, secs
                 );
             } else {
                 eprintln!(
-                    "[tach] (Saved {:.1}s of initialization overhead)",
+                    "[tach:reporter] (Saved {:.1}s of initialization overhead)",
                     saved_secs
                 );
             }
@@ -964,7 +964,7 @@ impl Reporter for DotsReporter {
             eprintln!();
             self.column = 0;
         }
-        eprintln!("[tach] FATAL ERROR: {}", message);
+        eprintln!("[tach:reporter] FATAL ERROR: {}", message);
     }
 }
 

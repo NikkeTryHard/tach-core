@@ -242,8 +242,8 @@ impl DebugServer {
         // BOSS REFINEMENT #1: Pause other workers to prevent log interleaving
         pause_workers(worker_pids, debug_worker_pid);
 
-        eprintln!("\n[tach] Worker hit breakpoint. Entering Debug Mode...");
-        eprintln!("[tach] Type 'c' to continue, 'q' to quit pdb.\n");
+        eprintln!("\n[tach:debugger] Worker hit breakpoint. Entering Debug Mode...");
+        eprintln!("[tach:debugger] Type 'c' to continue, 'q' to quit pdb.\n");
 
         // Create terminal manager and enter raw mode
         let mut terminal = TerminalManager::new()?;
