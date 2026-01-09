@@ -263,8 +263,12 @@ pub struct CoverageRingBuffer {
     capacity: usize,
 }
 
-// Safety: The ring buffer uses atomic operations for synchronization
-// and is designed for concurrent access from multiple processes.
+// SAFETY: CoverageRingBuffer is safe to send and share between threads because:
+// 1. The raw pointer `ptr` points to mmap'd memory that outlives the buffer
+// 2. All access to shared state uses atomic operations (AtomicU64) with
+//    appropriate memory ordering (SeqCst for writes, Acquire for reads)
+// 3. The file descriptor is not closed while the mapping is active
+// 4. The memfd is created with proper size and will not be truncated
 unsafe impl Send for CoverageRingBuffer {}
 unsafe impl Sync for CoverageRingBuffer {}
 
@@ -518,7 +522,11 @@ pub struct MappingRingBuffer {
     capacity: usize,
 }
 
-// Safety: Same as CoverageRingBuffer - uses atomic operations
+// SAFETY: MappingRingBuffer has identical safety guarantees as CoverageRingBuffer:
+// 1. The raw pointer `ptr` points to mmap'd memory that outlives the buffer
+// 2. All access to shared state uses atomic operations (AtomicU64)
+// 3. The file descriptor is not closed while the mapping is active
+// 4. The memfd is created with proper size and will not be truncated
 unsafe impl Send for MappingRingBuffer {}
 unsafe impl Sync for MappingRingBuffer {}
 
