@@ -562,7 +562,7 @@ cat /sys/kernel/security/lsm
 cat /proc/sys/vm/unprivileged_userfaultfd
 
 # Run self-test
-./target/release/tach-core --self-test
+./target/release/tach-core self-test
 ```
 
 ### Report Issues
