@@ -135,7 +135,7 @@ Before 1.0.0, verify all critical research requirements are met:
 
 - [ ] **Allocator Quiesce**: Verify jemalloc `thread.tcache.flush` is called before snapshotting
   > "By invoking this before taking the snapshot, the test runner ensures that the thread-local bins are empty" — _Python Memory Snapshotting with Userfaultfd_
-  > **External Ref**: [jemalloc.net/jemalloc.3.html](https://jemalloc.net/jemalloc.3.html) — mallctl API documentation
+  > **External Ref**: [jemalloc mallctl API](https://jemalloc.net/jemalloc.3.html) — Allocator control documentation
 - [ ] **Toxicity Detection**: Confirm static analysis catches all fork-unsafe patterns
   > "identify 'toxic' or 'fork-unsafe' Python modules through static analysis of import graphs" — _Rust Static Analysis for Toxic Python Modules_
   > **External Ref**: [POSIX fork() spec](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) — async-signal-safety requirements
@@ -145,15 +145,15 @@ Before 1.0.0, verify all critical research requirements are met:
 - [ ] **Database Dispose**: Ensure connections are discarded in child processes
   > "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] **TLS Restoration**: Verify mimalloc TLS state is correctly restored on Python 3.13+
-  > "mimalloc uses TLS for TLABs; fs*base must be tracked and restored" — \_Userfaultfd and CPython Allocator Interaction*
+  > "mimalloc uses TLS for TLABs; fs_base must be tracked and restored" — _Userfaultfd and CPython Allocator Interaction_
   > **External Ref**: [mimalloc GitHub](https://github.com/microsoft/mimalloc) — thread-local allocation design
-- [ ] **GIL Management**: Verify PyO3 `py.detach()` is used during Rust-heavy operations
+- [ ] **GIL Management**: Verify PyO3 `py.allow_threads()` is used during Rust-heavy operations
   > **External Ref**: [PyO3 Parallelism Guide](https://pyo3.rs/main/parallelism) — GIL release patterns
 - [ ] **PyO3 0.26+ API Migration**: Verify codebase uses new GIL API names
   > PyO3 0.26 renamed: `with_gil`→`attach`, `allow_threads`→`detach`, `prepare_freethreaded_python`→`initialize`
   > **External Ref**: [PyO3 Migration Guide](https://pyo3.rs/main/migration)
 - [ ] **TLS Segment Registration**: Implement `fs_base` parsing for Python 3.13+ mimalloc TLS
-  > "You must identify and register the TLS memory segments with userfaultfd. This requires parsing the fs*base (via arch_prctl) to find the TLS range." — \_Userfaultfd and CPython Allocator Interaction*
+  > "You must identify and register the TLS memory segments with userfaultfd. This requires parsing the fs_base (via arch_prctl) to find the TLS range." — _Userfaultfd and CPython Allocator Interaction_
   > **External Ref**: [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)
 - [ ] **Free-Threaded Python**: Test against Python 3.13t/3.14t builds
   > Free-threaded builds have ~10% single-thread overhead but enable true parallelism
@@ -240,7 +240,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Database Handling
 
 - [ ] Hook into Django's transaction management
-  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — \_Rust-Python Test Isolation Blueprint*
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach_test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — _Rust-Python Test Isolation Blueprint_
 - [ ] Preserve database connections across test resets
   > **Ref**: "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] Handle database migrations in test database
@@ -294,7 +294,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### pytest-mock
 
 - [ ] `mocker` fixture providing `unittest.mock` wrappers
-  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp*call for zero-overhead mocking" — \_Rust-CPython Execution Blueprint Research*
+  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp_call for zero-overhead mocking" — _Rust-CPython Execution Blueprint Research_
 - [ ] `mocker.patch()` context manager
 - [ ] `mocker.patch.object()` method
 - [ ] `mocker.patch.dict()` dictionary patching
@@ -310,7 +310,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [ ] Set environment variables before test collection
 - [ ] Support variable expansion (`${HOME}`)
 - [ ] Preserve original values for restoration
-  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach*overlay/5/log.txt" — \_Project Tach Compatibility Layer Blueprint*
+  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach_overlay/5/log.txt" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Support conditional env vars
 
 #### pytest-timeout
@@ -400,7 +400,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 #### Transaction Management
 
 - [ ] Hook into `django.db.transaction.atomic()`
-  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state" — \_Rust-Python Test Isolation Blueprint*
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach_test_start. This instantly reverts the database state" — _Rust-Python Test Isolation Blueprint_
 - [ ] Wrap each test in a savepoint
 - [ ] Rollback savepoint after test completion
 - [ ] Handle nested transactions correctly
@@ -616,7 +616,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Optimization
 
 - [ ] Batch tests from same module to same worker
-  > **Ref**: "We define a Weight Vector W where W[j] corresponds to the estimated cost of module m*j. These weights are derived from heuristics or optional historical profiling data" — \_Python Monorepo Zygote Tree Design*
+  > **Ref**: "We define a Weight Vector W where W[j] corresponds to the estimated cost of module m_j. These weights are derived from heuristics or optional historical profiling data" — _Python Monorepo Zygote Tree Design_
 - [ ] Minimize fixture setup/teardown overhead
 - [ ] Share module fixtures between workers when safe
 - [ ] Prefetch module fixtures
@@ -706,7 +706,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 #### Local Variable Display
 
 - [ ] Capture local variables at assertion failure
-  > **Ref**: "The evaluator inspects the f*code of the frame. It checks a high-performance Rust hash map to see if a mock has been registered" — \_Python Testing Engine Rust Breakthroughs*
+  > **Ref**: "The evaluator inspects the f_code of the frame. It checks a high-performance Rust hash map to see if a mock has been registered" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Display variable values inline with traceback
 - [ ] Truncate large values intelligently
 - [ ] Support `--showlocals` flag
@@ -994,7 +994,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 - [ ] Detect low memory conditions
 - [ ] Reduce worker count under pressure
 - [ ] Trigger garbage collection proactively
-  > **Ref**: "If a snapshot is taken while the GC is traversing the object graph and modifying gc*refs, a subsequent restore will leave the GC in an inconsistent state" — \_Userfaultfd and CPython Allocator Interaction*
+  > **Ref**: "If a snapshot is taken while the GC is traversing the object graph and modifying gc_refs, a subsequent restore will leave the GC in an inconsistent state" — _Userfaultfd and CPython Allocator Interaction_
 - [ ] Fail gracefully on OOM
 - [ ] Support memory limits
 
@@ -1128,7 +1128,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 > **Research Foundation**: Enables future cross-platform support per _Cross-Platform Process Cloning Research_.
 >
 > - "By leveraging undocumented kernel primitives—Mach virtual memory remapping on macOS and NT process cloning on Windows—it is theoretically possible to approximate the performance of Linux fork()" — _Cross-Platform Process Cloning Research_
-> - "The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach*vm_remap" — \_Cross-Platform Process Cloning Research*
+> - "The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach_vm_remap" — _Cross-Platform Process Cloning Research_
 
 The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better reporting, CI platform integrations, and artifact handling.
 
