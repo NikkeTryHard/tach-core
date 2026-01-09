@@ -21,7 +21,7 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 ## Quick Start
 
 ```bash
-git clone https://github.com/user/tach-core.git && cd tach-core
+git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
 python -m venv .venv && source .venv/bin/activate && pip install pytest
 export PYO3_PYTHON=$(which python) && cargo build
 cargo test --lib

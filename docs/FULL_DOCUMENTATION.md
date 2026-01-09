@@ -1,6 +1,6 @@
 # Tach-Core Complete Documentation
 
-> Auto-generated from docs/*.md files. Do not edit directly.
+> Auto-generated from docs/\*.md files. Do not edit directly.
 > Regenerate with: `./scripts/build-docs.sh`
 
 ---
@@ -8,6 +8,7 @@
 ## Table of Contents
 
 ### Architecture
+
 - [Allocator (Jemalloc)](#allocator-jemalloc)
 - [Coverage System](#coverage-system)
 - [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
@@ -26,15 +27,19 @@
 - [Zygote Lifecycle](#zygote-lifecycle)
 
 ### Security
+
 - [Sandbox Enforcement: The EPERM Doctrine](#sandbox-enforcement-the-eperm-doctrine)
 
 ### Operations
+
 - [Self-Hosted Runner Requirements](#self-hosted-runner-requirements)
 
 ### Decisions
+
 - [Rust 2024 Edition Migration Analysis](#rust-2024-edition-migration-analysis)
 
 ### Reference
+
 - [API Reference](#api-reference)
 - [Configuration Reference](#configuration-reference)
 - [Development Guide](#development-guide)
@@ -45,7 +50,6 @@
 ---
 
 # Architecture Documentation
-
 
 # Allocator (Jemalloc)
 
@@ -288,9 +292,7 @@ goblin = "0.10"
 - [Zygote Lifecycle](zygote.md) - When quiesce is called
 - [Troubleshooting](../troubleshooting.md) - Jemalloc build issues
 
-
 ---
-
 
 # Coverage System
 
@@ -584,9 +586,7 @@ Validated by comprehensive unit tests for alignment/wrapping and stress tests fo
 - [API Reference](../api-reference.md) - FFI signatures
 - [Configuration](../configuration.md) - Coverage options
 
-
 ---
-
 
 # TTY Proxy for Interactive Debugging
 
@@ -1102,9 +1102,7 @@ fn main() -> Result<()> {
 - [Zygote Lifecycle](zygote.md) - Worker process management
 - [Isolation](isolation.md) - How workers are isolated
 
-
 ---
-
 
 # Discovery Engine
 
@@ -1407,9 +1405,7 @@ See [Toxicity Analysis](toxicity.md) for details.
 - [Toxicity Analysis](toxicity.md) - How discovered modules are analyzed for safety
 - [Fixture Resolver](resolver.md) - How fixture dependencies are resolved
 
-
 ---
-
 
 # Internal Architecture: The Physics of Restoration
 
@@ -1904,9 +1900,7 @@ _"The Iron Dome is only as strong as its weakest pointer."_
 
 _Project Tach Internal Architecture Standard_
 
-
 ---
-
 
 # Isolation Architecture (Namespaces and OverlayFS)
 
@@ -2256,9 +2250,7 @@ cargo test --lib isolation::namespace -- --nocapture
 - [Configuration](../configuration.md) - `--no-isolation` CLI flag
 - [README](../../README.md) - Project architecture overview
 
-
 ---
-
 
 # Zero-Copy Loader
 
@@ -2822,9 +2814,7 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
-
 ---
-
 
 # Architecture Overview
 
@@ -3086,9 +3076,7 @@ See [README.md](../../README.md#project-structure) for complete source file orga
 - [Zero-Copy Loader](loader.md) - How modules are loaded
 - [Toxicity Analysis](toxicity.md) - How unsafe code is detected
 
-
 ---
-
 
 # IPC Protocol
 
@@ -3418,9 +3406,7 @@ sequenceDiagram
 - [Zygote Lifecycle](zygote.md) - Command loop implementation
 - [Physics Engine](snapshot.md) - UFFD handshake details
 
-
 ---
-
 
 # Reporter
 
@@ -3835,9 +3821,7 @@ scheduler.run(&mut multi)?;
 - [Scheduler](scheduler.md) - How results are collected
 - [Configuration](../configuration.md) - --format and --junit-xml flags
 
-
 ---
-
 
 # Fixture Resolver
 
@@ -4195,9 +4179,7 @@ def run_test(file_path, test_name, fixtures):
 - [Zygote Lifecycle](zygote.md) - Fixture execution
 - [IPC Protocol](protocol.md) - FixtureInfo in TestPayload
 
-
 ---
-
 
 # Iron Dome (Sandbox)
 
@@ -4494,9 +4476,7 @@ The Iron Dome logs warnings and continues with reduced protection on older kerne
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
 - [Configuration](../configuration.md) - pyproject.toml settings
 
-
 ---
-
 
 # Scheduler Architecture
 
@@ -4794,9 +4774,7 @@ sequenceDiagram
 - [Sandbox](sandbox.md)
 - [Coverage](coverage.md)
 
-
 ---
-
 
 # Physics Engine (Snapshot)
 
@@ -5275,9 +5253,7 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
-
 ---
-
 
 # Toxicity Analysis
 
@@ -5650,9 +5626,7 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
-
 ---
-
 
 # Zygote Lifecycle
 
@@ -6132,12 +6106,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
-
 ---
 
-
 # Security Documentation
-
 
 # Sandbox Enforcement: The EPERM Doctrine
 
@@ -6498,12 +6469,9 @@ _"A sandbox is not secure until the kernel says no."_
 
 _The EPERM Doctrine - Project Tach Security Standard_
 
-
 ---
 
-
 # Operations Documentation
-
 
 # Self-Hosted Runner Requirements
 
@@ -6859,12 +6827,9 @@ _"The Iron Dome requires an iron foundation."_
 
 _Project Tach CI Infrastructure Standard_
 
-
 ---
 
-
 # Architecture Decision Records
-
 
 # Rust 2024 Edition Migration Analysis
 
@@ -7161,12 +7126,9 @@ _"Safety is not an optional feature."_
 
 _Project Tach - Rust Edition Migration Analysis_
 
-
 ---
 
-
 # Reference Documentation
-
 
 # API Reference
 
@@ -7802,9 +7764,7 @@ end_of_record
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
 - [Configuration](configuration.md) - Configuration options
 
-
 ---
-
 
 # Configuration Reference
 
@@ -8183,9 +8143,7 @@ test:
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details
 
-
 ---
-
 
 # Development Guide
 
@@ -8210,7 +8168,7 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 ## Quick Start
 
 ```bash
-git clone https://github.com/user/tach-core.git && cd tach-core
+git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
 python -m venv .venv && source .venv/bin/activate && pip install pytest
 export PYO3_PYTHON=$(which python) && cargo build
 cargo test --lib
@@ -8519,9 +8477,7 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 - [Troubleshooting](troubleshooting.md)
 - [API Reference](api-reference.md)
 
-
 ---
-
 
 # Python Compatibility
 
@@ -8750,9 +8706,7 @@ Python 3.13 switched from pymalloc to mimalloc. If you encounter memory-related 
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Architecture: Snapshot](architecture/snapshot.md) - Memory snapshot internals
 
-
 ---
-
 
 # Troubleshooting Guide
 
@@ -9340,9 +9294,7 @@ When reporting issues, include:
 - [Sandbox](architecture/sandbox.md) - Security architecture
 - [Snapshot](architecture/snapshot.md) - Memory snapshot details
 
-
 ---
-
 
 # WSL2 Setup Guide for tach-core
 
@@ -9627,6 +9579,4 @@ cargo build
 - [Landlock Documentation](https://docs.kernel.org/userspace-api/landlock.html)
 - [userfaultfd Documentation](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)
 
-
 ---
-

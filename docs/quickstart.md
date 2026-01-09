@@ -20,7 +20,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
 # Clone and build Tach
-git clone https://github.com/user/tach-core.git
+git clone https://github.com/NikkeTryHard/tach-core.git
 cd tach-core
 
 # Create Python environment
@@ -48,7 +48,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
 # Clone and build Tach
-git clone https://github.com/user/tach-core.git
+git clone https://github.com/NikkeTryHard/tach-core.git
 cd tach-core
 
 # Create Python environment
@@ -76,7 +76,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
 # Clone and build Tach
-git clone https://github.com/user/tach-core.git
+git clone https://github.com/NikkeTryHard/tach-core.git
 cd tach-core
 
 # Create Python environment

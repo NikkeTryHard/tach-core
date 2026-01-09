@@ -67,7 +67,7 @@ flowchart LR
 
 ```bash
 # Clone and build
-git clone https://github.com/user/tach-core.git && cd tach-core
+git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
 python -m venv .venv && source .venv/bin/activate && pip install pytest
 export PYO3_PYTHON=$(which python) && cargo build --release
 
@@ -314,6 +314,6 @@ See [Development Guide](docs/development.md) for complete build commands, testin
 
 **Built with Rust for performance and reliability.**
 
-[Documentation](docs/) | [Issues](https://github.com/user/tach-core/issues)
+[Documentation](docs/) | [Issues](https://github.com/NikkeTryHard/tach-core/issues)
 
 </div>

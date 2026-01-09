@@ -111,7 +111,7 @@ pub enum TracebackStyle {
     # Run with parallel workers
     tach -n auto tests/
 
-For more information, visit: https://github.com/anthropics/tach-core"#
+For more information, visit: https://github.com/NikkeTryHard/tach-core"#
 )]
 pub struct Cli {
     // =========================================================================
