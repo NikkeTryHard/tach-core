@@ -234,7 +234,7 @@ fn main() -> Result<()> {
     // --- WATCH MODE ---
     if is_watch {
         if is_json {
-            eprintln!("[tach] Warning: JSON output not recommended in watch mode");
+            eprintln!("[tach:supervisor] Warning: JSON output not recommended in watch mode");
         }
 
         // Clone config values for the closure

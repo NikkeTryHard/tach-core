@@ -324,7 +324,7 @@ fn test_bss_heap_split_brain_validation() {
     };
 
     if !snapshot_mgr.available {
-        eprintln!("[memory_invariant] UFFD not available. Skipping.");
+        eprintln!("[tach:test] UFFD not available. Skipping.");
         cleanup_test_run_dir(&run_dir);
         return;
     }
@@ -346,7 +346,7 @@ fn test_bss_heap_split_brain_validation() {
             {
                 Ok(u) => u,
                 Err(e) => {
-                    eprintln!("[worker] userfaultfd failed: {}", e);
+                    eprintln!("[tach:test] userfaultfd failed: {}", e);
                     std::process::exit(1);
                 }
             };
@@ -364,7 +364,7 @@ fn test_bss_heap_split_brain_validation() {
 
             Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "warmup") {
-                    eprintln!("[worker] Python warmup error: {}", e);
+                    eprintln!("[tach:test] Python warmup error: {}", e);
                     std::process::exit(2);
                 }
             });
@@ -380,7 +380,10 @@ fn test_bss_heap_split_brain_validation() {
                 );
             }
             let libpython_data = find_libpython_data_regions(&regions_before);
-            eprintln!("[worker] libpython data regions: {}", libpython_data.len());
+            eprintln!(
+                "[tach:test] libpython data regions: {}",
+                libpython_data.len()
+            );
 
             // 6. Freeze for snapshot capture
             eprintln!("\n[worker] Step 2: Freezing for snapshot capture (SIGSTOP)...");
@@ -392,7 +395,7 @@ fn test_bss_heap_split_brain_validation() {
             // 8. Dirty the memory (consume PyFloat_FreeList, allocate more)
             Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "dirty") {
-                    eprintln!("[worker] Python dirty error: {}", e);
+                    eprintln!("[tach:test] Python dirty error: {}", e);
                     std::process::exit(3);
                 }
             });
@@ -448,22 +451,22 @@ fn test_bss_heap_split_brain_validation() {
 
             // 11. THE CRITICAL TEST: Run gc.collect() 100 times
             // If BSS/Heap are out of sync, this will SIGSEGV
-            eprintln!("[worker] Step 6: Running gc.collect() 100 times (Split-Brain test)...");
+            eprintln!("[tach:test] Step 6: Running gc.collect() 100 times (Split-Brain test)...");
 
             Python::attach(|py| {
                 if let Err(e) = run_float_stressor(py, "verify") {
-                    eprintln!("[worker] Python verify error: {}", e);
+                    eprintln!("[tach:test] Python verify error: {}", e);
                     std::process::exit(4);
                 }
             });
 
             eprintln!("\n[worker] ✓ BSS/HEAP SPLIT-BRAIN TEST PASSED!");
-            eprintln!("[worker] PyFloat_FreeList and Heap are correctly synchronized.");
+            eprintln!("[tach:test] PyFloat_FreeList and Heap are correctly synchronized.");
             std::process::exit(0);
         }
         ForkResult::Parent { child } => {
             // === SUPERVISOR PROCESS ===
-            eprintln!("[supervisor] Worker PID: {}", child);
+            eprintln!("[tach:test] Worker PID: {}", child);
 
             // Accept UFFD connection
             let (stream, _) = listener
@@ -484,14 +487,14 @@ fn test_bss_heap_split_brain_validation() {
             loop {
                 match waitpid(child, Some(WaitPidFlag::WUNTRACED)) {
                     Ok(WaitStatus::Stopped(_, Signal::SIGSTOP)) => {
-                        eprintln!("[supervisor] Worker stopped. Capturing golden snapshot...");
+                        eprintln!("[tach:test] Worker stopped. Capturing golden snapshot...");
                         break;
                     }
                     Ok(status) => {
-                        eprintln!("[supervisor] Unexpected status: {:?}", status);
+                        eprintln!("[tach:test] Unexpected status: {:?}", status);
                     }
                     Err(e) => {
-                        eprintln!("[supervisor] waitpid error: {}", e);
+                        eprintln!("[tach:test] waitpid error: {}", e);
                         break;
                     }
                 }
@@ -500,16 +503,16 @@ fn test_bss_heap_split_brain_validation() {
             // Register worker with UFFD and capture snapshot
             let worker_nix_pid = NixPid::from_raw(worker_pid);
             if let Err(e) = snapshot_mgr.register_worker_with_uffd(worker_nix_pid, uffd) {
-                eprintln!("[supervisor] Failed to register worker: {}", e);
+                eprintln!("[tach:test] Failed to register worker: {}", e);
                 let _ = kill(child, Signal::SIGKILL);
                 cleanup_test_run_dir(&run_dir);
                 return;
             }
-            eprintln!("[supervisor] Golden snapshot captured!");
+            eprintln!("[tach:test] Golden snapshot captured!");
 
             // Resume worker
             kill(child, Signal::SIGCONT).expect("Failed to SIGCONT worker");
-            eprintln!("[supervisor] Worker resumed - waiting for completion...");
+            eprintln!("[tach:test] Worker resumed - waiting for completion...");
 
             // Polling loop: handle UFFD faults while worker runs
             let mut faults_handled = 0;
@@ -519,8 +522,8 @@ fn test_bss_heap_split_brain_validation() {
                     Ok(WaitStatus::Exited(_, code)) => {
                         eprintln!("\n[supervisor] Worker exited with code {}", code);
                         if code == 0 {
-                            eprintln!("[supervisor] ✓ BSS/HEAP SPLIT-BRAIN VALIDATION PASSED!");
-                            eprintln!("[supervisor] Total page faults handled: {}", faults_handled);
+                            eprintln!("[tach:test] ✓ BSS/HEAP SPLIT-BRAIN VALIDATION PASSED!");
+                            eprintln!("[tach:test] Total page faults handled: {}", faults_handled);
                         } else {
                             eprintln!(
                                 "[supervisor] ✗ BSS/HEAP VALIDATION FAILED (exit code: {})!",
@@ -541,10 +544,10 @@ fn test_bss_heap_split_brain_validation() {
                         // Worker still running, poll for UFFD events
                     }
                     Ok(status) => {
-                        eprintln!("[supervisor] Worker status: {:?}", status);
+                        eprintln!("[tach:test] Worker status: {:?}", status);
                     }
                     Err(e) => {
-                        eprintln!("[supervisor] waitpid error: {}", e);
+                        eprintln!("[tach:test] waitpid error: {}", e);
                         break;
                     }
                 }
@@ -559,7 +562,7 @@ fn test_bss_heap_split_brain_validation() {
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        eprintln!("[supervisor] Fault handling error: {}", e);
+                        eprintln!("[tach:test] Fault handling error: {}", e);
                     }
                 }
 
@@ -597,7 +600,7 @@ fn test_gc_collect_100_times() {
             panic!("Verify failed: {}", e);
         }
 
-        eprintln!("[test] gc.collect() 100x test passed");
+        eprintln!("[tach:test] gc.collect() 100x test passed");
     });
 }
 
@@ -746,11 +749,11 @@ fn test_rss_stability_after_1000_restores() {
     let initial_rss = match get_rss_bytes() {
         Some(rss) => rss,
         None => {
-            eprintln!("[ghost_hunt] WARNING: Could not read RSS. Skipping test.");
+            eprintln!("[tach:test] WARNING: Could not read RSS. Skipping test.");
             return;
         }
     };
-    eprintln!("[ghost_hunt] Initial RSS: {}", format_bytes(initial_rss));
+    eprintln!("[tach:test] Initial RSS: {}", format_bytes(initial_rss));
 
     // Track RSS over time for trend analysis
     let mut rss_samples: Vec<usize> = Vec::with_capacity(ITERATIONS / 100 + 1);
@@ -904,7 +907,7 @@ fn test_rss_stability_quick() {
     let initial_rss = match get_rss_bytes() {
         Some(rss) => rss,
         None => {
-            eprintln!("[rss_quick] Could not read RSS. Skipping.");
+            eprintln!("[tach:test] Could not read RSS. Skipping.");
             return;
         }
     };
@@ -919,7 +922,7 @@ fn test_rss_stability_quick() {
         if i % 25 == 0
             && let Some(rss) = get_rss_bytes()
         {
-            eprintln!("[rss_quick] Iteration {}: RSS = {}", i, format_bytes(rss));
+            eprintln!("[tach:test] Iteration {}: RSS = {}", i, format_bytes(rss));
         }
     }
 
@@ -945,7 +948,7 @@ fn test_rss_stability_quick() {
         );
         // Don't panic in quick test, just warn
     } else {
-        eprintln!("[rss_quick] ✓ RSS stability OK");
+        eprintln!("[tach:test] ✓ RSS stability OK");
     }
 }
 
@@ -1143,14 +1146,14 @@ fn test_jitter_benchmark_p99_latency() {
     let mut target_buffer = vec![0u8; DATA_SIZE];
 
     // Warmup
-    eprintln!("[jitter] Warming up...");
+    eprintln!("[tach:test] Warming up...");
     for _ in 0..100 {
         target_buffer.copy_from_slice(&test_data);
         std::hint::black_box(&target_buffer);
     }
 
     // Collect latency samples
-    eprintln!("[jitter] Collecting {} samples...", ITERATIONS);
+    eprintln!("[tach:test] Collecting {} samples...", ITERATIONS);
     let mut latencies_us: Vec<u64> = Vec::with_capacity(ITERATIONS);
 
     for i in 0..ITERATIONS {
@@ -1167,7 +1170,7 @@ fn test_jitter_benchmark_p99_latency() {
 
         // Progress indicator
         if i > 0 && i % 1000 == 0 {
-            eprintln!("[jitter]   {}K samples collected...", i / 1000);
+            eprintln!("[tach:test]   {}K samples collected...", i / 1000);
         }
     }
 
@@ -1303,8 +1306,8 @@ fn test_jitter_quick() {
     let p99 = percentile(&latencies_us, 99.0);
     let max = *latencies_us.last().unwrap();
 
-    eprintln!("[jitter_quick] P50={}us P99={}us Max={}us", p50, p99, max);
-    eprintln!("[jitter_quick] ✓ Jitter test complete");
+    eprintln!("[tach:test] P50={}us P99={}us Max={}us", p50, p99, max);
+    eprintln!("[tach:test] ✓ Jitter test complete");
 }
 
 // =============================================================================
@@ -1354,7 +1357,7 @@ fn test_jitter_nanosecond_precision() {
     let mut target_buffer = vec![0u8; DATA_SIZE];
 
     // Extended warmup to stabilize caches and page tables
-    eprintln!("[jitter_ns] Warming up (1000 iterations)...");
+    eprintln!("[tach:test] Warming up (1000 iterations)...");
     for _ in 0..1000 {
         target_buffer.copy_from_slice(&test_data);
         std::hint::black_box(&target_buffer);
@@ -1386,7 +1389,7 @@ fn test_jitter_nanosecond_precision() {
 
         // Progress indicator
         if i > 0 && i % 2000 == 0 {
-            eprintln!("[jitter_ns]   {}K samples collected...", i / 1000);
+            eprintln!("[tach:test]   {}K samples collected...", i / 1000);
         }
     }
 
@@ -1560,7 +1563,7 @@ fn test_jitter_nanosecond_quick() {
         "[jitter_ns_quick] Raw: P99={}ns P99.9={}ns Max={}ns",
         p99, p999, max
     );
-    eprintln!("[jitter_ns_quick] ✓ Nanosecond jitter test complete");
+    eprintln!("[tach:test] ✓ Nanosecond jitter test complete");
 }
 
 // =============================================================================
@@ -1655,8 +1658,8 @@ fn read_dtv_generation() -> Option<u64> {
 /// ```
 #[test]
 fn test_dtv_consistency_after_memory_ops() {
-    eprintln!("[dtv] DTV Consistency Test");
-    eprintln!("[dtv] Verifying TLS/DTV state remains consistent after memory operations");
+    eprintln!("[tach:test] DTV Consistency Test");
+    eprintln!("[tach:test] Verifying TLS/DTV state remains consistent after memory operations");
     eprintln!();
 
     #[cfg(target_arch = "x86_64")]
@@ -1665,18 +1668,20 @@ fn test_dtv_consistency_after_memory_ops() {
         let initial_value = read_dtv_generation();
         match initial_value {
             Some(val) => {
-                eprintln!("[dtv] Initial TLS value: 0x{:016x}", val);
+                eprintln!("[tach:test] Initial TLS value: 0x{:016x}", val);
             }
             None => {
-                eprintln!("[dtv] WARNING: Could not read TLS. Skipping detailed verification.");
-                eprintln!("[dtv] ✓ Test passed (TLS access attempted)");
+                eprintln!(
+                    "[tach:test] WARNING: Could not read TLS. Skipping detailed verification."
+                );
+                eprintln!("[tach:test] ✓ Test passed (TLS access attempted)");
                 return;
             }
         }
 
         // Step 2: Perform memory operations that simulate restore
         // Allocate and deallocate memory to exercise the allocator
-        eprintln!("[dtv] Performing memory operations...");
+        eprintln!("[tach:test] Performing memory operations...");
         let mut allocations: Vec<Vec<u8>> = Vec::new();
         for i in 0..100 {
             // Allocate chunks of varying sizes
@@ -1692,12 +1697,12 @@ fn test_dtv_consistency_after_memory_ops() {
         let post_ops_value = read_dtv_generation();
         match post_ops_value {
             Some(val) => {
-                eprintln!("[dtv] Post-ops TLS value: 0x{:016x}", val);
+                eprintln!("[tach:test] Post-ops TLS value: 0x{:016x}", val);
 
                 // The TLS value should remain stable
                 if let Some(initial) = initial_value {
                     if val == initial {
-                        eprintln!("[dtv] ✓ TLS value unchanged after memory operations");
+                        eprintln!("[tach:test] ✓ TLS value unchanged after memory operations");
                     } else {
                         // TLS value changed - this could be normal if generation counter updated
                         // due to dlopen, but we should note it
@@ -1705,18 +1710,20 @@ fn test_dtv_consistency_after_memory_ops() {
                             "[dtv] NOTE: TLS value changed (0x{:016x} -> 0x{:016x})",
                             initial, val
                         );
-                        eprintln!("[dtv]       This may be normal if modules were loaded/unloaded");
+                        eprintln!(
+                            "[tach:test]       This may be normal if modules were loaded/unloaded"
+                        );
                     }
                 }
             }
             None => {
-                eprintln!("[dtv] ERROR: Could not read TLS after memory operations!");
+                eprintln!("[tach:test] ERROR: Could not read TLS after memory operations!");
                 panic!("TLS became inaccessible after memory operations");
             }
         }
 
         // Step 4: Verify Python TLS is still functional
-        eprintln!("[dtv] Verifying Python interpreter TLS...");
+        eprintln!("[tach:test] Verifying Python interpreter TLS...");
         Python::attach(|py| {
             // Access thread-local state via Python
             let result = py.run(
@@ -1739,10 +1746,10 @@ gc_threshold = sys.getrecursionlimit()
 
             match result {
                 Ok(_) => {
-                    eprintln!("[dtv] ✓ Python TLS access successful");
+                    eprintln!("[tach:test] ✓ Python TLS access successful");
                 }
                 Err(e) => {
-                    eprintln!("[dtv] ERROR: Python TLS access failed: {:?}", e);
+                    eprintln!("[tach:test] ERROR: Python TLS access failed: {:?}", e);
                     panic!("Python TLS access failed");
                 }
             }
@@ -1750,24 +1757,24 @@ gc_threshold = sys.getrecursionlimit()
 
         // Step 5: Final TLS check
         if let Some(final_val) = read_dtv_generation() {
-            eprintln!("[dtv] Final TLS value: 0x{:016x}", final_val);
+            eprintln!("[tach:test] Final TLS value: 0x{:016x}", final_val);
         }
 
         eprintln!();
-        eprintln!("[dtv] ✓ DTV Consistency Test PASSED");
+        eprintln!("[tach:test] ✓ DTV Consistency Test PASSED");
     }
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        eprintln!("[dtv] Skipping DTV test on non-x86_64 architecture");
-        eprintln!("[dtv] ✓ Test skipped (not applicable)");
+        eprintln!("[tach:test] Skipping DTV test on non-x86_64 architecture");
+        eprintln!("[tach:test] ✓ Test skipped (not applicable)");
     }
 }
 
 /// DTV stress test: Multiple Python imports to stress DTV slot allocation
 #[test]
 fn test_dtv_stress_with_python_imports() {
-    eprintln!("[dtv_stress] DTV Stress Test: Python module imports");
+    eprintln!("[tach:test] DTV Stress Test: Python module imports");
 
     Python::attach(|py| {
         // Import various Python modules that may load C-extensions
@@ -1785,7 +1792,7 @@ fn test_dtv_stress_with_python_imports() {
             "operator",
         ];
 
-        eprintln!("[dtv_stress] Importing {} modules...", modules.len());
+        eprintln!("[tach:test] Importing {} modules...", modules.len());
 
         for module_name in &modules {
             let import_code = format!("import {}", module_name);
@@ -1797,16 +1804,16 @@ fn test_dtv_stress_with_python_imports() {
                 None,
             ) {
                 Ok(_) => {
-                    eprintln!("[dtv_stress]   Imported {}", module_name);
+                    eprintln!("[tach:test]   Imported {}", module_name);
                 }
                 Err(e) => {
-                    eprintln!("[dtv_stress]   Failed to import {}: {:?}", module_name, e);
+                    eprintln!("[tach:test]   Failed to import {}: {:?}", module_name, e);
                 }
             }
         }
 
         // Verify allocator still works after all imports
-        eprintln!("[dtv_stress] Verifying allocator...");
+        eprintln!("[tach:test] Verifying allocator...");
         let alloc_test = py.run(
             c"
 # Stress the allocator after module loads
@@ -1821,7 +1828,7 @@ gc.collect()
 
         match alloc_test {
             Ok(_) => {
-                eprintln!("[dtv_stress] ✓ Allocator functional after module imports");
+                eprintln!("[tach:test] ✓ Allocator functional after module imports");
             }
             Err(e) => {
                 panic!("[dtv_stress] Allocator test failed: {:?}", e);
@@ -1829,5 +1836,5 @@ gc.collect()
         }
     });
 
-    eprintln!("[dtv_stress] ✓ DTV Stress Test PASSED");
+    eprintln!("[tach:test] ✓ DTV Stress Test PASSED");
 }

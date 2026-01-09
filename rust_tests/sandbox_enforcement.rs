@@ -33,7 +33,7 @@ fn test_seccomp_blocks_socket_creation() {
         ForkResult::Child => {
             // Apply Seccomp filter
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 std::process::exit(254);
             }
 
@@ -47,7 +47,7 @@ fn test_seccomp_blocks_socket_creation() {
             } else {
                 // Socket succeeded - Seccomp NOT enforced!
                 unsafe { libc::close(result) };
-                eprintln!("[suicide_worker] CRITICAL: socket() succeeded, Seccomp not enforced!");
+                eprintln!("[tach:test] CRITICAL: socket() succeeded, Seccomp not enforced!");
                 std::process::exit(255);
             }
         }
@@ -74,13 +74,13 @@ fn test_seccomp_blocks_connect() {
             // so we create the socket BEFORE applying Seccomp.
             let sock = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
             if sock < 0 {
-                eprintln!("[suicide_worker] Failed to create socket before Seccomp");
+                eprintln!("[tach:test] Failed to create socket before Seccomp");
                 std::process::exit(253);
             }
 
             // Apply Seccomp filter
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 std::process::exit(254);
             }
 
@@ -136,13 +136,13 @@ fn test_seccomp_blocks_bind() {
             // Create a socket BEFORE applying Seccomp
             let sock = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
             if sock < 0 {
-                eprintln!("[suicide_worker] Failed to create socket before Seccomp");
+                eprintln!("[tach:test] Failed to create socket before Seccomp");
                 std::process::exit(253);
             }
 
             // Apply Seccomp filter
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 unsafe { libc::close(sock) };
                 std::process::exit(254);
             }
@@ -171,7 +171,7 @@ fn test_seccomp_blocks_bind() {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                 std::process::exit(errno);
             } else {
-                eprintln!("[suicide_worker] CRITICAL: bind() succeeded, Seccomp not enforced!");
+                eprintln!("[tach:test] CRITICAL: bind() succeeded, Seccomp not enforced!");
                 std::process::exit(255);
             }
         }
@@ -200,7 +200,7 @@ fn test_seccomp_blocks_fork() {
     match unsafe { fork() }.expect("fork failed") {
         ForkResult::Child => {
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 std::process::exit(254);
             }
 
@@ -216,7 +216,7 @@ fn test_seccomp_blocks_fork() {
             } else {
                 // Fork succeeded - Seccomp NOT enforced!
                 unsafe { libc::kill(result as i32, libc::SIGKILL) };
-                eprintln!("[suicide_worker] CRITICAL: SYS_fork succeeded, Seccomp not enforced!");
+                eprintln!("[tach:test] CRITICAL: SYS_fork succeeded, Seccomp not enforced!");
                 std::process::exit(255);
             }
         }
@@ -240,7 +240,7 @@ fn test_seccomp_blocks_execve() {
     match unsafe { fork() }.expect("fork failed") {
         ForkResult::Child => {
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 std::process::exit(254);
             }
 
@@ -278,7 +278,7 @@ fn test_seccomp_allows_clone() {
     match unsafe { fork() }.expect("fork failed") {
         ForkResult::Child => {
             if let Err(e) = apply_seccomp() {
-                eprintln!("[suicide_worker] Failed to apply Seccomp: {}", e);
+                eprintln!("[tach:test] Failed to apply Seccomp: {}", e);
                 std::process::exit(254);
             }
 
@@ -330,12 +330,12 @@ fn test_landlock_blocks_etc_write() {
             // Apply Landlock
             match apply_landlock(&project_root, 9999) {
                 Ok(SandboxStatus::NotEnforced) => {
-                    eprintln!("[suicide_worker] Landlock not supported on this kernel");
+                    eprintln!("[tach:test] Landlock not supported on this kernel");
                     std::process::exit(0); // Skip on unsupported kernels
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Landlock: {}", e);
+                    eprintln!("[tach:test] Failed to apply Landlock: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -352,7 +352,7 @@ fn test_landlock_blocks_etc_write() {
                     std::process::exit(errno);
                 }
                 Ok(_) => {
-                    eprintln!("[suicide_worker] CRITICAL: /etc/passwd write succeeded!");
+                    eprintln!("[tach:test] CRITICAL: /etc/passwd write succeeded!");
                     std::process::exit(255);
                 }
             }
@@ -383,7 +383,7 @@ fn test_landlock_blocks_root_write() {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Landlock: {}", e);
+                    eprintln!("[tach:test] Failed to apply Landlock: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -431,7 +431,7 @@ fn test_landlock_allows_tmp_write() {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Landlock: {}", e);
+                    eprintln!("[tach:test] Failed to apply Landlock: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -447,7 +447,7 @@ fn test_landlock_allows_tmp_write() {
                 }
                 Err(e) => {
                     let errno = e.raw_os_error().unwrap_or(254);
-                    eprintln!("[suicide_worker] /tmp write failed: {}", e);
+                    eprintln!("[tach:test] /tmp write failed: {}", e);
                     std::process::exit(errno);
                 }
             }
@@ -478,7 +478,7 @@ fn test_landlock_allows_project_read() {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Landlock: {}", e);
+                    eprintln!("[tach:test] Failed to apply Landlock: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -497,7 +497,7 @@ fn test_landlock_allows_project_read() {
                 }
                 Err(e) => {
                     let errno = e.raw_os_error().unwrap_or(254);
-                    eprintln!("[suicide_worker] Project read failed: {}", e);
+                    eprintln!("[tach:test] Project read failed: {}", e);
                     std::process::exit(errno);
                 }
             }
@@ -533,7 +533,7 @@ fn test_pid_namespace_isolation() {
     let (worker1_host_pid, worker1_inner_pid) = match worker1_result {
         Some(pids) => pids,
         None => {
-            eprintln!("[test] Skipping: PID namespaces not available");
+            eprintln!("[tach:test] Skipping: PID namespaces not available");
             return;
         }
     };
@@ -545,7 +545,7 @@ fn test_pid_namespace_isolation() {
         None => {
             // Clean up worker 1
             let _ = kill(Pid::from_raw(worker1_host_pid), Signal::SIGKILL);
-            eprintln!("[test] Skipping: PID namespaces not available");
+            eprintln!("[tach:test] Skipping: PID namespaces not available");
             return;
         }
     };
@@ -737,7 +737,7 @@ fn test_toxic_worker_can_use_network() {
             match apply_iron_dome(&project_root, 9999, true) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Iron Dome: {}", e);
+                    eprintln!("[tach:test] Failed to apply Iron Dome: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -752,10 +752,7 @@ fn test_toxic_worker_can_use_network() {
                 let errno = std::io::Error::last_os_error()
                     .raw_os_error()
                     .unwrap_or(254);
-                eprintln!(
-                    "[suicide_worker] Toxic worker socket blocked: errno {}",
-                    errno
-                );
+                eprintln!("[tach:test] Toxic worker socket blocked: errno {}", errno);
                 std::process::exit(errno);
             }
         }
@@ -786,7 +783,7 @@ fn test_toxic_worker_still_has_landlock() {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Iron Dome: {}", e);
+                    eprintln!("[tach:test] Failed to apply Iron Dome: {}", e);
                     std::process::exit(254);
                 }
             }
@@ -831,7 +828,7 @@ fn test_safe_worker_full_iron_dome() {
             match apply_iron_dome(&project_root, 9999, false) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[suicide_worker] Failed to apply Iron Dome: {}", e);
+                    eprintln!("[tach:test] Failed to apply Iron Dome: {}", e);
                     std::process::exit(254);
                 }
             }

@@ -13,7 +13,7 @@ fn test_snapshot_manager_construction() {
     assert!(result.is_ok(), "SnapshotManager should construct");
 
     let mgr = result.unwrap();
-    eprintln!("[snapshot_integration] UFFD available: {}", mgr.available);
+    eprintln!("[tach:test] UFFD available: {}", mgr.available);
 }
 
 /// Test: SnapshotManager starts with no workers
@@ -39,7 +39,7 @@ fn test_parse_own_memory_maps() {
     // Count snapshotable regions
     let snapshotable: Vec<_> = regions.iter().filter(|r| r.should_snapshot()).collect();
     eprintln!(
-        "[snapshot_integration] Found {} snapshotable regions out of {}",
+        "[tach:test] Found {} snapshotable regions out of {}",
         snapshotable.len(),
         regions.len()
     );

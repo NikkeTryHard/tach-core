@@ -40,7 +40,7 @@ fn test_userfaultfd_available() {
 
     match result {
         Ok(_) => {
-            eprintln!("[physics_check] userfaultfd is available");
+            eprintln!("[tach:test] userfaultfd is available");
         }
         Err(e) => {
             eprintln!(
@@ -84,7 +84,7 @@ fn test_scm_rights_fd_passing() {
             let (received_pid, received_fd) = recv_fd(&stream).expect("Failed to receive FD");
 
             eprintln!(
-                "[physics_check] Received PID={}, FD={}",
+                "[tach:test] Received PID={}, FD={}",
                 received_pid,
                 received_fd.as_raw_fd()
             );
@@ -108,10 +108,7 @@ fn test_snapshot_manager_creation() {
 
     let mgr = mgr.unwrap();
     // Either available or graceful fallback
-    eprintln!(
-        "[physics_check] SnapshotManager available: {}",
-        mgr.available
-    );
+    eprintln!("[tach:test] SnapshotManager available: {}", mgr.available);
 }
 
 /// Test: The full Physics Check - memory snapshot and reset
@@ -139,14 +136,14 @@ fn test_physics_check_memory_reset() {
     let mut snapshot_mgr = match SnapshotManager::new() {
         Ok(mgr) => mgr,
         Err(e) => {
-            eprintln!("[physics_check] SnapshotManager failed: {}. Skipping.", e);
+            eprintln!("[tach:test] SnapshotManager failed: {}. Skipping.", e);
             cleanup_test_run_dir(&run_dir);
             return;
         }
     };
 
     if !snapshot_mgr.available {
-        eprintln!("[physics_check] UFFD not available. Skipping Physics Check.");
+        eprintln!("[tach:test] UFFD not available. Skipping Physics Check.");
         cleanup_test_run_dir(&run_dir);
         return;
     }
@@ -164,7 +161,7 @@ fn test_physics_check_memory_reset() {
             {
                 Ok(u) => u,
                 Err(e) => {
-                    eprintln!("[worker] userfaultfd failed: {}", e);
+                    eprintln!("[tach:test] userfaultfd failed: {}", e);
                     std::process::exit(1);
                 }
             };
@@ -181,35 +178,35 @@ fn test_physics_check_memory_reset() {
             let test_data: Box<[i32; 3]> = Box::new([1, 2, 3]);
             let data_ptr = Box::into_raw(test_data);
             eprintln!(
-                "[worker] Golden state: test_data = {:?} at {:p}",
+                "[tach:test] Golden state: test_data = {:?} at {:p}",
                 unsafe { &*data_ptr },
                 data_ptr
             );
 
             // 5. Freeze (SIGSTOP) - supervisor will capture snapshot including test_data
-            eprintln!("[worker] Freezing for snapshot capture...");
+            eprintln!("[tach:test] Freezing for snapshot capture...");
             nix::sys::signal::raise(Signal::SIGSTOP).expect("Failed to SIGSTOP");
 
             // 6. We're resumed! Supervisor has captured golden snapshot.
-            eprintln!("[worker] Resumed from snapshot. Now mutating data...");
+            eprintln!("[tach:test] Resumed from snapshot. Now mutating data...");
 
             // 7. Mutate the data (dirties the page)
             unsafe {
                 (*data_ptr)[0] = 999;
             }
-            eprintln!("[worker] After mutation: test_data = {:?}", unsafe {
+            eprintln!("[tach:test] After mutation: test_data = {:?}", unsafe {
                 &*data_ptr
             });
 
             // 8. SEPPUKU: Worker zaps its own heap page
             // This drops the physical page, next access will fault
             let page_addr = (data_ptr as usize) & !4095; // Align to page
-            eprintln!("[worker] Self-resetting page at {:x}...", page_addr);
+            eprintln!("[tach:test] Self-resetting page at {:x}...", page_addr);
             unsafe {
                 let ret = libc::madvise(page_addr as *mut libc::c_void, 4096, libc::MADV_DONTNEED);
                 if ret != 0 {
                     eprintln!(
-                        "[worker] madvise failed: {}",
+                        "[tach:test] madvise failed: {}",
                         std::io::Error::last_os_error()
                     );
                 }
@@ -217,27 +214,27 @@ fn test_physics_check_memory_reset() {
 
             // 9. Access the data - this triggers UFFD fault!
             // Supervisor catches fault, copies golden page, we see [1, 2, 3]
-            eprintln!("[worker] Accessing reset data (should trigger UFFD fault)...");
+            eprintln!("[tach:test] Accessing reset data (should trigger UFFD fault)...");
             let value = unsafe { (*data_ptr)[0] };
-            eprintln!("[worker] After reset: test_data[0] = {}", value);
+            eprintln!("[tach:test] After reset: test_data[0] = {}", value);
 
             // Cleanup
             let _ = unsafe { Box::from_raw(data_ptr) };
 
             if value == 1 {
-                eprintln!("[worker] ✓ TIME TRAVEL SUCCESS! Data rolled back to [1, 2, 3]");
+                eprintln!("[tach:test] ✓ TIME TRAVEL SUCCESS! Data rolled back to [1, 2, 3]");
                 std::process::exit(0); // SUCCESS
             } else if value == 999 {
-                eprintln!("[worker] ✗ RESET FAILED: Data still shows mutation (999)");
+                eprintln!("[tach:test] ✗ RESET FAILED: Data still shows mutation (999)");
                 std::process::exit(2); // RESET DIDN'T WORK
             } else {
-                eprintln!("[worker] ✗ CORRUPTION: Unexpected value: {}", value);
+                eprintln!("[tach:test] ✗ CORRUPTION: Unexpected value: {}", value);
                 std::process::exit(3); // MEMORY CORRUPTION
             }
         }
         ForkResult::Parent { child } => {
             // === SUPERVISOR PROCESS ===
-            eprintln!("[supervisor] Worker PID: {}", child);
+            eprintln!("[tach:test] Worker PID: {}", child);
 
             // Accept UFFD connection
             let (stream, _) = listener
@@ -246,7 +243,7 @@ fn test_physics_check_memory_reset() {
             let (worker_pid, uffd_fd) = recv_fd(&stream).expect("Failed to receive UFFD");
 
             eprintln!(
-                "[supervisor] Received UFFD from worker PID {} (FD: {})",
+                "[tach:test] Received UFFD from worker PID {} (FD: {})",
                 worker_pid,
                 uffd_fd.as_raw_fd()
             );
@@ -259,14 +256,14 @@ fn test_physics_check_memory_reset() {
             loop {
                 match waitpid(child, Some(WaitPidFlag::WUNTRACED)) {
                     Ok(WaitStatus::Stopped(_, Signal::SIGSTOP)) => {
-                        eprintln!("[supervisor] Worker stopped. Capturing golden snapshot...");
+                        eprintln!("[tach:test] Worker stopped. Capturing golden snapshot...");
                         break;
                     }
                     Ok(status) => {
-                        eprintln!("[supervisor] Unexpected status: {:?}", status);
+                        eprintln!("[tach:test] Unexpected status: {:?}", status);
                     }
                     Err(e) => {
-                        eprintln!("[supervisor] waitpid error: {}", e);
+                        eprintln!("[tach:test] waitpid error: {}", e);
                         break;
                     }
                 }
@@ -275,27 +272,27 @@ fn test_physics_check_memory_reset() {
             // CAPTURE GOLDEN SNAPSHOT
             let worker_nix_pid = NixPid::from_raw(worker_pid);
             if let Err(e) = snapshot_mgr.register_worker_with_uffd(worker_nix_pid, uffd) {
-                eprintln!("[supervisor] Failed to register worker: {}", e);
+                eprintln!("[tach:test] Failed to register worker: {}", e);
                 let _ = kill(child, Signal::SIGKILL);
                 cleanup_test_run_dir(&run_dir);
                 return;
             }
-            eprintln!("[supervisor] Golden snapshot captured!");
+            eprintln!("[tach:test] Golden snapshot captured!");
 
             // Resume worker - it will mutate, self-reset (madvise), access data (fault), then exit
             kill(child, Signal::SIGCONT).expect("Failed to SIGCONT worker");
-            eprintln!("[supervisor] Worker resumed - waiting for UFFD faults...");
+            eprintln!("[tach:test] Worker resumed - waiting for UFFD faults...");
 
             // Polling loop: handle UFFD faults while worker runs
             loop {
                 // Check if worker has exited using non-blocking wait
                 match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
                     Ok(WaitStatus::Exited(_, code)) => {
-                        eprintln!("[supervisor] Worker exited with code {}", code);
+                        eprintln!("[tach:test] Worker exited with code {}", code);
                         if code == 0 {
-                            eprintln!("[supervisor] ✓ Physics Check PASSED!");
+                            eprintln!("[tach:test] ✓ Physics Check PASSED!");
                         } else {
-                            eprintln!("[supervisor] ✗ Physics Check FAILED (exit code: {})!", code);
+                            eprintln!("[tach:test] ✗ Physics Check FAILED (exit code: {})!", code);
                         }
                         break;
                     }
@@ -303,11 +300,11 @@ fn test_physics_check_memory_reset() {
                         // Worker still running, poll for UFFD events
                     }
                     Ok(status) => {
-                        eprintln!("[supervisor] Worker status: {:?}", status);
+                        eprintln!("[tach:test] Worker status: {:?}", status);
                         break;
                     }
                     Err(e) => {
-                        eprintln!("[supervisor] waitpid error: {}", e);
+                        eprintln!("[tach:test] waitpid error: {}", e);
                         break;
                     }
                 }
@@ -315,11 +312,11 @@ fn test_physics_check_memory_reset() {
                 // Poll UFFD for pending page faults
                 match snapshot_mgr.handle_pending_faults(worker_nix_pid) {
                     Ok(handled) if handled > 0 => {
-                        eprintln!("[supervisor] Handled {} page faults", handled);
+                        eprintln!("[tach:test] Handled {} page faults", handled);
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        eprintln!("[supervisor] Fault handling error: {}", e);
+                        eprintln!("[tach:test] Fault handling error: {}", e);
                     }
                 }
 
@@ -330,7 +327,7 @@ fn test_physics_check_memory_reset() {
             // Cleanup
             snapshot_mgr.remove_worker(worker_nix_pid);
             cleanup_test_run_dir(&run_dir);
-            eprintln!("[supervisor] Physics check complete");
+            eprintln!("[tach:test] Physics check complete");
         }
     }
 }
