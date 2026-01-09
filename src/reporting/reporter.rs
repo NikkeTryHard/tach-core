@@ -190,10 +190,10 @@ fn truncate_test_id(id: &str, max_width: usize) -> String {
 /// then falls back to actual terminal size detection.
 fn get_terminal_width() -> usize {
     // Check env override for testing narrow terminal behavior
-    if let Ok(width_str) = std::env::var("TACH_TERM_WIDTH") {
-        if let Ok(width) = width_str.parse::<usize>() {
-            return width.max(20); // Minimum 20 columns
-        }
+    if let Ok(width_str) = std::env::var("TACH_TERM_WIDTH")
+        && let Ok(width) = width_str.parse::<usize>()
+    {
+        return width.max(20); // Minimum 20 columns
     }
     terminal_size::terminal_size()
         .map(|(w, _)| w.0 as usize)

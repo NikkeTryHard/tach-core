@@ -560,13 +560,12 @@ fn handle_version_command(verbose: bool) -> Result<()> {
             .args(["rev-parse", "--short", "HEAD"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let hash = String::from_utf8_lossy(&output.stdout);
-                let hash = hash.trim();
-                if !hash.is_empty() {
-                    eprintln!("  Git commit: {}", hash);
-                }
+            let hash = String::from_utf8_lossy(&output.stdout);
+            let hash = hash.trim();
+            if !hash.is_empty() {
+                eprintln!("  Git commit: {}", hash);
             }
         }
 

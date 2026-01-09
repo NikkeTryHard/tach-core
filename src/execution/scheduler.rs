@@ -351,42 +351,42 @@ impl Scheduler {
             let mut full_buf = vec![0u8; HEADER_SIZE + len];
             full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
 
-            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok() {
-                if let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE) {
-                    // Get and remove worker
-                    let (test_name, slot) = {
-                        let mut workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        match workers.remove(&result.test_id) {
-                            Some(w) => (w.test_name, w.slot),
-                            None => (format!("test_{}", result.test_id), 0),
-                        }
-                    };
-
-                    // Read and discard logs (they went to memfd)
-                    let _ = self
-                        .log_capture
+            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok()
+                && let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE)
+            {
+                // Get and remove worker
+                let (test_name, slot) = {
+                    let mut workers = self
+                        .active_workers
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
+                        .unwrap_or_else(|e| e.into_inner());
+                    match workers.remove(&result.test_id) {
+                        Some(w) => (w.test_name, w.slot),
+                        None => (format!("test_{}", result.test_id), 0),
+                    }
+                };
 
-                    // Format for reporter
-                    let status = if result.status == STATUS_PASS {
-                        "pass"
-                    } else {
-                        "fail"
-                    };
-                    let duration_ms = result.duration_ns / 1_000_000;
-                    let msg = if result.message.is_empty() {
-                        None
-                    } else {
-                        Some(result.message)
-                    };
+                // Read and discard logs (they went to memfd)
+                let _ = self
+                    .log_capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .read_and_clear(slot);
 
-                    return Some((test_name, status, duration_ms, msg, result.memory_rss_bytes));
-                }
+                // Format for reporter
+                let status = if result.status == STATUS_PASS {
+                    "pass"
+                } else {
+                    "fail"
+                };
+                let duration_ms = result.duration_ns / 1_000_000;
+                let msg = if result.message.is_empty() {
+                    None
+                } else {
+                    Some(result.message)
+                };
+
+                return Some((test_name, status, duration_ms, msg, result.memory_rss_bytes));
             }
         }
         None
@@ -480,50 +480,50 @@ impl Scheduler {
             let mut full_buf = vec![0u8; HEADER_SIZE + len];
             full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
 
-            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok() {
-                if let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE) {
-                    // Get and remove worker
-                    let (test_name, slot) = {
-                        let mut workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        match workers.remove(&result.test_id) {
-                            Some(w) => (w.test_name, w.slot),
-                            None => (format!("test_{}", result.test_id), 0),
-                        }
-                    };
-
-                    // Read logs
-                    let logs = self
-                        .log_capture
+            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok()
+                && let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE)
+            {
+                // Get and remove worker
+                let (test_name, slot) = {
+                    let mut workers = self
+                        .active_workers
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot)
-                        .unwrap_or_default();
-
-                    // Print result
-                    let duration_ms = result.duration_ns as f64 / 1_000_000.0;
-                    println!(
-                        "  {} {} ({:.2}ms)",
-                        result.status_icon(),
-                        test_name,
-                        duration_ms
-                    );
-
-                    // Print logs
-                    if !logs.is_empty() {
-                        for line in logs.lines().take(3) {
-                            println!("    │ {}", &line[..line.len().min(80)]);
-                        }
+                        .unwrap_or_else(|e| e.into_inner());
+                    match workers.remove(&result.test_id) {
+                        Some(w) => (w.test_name, w.slot),
+                        None => (format!("test_{}", result.test_id), 0),
                     }
+                };
 
-                    if !result.message.is_empty() {
-                        println!("    └─ {}", result.message);
+                // Read logs
+                let logs = self
+                    .log_capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .read_and_clear(slot)
+                    .unwrap_or_default();
+
+                // Print result
+                let duration_ms = result.duration_ns as f64 / 1_000_000.0;
+                println!(
+                    "  {} {} ({:.2}ms)",
+                    result.status_icon(),
+                    test_name,
+                    duration_ms
+                );
+
+                // Print logs
+                if !logs.is_empty() {
+                    for line in logs.lines().take(3) {
+                        println!("    │ {}", &line[..line.len().min(80)]);
                     }
-
-                    return Some(result);
                 }
+
+                if !result.message.is_empty() {
+                    println!("    └─ {}", result.message);
+                }
+
+                return Some(result);
             }
         }
         None

@@ -5,7 +5,7 @@ edition = "2024"
 description = "Hypervisor-accelerated Python test runner"
 license = "MIT"
 repository = "https://github.com/NikkeTryHard/tach-core"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "tach_core"
