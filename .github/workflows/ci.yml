@@ -206,6 +206,11 @@ jobs:
           # Optional test directories (may require external deps)
           pytest tests/gauntlet_db/ -v --tb=short || echo "DB tests skipped (no database)"
           pytest tests/gauntlet_numpy/ -v --tb=short || echo "NumPy tests skipped (optional)"
+          pytest tests/benchmark/ -v --tb=short || echo "Benchmark tests skipped"
+          pytest tests/crash_test/ -v --tb=short || echo "Crash tests skipped"
+          pytest tests/fd_leak_test/ -v --tb=short || echo "FD leak tests skipped"
+          pytest tests/parallel_test/ -v --tb=short || echo "Parallel tests skipped"
+          pytest tests/env_test/ -v --tb=short || echo "Env tests skipped"
         timeout-minutes: 15
 
   # Only runs when code changes
