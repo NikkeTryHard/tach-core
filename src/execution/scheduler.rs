@@ -6,8 +6,8 @@
 
 use crate::logcapture::LogCapture;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, FixtureInfo, MAX_PAYLOAD_SIZE, STATUS_PASS, TestPayload, TestResult,
-    decode_with_limit,
+    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, TestPayload,
+    TestResult, decode_with_limit, encode_with_length,
 };
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
@@ -327,9 +327,13 @@ impl Scheduler {
     ) -> Option<(String, &'static str, u64, Option<String>, Option<u64>)> {
         let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut len_buf = [0u8; 4];
-        if socket.read_exact(&mut len_buf).is_ok() {
-            let len = u32::from_le_bytes(len_buf) as usize;
+        // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+        let mut header_buf = [0u8; HEADER_SIZE];
+        if socket.read_exact(&mut header_buf).is_ok() {
+            // Extract length from bytes 4-7 (little-endian u32)
+            let len =
+                u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+                    as usize;
 
             // OOM protection: Validate size BEFORE allocating
             // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
@@ -343,11 +347,11 @@ impl Scheduler {
                 return None;
             }
 
-            // Allocate buffer for length prefix + payload
-            let mut full_buf = vec![0u8; 4 + len];
-            full_buf[..4].copy_from_slice(&len_buf);
+            // Allocate buffer for header + payload
+            let mut full_buf = vec![0u8; HEADER_SIZE + len];
+            full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
 
-            if socket.read_exact(&mut full_buf[4..]).is_ok() {
+            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok() {
                 if let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE) {
                     // Get and remove worker
                     let (test_name, slot) = {
@@ -412,12 +416,12 @@ impl Scheduler {
             timeout_secs: test.timeout_secs,
         };
 
-        let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())?;
-        let len = payload_bytes.len() as u32;
+        // Use encode_with_length which includes protocol header
+        let encoded = encode_with_length(&payload)?;
 
         self.cmd_socket.write_all(&[CMD_FORK])?;
-        self.cmd_socket.write_all(&len.to_le_bytes())?;
-        self.cmd_socket.write_all(&payload_bytes)?;
+        // Write the full encoded buffer (header + payload)
+        self.cmd_socket.write_all(&encoded)?;
 
         let mut pid_buf = [0u8; 4];
         self.cmd_socket.read_exact(&mut pid_buf)?;
@@ -452,9 +456,13 @@ impl Scheduler {
     fn try_collect_result(&self) -> Option<TestResult> {
         let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut len_buf = [0u8; 4];
-        if socket.read_exact(&mut len_buf).is_ok() {
-            let len = u32::from_le_bytes(len_buf) as usize;
+        // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+        let mut header_buf = [0u8; HEADER_SIZE];
+        if socket.read_exact(&mut header_buf).is_ok() {
+            // Extract length from bytes 4-7 (little-endian u32)
+            let len =
+                u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+                    as usize;
 
             // OOM protection: Validate size BEFORE allocating
             // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
@@ -468,11 +476,11 @@ impl Scheduler {
                 return None;
             }
 
-            // Allocate buffer for length prefix + payload
-            let mut full_buf = vec![0u8; 4 + len];
-            full_buf[..4].copy_from_slice(&len_buf);
+            // Allocate buffer for header + payload
+            let mut full_buf = vec![0u8; HEADER_SIZE + len];
+            full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
 
-            if socket.read_exact(&mut full_buf[4..]).is_ok() {
+            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok() {
                 if let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE) {
                     // Get and remove worker
                     let (test_name, slot) = {

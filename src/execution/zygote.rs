@@ -3,7 +3,7 @@
 use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST, MAX_PAYLOAD_SIZE, MSG_PONG, MSG_READY,
+    CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST, HEADER_SIZE, MAX_PAYLOAD_SIZE, MSG_PONG, MSG_READY,
     MSG_WORKER_READY, TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::snapshot::send_fd;
@@ -360,13 +360,20 @@ fn worker_loop(socket: UnixStream) {
                 }
             }
             CMD_RUN_TEST => {
-                // Read payload length
-                let mut len_buf = [0u8; 4];
-                if socket.read_exact(&mut len_buf).is_err() {
-                    eprintln!("[tach:worker] Failed to read payload length");
+                // Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+                let mut header_buf = [0u8; HEADER_SIZE];
+                if socket.read_exact(&mut header_buf).is_err() {
+                    eprintln!("[tach:worker] Failed to read protocol header");
                     break;
                 }
-                let len = u32::from_le_bytes(len_buf) as usize;
+
+                // Extract length from bytes 4-7 (little-endian u32)
+                let len = u32::from_le_bytes([
+                    header_buf[4],
+                    header_buf[5],
+                    header_buf[6],
+                    header_buf[7],
+                ]) as usize;
 
                 // OOM protection: Validate size BEFORE allocating
                 if len > MAX_PAYLOAD_SIZE {
@@ -377,10 +384,10 @@ fn worker_loop(socket: UnixStream) {
                     break;
                 }
 
-                // Allocate buffer for length prefix + payload
-                let mut full_buf = vec![0u8; 4 + len];
-                full_buf[..4].copy_from_slice(&len_buf);
-                if socket.read_exact(&mut full_buf[4..]).is_err() {
+                // Allocate buffer for header + payload
+                let mut full_buf = vec![0u8; HEADER_SIZE + len];
+                full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+                if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_err() {
                     eprintln!("[tach:worker] Failed to read payload");
                     break;
                 }
@@ -541,15 +548,17 @@ fn spawn_result_collector(
     thread::spawn(move || {
         let mut socket = socket;
 
-        // 1. Read result length prefix
-        let mut result_len_buf = [0u8; 4];
-        if socket.read_exact(&mut result_len_buf).is_err() {
+        // 1. Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+        let mut header_buf = [0u8; HEADER_SIZE];
+        if socket.read_exact(&mut header_buf).is_err() {
             eprintln!("[tach:zygote] Worker {} crashed before sending result", pid);
             return;
         }
 
-        // 2. Read result payload
-        let result_len = u32::from_le_bytes(result_len_buf) as usize;
+        // 2. Extract length from bytes 4-7 and read payload
+        let result_len =
+            u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+                as usize;
 
         // OOM protection: Validate size BEFORE allocating
         if result_len > MAX_PAYLOAD_SIZE {
@@ -566,8 +575,8 @@ fn spawn_result_collector(
             return;
         }
 
-        // 3. Forward result to Supervisor
-        let mut full = result_len_buf.to_vec();
+        // 3. Forward result to Supervisor (header + payload)
+        let mut full = header_buf.to_vec();
         full.extend(result_buf);
         if result_tx.send(full).is_err() {
             eprintln!("[tach:zygote] Result channel closed");
@@ -734,10 +743,17 @@ except Exception as e:
 
         match cmd_buf[0] {
             CMD_FORK => {
-                // Read payload
-                let mut len_buf = [0u8; 4];
-                cmd_socket.read_exact(&mut len_buf)?;
-                let len = u32::from_le_bytes(len_buf) as usize;
+                // Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+                let mut header_buf = [0u8; HEADER_SIZE];
+                cmd_socket.read_exact(&mut header_buf)?;
+
+                // Extract length from bytes 4-7 (little-endian u32)
+                let len = u32::from_le_bytes([
+                    header_buf[4],
+                    header_buf[5],
+                    header_buf[6],
+                    header_buf[7],
+                ]) as usize;
 
                 // OOM protection: Validate size BEFORE allocating
                 // CRITICAL: Return error instead of continue to avoid protocol desync.
@@ -754,10 +770,10 @@ except Exception as e:
                     ));
                 }
 
-                // Allocate buffer for length prefix + payload
-                let mut full_buf = vec![0u8; 4 + len];
-                full_buf[..4].copy_from_slice(&len_buf);
-                cmd_socket.read_exact(&mut full_buf[4..])?;
+                // Allocate buffer for header + payload
+                let mut full_buf = vec![0u8; HEADER_SIZE + len];
+                full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+                cmd_socket.read_exact(&mut full_buf[HEADER_SIZE..])?;
 
                 let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
                     Ok(p) => p,
@@ -808,11 +824,10 @@ except Exception as e:
                     // =========================================================
                     eprintln!("[tach:zygote] Reusing worker {} for test", worker.pid);
 
-                    // Send CMD_RUN_TEST + payload to worker
+                    // Send CMD_RUN_TEST + full encoded buffer (header + payload) to worker
                     let dispatch_ok = (|| -> std::io::Result<()> {
                         worker.socket.write_all(&[CMD_RUN_TEST])?;
-                        worker.socket.write_all(&len_buf)?;
-                        worker.socket.write_all(&full_buf[4..])?; // Send payload only (without length prefix)
+                        worker.socket.write_all(&full_buf)?; // Send full buffer (header + payload)
                         Ok(())
                     })();
 
@@ -1868,8 +1883,11 @@ mod tests {
 
     #[test]
     fn test_result_encoding() {
-        // Test that TestResult can be encoded with length prefix
-        use crate::protocol::{STATUS_PASS, TestResult, encode_with_length};
+        // Test that TestResult can be encoded with protocol header
+        use crate::protocol::{
+            HEADER_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, STATUS_PASS, TestResult,
+            encode_with_length,
+        };
 
         let result = TestResult {
             test_id: 999,
@@ -1881,15 +1899,28 @@ mod tests {
 
         let encoded = encode_with_length(&result).expect("Encoding should succeed");
 
-        // First 4 bytes should be the length
-        let len = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+        // Verify header format: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+        assert_eq!(
+            &encoded[0..2],
+            &PROTOCOL_MAGIC,
+            "Magic bytes should be 'TA'"
+        );
+        assert_eq!(encoded[2], PROTOCOL_VERSION, "Version should match");
+        assert_eq!(encoded[3], 0, "Reserved byte should be 0");
+
+        // Extract length from bytes 4-7 (little-endian u32)
+        let len = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
 
         // Length should match remaining bytes
-        assert_eq!(len, encoded.len() - 4, "Length prefix should be correct");
+        assert_eq!(
+            len,
+            encoded.len() - HEADER_SIZE,
+            "Length should match payload size"
+        );
 
-        // Should be able to deserialize
+        // Should be able to deserialize the payload
         let (decoded, _): (TestResult, _) =
-            bincode::serde::decode_from_slice(&encoded[4..], bincode::config::standard())
+            bincode::serde::decode_from_slice(&encoded[HEADER_SIZE..], bincode::config::standard())
                 .expect("Deserialization should succeed");
         assert_eq!(decoded.test_id, 999);
         assert_eq!(decoded.status, STATUS_PASS);
