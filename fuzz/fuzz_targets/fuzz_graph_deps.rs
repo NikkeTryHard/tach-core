@@ -79,7 +79,7 @@ fn topological_sort(graph: &HashMap<String, Vec<String>>) -> Option<Vec<String>>
     }
 
     // Find nodes with no incoming edges
-    let mut queue: Vec<String> = in_degree.iter().filter(|(_, &d)| d == 0).map(|(n, _)| n.clone()).collect();
+    let mut queue: Vec<String> = in_degree.iter().filter(|&(_, &d)| d == 0).map(|(n, _)| n.clone()).collect();
 
     let mut result = Vec::new();
 
