@@ -69,6 +69,7 @@ pub struct RunnableTest {
     pub is_async: bool,                  // Whether test is async
     pub fixtures: Vec<ResolvedFixture>,  // Resolved fixture chain
     pub is_toxic: bool,                  // Requires worker restart
+    pub timeout_secs: Option<u64>,       // Per-test timeout override
 }
 ```
 
