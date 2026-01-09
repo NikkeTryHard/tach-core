@@ -1,7 +1,6 @@
 /target
 fuzz/target/
 /.venv
-Cargo.lock
 __pycache__/
 .tach/
 *.pyc
