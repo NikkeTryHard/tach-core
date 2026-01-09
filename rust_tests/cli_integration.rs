@@ -6,7 +6,7 @@
 //! - JSON output format
 
 use std::path::PathBuf;
-use tach_core::config::{Cli, Commands, OutputFormat};
+use tach_core::config::OutputFormat;
 use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::reporter::{HumanReporter, JsonReporter, MultiReporter, Reporter};
 
@@ -63,7 +63,7 @@ fn test_output_format_variants() {
 /// Test MultiReporter broadcasts to all child reporters
 #[test]
 fn test_multi_reporter_creation() {
-    let reporters: Vec<Box<dyn Reporter>> = vec![Box::new(HumanReporter)];
+    let reporters: Vec<Box<dyn Reporter>> = vec![Box::new(HumanReporter::new())];
     let _ = MultiReporter::new(reporters);
     // If it compiles and creates, the pattern works
 }
@@ -74,6 +74,7 @@ fn test_discovery_result_with_line_numbers() {
     let result = DiscoveryResult {
         modules: vec![TestModule {
             path: PathBuf::from("test_example.py"),
+            is_toxic: false,
             tests: vec![
                 TestCase {
                     name: "test_first".to_string(),
@@ -112,5 +113,5 @@ fn test_json_reporter_implements_reporter() {
 #[test]
 fn test_human_reporter_implements_reporter() {
     fn accepts_reporter<T: Reporter>(_r: T) {}
-    accepts_reporter(HumanReporter);
+    accepts_reporter(HumanReporter::new());
 }

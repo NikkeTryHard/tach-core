@@ -19,14 +19,20 @@ path = "src/main.rs"
 [[bin]]
 name = "tls_exploration"
 path = "experiments/tls_restoration_poc.rs"
+required-features = ["experiments"]
 
 [[bin]]
 name = "tls_python_poc"
 path = "experiments/tls_python_poc.rs"
+required-features = ["experiments"]
 
 [[bin]]
 name = "tls_sentinel_scan"
 path = "experiments/tls_sentinel_scan.rs"
+required-features = ["experiments"]
+
+[features]
+experiments = []
 
 [dependencies]
 # Core
@@ -256,3 +262,7 @@ path = "rust_tests/coverage_flag_tests.rs"
 [[test]]
 name = "durations_flag_tests"
 path = "rust_tests/durations_flag_tests.rs"
+
+[[test]]
+name = "cli_integration"
+path = "rust_tests/cli_integration.rs"
