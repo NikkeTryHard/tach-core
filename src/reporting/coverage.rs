@@ -339,7 +339,7 @@ impl CoverageRingBuffer {
         }
 
         eprintln!(
-            "[coverage] Created ring buffer: {} entries, {} bytes total",
+            "[tach:coverage] Created ring buffer: {} entries, {} bytes total",
             capacity, total_size
         );
 
@@ -582,7 +582,7 @@ impl MappingRingBuffer {
         }
 
         eprintln!(
-            "[coverage] Created mapping buffer: {} entries, {} bytes total",
+            "[tach:coverage] Created mapping buffer: {} entries, {} bytes total",
             capacity, total_size
         );
 
@@ -1164,7 +1164,7 @@ pub fn write_lcov(data: &CoverageData, path: &std::path::Path) -> Result<()> {
         writeln!(output, "end_of_record")?;
     }
 
-    eprintln!("[coverage] Wrote LCOV report to {}", path.display());
+    eprintln!("[tach:coverage] Wrote LCOV report to {}", path.display());
     Ok(())
 }
 
@@ -1249,7 +1249,7 @@ pub fn write_json(data: &CoverageData, path: &std::path::Path) -> Result<()> {
     serde_json::to_writer_pretty(file, &output)
         .with_context(|| format!("Failed to write JSON coverage: {}", path.display()))?;
 
-    eprintln!("[coverage] Wrote JSON report to {}", path.display());
+    eprintln!("[tach:coverage] Wrote JSON report to {}", path.display());
     Ok(())
 }
 

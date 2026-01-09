@@ -96,7 +96,7 @@ pub fn verify_jemalloc_active() -> Result<String> {
         };
 
         eprintln!(
-            "[allocator] jemalloc {} verified as active allocator",
+            "[tach:allocator] jemalloc {} verified as active allocator",
             version
         );
         Ok(version)
@@ -205,7 +205,7 @@ pub fn quiesce_allocator() -> Result<()> {
         }
 
         eprintln!(
-            "[allocator] Quiesced: tcache flushed, epoch advanced to {}",
+            "[tach:allocator] Quiesced: tcache flushed, epoch advanced to {}",
             epoch
         );
 

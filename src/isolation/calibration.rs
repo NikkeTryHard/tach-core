@@ -96,12 +96,12 @@ impl TlsCalibration {
     #[cfg(target_arch = "x86_64")]
     pub fn calibrate() -> Result<Self> {
         eprintln!("{}", "=".repeat(70));
-        eprintln!("[calibration]  TLS Self-Calibration Starting");
+        eprintln!("[tach:calibration]  TLS Self-Calibration Starting");
         eprintln!("{}", "=".repeat(70));
 
         // Step 1: Get fs_base
         let fs_base = get_fs_base()?;
-        eprintln!("[calibration] fs_base = 0x{:016x}", fs_base);
+        eprintln!("[tach:calibration] fs_base = 0x{:016x}", fs_base);
 
         // Step 2: Parse memory maps to find TLS region
         let regions = parse_memory_maps()?;
@@ -109,7 +109,7 @@ impl TlsCalibration {
             .ok_or_else(|| anyhow!("fs_base 0x{:x} not in any mapped region", fs_base))?;
 
         eprintln!(
-            "[calibration] TLS region: 0x{:x}-0x{:x} ({} bytes)",
+            "[tach:calibration] TLS region: 0x{:x}-0x{:x} ({} bytes)",
             tls_region.start,
             tls_region.end,
             tls_region.size()
@@ -118,13 +118,13 @@ impl TlsCalibration {
         let tls_region_size = tls_region.size();
 
         // Step 3: Populate mimalloc TLS by allocating Python objects
-        eprintln!("[calibration] Populating mimalloc TLS structures...");
+        eprintln!("[tach:calibration] Populating mimalloc TLS structures...");
         Python::attach(|py| {
             populate_mimalloc_tls(py)?;
 
             // Step 4: Allocate sentinel
             eprintln!(
-                "[calibration] Allocating sentinel (0x{:016X})...",
+                "[tach:calibration] Allocating sentinel (0x{:016X})...",
                 SENTINEL_PATTERN
             );
             let sentinel_addr = allocate_sentinel(py)?;
@@ -140,12 +140,12 @@ impl TlsCalibration {
                 .collect();
 
             eprintln!(
-                "[calibration] Found {} potential heap regions",
+                "[tach:calibration] Found {} potential heap regions",
                 heap_regions.len()
             );
 
             // Step 6: Scan TLS for heap pointers
-            eprintln!("[calibration] Scanning TLS for heap pointers...");
+            eprintln!("[tach:calibration] Scanning TLS for heap pointers...");
             let (heap_pointer_offsets, sentinel_offsets) =
                 scan_tls_for_pointers(fs_base, tls_region, &heap_regions, sentinel_addr);
 
@@ -154,12 +154,15 @@ impl TlsCalibration {
 
             // Log the calibration message (Orchestrator's requirement)
             if let Some(offset) = mi_heap_offset {
-                eprintln!("[restoration] Sentinel found at fs_base + 0x{:04X}", offset);
+                eprintln!(
+                    "[tach:restoration] Sentinel found at fs_base + 0x{:04X}",
+                    offset
+                );
             }
 
             // Report results
             eprintln!("\n{}", "=".repeat(70));
-            eprintln!("[calibration] CALIBRATION RESULTS");
+            eprintln!("[tach:calibration] CALIBRATION RESULTS");
             eprintln!("{}", "=".repeat(70));
             eprintln!("  Heap pointers in TLS: {}", heap_pointer_offsets.len());
             eprintln!(
@@ -180,11 +183,13 @@ impl TlsCalibration {
             let calibrated = mi_heap_offset.is_some();
 
             if calibrated {
-                eprintln!("\n[calibration] CALIBRATION SUCCESSFUL");
+                eprintln!("\n[tach:calibration] CALIBRATION SUCCESSFUL");
             } else {
-                eprintln!("\n[calibration] CALIBRATION FAILED - No heap pointers found in TLS");
                 eprintln!(
-                    "[calibration] This may indicate Python < 3.13 (pymalloc, no TLS caching)"
+                    "\n[tach:calibration] CALIBRATION FAILED - No heap pointers found in TLS"
+                );
+                eprintln!(
+                    "[tach:calibration] This may indicate Python < 3.13 (pymalloc, no TLS caching)"
                 );
             }
 
@@ -322,7 +327,7 @@ fn allocate_sentinel(py: Python<'_>) -> Result<usize> {
         .map_err(|e| anyhow!("Failed to extract address: {}", e))?;
 
     eprintln!(
-        "[calibration] Sentinel allocated at 0x{:016x}, value: 0x{:016X}",
+        "[tach:calibration] Sentinel allocated at 0x{:016x}, value: 0x{:016X}",
         addr_value, SENTINEL_PATTERN
     );
 
@@ -397,7 +402,7 @@ fn scan_tls_for_pointers(
             if value == sentinel_addr {
                 sentinel_offsets.push(offset);
                 eprintln!(
-                    "[calibration] SENTINEL POINTER at fs_base+0x{:04x} -> 0x{:016x}",
+                    "[tach:calibration] SENTINEL POINTER at fs_base+0x{:04x} -> 0x{:016x}",
                     offset, value
                 );
             }

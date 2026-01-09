@@ -142,7 +142,7 @@ impl Scheduler {
         }
 
         eprintln!(
-            "[scheduler] Queue split: {} safe (Hypervisor), {} toxic (Isolation)",
+            "[tach:scheduler] Queue split: {} safe (Hypervisor), {} toxic (Isolation)",
             safe_count, toxic_count
         );
     }
@@ -336,7 +336,7 @@ impl Scheduler {
             // This is a protocol violation from the Zygote - should never happen in normal operation.
             if len > MAX_PAYLOAD_SIZE {
                 eprintln!(
-                    "[scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
+                    "[tach:scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
                     len, MAX_PAYLOAD_SIZE
                 );
                 // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
@@ -461,7 +461,7 @@ impl Scheduler {
             // This is a protocol violation from the Zygote - should never happen in normal operation.
             if len > MAX_PAYLOAD_SIZE {
                 eprintln!(
-                    "[scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
+                    "[tach:scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
                     len, MAX_PAYLOAD_SIZE
                 );
                 // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
@@ -630,7 +630,7 @@ pub fn invoke_timeout_hook(hook_spec: &str, test_id: u32, test_name: &str, timeo
     let parts: Vec<&str> = hook_spec.splitn(2, ':').collect();
     if parts.len() != 2 {
         eprintln!(
-            "[scheduler] Invalid timeout_hook format '{}', expected 'module:function'",
+            "[tach:scheduler] Invalid timeout_hook format '{}', expected 'module:function'",
             hook_spec
         );
         return;
@@ -654,20 +654,23 @@ pub fn invoke_timeout_hook(hook_spec: &str, test_id: u32, test_name: &str, timeo
     match result {
         Ok(()) => {
             eprintln!(
-                "[scheduler] Timeout hook completed for {} in {:?}",
+                "[tach:scheduler] Timeout hook completed for {} in {:?}",
                 test_name,
                 start.elapsed()
             );
         }
         Err(e) => {
-            eprintln!("[scheduler] Timeout hook failed for {}: {}", test_name, e);
+            eprintln!(
+                "[tach:scheduler] Timeout hook failed for {}: {}",
+                test_name, e
+            );
         }
     }
 
     // Log if hook took too long (but don't interrupt - it already ran)
     if start.elapsed() > hook_timeout {
         eprintln!(
-            "[scheduler] Warning: timeout hook took {:?} (exceeds 5s limit)",
+            "[tach:scheduler] Warning: timeout hook took {:?} (exceeds 5s limit)",
             start.elapsed()
         );
     }

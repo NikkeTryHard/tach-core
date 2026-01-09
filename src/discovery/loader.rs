@@ -305,7 +305,7 @@ impl BytecodeCompiler {
                 Ok(true) => false, // Magic matches, use cache
                 Ok(false) => {
                     eprintln!(
-                        "[loader] Magic mismatch for {}, recompiling",
+                        "[tach:loader] Magic mismatch for {}, recompiling",
                         source.display()
                     );
                     true
@@ -394,13 +394,17 @@ impl BytecodeCompiler {
                 }
                 Err(e) => {
                     // Graceful fallback: log warning, continue
-                    eprintln!("[loader] WARN: Failed to compile {}: {}", file.display(), e);
+                    eprintln!(
+                        "[tach:loader] WARN: Failed to compile {}: {}",
+                        file.display(),
+                        e
+                    );
                 }
             }
         }
 
         eprintln!(
-            "[loader] Compiled {} of {} files",
+            "[tach:loader] Compiled {} of {} files",
             success_count,
             files.len()
         );

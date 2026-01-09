@@ -81,7 +81,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
         Ok(u) => u,
         Err(e) => {
             eprintln!(
-                "[tach_rust] WARN: Failed to create userfaultfd: {}. Snapshotting disabled.",
+                "[tach:rust] WARN: Failed to create userfaultfd: {}. Snapshotting disabled.",
                 e
             );
             return Ok(false); // Fallback to fork-server
@@ -93,7 +93,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
         Ok(s) => s,
         Err(e) => {
             eprintln!(
-                "[tach_rust] WARN: Failed to connect to supervisor: {}. Snapshotting disabled.",
+                "[tach:rust] WARN: Failed to connect to supervisor: {}. Snapshotting disabled.",
                 e
             );
             return Ok(false);
@@ -103,7 +103,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
     // 3. Send PID + UFFD via SCM_RIGHTS
     if let Err(e) = send_fd(&sock, pid, uffd.as_raw_fd()) {
         eprintln!(
-            "[tach_rust] WARN: Failed to send UFFD: {}. Snapshotting disabled.",
+            "[tach:rust] WARN: Failed to send UFFD: {}. Snapshotting disabled.",
             e
         );
         return Ok(false);
@@ -120,7 +120,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
             .collect();
         let count = cached.len();
         *RESET_REGIONS.lock().unwrap_or_else(|e| e.into_inner()) = cached;
-        eprintln!("[tach_rust] Cached {} regions for self-reset", count);
+        eprintln!("[tach:rust] Cached {} regions for self-reset", count);
     }
 
     // =========================================================================
@@ -145,17 +145,17 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
     // If quiesce fails, we continue anyway (dirty worker > dead worker)
     // but log a warning since memory corruption may occur after reset.
     // =========================================================================
-    eprintln!("[tach_rust] Quiescing jemalloc allocator before snapshot...");
+    eprintln!("[tach:rust] Quiescing jemalloc allocator before snapshot...");
     if let Err(e) = crate::allocator::quiesce_allocator() {
         eprintln!(
-            "[tach_rust] WARNING: Failed to quiesce allocator: {}. \
+            "[tach:rust] WARNING: Failed to quiesce allocator: {}. \
              Memory corruption may occur after reset.",
             e
         );
     }
 
     // 5. Freeze self - Supervisor will capture snapshot and SIGCONT us
-    eprintln!("[tach_rust] Freezing for snapshot (PID {})...", pid);
+    eprintln!("[tach:rust] Freezing for snapshot (PID {})...", pid);
     if let Err(e) = nix::sys::signal::raise(Signal::SIGSTOP) {
         return Err(pyo3::exceptions::PyOSError::new_err(format!(
             "Failed to SIGSTOP: {}",
@@ -165,7 +165,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
 
     // 6. We're back! Supervisor has registered our memory.
     SNAPSHOT_ENABLED.store(true, Ordering::SeqCst);
-    eprintln!("[tach_rust] Resumed after snapshot capture");
+    eprintln!("[tach:rust] Resumed after snapshot capture");
     Ok(true)
 }
 
@@ -177,7 +177,7 @@ fn init_snapshot_mode(sock_path: &str) -> PyResult<bool> {
 #[pyfunction]
 fn reset_memory() -> PyResult<()> {
     if !SNAPSHOT_ENABLED.load(Ordering::SeqCst) {
-        eprintln!("[tach_rust] reset_memory called but snapshot not enabled");
+        eprintln!("[tach:rust] reset_memory called but snapshot not enabled");
         return Ok(());
     }
 
@@ -188,7 +188,7 @@ fn reset_memory() -> PyResult<()> {
         let ret = unsafe { libc::madvise(start as *mut libc::c_void, len, libc::MADV_DONTNEED) };
         if ret != 0 {
             eprintln!(
-                "[tach_rust] madvise failed for region {:x}-{:x}: {}",
+                "[tach:rust] madvise failed for region {:x}-{:x}: {}",
                 start,
                 start + len,
                 std::io::Error::last_os_error()
@@ -197,7 +197,7 @@ fn reset_memory() -> PyResult<()> {
     }
 
     eprintln!(
-        "[tach_rust] Self-reset complete: invalidated {} regions",
+        "[tach:rust] Self-reset complete: invalidated {} regions",
         regions.len()
     );
     Ok(())
@@ -323,7 +323,7 @@ fn reset_and_signal_ready(socket: &UnixStream) -> Result<()> {
     let mut socket = socket.try_clone()?;
     socket.write_all(&[MSG_WORKER_READY])?;
 
-    eprintln!("[worker] Reset complete, signaled READY");
+    eprintln!("[tach:worker] Reset complete, signaled READY");
     Ok(())
 }
 
@@ -347,7 +347,7 @@ fn worker_loop(socket: UnixStream) {
         // Wait for next command from Zygote
         let mut cmd_buf = [0u8; 1];
         if socket.read_exact(&mut cmd_buf).is_err() {
-            eprintln!("[worker] Socket closed, exiting loop");
+            eprintln!("[tach:worker] Socket closed, exiting loop");
             break;
         }
 
@@ -355,7 +355,7 @@ fn worker_loop(socket: UnixStream) {
             CMD_PING => {
                 // Health check - respond with PONG
                 if socket.write_all(&[MSG_PONG]).is_err() {
-                    eprintln!("[worker] Failed to send PONG, exiting");
+                    eprintln!("[tach:worker] Failed to send PONG, exiting");
                     break;
                 }
             }
@@ -363,7 +363,7 @@ fn worker_loop(socket: UnixStream) {
                 // Read payload length
                 let mut len_buf = [0u8; 4];
                 if socket.read_exact(&mut len_buf).is_err() {
-                    eprintln!("[worker] Failed to read payload length");
+                    eprintln!("[tach:worker] Failed to read payload length");
                     break;
                 }
                 let len = u32::from_le_bytes(len_buf) as usize;
@@ -371,7 +371,7 @@ fn worker_loop(socket: UnixStream) {
                 // OOM protection: Validate size BEFORE allocating
                 if len > MAX_PAYLOAD_SIZE {
                     eprintln!(
-                        "[worker] Rejecting oversized payload: {} bytes > {} limit",
+                        "[tach:worker] Rejecting oversized payload: {} bytes > {} limit",
                         len, MAX_PAYLOAD_SIZE
                     );
                     break;
@@ -381,14 +381,14 @@ fn worker_loop(socket: UnixStream) {
                 let mut full_buf = vec![0u8; 4 + len];
                 full_buf[..4].copy_from_slice(&len_buf);
                 if socket.read_exact(&mut full_buf[4..]).is_err() {
-                    eprintln!("[worker] Failed to read payload");
+                    eprintln!("[tach:worker] Failed to read payload");
                     break;
                 }
 
                 let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("[worker] Deserialize error: {}", e);
+                        eprintln!("[tach:worker] Deserialize error: {}", e);
                         break;
                     }
                 };
@@ -401,30 +401,30 @@ fn worker_loop(socket: UnixStream) {
                 if let Ok(result_bytes) = encode_with_length(&result)
                     && socket.write_all(&result_bytes).is_err()
                 {
-                    eprintln!("[worker] Failed to send result");
+                    eprintln!("[tach:worker] Failed to send result");
                     break;
                 }
 
                 // Dual-path decision
                 if payload.is_toxic {
                     // TOXIC PATH: Exit loop, process will terminate
-                    eprintln!("[worker] Toxic test completed, exiting");
+                    eprintln!("[tach:worker] Toxic test completed, exiting");
                     break;
                 } else {
                     // SAFE PATH: Reset memory and continue loop
                     if let Err(e) = reset_and_signal_ready(&socket) {
-                        eprintln!("[worker] Reset failed: {}, exiting", e);
+                        eprintln!("[tach:worker] Reset failed: {}, exiting", e);
                         break;
                     }
                     // Loop continues - wait for next command
                 }
             }
             CMD_EXIT => {
-                eprintln!("[worker] Received EXIT command");
+                eprintln!("[tach:worker] Received EXIT command");
                 break;
             }
             _ => {
-                eprintln!("[worker] Unknown command: {:#x}", cmd_buf[0]);
+                eprintln!("[tach:worker] Unknown command: {:#x}", cmd_buf[0]);
             }
         }
     }
@@ -449,7 +449,7 @@ fn check_worker_health(socket: &mut UnixStream, pid: i32) -> bool {
 
     // Send PING
     if socket.write_all(&[CMD_PING]).is_err() {
-        eprintln!("[zygote] Worker {} failed PING write", pid);
+        eprintln!("[tach:zygote] Worker {} failed PING write", pid);
         let _ = socket.set_read_timeout(old_timeout);
         return false;
     }
@@ -465,7 +465,7 @@ fn check_worker_health(socket: &mut UnixStream, pid: i32) -> bool {
     let _ = socket.set_read_timeout(old_timeout);
 
     if !healthy {
-        eprintln!("[zygote] Worker {} failed health check (no PONG)", pid);
+        eprintln!("[tach:zygote] Worker {} failed health check (no PONG)", pid);
     }
 
     healthy
@@ -515,7 +515,7 @@ fn reap_dead_workers() -> usize {
     let removed = original_count - workers.len();
     if removed > 0 {
         eprintln!(
-            "[zygote] Reaped {} dead/unresponsive workers: {:?}",
+            "[tach:zygote] Reaped {} dead/unresponsive workers: {:?}",
             removed, dead_pids
         );
     }
@@ -544,7 +544,7 @@ fn spawn_result_collector(
         // 1. Read result length prefix
         let mut result_len_buf = [0u8; 4];
         if socket.read_exact(&mut result_len_buf).is_err() {
-            eprintln!("[zygote] Worker {} crashed before sending result", pid);
+            eprintln!("[tach:zygote] Worker {} crashed before sending result", pid);
             return;
         }
 
@@ -554,7 +554,7 @@ fn spawn_result_collector(
         // OOM protection: Validate size BEFORE allocating
         if result_len > MAX_PAYLOAD_SIZE {
             eprintln!(
-                "[result_collector] Rejecting oversized result: {} bytes > {} limit. Terminating.",
+                "[tach:result_collector] Rejecting oversized result: {} bytes > {} limit. Terminating.",
                 result_len, MAX_PAYLOAD_SIZE
             );
             return;
@@ -562,7 +562,7 @@ fn spawn_result_collector(
 
         let mut result_buf = vec![0u8; result_len];
         if socket.read_exact(&mut result_buf).is_err() {
-            eprintln!("[zygote] Worker {} crashed during result send", pid);
+            eprintln!("[tach:zygote] Worker {} crashed during result send", pid);
             return;
         }
 
@@ -570,13 +570,13 @@ fn spawn_result_collector(
         let mut full = result_len_buf.to_vec();
         full.extend(result_buf);
         if result_tx.send(full).is_err() {
-            eprintln!("[zygote] Result channel closed");
+            eprintln!("[tach:zygote] Result channel closed");
             return;
         }
 
         // 4. Toxic workers exit here - don't wait for READY signal
         if is_toxic {
-            eprintln!("[zygote] Toxic worker {} completed, not pooling", pid);
+            eprintln!("[tach:zygote] Toxic worker {} completed, not pooling", pid);
             return;
         }
 
@@ -585,21 +585,21 @@ fn spawn_result_collector(
         match socket.read_exact(&mut ready_buf) {
             Ok(_) if ready_buf[0] == MSG_WORKER_READY => {
                 // Worker is ready for reuse - add to pool
-                eprintln!("[zygote] Worker {} ready, adding to pool", pid);
+                eprintln!("[tach:zygote] Worker {} ready, adding to pool", pid);
                 if let Ok(mut workers) = IDLE_WORKERS.lock() {
                     workers.push(WorkerHandle { pid, socket });
                 } else {
-                    eprintln!("[zygote] WARNING: Failed to acquire lock for worker pool");
+                    eprintln!("[tach:zygote] WARNING: Failed to acquire lock for worker pool");
                 }
             }
             Ok(_) => {
                 eprintln!(
-                    "[zygote] Worker {} sent unexpected byte: {:#x}",
+                    "[tach:zygote] Worker {} sent unexpected byte: {:#x}",
                     pid, ready_buf[0]
                 );
             }
             Err(_) => {
-                eprintln!("[zygote] Worker {} died after result (no READY)", pid);
+                eprintln!("[tach:zygote] Worker {} died after result (no READY)", pid);
             }
         }
     });
@@ -617,14 +617,14 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
     // Prevent zombies
     unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }?;
 
-    eprintln!("[zygote] Initializing Python...");
+    eprintln!("[tach:zygote] Initializing Python...");
     let cwd = env::current_dir()?;
     let cwd_str = cwd.to_string_lossy().to_string();
 
     //  Detect venv and get site-packages path
     let site_packages = find_site_packages(&cwd);
     if let Some(ref sp) = site_packages {
-        eprintln!("[zygote] Found venv: {}", sp.display());
+        eprintln!("[tach:zygote] Found venv: {}", sp.display());
     }
 
     Python::attach(|py| -> Result<()> {
@@ -644,9 +644,9 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
 
         // Now pytest should be importable from venv
         match py.import("pytest") {
-            Ok(_) => eprintln!("[zygote] pytest loaded successfully"),
+            Ok(_) => eprintln!("[tach:zygote] pytest loaded successfully"),
             Err(e) => {
-                eprintln!("[zygote] Error: {}", e);
+                eprintln!("[tach:zygote] Error: {}", e);
                 return Err(anyhow::anyhow!("Failed to import pytest: {}", e));
             }
         }
@@ -664,7 +664,7 @@ try:
     # Check if DJANGO_SETTINGS_MODULE is already set
     if 'DJANGO_SETTINGS_MODULE' in os.environ:
         django.setup()
-        print(f'[zygote] Django initialized: {os.environ["DJANGO_SETTINGS_MODULE"]}', file=sys.stderr)
+        print(f'[tach:zygote] Django initialized: {os.environ["DJANGO_SETTINGS_MODULE"]}', file=sys.stderr)
 
         # CRITICAL: Warm up DB connections before forking
         # File descriptors must exist in Zygote to be inherited by workers
@@ -672,13 +672,13 @@ try:
             from django.db import connections
             for alias in connections:
                 connections[alias].ensure_connection()
-            print(f'[zygote] Django DB connections warmed up', file=sys.stderr)
+            print(f'[tach:zygote] Django DB connections warmed up', file=sys.stderr)
         except Exception as e:
-            print(f'[zygote] Django DB warmup failed: {e}', file=sys.stderr)
+            print(f'[tach:zygote] Django DB warmup failed: {e}', file=sys.stderr)
 except ImportError:
     pass  # Django not installed, skip
 except Exception as e:
-    print(f'[zygote] Django setup error: {e}', file=sys.stderr)
+    print(f'[tach:zygote] Django setup error: {e}', file=sys.stderr)
 "#),
             None,
             None,
@@ -704,7 +704,7 @@ except Exception as e:
         Ok(())
     })?;
 
-    eprintln!("[zygote] Python ready.");
+    eprintln!("[tach:zygote] Python ready.");
 
     // Signal ready on both sockets
     let mut cmd_socket = cmd_socket;
@@ -744,7 +744,7 @@ except Exception as e:
                 // If we continue, the unread payload bytes will corrupt subsequent reads.
                 if len > MAX_PAYLOAD_SIZE {
                     eprintln!(
-                        "[zygote] FATAL: Rejecting oversized payload: {} bytes > {} limit. Protocol error.",
+                        "[tach:zygote] FATAL: Rejecting oversized payload: {} bytes > {} limit. Protocol error.",
                         len, MAX_PAYLOAD_SIZE
                     );
                     return Err(anyhow::anyhow!(
@@ -762,7 +762,7 @@ except Exception as e:
                 let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("[zygote] Deserialize error: {}", e);
+                        eprintln!("[tach:zygote] Deserialize error: {}", e);
                         continue;
                     }
                 };
@@ -788,7 +788,7 @@ except Exception as e:
 
                                 if !process_alive {
                                     eprintln!(
-                                        "[zygote] Worker {} died unexpectedly, trying next",
+                                        "[tach:zygote] Worker {} died unexpectedly, trying next",
                                         worker.pid
                                     );
                                     continue; // Try next worker
@@ -806,7 +806,7 @@ except Exception as e:
                     // =========================================================
                     // REUSE PATH: Dispatch to existing worker
                     // =========================================================
-                    eprintln!("[zygote] Reusing worker {} for test", worker.pid);
+                    eprintln!("[tach:zygote] Reusing worker {} for test", worker.pid);
 
                     // Send CMD_RUN_TEST + payload to worker
                     let dispatch_ok = (|| -> std::io::Result<()> {
@@ -818,7 +818,7 @@ except Exception as e:
 
                     if let Err(e) = dispatch_ok {
                         eprintln!(
-                            "[zygote] Failed to dispatch to worker {}: {}",
+                            "[tach:zygote] Failed to dispatch to worker {}: {}",
                             worker.pid, e
                         );
                         // Worker died, fall through to fork path
@@ -872,7 +872,7 @@ except Exception as e:
                             crate::isolation::setup_filesystem(payload.test_id, &project_root)
                         {
                             eprintln!(
-                                "[worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}",
+                                "[tach:worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}",
                                 e
                             );
                             std::process::exit(1);
@@ -950,7 +950,10 @@ except Exception as e:
                             // Safe test: reset memory and enter worker loop
                             // This is the Hypervisor Mode path - worker will be reused
                             if let Err(e) = reset_and_signal_ready(&child_sock) {
-                                eprintln!("[worker] Reset failed after first test: {}, exiting", e);
+                                eprintln!(
+                                    "[tach:worker] Reset failed after first test: {}, exiting",
+                                    e
+                                );
                                 process::exit(1);
                             }
 
@@ -959,11 +962,11 @@ except Exception as e:
                             process::exit(0);
                         }
                     }
-                    Err(e) => eprintln!("[zygote] Fork failed: {}", e),
+                    Err(e) => eprintln!("[tach:zygote] Fork failed: {}", e),
                 }
             }
             CMD_EXIT => {
-                eprintln!("[zygote] Received EXIT.");
+                eprintln!("[tach:zygote] Received EXIT.");
 
                 //  Drain idle workers and send them EXIT commands
                 let idle_workers =
@@ -971,13 +974,13 @@ except Exception as e:
                 let worker_count = idle_workers.len();
                 let mut worker_pids = Vec::with_capacity(worker_count);
                 for mut worker in idle_workers {
-                    eprintln!("[zygote] Sending EXIT to idle worker {}", worker.pid);
+                    eprintln!("[tach:zygote] Sending EXIT to idle worker {}", worker.pid);
                     worker_pids.push(worker.pid);
                     let _ = worker.socket.write_all(&[CMD_EXIT]);
                     // Socket drops here, worker will see EOF if write fails
                 }
                 if worker_count > 0 {
-                    eprintln!("[zygote] Drained {} idle workers", worker_count);
+                    eprintln!("[tach:zygote] Drained {} idle workers", worker_count);
                 }
 
                 // Give threads time to forward final results
@@ -1053,7 +1056,7 @@ fn run_worker(payload: &TestPayload) -> TestResult {
             // Log thread leak if detected (for visibility)
             if thread_leaked {
                 eprintln!(
-                    "[worker] Thread leak detected for test {}, worker marked toxic",
+                    "[tach:worker] Thread leak detected for test {}, worker marked toxic",
                     &payload.test_name
                 );
             }

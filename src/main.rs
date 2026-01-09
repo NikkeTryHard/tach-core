@@ -60,7 +60,7 @@ impl RunContext {
             }
             Err(e) => {
                 eprintln!(
-                    "[supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.",
+                    "[tach:supervisor] WARN: Failed to create UFFD listener: {}. Snapshot mode disabled.",
                     e
                 );
                 None
@@ -121,7 +121,7 @@ fn main() -> Result<()> {
     match tach_core::allocator::verify_jemalloc_active() {
         Ok(version) => {
             eprintln!(
-                "[supervisor] Jemalloc {} verified - Hypervisor allocator ready",
+                "[tach:supervisor] Jemalloc {} verified - Hypervisor allocator ready",
                 version
             );
         }
@@ -159,12 +159,12 @@ fn main() -> Result<()> {
         // This is called during initialization before any worker threads spawn.
         unsafe { std::env::set_var("TACH_LOG_LEVEL", "trace") };
         if !is_json {
-            eprintln!("[supervisor] Trace logging enabled (maximum verbosity)");
+            eprintln!("[tach:supervisor] Trace logging enabled (maximum verbosity)");
         }
     } else if cli.debug {
         unsafe { std::env::set_var("TACH_LOG_LEVEL", "debug") };
         if !is_json {
-            eprintln!("[supervisor] Debug logging enabled");
+            eprintln!("[tach:supervisor] Debug logging enabled");
         }
     }
 
@@ -186,7 +186,7 @@ fn main() -> Result<()> {
         && !is_json
     {
         eprintln!(
-            "[supervisor] Warning: Failed to install signal handlers: {}",
+            "[tach:supervisor] Warning: Failed to install signal handlers: {}",
             e
         );
     }
@@ -310,7 +310,7 @@ fn execute_session(
 
     // --- DISCOVERY ---
     if !is_json {
-        eprintln!("[supervisor] Scanning {}...", cwd.display());
+        eprintln!("[tach:supervisor] Scanning {}...", cwd.display());
     }
 
     let start = std::time::Instant::now();
@@ -320,7 +320,7 @@ fn execute_session(
         let toxic_count = toxicity_graph.toxic_modules().len();
         let safe_count = toxicity_graph.safe_modules().len();
         eprintln!(
-            "[supervisor] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
+            "[tach:supervisor] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
             discovery_result.test_count(),
             discovery_result.fixture_count(),
             start.elapsed(),
@@ -359,7 +359,7 @@ fn execute_session(
         let compiled = compiler.compile_batch(&py_files, registry);
         if !is_json {
             eprintln!(
-                "[supervisor] Compiled {} of {} modules for zero-copy loading in {:?}",
+                "[tach:supervisor] Compiled {} of {} modules for zero-copy loading in {:?}",
                 compiled,
                 py_files.len(),
                 start_compile.elapsed()
@@ -367,7 +367,7 @@ fn execute_session(
         }
     } else if !is_json {
         eprintln!(
-            "[supervisor] WARN: Failed to create bytecode compiler, falling back to importlib"
+            "[tach:supervisor] WARN: Failed to create bytecode compiler, falling back to importlib"
         );
     }
 
@@ -378,7 +378,7 @@ fn execute_session(
 
     if !is_json {
         eprintln!(
-            "[supervisor] Resolved {} tests ({} errors)",
+            "[tach:supervisor] Resolved {} tests ({} errors)",
             runnable_tests.len(),
             errors.len()
         );
@@ -409,7 +409,7 @@ fn execute_session(
 
     if !is_json && toxic_test_count > 0 {
         eprintln!(
-            "[supervisor] Toxicity: {} of {} tests marked toxic (will use fork/kill)",
+            "[tach:supervisor] Toxicity: {} of {} tests marked toxic (will use fork/kill)",
             toxic_test_count,
             runnable_tests.len()
         );
@@ -441,7 +441,7 @@ fn execute_session(
 
     if !is_json {
         eprintln!(
-            "[supervisor] Selected {} tests to run (filtered by path: {})",
+            "[tach:supervisor] Selected {} tests to run (filtered by path: {})",
             filtered_tests.len(),
             target_path
         );
@@ -449,7 +449,10 @@ fn execute_session(
 
     if filtered_tests.is_empty() {
         if !is_json {
-            eprintln!("[supervisor] No tests found matching path: {}", target_path);
+            eprintln!(
+                "[tach:supervisor] No tests found matching path: {}",
+                target_path
+            );
         }
         return Ok(());
     }
@@ -648,7 +651,7 @@ fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
 /// and prints a summary of what would be executed without actually running.
 fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Result<()> {
     if !is_json {
-        eprintln!("[dry-run] Discovering tests in {}...", cwd.display());
+        eprintln!("[tach:dry-run] Discovering tests in {}...", cwd.display());
     }
 
     let start = std::time::Instant::now();
@@ -658,7 +661,7 @@ fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Resul
         let toxic_count = toxicity_graph.toxic_modules().len();
         let safe_count = toxicity_graph.safe_modules().len();
         eprintln!(
-            "[dry-run] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
+            "[tach:dry-run] Discovered {} tests, {} fixtures in {:?} (toxic: {}, safe: {})",
             discovery_result.test_count(),
             discovery_result.fixture_count(),
             start.elapsed(),
@@ -674,7 +677,7 @@ fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Resul
 
     if !is_json {
         eprintln!(
-            "[dry-run] Resolved {} tests ({} errors)",
+            "[tach:dry-run] Resolved {} tests ({} errors)",
             runnable_tests.len(),
             errors.len()
         );
@@ -806,7 +809,7 @@ fn run_tests(
 
     if coverage_enabled {
         if !is_json {
-            eprintln!("[supervisor] Initializing coverage collection...");
+            eprintln!("[tach:supervisor] Initializing coverage collection...");
         }
 
         // Initialize coverage ring buffer (LINE events)
@@ -814,7 +817,7 @@ fn run_tests(
             Ok(_) => {
                 if !is_json {
                     eprintln!(
-                        "[supervisor] Coverage buffer: {} entries ({} bytes)",
+                        "[tach:supervisor] Coverage buffer: {} entries ({} bytes)",
                         coverage::DEFAULT_CAPACITY,
                         coverage::DEFAULT_CAPACITY * coverage::ENTRY_SIZE + coverage::HEADER_SIZE
                     );
@@ -822,7 +825,7 @@ fn run_tests(
             }
             Err(e) => {
                 eprintln!(
-                    "[supervisor] WARNING: Failed to init coverage buffer: {}",
+                    "[tach:supervisor] WARNING: Failed to init coverage buffer: {}",
                     e
                 );
             }
@@ -833,7 +836,7 @@ fn run_tests(
             Ok(_) => {
                 if !is_json {
                     eprintln!(
-                        "[supervisor] Mapping buffer: {} entries ({} bytes)",
+                        "[tach:supervisor] Mapping buffer: {} entries ({} bytes)",
                         coverage::MAPPING_CAPACITY,
                         coverage::MAPPING_CAPACITY * coverage::MAPPING_ENTRY_SIZE
                             + coverage::HEADER_SIZE
@@ -841,7 +844,10 @@ fn run_tests(
                 }
             }
             Err(e) => {
-                eprintln!("[supervisor] WARNING: Failed to init mapping buffer: {}", e);
+                eprintln!(
+                    "[tach:supervisor] WARNING: Failed to init mapping buffer: {}",
+                    e
+                );
             }
         }
 
@@ -866,7 +872,10 @@ fn run_tests(
     let log_capture = LogCapture::new(max_workers)?;
 
     if !is_json {
-        eprintln!("[supervisor] Created {} log buffers (memfd)", max_workers);
+        eprintln!(
+            "[tach:supervisor] Created {} log buffers (memfd)",
+            max_workers
+        );
     }
 
     // --- SOCKET PAIRS ---
@@ -879,7 +888,7 @@ fn run_tests(
     // --- NO-ISOLATION MODE ---
     // Set env var so workers can check it (must be before fork to inherit)
     if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
-        eprintln!("[supervisor] Isolation disabled via TACH_NO_ISOLATION");
+        eprintln!("[tach:supervisor] Isolation disabled via TACH_NO_ISOLATION");
     }
 
     // --- CREATE RUN CONTEXT (Snapshot Mode) ---
@@ -888,13 +897,13 @@ fn run_tests(
     let run_context = RunContext::new()?;
     if run_context.snapshot_enabled() && !is_json {
         eprintln!(
-            "[supervisor] Snapshot mode enabled: {}",
+            "[tach:supervisor] Snapshot mode enabled: {}",
             run_context.uffd_sock_path.display()
         );
     }
 
     if !is_json {
-        eprintln!("[supervisor] Forking Zygote...");
+        eprintln!("[tach:supervisor] Forking Zygote...");
     }
 
     match unsafe { fork() }? {
@@ -907,7 +916,7 @@ fn run_tests(
             std::mem::forget(unsafe { std::ptr::read(cleanup) });
 
             if let Err(e) = zygote::entrypoint(zyg_cmd_sock, zyg_result_sock) {
-                eprintln!("[zygote] Error: {:?}", e);
+                eprintln!("[tach:zygote] Error: {:?}", e);
                 std::process::exit(1);
             }
             std::process::exit(0);
@@ -919,7 +928,7 @@ fn run_tests(
             cleanup.set_zygote_pid(zygote_pid.as_raw());
 
             if !is_json {
-                eprintln!("[supervisor] Zygote PID: {}", zygote_pid);
+                eprintln!("[tach:supervisor] Zygote PID: {}", zygote_pid);
             }
 
             // Wait for READY
@@ -928,7 +937,7 @@ fn run_tests(
             cmd_sock_clone.read_exact(&mut ready_buf)?;
 
             if ready_buf[0] == 0x42 && !is_json {
-                eprintln!("[supervisor] Zygote is READY.\n");
+                eprintln!("[tach:supervisor] Zygote is READY.\n");
             }
 
             // --- SCHEDULER ---
@@ -957,7 +966,7 @@ fn run_tests(
             // Display memory usage statistics if enabled
             if memory_enabled && !is_json && !stats.memory_usage.is_empty() {
                 eprintln!();
-                eprintln!("[supervisor] Memory Usage:");
+                eprintln!("[tach:supervisor] Memory Usage:");
 
                 // Calculate statistics
                 let total_memory: u64 = stats.memory_usage.iter().map(|(_, m)| *m).sum();
@@ -1028,7 +1037,7 @@ fn run_tests(
 
                 if !is_json {
                     eprintln!(
-                        "[supervisor] Coverage: {} unique lines covered, {} total hits",
+                        "[tach:supervisor] Coverage: {} unique lines covered, {} total hits",
                         coverage_data.len(),
                         total_hits
                     );
@@ -1038,7 +1047,7 @@ fn run_tests(
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
                             eprintln!(
-                                "[supervisor] WARNING: {} coverage entries dropped (buffer overflow)",
+                                "[tach:supervisor] WARNING: {} coverage entries dropped (buffer overflow)",
                                 overflow
                             );
                         }
@@ -1047,7 +1056,7 @@ fn run_tests(
                         let overflow = buffer.overflow_count();
                         if overflow > 0 {
                             eprintln!(
-                                "[supervisor] WARNING: {} mapping entries dropped (buffer overflow)",
+                                "[tach:supervisor] WARNING: {} mapping entries dropped (buffer overflow)",
                                 overflow
                             );
                         }
@@ -1067,12 +1076,12 @@ fn run_tests(
                         coverage::write_coverage_report(&coverage_data, output_path, format)
                     {
                         eprintln!(
-                            "[supervisor] WARNING: Failed to write coverage report: {}",
+                            "[tach:supervisor] WARNING: Failed to write coverage report: {}",
                             e
                         );
                     } else if !is_json {
                         eprintln!(
-                            "[supervisor] Coverage report written to: {}",
+                            "[tach:supervisor] Coverage report written to: {}",
                             output_path.display()
                         );
                     }
@@ -1080,7 +1089,7 @@ fn run_tests(
             }
 
             if !is_json {
-                eprintln!("[supervisor] Done.");
+                eprintln!("[tach:supervisor] Done.");
             }
 
             // Return failure count for exit code

@@ -203,7 +203,7 @@ pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
     let cmsg = [ControlMessage::ScmRights(&request.fds)];
 
     eprintln!(
-        "[fd_teleporter] Sending {} FDs: {:?} -> targets {:?}",
+        "[tach:fd_teleporter] Sending {} FDs: {:?} -> targets {:?}",
         request.len(),
         request.fds,
         request.target_fds
@@ -212,7 +212,7 @@ pub fn send_fds(sock: &UnixStream, request: &FdTeleportRequest) -> Result<()> {
     sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsg, MsgFlags::empty(), None)
         .context("Failed to send FDs via SCM_RIGHTS")?;
 
-    eprintln!("[fd_teleporter] FDs sent successfully");
+    eprintln!("[tach:fd_teleporter] FDs sent successfully");
 
     Ok(())
 }
@@ -244,7 +244,7 @@ pub fn forget_sent_fd(fd: OwnedFd) {
     let raw_fd = fd.as_raw_fd();
     std::mem::forget(fd);
     eprintln!(
-        "[fd_teleporter] Ghost Close Prevention: forgot ownership of FD {}",
+        "[tach:fd_teleporter] Ghost Close Prevention: forgot ownership of FD {}",
         raw_fd
     );
 }
@@ -370,7 +370,7 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
     }
 
     eprintln!(
-        "[fd_teleporter] Received {} FDs: {:?} -> adopting to {:?}",
+        "[tach:fd_teleporter] Received {} FDs: {:?} -> adopting to {:?}",
         count, received_fds, target_fds
     );
 
@@ -400,7 +400,7 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
         if received_fd == target_fd {
             // Already at correct position
             eprintln!(
-                "[fd_teleporter] FD {} already at target position",
+                "[tach:fd_teleporter] FD {} already at target position",
                 received_fd
             );
             final_fds.push(received_fd);
@@ -425,7 +425,7 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
             // Don't close received_fd since we're using it as fallback
         } else {
             eprintln!(
-                "[fd_teleporter] dup2({} -> {}) succeeded",
+                "[tach:fd_teleporter] dup2({} -> {}) succeeded",
                 received_fd, target_fd
             );
             final_fds.push(target_fd);
@@ -440,7 +440,7 @@ pub fn receive_and_adopt_fds(sock: &UnixStream) -> Result<FdAdoptionResult> {
     }
 
     eprintln!(
-        "[fd_teleporter] Adoption complete: {}/{} FDs adopted, final_fds={:?}",
+        "[tach:fd_teleporter] Adoption complete: {}/{} FDs adopted, final_fds={:?}",
         adopted_count, count, final_fds
     );
 
@@ -470,7 +470,7 @@ pub fn receive_and_adopt_single_fd(sock: &UnixStream) -> Result<RawFd> {
 
     if !result.errors.is_empty() {
         eprintln!(
-            "[fd_teleporter] WARNING: Adoption had errors: {:?}",
+            "[tach:fd_teleporter] WARNING: Adoption had errors: {:?}",
             result.errors
         );
     }

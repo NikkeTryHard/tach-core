@@ -192,7 +192,7 @@ impl DebugServer {
             .set_nonblocking(true)
             .context("Failed to set socket non-blocking")?;
 
-        eprintln!("[debugger] Listening on {}", socket_path.display());
+        eprintln!("[tach:debugger] Listening on {}", socket_path.display());
 
         Ok(Self {
             socket_path,
@@ -211,7 +211,7 @@ impl DebugServer {
             Ok((stream, _)) => Some(stream),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => None,
             Err(e) => {
-                eprintln!("[debugger] Accept error: {}", e);
+                eprintln!("[tach:debugger] Accept error: {}", e);
                 None
             }
         }

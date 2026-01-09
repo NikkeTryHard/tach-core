@@ -366,7 +366,10 @@ pub fn get_fs_base_ptrace(pid: Pid) -> Result<usize> {
     ptrace::detach(pid, None)
         .with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
 
-    eprintln!("[tls] Captured fs_base for PID {}: 0x{:016x}", pid, fs_base);
+    eprintln!(
+        "[tach:tls] Captured fs_base for PID {}: 0x{:016x}",
+        pid, fs_base
+    );
 
     Ok(fs_base as usize)
 }
@@ -420,7 +423,10 @@ pub fn set_fs_base_ptrace(pid: Pid, fs_base: usize) -> Result<()> {
     ptrace::detach(pid, None)
         .with_context(|| format!("Failed to ptrace detach from PID {}", pid))?;
 
-    eprintln!("[tls] Restored fs_base for PID {}: 0x{:016x}", pid, fs_base);
+    eprintln!(
+        "[tach:tls] Restored fs_base for PID {}: 0x{:016x}",
+        pid, fs_base
+    );
 
     Ok(())
 }
@@ -434,7 +440,7 @@ fn find_tls_region(pid: Pid, fs_base: usize) -> Result<(usize, usize)> {
     for region in regions {
         if region.start <= fs_base && fs_base < region.end {
             eprintln!(
-                "[tls] Found TLS region for fs_base 0x{:x}: 0x{:x}-0x{:x} [{}]",
+                "[tach:tls] Found TLS region for fs_base 0x{:x}: 0x{:x}-0x{:x} [{}]",
                 fs_base, region.start, region.end, region.name
             );
             return Ok((region.start, region.end));
@@ -505,7 +511,7 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
     let capture_len = max_capture_from_fs.max(TLS_SNAPSHOT_SIZE_HINT.min(max_capture_from_fs));
 
     eprintln!(
-        "[tls] Dynamic TLS capture: fs_base=0x{:x}, region=[0x{:x}, 0x{:x}), capture={} bytes",
+        "[tach:tls] Dynamic TLS capture: fs_base=0x{:x}, region=[0x{:x}, 0x{:x}), capture={} bytes",
         fs_base, region_start, region_end, capture_len
     );
 
@@ -530,7 +536,7 @@ pub fn capture_tls_snapshot(pid: Pid) -> Result<TlsSnapshot> {
     }
 
     eprintln!(
-        "[tls] TLS snapshot captured: {} bytes from fs_base=0x{:x} (region={} bytes total)",
+        "[tach:tls] TLS snapshot captured: {} bytes from fs_base=0x{:x} (region={} bytes total)",
         tls_data.len(),
         fs_base,
         region_end - region_start
@@ -559,7 +565,7 @@ pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()> {
     use std::io::IoSlice;
 
     eprintln!(
-        "[tls] Restoring TLS for PID {}: {} bytes to 0x{:x}",
+        "[tach:tls] Restoring TLS for PID {}: {} bytes to 0x{:x}",
         pid,
         snapshot.tls_data.len(),
         snapshot.fs_base
@@ -595,7 +601,7 @@ pub fn restore_tls_snapshot(pid: Pid, snapshot: &TlsSnapshot) -> Result<()> {
     set_fs_base_ptrace(pid, snapshot.fs_base)?;
 
     eprintln!(
-        "[tls] TLS restore complete for PID {}: fs_base=0x{:x}",
+        "[tach:tls] TLS restore complete for PID {}: fs_base=0x{:x}",
         pid, snapshot.fs_base
     );
 
@@ -730,7 +736,7 @@ pub fn restore_vectorized(pid: Pid, regions: &[RestoreRegion]) -> Result<Vectori
         regions.iter().map(|r| (r.name.clone(), r.len())).collect();
 
     eprintln!(
-        "[vectorized] Restored {} regions ({} bytes) in {}us",
+        "[tach:vectorized] Restored {} regions ({} bytes) in {}us",
         regions.len(),
         bytes_written,
         duration.as_micros()
@@ -1166,7 +1172,7 @@ pub fn parse_elf_writable_segments(
         );
 
         eprintln!(
-            "[snapshot] Found writable segment: {} ({} pages)",
+            "[tach:snapshot] Found writable segment: {} ({} pages)",
             description,
             (align_to_page_up(target_end) - align_to_page(target_va)) / PAGE_SIZE
         );
@@ -1176,7 +1182,7 @@ pub fn parse_elf_writable_segments(
 
     if segments.is_empty() {
         eprintln!(
-            "[snapshot] WARNING: No writable PT_LOAD segments found in {}",
+            "[tach:snapshot] WARNING: No writable PT_LOAD segments found in {}",
             elf_path.display()
         );
     }
@@ -1208,7 +1214,7 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
     match find_libpython(pid) {
         Ok(libpython) => {
             eprintln!(
-                "[snapshot] Found libpython at 0x{:x}: {} (static={})",
+                "[tach:snapshot] Found libpython at 0x{:x}: {} (static={})",
                 libpython.base_addr,
                 libpython.path.display(),
                 libpython.is_static
@@ -1222,7 +1228,7 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
                 }
                 Err(e) => {
                     eprintln!(
-                        "[snapshot] WARNING: Failed to parse libpython ELF: {}. \
+                        "[tach:snapshot] WARNING: Failed to parse libpython ELF: {}. \
                          Falling back to /proc/maps detection.",
                         e
                     );
@@ -1231,7 +1237,7 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
         }
         Err(e) => {
             eprintln!(
-                "[snapshot] WARNING: Could not find libpython: {}. \
+                "[tach:snapshot] WARNING: Could not find libpython: {}. \
                  Relying on /proc/maps detection only.",
                 e
             );
@@ -1242,7 +1248,7 @@ pub fn get_snapshot_segments(pid: Pid) -> Result<Vec<AlignedSegment>> {
     let merged = merge_segments(all_segments);
 
     eprintln!(
-        "[snapshot] Total segments after merge: {} ({} pages)",
+        "[tach:snapshot] Total segments after merge: {} ({} pages)",
         merged.len(),
         merged.iter().map(|s| s.page_count()).sum::<usize>()
     );
@@ -1296,12 +1302,12 @@ impl SnapshotManager {
             .create()
         {
             Ok(_) => {
-                eprintln!("[snapshot] userfaultfd available - Fast-Reset mode enabled");
+                eprintln!("[tach:snapshot] userfaultfd available - Fast-Reset mode enabled");
                 true
             }
             Err(e) => {
                 eprintln!(
-                    "[snapshot] userfaultfd unavailable ({}). Falling back to fork-server.",
+                    "[tach:snapshot] userfaultfd unavailable ({}). Falling back to fork-server.",
                     e
                 );
                 false
@@ -1331,14 +1337,14 @@ impl SnapshotManager {
     /// On success, logs: `[restoration] Sentinel found at fs_base + 0xXXXX`
     #[cfg(target_arch = "x86_64")]
     pub fn calibrate(&mut self) -> Result<()> {
-        eprintln!("[snapshot] Initiating TLS self-calibration...");
+        eprintln!("[tach:snapshot] Initiating TLS self-calibration...");
 
         let calibration = TlsCalibration::calibrate()
             .context("TLS self-calibration failed - ERR_CALIBRATION_FAILED")?;
 
         if calibration.is_calibrated() {
             eprintln!(
-                "[snapshot] TLS calibration complete: mi_heap_t at fs_base + 0x{:04X}",
+                "[tach:snapshot] TLS calibration complete: mi_heap_t at fs_base + 0x{:04X}",
                 calibration.primary_offset().unwrap_or(0)
             );
             self.calibration = Some(calibration);
@@ -1346,7 +1352,7 @@ impl SnapshotManager {
         } else {
             // Calibration ran but found no heap pointers - this is OK for pre-3.13 Python
             eprintln!(
-                "[snapshot] TLS calibration found no heap pointers (Python < 3.13 or pymalloc). \
+                "[tach:snapshot] TLS calibration found no heap pointers (Python < 3.13 or pymalloc). \
                  TLS restoration will be skipped."
             );
             self.calibration = Some(calibration);
@@ -1394,7 +1400,7 @@ impl SnapshotManager {
             .collect();
 
         eprintln!(
-            "[snapshot] Registering worker PID {}: {} regions to capture",
+            "[tach:snapshot] Registering worker PID {}: {} regions to capture",
             pid,
             snapshot_regions.len()
         );
@@ -1424,7 +1430,7 @@ impl SnapshotManager {
         let tls_snapshot = match capture_tls_snapshot(pid) {
             Ok(tls) => {
                 eprintln!(
-                    "[snapshot] TLS captured: fs_base=0x{:x}, {} bytes",
+                    "[tach:snapshot] TLS captured: fs_base=0x{:x}, {} bytes",
                     tls.fs_base,
                     tls.tls_data.len()
                 );
@@ -1434,7 +1440,7 @@ impl SnapshotManager {
                 // TLS capture failure is non-fatal for pre-3.13 Python
                 // (pymalloc doesn't use TLS caching)
                 eprintln!(
-                    "[snapshot] WARNING: TLS capture failed: {}. \
+                    "[tach:snapshot] WARNING: TLS capture failed: {}. \
                      This may cause issues with Python 3.13+ (mimalloc).",
                     e
                 );
@@ -1499,7 +1505,7 @@ impl SnapshotManager {
         }
 
         eprintln!(
-            "[snapshot]   {} ({:x}-{:x}): {} pages captured",
+            "[tach:snapshot]   {} ({:x}-{:x}): {} pages captured",
             region.name,
             region.start,
             region.end,
@@ -1568,7 +1574,7 @@ impl SnapshotManager {
         }
 
         eprintln!(
-            "[snapshot] Reset worker {}: invalidated {} regions",
+            "[tach:snapshot] Reset worker {}: invalidated {} regions",
             pid,
             iovecs.len()
         );
@@ -1606,16 +1612,19 @@ impl SnapshotManager {
 
         if let Some(ref tls_snapshot) = worker.tls_snapshot {
             eprintln!(
-                "[snapshot] Restoring TLS for worker {}: fs_base=0x{:x}, {} bytes",
+                "[tach:snapshot] Restoring TLS for worker {}: fs_base=0x{:x}, {} bytes",
                 pid,
                 tls_snapshot.fs_base,
                 tls_snapshot.tls_data.len()
             );
             restore_tls_snapshot(pid, tls_snapshot)?;
-            eprintln!("[snapshot] TLS restoration complete for worker {}", pid);
+            eprintln!(
+                "[tach:snapshot] TLS restoration complete for worker {}",
+                pid
+            );
         } else {
             eprintln!(
-                "[snapshot] No TLS snapshot for worker {} (pre-3.13 Python or capture failed)",
+                "[tach:snapshot] No TLS snapshot for worker {} (pre-3.13 Python or capture failed)",
                 pid
             );
         }
@@ -1686,7 +1695,7 @@ impl SnapshotManager {
         if let Some(data) = worker.golden_pages.get(&page_start) {
             // Restore the page from golden snapshot
             eprintln!(
-                "[snapshot] Restoring page at {:x} ({} bytes) for PID {}",
+                "[tach:snapshot] Restoring page at {:x} ({} bytes) for PID {}",
                 page_start,
                 data.len(),
                 pid
@@ -1704,7 +1713,7 @@ impl SnapshotManager {
         } else {
             // Page not in snapshot - zero it
             eprintln!(
-                "[snapshot] Zero-filling page at {:x} for PID {} (not in snapshot)",
+                "[tach:snapshot] Zero-filling page at {:x} for PID {} (not in snapshot)",
                 page_start, pid
             );
             unsafe {
@@ -1738,7 +1747,7 @@ impl SnapshotManager {
                 Ok(Some(Event::Pagefault { addr, .. })) => {
                     let fault_addr = addr as usize;
                     eprintln!(
-                        "[snapshot] UFFD_EVENT_PAGEFAULT at {:x} for PID {}",
+                        "[tach:snapshot] UFFD_EVENT_PAGEFAULT at {:x} for PID {}",
                         fault_addr, pid
                     );
 
@@ -1746,7 +1755,7 @@ impl SnapshotManager {
                     let page_start = align_to_page(fault_addr);
                     if let Some(data) = worker.golden_pages.get(&page_start) {
                         eprintln!(
-                            "[snapshot] Restoring page {:x} ({} bytes)",
+                            "[tach:snapshot] Restoring page {:x} ({} bytes)",
                             page_start,
                             data.len()
                         );
@@ -1761,7 +1770,7 @@ impl SnapshotManager {
                         }
                     } else {
                         eprintln!(
-                            "[snapshot] Zero-filling page {:x} (not in snapshot)",
+                            "[tach:snapshot] Zero-filling page {:x} (not in snapshot)",
                             page_start
                         );
                         unsafe {
@@ -1775,7 +1784,7 @@ impl SnapshotManager {
                     handled += 1;
                 }
                 Ok(Some(event)) => {
-                    eprintln!("[snapshot] UFFD event: {:?} for PID {}", event, pid);
+                    eprintln!("[tach:snapshot] UFFD event: {:?} for PID {}", event, pid);
                 }
                 Ok(None) => {
                     // No more events
@@ -1783,7 +1792,10 @@ impl SnapshotManager {
                 }
                 Err(e) => {
                     // Any error means no events ready or UFFD closed
-                    eprintln!("[snapshot] UFFD read_event: {} (breaking poll loop)", e);
+                    eprintln!(
+                        "[tach:snapshot] UFFD read_event: {} (breaking poll loop)",
+                        e
+                    );
                     break;
                 }
             }

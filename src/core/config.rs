@@ -646,7 +646,7 @@ pub fn load_env_from_pyproject(root: &Path) {
     let contents = match fs::read_to_string(&config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[config] Failed to read pyproject.toml: {}", e);
+            eprintln!("[tach:config] Failed to read pyproject.toml: {}", e);
             return;
         }
     };
@@ -654,7 +654,7 @@ pub fn load_env_from_pyproject(root: &Path) {
     let pyproject: PyProject = match toml::from_str(&contents) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[config] Failed to parse pyproject.toml: {}", e);
+            eprintln!("[tach:config] Failed to parse pyproject.toml: {}", e);
             return;
         }
     };
@@ -669,7 +669,7 @@ pub fn load_env_from_pyproject(root: &Path) {
                 .any(|&blocked| key.eq_ignore_ascii_case(blocked))
             {
                 eprintln!(
-                    "[config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
+                    "[tach:config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
                     key
                 );
                 continue;
@@ -678,7 +678,7 @@ pub fn load_env_from_pyproject(root: &Path) {
             // in multi-threaded environments. This is called during config loading
             // which happens before any worker threads are spawned.
             unsafe { std::env::set_var(&key, &value) };
-            eprintln!("[config] Set env: {}={}", key, value);
+            eprintln!("[tach:config] Set env: {}={}", key, value);
         }
     }
 }
