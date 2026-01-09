@@ -17,14 +17,147 @@ gantt
     section Compatibility
     0.2.x Plugin Ecosystem       :2026-02, 2026-04
     0.3.x Database Integration   :2026-04, 2026-06
-    section Performance
+    section Fixtures
     0.4.x Hierarchical Zygotes   :2026-06, 2026-08
-    0.5.x Observability          :2026-08, 2026-10
-    0.6.x Zero-Copy Loading      :2026-10, 2026-12
-    section Advanced
-    0.7.x Memory Snapshotting    :2027-01, 2027-04
-    0.8.x Cross-Platform         :2027-04, 2027-08
+    0.5.x Developer Experience   :2026-08, 2026-10
+    section Performance
+    0.6.x Configuration          :2026-10, 2026-12
+    0.7.x Memory Snapshotting    :2027-01, 2027-03
+    section Platform
+    0.8.x CI/CD + Sub-Interpreters :2027-03, 2027-06
+    0.9.x Stability              :2027-06, 2027-08
+    section Release
+    0.10.x Beta 1                :2027-08, 2027-09
+    0.11.x Beta 2 + RC           :2027-09, 2027-10
+    1.0.0 Production             :milestone, 2027-10, 0d
 ```
+
+---
+
+## Strategic Context
+
+> **Research Foundation**: This roadmap is informed by 12 research papers and competitive analysis of 10+ Rust-Python test tools. See [research-investigation.md](research-investigation.md) for paper analysis, [external-research.md](external-research.md) for competitive landscape, and [research-reference.md](research-reference.md) for implementation mapping.
+
+### Competitive Landscape Summary
+
+| Tool          | Approach            | Startup     | Tach Advantage            |
+| ------------- | ------------------- | ----------- | ------------------------- |
+| pytest-xdist  | execnet workers     | ~50-100ms   | 1000x faster isolation    |
+| pytest-forked | fork() per test     | ~500-1000μs | 10x faster reset          |
+| Maelstrom     | Container per test  | 50-100ms    | 1000x faster startup      |
+| rtest/karva   | No isolation        | N/A         | Full isolation + fixtures |
+| snob          | Test selection only | N/A         | Full execution engine     |
+
+> **Key Insight**: No existing tool combines Tach's speed (<50μs reset), isolation (userfaultfd), and compatibility (full pytest fixtures). See [external-research.md §23](external-research.md) for detailed analysis.
+
+### Python Version Compatibility
+
+| Python Version | Default Allocator | Fork Safety | multiprocessing Default | Tach Support        |
+| -------------- | ----------------- | ----------- | ----------------------- | ------------------- |
+| 3.10-3.11      | pymalloc          | Full        | `fork`                  | Full                |
+| 3.12           | pymalloc          | Full        | `fork`                  | Full                |
+| 3.13           | mimalloc (TLS)    | Deprecated  | `fork`                  | Full (TLS tracking) |
+| 3.14+          | mimalloc (TLS)    | Removed     | `forkserver`            | Full                |
+
+> **Critical Note (Python 3.14+):** Starting with Python 3.14, `fork` is deprecated for multiprocessing. Linux/Unix defaults to `forkserver`. Tach's zygote model is unaffected as it uses `clone()` directly, but tests using `multiprocessing.Pool` may behave differently.
+>
+> **External Refs:**
+>
+> - [Python 3.14 What's New](https://docs.python.org/3.14/whatsnew/3.14.html)
+> - [PEP 703 - Free Threading](https://peps.python.org/pep-0703/)
+
+### Kernel Version Requirements
+
+| Feature            | Minimum Kernel | Recommended | Notes                                         |
+| ------------------ | -------------- | ----------- | --------------------------------------------- |
+| Landlock V1        | 5.13           | 6.7+        | Basic filesystem access control               |
+| Landlock V2        | 5.19           | 6.7+        | `LANDLOCK_ACCESS_FS_REFER` (cross-dir rename) |
+| Landlock V3        | 6.2            | 6.7+        | `LANDLOCK_ACCESS_FS_TRUNCATE`                 |
+| Landlock V4        | 6.7            | 6.10+       | **Network restrictions** (TCP bind/connect)   |
+| Landlock V5        | 6.10           | 6.10+       | `LANDLOCK_ACCESS_FS_IOCTL_DEV`                |
+| userfaultfd        | 4.3            | 5.10+       | Basic page fault handling                     |
+| userfaultfd WP     | 5.7            | 5.10+       | Write-protect mode for dirty tracking         |
+| OverlayFS metacopy | 5.11           | 5.15+       | Optimized copy-up for metadata                |
+| CLONE_NEWUSER      | 3.8            | 5.0+        | Unprivileged namespace creation               |
+
+> **Graceful Degradation:** Tach detects kernel capabilities at runtime and degrades gracefully. Missing features log warnings but never crash.
+>
+> **External Ref:** [Landlock Kernel Docs](https://docs.kernel.org/userspace-api/landlock.html)
+
+### What Tach Must Implement for pytest Parity
+
+**Critical (Blocking Adoption)**:
+
+- [ ] **Plugin Shim** (0.2.x): pytest-django, pytest-asyncio, pytest-mock support
+  > Most real-world projects use at least one plugin. Without shims, adoption is blocked.
+- [ ] **Database Rollback** (0.3.x): Transaction savepoint/rollback for Django ORM, SQLAlchemy
+  > Database tests are ~40% of enterprise test suites. Memory snapshots don't restore DB state.
+- [ ] **Session/Module Fixtures** (0.4.x): Fixtures persisting across tests
+  > Expensive setup (DB migrations, API clients) must be cached, not re-run per test.
+
+**Important (Adoption Friction)**:
+
+- [ ] **pytest.raises/warns**: Exception and warning assertion helpers
+- [ ] **Parametrized Fixtures**: `@pytest.fixture(params=[...])`
+- [ ] **Marker Expressions**: Full `-m` expression support (`-m "slow and not db"`)
+- [ ] **conftest.py Hooks**: `pytest_configure`, `pytest_collection_modifyitems`
+
+**Nice-to-Have (Competitive Edge)**:
+
+- [ ] **Test Impact Analysis**: snob-style "only run affected tests" mode
+  > Ref: [alexpasmantier/snob](https://github.com/alexpasmantier/snob) - dependency graph analysis
+  > **Implementation approach:**
+  >
+  > 1. Build code-to-test dependency graph during discovery
+  > 2. Track which source files affect which tests via import analysis
+  > 3. Integrate with `git diff` for "affected tests only" mode
+  > 4. Cache dependency graph with file hash invalidation
+  > 5. Provide `--affected` CLI flag for CI integration
+- [ ] **Flaky Test Detection**: nextest-style retry and flakiness tracking
+- [ ] **Distributed Execution**: Maelstrom-style cluster mode for CI farms
+
+### Research-to-Implementation Mapping
+
+| Version | Research Phase    | Primary Paper                                    | Key Deliverable                                     |
+| ------- | ----------------- | ------------------------------------------------ | --------------------------------------------------- |
+| 0.1.x   | Static Discovery  | _Python Testing Engine Rust Breakthroughs_       | AST-based test discovery eliminating "Import Tax"   |
+| 0.2.x   | Plugin Isolation  | _Project Tach Compatibility Layer Blueprint_     | Shadow plugin shim with syscall interception        |
+| 0.3.x   | Database Safety   | _Fork Safety of Python C-Extensions_             | Transactional rollback, connection dispose pattern  |
+| 0.4.x   | Zygote Hierarchy  | _Forklift_, _Python Monorepo Zygote Tree Design_ | DAAC clustering for hierarchical pre-initialization |
+| 0.5.x   | Observability     | _Rust-CPython Execution Blueprint Research_      | PEP 669 low-impact monitoring integration           |
+| 0.6.x   | Zero-Copy Loading | _Zero-Copy Python Module Loading_                | mmap-based bytecode loading bypassing importlib     |
+| 0.7.x   | Memory Snapshots  | _Python Memory Snapshotting with Userfaultfd_    | userfaultfd + MADV_DONTNEED microsecond reset       |
+| 0.8.x+  | Cross-Platform    | _Cross-Platform Process Cloning Research_        | mach_vm_remap (macOS), NT Section Objects (Windows) |
+
+### Research Verification Checklist
+
+Before 1.0.0, verify all critical research requirements are met:
+
+- [ ] **Allocator Quiesce**: Verify jemalloc `thread.tcache.flush` is called before snapshotting
+  > "By invoking this before taking the snapshot, the test runner ensures that the thread-local bins are empty" — _Python Memory Snapshotting with Userfaultfd_
+  > **External Ref**: [jemalloc mallctl API](https://jemalloc.net/jemalloc.3.html) — Allocator control documentation
+- [ ] **Toxicity Detection**: Confirm static analysis catches all fork-unsafe patterns
+  > "identify 'toxic' or 'fork-unsafe' Python modules through static analysis of import graphs" — _Rust Static Analysis for Toxic Python Modules_
+  > **External Ref**: [POSIX fork() spec](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) — async-signal-safety requirements
+- [ ] **Namespace Isolation**: Verify CLONE_NEWNS + CLONE_NEWNET provide complete isolation
+  > "Namespaces provide complete, kernel-enforced isolation with acceptable overhead" — _Project Tach Compatibility Layer Blueprint_
+  > **External Ref**: [Landlock kernel docs](https://docs.kernel.org/userspace-api/landlock.html) — ABI version features
+- [ ] **Database Dispose**: Ensure connections are discarded in child processes
+  > "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
+- [ ] **TLS Restoration**: Verify mimalloc TLS state is correctly restored on Python 3.13+
+  > "mimalloc uses TLS for TLABs; fs_base must be tracked and restored" — _Userfaultfd and CPython Allocator Interaction_
+  > **External Ref**: [mimalloc GitHub](https://github.com/microsoft/mimalloc) — thread-local allocation design
+- [ ] **GIL Management**: Verify PyO3 `py.allow_threads()` is used during Rust-heavy operations
+  > **External Ref**: [PyO3 Parallelism Guide](https://pyo3.rs/main/parallelism) — GIL release patterns
+- [ ] **PyO3 0.26+ API Migration**: Verify codebase uses new GIL API names
+  > PyO3 0.26 renamed: `with_gil`→`attach`, `allow_threads`→`detach`, `prepare_freethreaded_python`→`initialize`
+  > **External Ref**: [PyO3 Migration Guide](https://pyo3.rs/main/migration)
+- [ ] **TLS Segment Registration**: Implement `fs_base` parsing for Python 3.13+ mimalloc TLS
+  > "You must identify and register the TLS memory segments with userfaultfd. This requires parsing the fs_base (via arch_prctl) to find the TLS range." — _Userfaultfd and CPython Allocator Interaction_
+  > **External Ref**: [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)
+- [ ] **Free-Threaded Python**: Test against Python 3.13t/3.14t builds
+  > Free-threaded builds have ~10% single-thread overhead but enable true parallelism
+  > **External Ref**: [py-free-threading.github.io](https://py-free-threading.github.io/)
 
 ---
 
@@ -107,7 +240,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### Database Handling
 
 - [ ] Hook into Django's transaction management
-  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — \_Rust-Python Test Isolation Blueprint*
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach_test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — _Rust-Python Test Isolation Blueprint_
 - [ ] Preserve database connections across test resets
   > **Ref**: "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] Handle database migrations in test database
@@ -161,7 +294,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 #### pytest-mock
 
 - [ ] `mocker` fixture providing `unittest.mock` wrappers
-  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp*call for zero-overhead mocking" — \_Rust-CPython Execution Blueprint Research*
+  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp_call for zero-overhead mocking" — _Rust-CPython Execution Blueprint Research_
 - [ ] `mocker.patch()` context manager
 - [ ] `mocker.patch.object()` method
 - [ ] `mocker.patch.dict()` dictionary patching
@@ -177,7 +310,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [ ] Set environment variables before test collection
 - [ ] Support variable expansion (`${HOME}`)
 - [ ] Preserve original values for restoration
-  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach*overlay/5/log.txt" — \_Project Tach Compatibility Layer Blueprint*
+  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach_overlay/5/log.txt" — _Project Tach Compatibility Layer Blueprint_
 - [ ] Support conditional env vars
 
 #### pytest-timeout
@@ -202,6 +335,30 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
   > **Ref**: "Objects passed between orchestrator and worker processes must be serialized, a CPU-intensive operation that often negates the benefits of parallelism for short-running tests" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Support `-n` flag as alias for `--workers`
 - [ ] Ignore xdist-specific markers gracefully
+
+### 0.2.3.1 - Landlock V4 Network Isolation (Kernel 6.7+)
+
+**Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
+
+#### Network Restriction Rules
+
+- [ ] Detect Landlock ABI V4+ at runtime
+- [ ] Implement TCP bind restrictions per worker
+  > Workers should only bind to assigned port ranges
+- [ ] Implement TCP connect restrictions
+  > Block outbound connections except to localhost and configured hosts
+- [ ] Graceful fallback to `CLONE_NEWNET` on older kernels
+
+#### Configuration
+
+```toml
+[tool.tach.network]
+allow_localhost = true
+allow_connect = ["api.example.com:443"]
+allow_bind_ports = [8000, 8080]  # Empty = no binding allowed
+```
+
+> **External Ref:** [Landlock Kernel Docs - Network](https://docs.kernel.org/userspace-api/landlock.html)
 
 ### 0.2.4 - Plugin Testing and Stabilization
 
@@ -243,7 +400,7 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 #### Transaction Management
 
 - [ ] Hook into `django.db.transaction.atomic()`
-  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state" — \_Rust-Python Test Isolation Blueprint*
+  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach_test_start. This instantly reverts the database state" — _Rust-Python Test Isolation Blueprint_
 - [ ] Wrap each test in a savepoint
 - [ ] Rollback savepoint after test completion
 - [ ] Handle nested transactions correctly
@@ -379,6 +536,18 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 - [ ] Support Redis Cluster
 - [ ] Handle connection pooling
 
+#### gRPC Fork Safety
+
+- [ ] Auto-detect gRPC usage in test dependencies
+- [ ] Set `GRPC_ENABLE_FORK_SUPPORT=1` environment variable
+  > **Ref**: "gRPC fork safety requires GRPC_ENABLE_FORK_SUPPORT=1 and epoll1 polling" — Fork Safety of Python C-Extensions
+- [ ] Verify `epoll1` polling engine compatibility
+- [ ] Warn if active RPCs detected before fork
+  > gRPC fork support only works with no active RPCs
+- [ ] Document gRPC-specific test patterns
+
+> **External Ref:** [gRPC Fork Support](https://github.com/grpc/grpc/blob/master/doc/fork_support.md)
+
 ---
 
 ## 0.4.x - Fixture Lifecycle
@@ -447,7 +616,7 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 #### Optimization
 
 - [ ] Batch tests from same module to same worker
-  > **Ref**: "We define a Weight Vector W where W[j] corresponds to the estimated cost of module m*j. These weights are derived from heuristics or optional historical profiling data" — \_Python Monorepo Zygote Tree Design*
+  > **Ref**: "We define a Weight Vector W where W[j] corresponds to the estimated cost of module m_j. These weights are derived from heuristics or optional historical profiling data" — _Python Monorepo Zygote Tree Design_
 - [ ] Minimize fixture setup/teardown overhead
 - [ ] Share module fixtures between workers when safe
 - [ ] Prefetch module fixtures
@@ -537,7 +706,7 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 #### Local Variable Display
 
 - [ ] Capture local variables at assertion failure
-  > **Ref**: "The evaluator inspects the f*code of the frame. It checks a high-performance Rust hash map to see if a mock has been registered" — \_Python Testing Engine Rust Breakthroughs*
+  > **Ref**: "The evaluator inspects the f_code of the frame. It checks a high-performance Rust hash map to see if a mock has been registered" — _Python Testing Engine Rust Breakthroughs_
 - [ ] Display variable values inline with traceback
 - [ ] Truncate large values intelligently
 - [ ] Support `--showlocals` flag
@@ -637,6 +806,32 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] Support `--no-progress` for CI
 - [ ] Show ETA for test completion
 - [ ] Show test rate (tests/second)
+
+### 0.5.4 - Coverage Optimization
+
+**Target**: Near-zero overhead coverage using SlipCover patterns.
+
+> **Research Foundation**: SlipCover achieves 5% overhead vs 218% for coverage.py via runtime de-instrumentation.
+
+#### De-instrumentation Strategy
+
+- [ ] Implement line-level de-instrumentation after first execution
+  > **Ref**: "Periodically de-instrument covered lines. Overhead proportional to uncovered code" — SlipCover Paper
+- [ ] Branch de-instrumentation for already-covered branches
+- [ ] Hot-path detection to skip instrumentation entirely
+- [ ] Incremental coverage mode (only instrument changed files)
+
+#### PEP 669 Integration
+
+- [ ] Use `sys.monitoring.DISABLE` return value for one-shot events
+  > **Ref**: "Events can be disabled after first firing" — PEP 669
+- [ ] Benchmark against coverage.py and SlipCover
+- [ ] Target: <5% overhead for typical test suites
+
+> **External Refs:**
+>
+> - [SlipCover Paper (ISSTA 2023)](https://dl.acm.org/doi/10.1145/3597926.3598128)
+> - [SlipCover GitHub](https://github.com/plasma-umass/slipcover)
 
 ---
 
@@ -799,7 +994,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 - [ ] Detect low memory conditions
 - [ ] Reduce worker count under pressure
 - [ ] Trigger garbage collection proactively
-  > **Ref**: "If a snapshot is taken while the GC is traversing the object graph and modifying gc*refs, a subsequent restore will leave the GC in an inconsistent state" — \_Userfaultfd and CPython Allocator Interaction*
+  > **Ref**: "If a snapshot is taken while the GC is traversing the object graph and modifying gc_refs, a subsequent restore will leave the GC in an inconsistent state" — _Userfaultfd and CPython Allocator Interaction_
 - [ ] Fail gracefully on OOM
 - [ ] Support memory limits
 
@@ -877,6 +1072,19 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 - [ ] Only re-discover changed files
 - [ ] Support `--cache-clear` to reset
 
+#### Parser Evaluation
+
+- [ ] Benchmark `rustpython-parser` vs `ruff_python_parser` for test discovery
+  > ruff_python_parser: "capable of processing gigabytes of source code per second" — Rust-CPython Execution Blueprint
+- [ ] Evaluate error recovery characteristics (important for incomplete files)
+- [ ] Consider migration if >2x performance improvement observed
+- [ ] Document parser selection rationale
+
+> **External Refs:**
+>
+> - [rustpython-parser](https://crates.io/crates/rustpython-parser)
+> - [Ruff Architecture](https://docs.astral.sh/ruff/internals/)
+
 ### 0.7.4 - Advanced Snapshot Techniques (Research)
 
 **Target**: Investigate next-generation snapshot approaches from fuzzing research.
@@ -898,11 +1106,18 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 
 #### Performance Targets
 
-| Technique       | Current Overhead | Target     |
-| --------------- | ---------------- | ---------- |
-| Fork server     | ~100-200 μs      | Baseline   |
-| userfaultfd     | ~10-50 μs        | **0.7.x**  |
-| Kernel snapshot | ~1-5 μs          | **Future** |
+| Technique             | Current Overhead | Target     | Speedup vs Fork | Implementation Complexity |
+| --------------------- | ---------------- | ---------- | --------------- | ------------------------- |
+| Fork (baseline)       | ~500-1000 μs     | N/A        | 1x              | Low                       |
+| Fork server           | ~100-200 μs      | 0.1.x ✓    | 5x              | Low                       |
+| userfaultfd           | ~10-50 μs        | **0.7.x**  | 10-50x          | Medium                    |
+| Kernel snapshot (LKM) | ~1-5 μs          | **Future** | 100-500x        | High (GPL)                |
+
+> **Licensing Note:** AFL-Snapshot-LKM is GPL-licensed. Distribution as kernel module has licensing implications for Tach's MIT license. Consider:
+>
+> - Optional separate download for kernel module
+> - Benchmark-only usage (non-production)
+> - Alternative: Investigate kernel API stabilization for mainline support
 
 ---
 
@@ -913,7 +1128,7 @@ The 0.7.x series focuses on performance at scale. As test suites grow to thousan
 > **Research Foundation**: Enables future cross-platform support per _Cross-Platform Process Cloning Research_.
 >
 > - "By leveraging undocumented kernel primitives—Mach virtual memory remapping on macOS and NT process cloning on Windows—it is theoretically possible to approximate the performance of Linux fork()" — _Cross-Platform Process Cloning Research_
-> - "The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach*vm_remap" — \_Cross-Platform Process Cloning Research*
+> - "The cornerstone of simulating Copy-on-Write on macOS without utilizing the standard fork() system call is mach_vm_remap" — _Cross-Platform Process Cloning Research_
 
 The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better reporting, CI platform integrations, and artifact handling.
 
@@ -1006,6 +1221,37 @@ The 0.8.x series makes Tach a first-class citizen in CI/CD pipelines. Better rep
   > **Ref**: "employs PEP 669 (Low-Impact Monitoring) to achieve observability with negligible overhead" — _Rust-CPython Execution Blueprint Research_
 - [ ] Missing lines report
 - [ ] Coverage trending
+
+### 0.8.4 - Sub-Interpreter Workers (Experimental)
+
+**Target**: Alternative worker model using PEP 684 per-interpreter GIL instead of fork.
+
+> **Research Foundation**: PEP 684 enables true parallel Python execution within a single process. PEP 734 (Python 3.14) exposes this via `concurrent.interpreters`.
+>
+> - "Each sub-interpreter can have its own GIL" — PEP 684
+> - V8 isolates demonstrate 5ms startup (Cloudflare Workers model)
+
+#### Sub-Interpreter Pool
+
+- [ ] Prototype sub-interpreter-based worker using C-API
+  > `Py_NewInterpreterFromConfig` with `PyInterpreterConfig_OWN_GIL`
+- [ ] Implement channel-based communication between interpreters
+  > No direct object sharing; use `interpreters.Queue` or shared memory
+- [ ] Benchmark against fork-based workers
+- [ ] Document extension module compatibility requirements
+  > Many C extensions don't support sub-interpreters yet
+
+#### PEP 734 Integration (Python 3.14+)
+
+- [ ] Use `concurrent.interpreters` when available
+- [ ] Fallback to C-API for Python 3.12-3.13
+- [ ] Test with free-threaded Python builds
+
+> **External Refs:**
+>
+> - [PEP 684 - Per-Interpreter GIL](https://peps.python.org/pep-0684/)
+> - [PEP 734 - Multiple Interpreters in Stdlib](https://peps.python.org/pep-0734/)
+> - [Cloudflare Workers Architecture](https://developers.cloudflare.com/workers/reference/how-workers-works/)
 
 ---
 
@@ -1203,6 +1449,26 @@ Stable release with API guarantees.
 - [ ] Handle partial failures
 - [ ] Support result streaming
 
+#### Distributed Architecture (Maelstrom-informed)
+
+> **Ref**: [Maelstrom](https://github.com/maelstrom-software/maelstrom) broker/worker architecture
+
+- [ ] Implement broker for work distribution across cluster nodes
+  > Broker manages test queue and worker assignments
+- [ ] Content-addressable artifact storage
+  > Test environments cached by hash for reproducibility
+- [ ] Node discovery via mDNS or explicit configuration
+- [ ] Health monitoring and automatic worker failover
+- [ ] Support heterogeneous clusters (mixed architectures)
+
+#### Performance Target
+
+| Metric            | Local (current) | Distributed (target) |
+| ----------------- | --------------- | -------------------- |
+| Worker startup    | <1ms            | <100ms (network)     |
+| Test dispatch     | <1ms            | <10ms                |
+| Result collection | <1ms            | <50ms                |
+
 ---
 
 ## 0.13.x - Test Sharding (Future)
@@ -1392,3 +1658,44 @@ Stable release with API guarantees.
 - [ ] Grafana dashboards
 - [ ] Alert integration
 - [ ] SLO tracking
+
+---
+
+## External References
+
+Consolidated external documentation and resources referenced throughout this roadmap.
+
+### Python Standards
+
+- [PEP 669 - Low Impact Monitoring](https://peps.python.org/pep-0669/) - Coverage and debugging
+- [PEP 684 - Per-Interpreter GIL](https://peps.python.org/pep-0684/) - Sub-interpreter isolation
+- [PEP 703 - Free Threading](https://peps.python.org/pep-0703/) - GIL removal (experimental)
+- [PEP 734 - Multiple Interpreters](https://peps.python.org/pep-0734/) - Python 3.14 interpreters module
+- [PEP 523 - Frame Evaluation API](https://peps.python.org/pep-0523/) - Native mocking
+
+### Linux Kernel
+
+- [userfaultfd(2)](https://man7.org/linux/man-pages/man2/userfaultfd.2.html) - User-space page fault handling
+- [Landlock Docs](https://docs.kernel.org/userspace-api/landlock.html) - Filesystem/network sandboxing
+- [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html) - Process isolation
+- [OverlayFS](https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html) - Copy-on-write filesystem
+
+### Rust Libraries
+
+- [PyO3 Guide](https://pyo3.rs/main/) - Rust-Python bindings
+- [PyO3 Parallelism](https://pyo3.rs/main/parallelism) - GIL management patterns
+- [jemalloc mallctl](https://jemalloc.net/jemalloc.3.html) - Allocator control API
+- [rust-landlock](https://docs.rs/landlock) - Landlock Rust bindings
+
+### Related Projects
+
+- [AFL-Snapshot-LKM](https://github.com/AFLplusplus/AFL-Snapshot-LKM) - Kernel snapshot module
+- [LibAFL](https://github.com/AFLplusplus/LibAFL) - Rust fuzzing framework
+- [SlipCover](https://github.com/plasma-umass/slipcover) - Low-overhead coverage
+- [Maelstrom](https://github.com/maelstrom-software/maelstrom) - Distributed test runner
+- [snob](https://github.com/alexpasmantier/snob) - Test impact analysis
+
+### Research Papers
+
+- [SlipCover Paper (ISSTA 2023)](https://dl.acm.org/doi/10.1145/3597926.3598128) - De-instrumentation
+- [Forklift Paper (WoSC 2024)](https://www.usenix.org/conference/wosc11/presentation/scherer) - Zygote trees
