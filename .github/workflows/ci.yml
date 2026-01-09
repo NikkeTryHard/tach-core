@@ -227,6 +227,7 @@ jobs:
           cargo test --test proptest_scheduler -- --test-threads=1
           cargo test --test proptest_discovery -- --test-threads=1
           cargo test --test proptest_namespace -- --test-threads=1
+          cargo test --test proptest_reporter -- --test-threads=1
         timeout-minutes: 15
         env:
           PROPTEST_CASES: 256
