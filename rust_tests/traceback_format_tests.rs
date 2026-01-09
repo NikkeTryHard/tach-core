@@ -7,6 +7,20 @@
 
 use std::process::Command;
 
+/// Marker that separates loader/discovery output from actual test execution output.
+/// This follows the project's logging convention: `[tach:module]` prefix for all eprintln! output.
+/// We use this to isolate test results from compilation warnings in loader output.
+const TEST_OUTPUT_MARKER: &str = "[tach:reporter] Running";
+
+/// Extract the test output section from combined stdout/stderr.
+/// This filters out loader/discovery noise to focus on actual test results.
+fn extract_test_output(combined: &str) -> &str {
+    combined
+        .split(TEST_OUTPUT_MARKER)
+        .nth(1)
+        .unwrap_or(combined)
+}
+
 /// Get the tach-core binary path
 fn tach_binary() -> std::path::PathBuf {
     let mut path = std::env::current_exe().unwrap();
@@ -64,14 +78,11 @@ fn test_tb_short_truncates_traceback() {
 
     // Short style should have traceback but be concise
     // It should NOT have the full "during handling of the above exception" chains
-    // in the TEST OUTPUT section (after "[tach:reporter] Running")
+    // in the TEST OUTPUT section (after the reporter starts running tests)
     let long_chain_indicator = "During handling of the above exception";
 
     // Find the test output section (after loader/discovery)
-    let test_output = combined
-        .split("[tach:reporter] Running")
-        .nth(1)
-        .unwrap_or(&combined);
+    let test_output = extract_test_output(&combined);
 
     let has_long_chain = test_output.contains(long_chain_indicator);
 
@@ -127,10 +138,7 @@ fn test_tb_no_suppresses_traceback() {
 
     // "no" style should suppress traceback entirely in TEST OUTPUT
     // Find the test output section (after loader/discovery)
-    let test_output = combined
-        .split("[tach:reporter] Running")
-        .nth(1)
-        .unwrap_or(&combined);
+    let test_output = extract_test_output(&combined);
 
     // Should NOT contain "Traceback (most recent call last)" in test output
     let has_full_traceback = test_output.contains("Traceback (most recent call last)");
@@ -239,10 +247,7 @@ fn test_tb_flag_overrides_env_var() {
 
     // With --tb no, should not have full traceback in TEST OUTPUT (flag overrides env)
     // Find the test output section (after loader/discovery)
-    let test_output = combined
-        .split("[tach:reporter] Running")
-        .nth(1)
-        .unwrap_or(&combined);
+    let test_output = extract_test_output(&combined);
     let has_full_traceback = test_output.contains("Traceback (most recent call last)");
 
     assert!(
@@ -303,10 +308,7 @@ fn test_tb_with_passing_tests_no_traceback() {
 
         // Should not have traceback for passing tests in TEST OUTPUT
         // Find the test output section (after loader/discovery)
-        let test_output = combined
-            .split("[tach:reporter] Running")
-            .nth(1)
-            .unwrap_or(&combined);
+        let test_output = extract_test_output(&combined);
         assert!(
             !test_output.contains("Traceback (most recent call last)"),
             "--tb {} should not show traceback for passing tests. Output:\n{}",
