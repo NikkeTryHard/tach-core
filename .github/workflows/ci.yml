@@ -117,7 +117,6 @@ jobs:
           cargo llvm-cov --all-features --workspace \
             --lcov --output-path coverage/lcov.info \
             --html --output-dir coverage/html
-        continue-on-error: true
 
       - name: Check coverage threshold
         run: |
@@ -196,8 +195,17 @@ jobs:
           pytest tests/gauntlet_012/ -v --tb=short
           pytest tests/gauntlet_013/ -v --tb=short
           pytest tests/gauntlet_014/ -v --tb=short
-          pytest tests/gauntlet_db/ -v --tb=short || true
-          pytest tests/gauntlet_numpy/ -v --tb=short || true
+          pytest tests/gauntlet_phase1/ -v --tb=short
+          pytest tests/gauntlet_phase2/ -v --tb=short
+          pytest tests/gauntlet_phase3/ -v --tb=short
+          pytest tests/gauntlet_phase5/ -v --tb=short
+          pytest tests/gauntlet_phase5_1/ -v --tb=short
+          pytest tests/gauntlet_phase5_2/ -v --tb=short
+          pytest tests/gauntlet_phase5_4/ -v --tb=short
+          pytest tests/regression/ -v --tb=short
+          # Optional test directories (may require external deps)
+          pytest tests/gauntlet_db/ -v --tb=short || echo "DB tests skipped (no database)"
+          pytest tests/gauntlet_numpy/ -v --tb=short || echo "NumPy tests skipped (optional)"
         timeout-minutes: 15
 
   # Only runs when code changes
