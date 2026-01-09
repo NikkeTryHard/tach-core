@@ -125,7 +125,8 @@ jobs:
           echo "Coverage: ${COVERAGE}%"
           echo "Threshold: ${COVERAGE_THRESHOLD}%"
           if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
-            echo "::warning::Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+            echo "::error::Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+            exit 1
           else
             echo "Coverage meets threshold"
           fi
