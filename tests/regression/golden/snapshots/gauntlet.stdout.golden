@@ -205,7 +205,7 @@ def test_segfault():
 >       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:15: AssertionError
+tests/crash_test/test_segfault.py:15: AssertionError
 
 test_sigbus
 -----------
@@ -216,7 +216,7 @@ def test_sigbus():
 >       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:36: AssertionError
+tests/crash_test/test_segfault.py:36: AssertionError
 
 test_sigterm
 ------------
@@ -227,7 +227,7 @@ def test_sigterm():
 >       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:50: AssertionError
+tests/crash_test/test_segfault.py:50: AssertionError
 
 test_port_05
 ------------

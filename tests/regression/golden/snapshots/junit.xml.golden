@@ -43,7 +43,7 @@ tests/gauntlet/test_fs_destruction.py:48: AssertionError</failure></testcase><te
 &gt;       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:15: AssertionError</failure></testcase><testcase name="test_port_00" classname="test_port_00" time="{DURATION}"><failure message="Test failed">def test_port_00():
+tests/crash_test/test_segfault.py:15: AssertionError</failure></testcase><testcase name="test_port_00" classname="test_port_00" time="{DURATION}"><failure message="Test failed">def test_port_00():
 &gt;       _bind_port_8080()
 
 tests/gauntlet/test_port_storm.py:23:
@@ -630,11 +630,11 @@ E       PermissionError: [Errno 1] Operation not permitted
 &gt;       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:36: AssertionError</failure></testcase><testcase name="test_sigkill" classname="test_sigkill" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase><testcase name="test_sigterm" classname="test_sigterm" time="{DURATION}"><failure message="Test failed">def test_sigterm():
+tests/crash_test/test_segfault.py:36: AssertionError</failure></testcase><testcase name="test_sigkill" classname="test_sigkill" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase><testcase name="test_sigterm" classname="test_sigterm" time="{DURATION}"><failure message="Test failed">def test_sigterm():
         """Kill self with SIGTERM (graceful termination request)."""
         os.kill(os.getpid(), signal.SIGTERM)
         # Never reached
 &gt;       assert False
 E       assert False
 
-tests/gauntlet/test_segfault.py:50: AssertionError</failure></testcase><testcase name="test_symlink_escape_prevention" classname="test_symlink_escape_prevention" time="{DURATION}"/><testcase name="test_proc_self_protection" classname="test_proc_self_protection" time="{DURATION}"/><testcase name="test_etc_readonly" classname="test_etc_readonly" time="{DURATION}"/><testcase name="test_usr_readonly" classname="test_usr_readonly" time="{DURATION}"/><testcase name="test_large_file_creation" classname="test_large_file_creation" time="{DURATION}"/><testcase name="test_deep_import_chain" classname="test_deep_import_chain" time="{DURATION}"/><testcase name="test_memory_allocation_burst" classname="test_memory_allocation_burst" time="{DURATION}"/><testcase name="test_exception_flood" classname="test_exception_flood" time="{DURATION}"/><testcase name="test_rapid_modification_marker" classname="test_rapid_modification_marker" time="{DURATION}"/><testcase name="test_sigfpe" classname="test_sigfpe" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase></testsuite></testsuites>
+tests/crash_test/test_segfault.py:50: AssertionError</failure></testcase><testcase name="test_symlink_escape_prevention" classname="test_symlink_escape_prevention" time="{DURATION}"/><testcase name="test_proc_self_protection" classname="test_proc_self_protection" time="{DURATION}"/><testcase name="test_etc_readonly" classname="test_etc_readonly" time="{DURATION}"/><testcase name="test_usr_readonly" classname="test_usr_readonly" time="{DURATION}"/><testcase name="test_large_file_creation" classname="test_large_file_creation" time="{DURATION}"/><testcase name="test_deep_import_chain" classname="test_deep_import_chain" time="{DURATION}"/><testcase name="test_memory_allocation_burst" classname="test_memory_allocation_burst" time="{DURATION}"/><testcase name="test_exception_flood" classname="test_exception_flood" time="{DURATION}"/><testcase name="test_rapid_modification_marker" classname="test_rapid_modification_marker" time="{DURATION}"/><testcase name="test_sigfpe" classname="test_sigfpe" time="{DURATION}"><failure message="Test failed">CRASHED - no response</failure></testcase></testsuite></testsuites>
