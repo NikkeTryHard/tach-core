@@ -1814,7 +1814,9 @@ mod tests {
     #[test]
     fn test_payload_serialization_roundtrip() {
         // Test that TestPayload can be serialized and deserialized
-        use crate::protocol::TestPayload;
+        use crate::protocol::{
+            MAX_PAYLOAD_SIZE, TestPayload, decode_with_limit, encode_with_length,
+        };
 
         let original = TestPayload {
             test_id: 12345,
@@ -1828,11 +1830,9 @@ mod tests {
             timeout_secs: None,
         };
 
-        let encoded = bincode::serde::encode_to_vec(&original, bincode::config::standard())
-            .expect("Serialization should succeed");
-        let (decoded, _): (TestPayload, _) =
-            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("Deserialization should succeed");
+        let encoded = encode_with_length(&original).expect("Serialization should succeed");
+        let decoded: TestPayload =
+            decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Deserialization should succeed");
 
         assert_eq!(decoded.test_id, original.test_id);
         assert_eq!(decoded.file_path, original.file_path);
@@ -1844,7 +1844,9 @@ mod tests {
     #[test]
     fn test_payload_with_fixtures() {
         // Test TestPayload with fixtures
-        use crate::protocol::{FixtureInfo, TestPayload};
+        use crate::protocol::{
+            FixtureInfo, MAX_PAYLOAD_SIZE, TestPayload, decode_with_limit, encode_with_length,
+        };
 
         let fixtures = vec![
             FixtureInfo {
@@ -1869,9 +1871,8 @@ mod tests {
             timeout_secs: Some(120),
         };
 
-        let encoded = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
-        let (decoded, _): (TestPayload, _) =
-            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
 
         assert_eq!(decoded.fixtures.len(), 2);
         assert_eq!(decoded.fixtures[0].name, "fixture1");
@@ -1885,8 +1886,8 @@ mod tests {
     fn test_result_encoding() {
         // Test that TestResult can be encoded with protocol header
         use crate::protocol::{
-            HEADER_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, STATUS_PASS, TestResult,
-            encode_with_length,
+            HEADER_SIZE, MAX_PAYLOAD_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, STATUS_PASS,
+            TestResult, decode_with_limit, encode_with_length,
         };
 
         let result = TestResult {
@@ -1919,9 +1920,8 @@ mod tests {
         );
 
         // Should be able to deserialize the payload
-        let (decoded, _): (TestResult, _) =
-            bincode::serde::decode_from_slice(&encoded[HEADER_SIZE..], bincode::config::standard())
-                .expect("Deserialization should succeed");
+        let decoded: TestResult =
+            decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Deserialization should succeed");
         assert_eq!(decoded.test_id, 999);
         assert_eq!(decoded.status, STATUS_PASS);
         assert_eq!(decoded.message, "Test passed successfully");

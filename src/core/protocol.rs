@@ -500,9 +500,7 @@ mod tests {
         );
 
         // Verify we can deserialize the payload correctly
-        let (decoded, _): (TestPayload, usize) =
-            bincode::serde::decode_from_slice(&encoded[HEADER_SIZE..], bincode::config::standard())
-                .unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
         assert_eq!(decoded.test_id, 42);
         assert_eq!(decoded.file_path, "tests/test_foo.py");
         assert_eq!(decoded.test_name, "test_bar");
