@@ -1769,6 +1769,10 @@ Run `tach self-test` to verify system compatibility.
 ## Version History
 
 > v1.0.0 was prematurely tagged and has been retracted. The first official release is v0.1.0.
+>
+> **Note:** Versions 0.1.1-0.1.4 were developed in parallel during the Foundation phase.
+> v0.1.4 is the first tagged release after v0.1.0.
 
-[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.1.0
