@@ -1,0 +1,39 @@
+# Build artifacts (rebuilt in container)
+target/
+*.so
+*.rlib
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker (avoid recursive context)
+.docker/
+
+# Documentation (not needed for build)
+docs/
+*.md
+!README.md
+
+# Tests (optional - include if running tests in container)
+# tests/
+
+# Misc
+.env
+.envrc
+*.log
+coverage.lcov
