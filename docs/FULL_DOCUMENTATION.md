@@ -1,6 +1,6 @@
 # Tach-Core Complete Documentation
 
-> Auto-generated from docs/\*.md files. Do not edit directly.
+> Auto-generated from docs/*.md files. Do not edit directly.
 > Regenerate with: `./scripts/build-docs.sh`
 
 ---
@@ -8,7 +8,6 @@
 ## Table of Contents
 
 ### Architecture
-
 - [Allocator (Jemalloc)](#allocator-jemalloc)
 - [Coverage System](#coverage-system)
 - [TTY Proxy for Interactive Debugging](#tty-proxy-for-interactive-debugging)
@@ -27,19 +26,15 @@
 - [Zygote Lifecycle](#zygote-lifecycle)
 
 ### Security
-
 - [Sandbox Enforcement: The EPERM Doctrine](#sandbox-enforcement-the-eperm-doctrine)
 
 ### Operations
-
 - [Self-Hosted Runner Requirements](#self-hosted-runner-requirements)
 
 ### Decisions
-
 - [Rust 2024 Edition Migration Analysis](#rust-2024-edition-migration-analysis)
 
 ### Reference
-
 - [API Reference](#api-reference)
 - [Tach Performance Benchmarks](#tach-performance-benchmarks)
 - [Configuration Reference](#configuration-reference)
@@ -53,6 +48,7 @@
 ---
 
 # Architecture Documentation
+
 
 # Allocator (Jemalloc)
 
@@ -295,7 +291,9 @@ goblin = "0.10"
 - [Zygote Lifecycle](zygote.md) - When quiesce is called
 - [Troubleshooting](../troubleshooting.md) - Jemalloc build issues
 
+
 ---
+
 
 # Coverage System
 
@@ -589,7 +587,9 @@ Validated by comprehensive unit tests for alignment/wrapping and stress tests fo
 - [API Reference](../api-reference.md) - FFI signatures
 - [Configuration](../configuration.md) - Coverage options
 
+
 ---
+
 
 # TTY Proxy for Interactive Debugging
 
@@ -1105,7 +1105,9 @@ fn main() -> Result<()> {
 - [Zygote Lifecycle](zygote.md) - Worker process management
 - [Isolation](isolation.md) - How workers are isolated
 
+
 ---
+
 
 # Discovery Engine
 
@@ -1410,7 +1412,9 @@ See [Toxicity Analysis](toxicity.md) for details.
 - [Toxicity Analysis](toxicity.md) - How discovered modules are analyzed for safety
 - [Fixture Resolver](resolver.md) - How fixture dependencies are resolved
 
+
 ---
+
 
 # Internal Architecture: The Physics of Restoration
 
@@ -1905,7 +1909,9 @@ _"The Iron Dome is only as strong as its weakest pointer."_
 
 _Project Tach Internal Architecture Standard_
 
+
 ---
+
 
 # Isolation Architecture (Namespaces and OverlayFS)
 
@@ -2255,7 +2261,9 @@ cargo test --lib isolation::namespace -- --nocapture
 - [Configuration](../configuration.md) - `--no-isolation` CLI flag
 - [README](../../README.md) - Project architecture overview
 
+
 ---
+
 
 # Zero-Copy Loader
 
@@ -2819,7 +2827,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Architecture Overview
 
@@ -2883,18 +2893,20 @@ flowchart TB
 
 ### Tier 1: Rust Supervisor
 
-| Component     | File                                          | Responsibility                                        |
-| :------------ | :-------------------------------------------- | :---------------------------------------------------- |
-| **CLI**       | `main.rs`                                     | Parse arguments, orchestrate execution                |
-| **Config**    | `core/config.rs`                              | Load pyproject.toml, merge CLI/env/file settings      |
-| **Discovery** | `discovery/scanner.rs`                        | AST-based test discovery using rustpython-parser      |
-| **Toxicity**  | `discovery/analysis.rs`, `discovery/graph.rs` | Detect unsafe modules, propagate via dependency graph |
-| **Loader**    | `discovery/loader.rs`                         | Compile .py to .pyc, manage bytecode cache            |
-| **Resolver**  | `discovery/resolver.rs`                       | Resolve fixture dependencies, topological sort        |
-| **Scheduler** | `execution/scheduler.rs`                      | Dispatch tests to workers, manage queues              |
-| **Snapshot**  | `isolation/snapshot.rs`                       | userfaultfd registration, page fault handling         |
-| **Coverage**  | `reporting/coverage.rs`                       | Ring buffer management, aggregation thread            |
-| **Reporter**  | `reporting/reporter.rs`                       | Progress bar, dots, JSON output                       |
+| Component         | File                                          | Responsibility                                        |
+| :---------------- | :-------------------------------------------- | :---------------------------------------------------- |
+| **CLI**           | `main.rs`                                     | Parse arguments, orchestrate execution                |
+| **Config**        | `core/config.rs`                              | Load pyproject.toml, merge CLI/env/file settings      |
+| **Discovery**     | `discovery/scanner.rs`                        | AST-based test discovery using rustpython-parser      |
+| **Toxicity**      | `discovery/analysis.rs`, `discovery/graph.rs` | Detect unsafe modules, propagate via dependency graph |
+| **Loader**        | `discovery/loader.rs`                         | Compile .py to .pyc, manage bytecode cache            |
+| **Resolver**      | `discovery/resolver.rs`                       | Resolve fixture dependencies, topological sort        |
+| **Scheduler**     | `execution/scheduler.rs`                      | Dispatch tests to workers, manage queues              |
+| **Snapshot**      | `isolation/snapshot.rs`                       | userfaultfd registration, page fault handling         |
+| **Coverage**      | `reporting/coverage.rs`                       | Ring buffer management, aggregation thread            |
+| **Reporter**      | `reporting/reporter.rs`                       | Progress bar, dots, JSON output                       |
+| **Suggestions**   | `core/suggestions.rs`                         | Error remediation suggestions                         |
+| **Plugin Bridge** | `execution/plugin_bridge.rs`                  | Bridges pytest plugin hooks to Tach execution model   |
 
 ### Tier 2: Zygote Process
 
@@ -3081,7 +3093,9 @@ See [README.md](../../README.md#project-structure) for complete source file orga
 - [Zero-Copy Loader](loader.md) - How modules are loaded
 - [Toxicity Analysis](toxicity.md) - How unsafe code is detected
 
+
 ---
+
 
 # IPC Protocol
 
@@ -3483,7 +3497,9 @@ sequenceDiagram
 - [Zygote Lifecycle](zygote.md) - Command loop implementation
 - [Physics Engine](snapshot.md) - UFFD handshake details
 
+
 ---
+
 
 # Reporter
 
@@ -3898,7 +3914,9 @@ scheduler.run(&mut multi)?;
 - [Scheduler](scheduler.md) - How results are collected
 - [Configuration](../configuration.md) - --format and --junit-xml flags
 
+
 ---
+
 
 # Fixture Resolver
 
@@ -4256,7 +4274,9 @@ def run_test(file_path, test_name, fixtures):
 - [Zygote Lifecycle](zygote.md) - Fixture execution
 - [IPC Protocol](protocol.md) - FixtureInfo in TestPayload
 
+
 ---
+
 
 # Iron Dome (Sandbox)
 
@@ -4553,7 +4573,9 @@ The Iron Dome logs warnings and continues with reduced protection on older kerne
 - [Zygote Lifecycle](zygote.md) - When sandbox is applied
 - [Configuration](../configuration.md) - pyproject.toml settings
 
+
 ---
+
 
 # Scheduler Architecture
 
@@ -4851,7 +4873,9 @@ sequenceDiagram
 - [Sandbox](sandbox.md)
 - [Coverage](coverage.md)
 
+
 ---
+
 
 # Physics Engine (Snapshot)
 
@@ -5330,7 +5354,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Toxicity Analysis
 
@@ -5705,7 +5731,9 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
+
 
 # Zygote Lifecycle
 
@@ -6185,9 +6213,12 @@ This implementation is informed by the following research papers (see `docs/pdfs
 
 See [Research Investigation](../research-investigation.md) for complete analysis.
 
+
 ---
 
+
 # Security Documentation
+
 
 # Sandbox Enforcement: The EPERM Doctrine
 
@@ -6548,9 +6579,12 @@ _"A sandbox is not secure until the kernel says no."_
 
 _The EPERM Doctrine - Project Tach Security Standard_
 
+
 ---
 
+
 # Operations Documentation
+
 
 # Self-Hosted Runner Requirements
 
@@ -6906,22 +6940,27 @@ _"The Iron Dome requires an iron foundation."_
 
 _Project Tach CI Infrastructure Standard_
 
+
 ---
 
+
 # Architecture Decision Records
+
 
 # Rust 2024 Edition Migration Analysis
 
 > **Status**: Decision Document
 > **Date**: 2026-01-04
 > **Author**: Project Tach Development Team
-> **Rust Version**: 1.85.0+ required for Edition 2024
+> **Rust Version**: 1.88.0+ required (MSRV). Edition 2024 stabilized in 1.85.0.
 
 ---
 
 ## Executive Summary
 
 Rust 2024 Edition was stabilized with Rust 1.85.0 (February 20, 2025). This document analyzes whether tach-core should migrate from Edition 2021 to Edition 2024, covering the pros, cons, breaking changes, and impact on our codebase.
+
+> **Note**: Project Tach requires Rust 1.88.0+ as its MSRV (see `Cargo.toml`).
 
 **Recommendation**: Migrate to Edition 2024 after addressing the `static mut` references issue. The edition brings safety improvements that align with our security-first philosophy.
 
@@ -7076,9 +7115,9 @@ pub extern "C" fn my_function() {}
 
 ### 2. MSRV Bump
 
-- Requires Rust 1.85.0+
+- Requires Rust 1.88.0+
 - May exclude users on older toolchains
-- CI must use 1.85.0+
+- CI must use 1.88.0+
 
 ### 3. Potential Hidden Issues
 
@@ -7097,9 +7136,9 @@ pub extern "C" fn my_function() {}
 ### Pre-Migration Checklist
 
 ```bash
-# 1. Ensure Rust 1.85.0+
+# 1. Ensure Rust 1.88.0+
 rustup update stable
-rustc --version  # Should show 1.85.0 or later
+rustc --version  # Should show 1.88.0 or later
 
 # 2. Check for static mut usage
 grep -r "static mut" src/
@@ -7205,9 +7244,12 @@ _"Safety is not an optional feature."_
 
 _Project Tach - Rust Edition Migration Analysis_
 
+
 ---
 
+
 # Reference Documentation
+
 
 # API Reference
 
@@ -7844,7 +7886,9 @@ end_of_record
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
 - [Configuration](configuration.md) - Configuration options
 
+
 ---
+
 
 # Tach Performance Benchmarks
 
@@ -7891,9 +7935,11 @@ Based on architecture design, expected improvements over pytest:
 
 ## Comparison with Other Tools
 
-See [docs/research/external-research.md](research/external-research.md#23-competitive-landscape) for competitive analysis.
+See [docs/research/external-research.md](research/external-research.md#23-rust-based-python-test-runners) for competitive analysis.
+
 
 ---
+
 
 # Configuration Reference
 
@@ -8086,11 +8132,13 @@ source = ["src", "lib"]
 omit = ["**/test_*", "**/migrations/*"]
 
 # Output file path
-output = ".coverage"
+output = "coverage.lcov"
 
 # Output format: "lcov", "html", "json"
 format = "lcov"
 ```
+
+> **Note:** Environment variables `TACH_COVERAGE_OUTPUT` and `TACH_COVERAGE_FORMAT` take precedence over `pyproject.toml` settings.
 
 ### [tool.tach] Options
 
@@ -8104,13 +8152,13 @@ format = "lcov"
 
 ### [tool.tach.coverage] Options
 
-| Option    | Type    | Default       | Description                   |
-| :-------- | :------ | :------------ | :---------------------------- |
-| `enabled` | boolean | `false`       | Enable coverage collection    |
-| `source`  | array   | `[]`          | Source directories to measure |
-| `omit`    | array   | `[]`          | Patterns to exclude           |
-| `output`  | string  | `".coverage"` | Output file path              |
-| `format`  | string  | `"lcov"`      | Output format                 |
+| Option    | Type    | Default           | Description                   |
+| :-------- | :------ | :---------------- | :---------------------------- |
+| `enabled` | boolean | `false`           | Enable coverage collection    |
+| `source`  | array   | `[]`              | Source directories to measure |
+| `omit`    | array   | `[]`              | Patterns to exclude           |
+| `output`  | string  | `"coverage.lcov"` | Output file path              |
+| `format`  | string  | `"lcov"`          | Output format                 |
 
 ---
 
@@ -8282,7 +8330,9 @@ test:
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Reporter](architecture/reporter.md) - Output format details
 
+
 ---
+
 
 # Development Guide
 
@@ -8294,7 +8344,7 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 
 | Requirement | Version                    | Notes                           |
 | :---------- | :------------------------- | :------------------------------ |
-| Rust        | 1.85+                      | Async traits, Rust 2024 Edition |
+| Rust        | 1.88+                      | Async traits, Rust 2024 Edition |
 | Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669           |
 | Linux       | Kernel 5.13+               | Landlock filesystem isolation   |
 | Build tools | gcc, make, autoconf        | Jemalloc compilation            |
@@ -8616,7 +8666,9 @@ Implement `Reporter` trait in `src/reporting/reporter.rs`:
 - [Troubleshooting](troubleshooting.md)
 - [API Reference](api-reference.md)
 
+
 ---
+
 
 # Tach Error Reference
 
@@ -8963,7 +9015,9 @@ tach --diagnose
 - [Troubleshooting Guide](troubleshooting.md)
 - [Development Guide](development.md)
 
+
 ---
+
 
 # Python Compatibility
 
@@ -9210,7 +9264,9 @@ Python 3.13 switched from pymalloc to mimalloc. If you encounter memory-related 
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Architecture: Snapshot](architecture/snapshot.md) - Memory snapshot internals
 
+
 ---
+
 
 # Quickstart Guide
 
@@ -9564,7 +9620,9 @@ tach-core --watch .
 tach-core self-test
 ```
 
+
 ---
+
 
 # Troubleshooting Guide
 
@@ -9611,6 +9669,12 @@ error: could not find Python interpreter
 export PYO3_PYTHON=$(which python)
 cargo build
 ```
+
+> **WSL2 Users:** Source `.envrc` to automatically set PYO3_PYTHON:
+>
+> ```bash
+> source .envrc
+> ```
 
 ### Wrong Python Version
 
@@ -9718,6 +9782,12 @@ cat /sys/kernel/security/lsm
 ```bash
 grep CONFIG_SECCOMP /boot/config-$(uname -r)
 # Should show: CONFIG_SECCOMP=y and CONFIG_SECCOMP_FILTER=y
+```
+
+If `/boot/config-*` doesn't exist (common on WSL2 or cloud kernels):
+
+```bash
+zgrep CONFIG_SECCOMP /proc/config.gz
 ```
 
 **Solution:**
@@ -10152,7 +10222,9 @@ When reporting issues, include:
 - [Sandbox](architecture/sandbox.md) - Security architecture
 - [Snapshot](architecture/snapshot.md) - Memory snapshot details
 
+
 ---
+
 
 # WSL2 Setup Guide for tach-core
 
@@ -10437,4 +10509,6 @@ cargo build
 - [Landlock Documentation](https://docs.kernel.org/userspace-api/landlock.html)
 - [userfaultfd Documentation](https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html)
 
+
 ---
+
