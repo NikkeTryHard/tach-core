@@ -1,0 +1,61 @@
+# tach-core Development Container
+# Provides full kernel feature support for userfaultfd, Landlock, and Seccomp
+#
+# Usage:
+#   docker build -t tach-dev .
+#   docker run -it --privileged -v $(pwd):/workspace tach-dev
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System packages: build tools, Python, debugging utilities
+RUN apt-get update && apt-get install -y \
+    # Build essentials
+    build-essential \
+    clang \
+    libclang-dev \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    # Python 3.12
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    # Debug tools
+    gdb \
+    strace \
+    linux-tools-generic \
+    htop \
+    procps \
+    # Utilities
+    git \
+    curl \
+    jq \
+    ripgrep \
+    fd-find \
+    less \
+    vim \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && . /root/.cargo/env \
+    && rustup default stable \
+    && rustup update
+
+# Add cargo to PATH for all shells
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Create workspace directory
+WORKDIR /workspace
+
+# Environment variables for tach-core
+ENV PYO3_PYTHON=/workspace/.venv/bin/python
+ENV CARGO_TARGET_DIR=/workspace/target
+
+# Default command
+CMD ["bash"]
