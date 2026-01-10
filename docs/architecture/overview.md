@@ -60,18 +60,20 @@ flowchart TB
 
 ### Tier 1: Rust Supervisor
 
-| Component     | File                                          | Responsibility                                        |
-| :------------ | :-------------------------------------------- | :---------------------------------------------------- |
-| **CLI**       | `main.rs`                                     | Parse arguments, orchestrate execution                |
-| **Config**    | `core/config.rs`                              | Load pyproject.toml, merge CLI/env/file settings      |
-| **Discovery** | `discovery/scanner.rs`                        | AST-based test discovery using rustpython-parser      |
-| **Toxicity**  | `discovery/analysis.rs`, `discovery/graph.rs` | Detect unsafe modules, propagate via dependency graph |
-| **Loader**    | `discovery/loader.rs`                         | Compile .py to .pyc, manage bytecode cache            |
-| **Resolver**  | `discovery/resolver.rs`                       | Resolve fixture dependencies, topological sort        |
-| **Scheduler** | `execution/scheduler.rs`                      | Dispatch tests to workers, manage queues              |
-| **Snapshot**  | `isolation/snapshot.rs`                       | userfaultfd registration, page fault handling         |
-| **Coverage**  | `reporting/coverage.rs`                       | Ring buffer management, aggregation thread            |
-| **Reporter**  | `reporting/reporter.rs`                       | Progress bar, dots, JSON output                       |
+| Component         | File                                          | Responsibility                                        |
+| :---------------- | :-------------------------------------------- | :---------------------------------------------------- |
+| **CLI**           | `main.rs`                                     | Parse arguments, orchestrate execution                |
+| **Config**        | `core/config.rs`                              | Load pyproject.toml, merge CLI/env/file settings      |
+| **Discovery**     | `discovery/scanner.rs`                        | AST-based test discovery using rustpython-parser      |
+| **Toxicity**      | `discovery/analysis.rs`, `discovery/graph.rs` | Detect unsafe modules, propagate via dependency graph |
+| **Loader**        | `discovery/loader.rs`                         | Compile .py to .pyc, manage bytecode cache            |
+| **Resolver**      | `discovery/resolver.rs`                       | Resolve fixture dependencies, topological sort        |
+| **Scheduler**     | `execution/scheduler.rs`                      | Dispatch tests to workers, manage queues              |
+| **Snapshot**      | `isolation/snapshot.rs`                       | userfaultfd registration, page fault handling         |
+| **Coverage**      | `reporting/coverage.rs`                       | Ring buffer management, aggregation thread            |
+| **Reporter**      | `reporting/reporter.rs`                       | Progress bar, dots, JSON output                       |
+| **Suggestions**   | `core/suggestions.rs`                         | Error remediation suggestions                         |
+| **Plugin Bridge** | `execution/plugin_bridge.rs`                  | Bridges pytest plugin hooks to Tach execution model   |
 
 ### Tier 2: Zygote Process
 
