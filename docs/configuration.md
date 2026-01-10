@@ -189,11 +189,13 @@ source = ["src", "lib"]
 omit = ["**/test_*", "**/migrations/*"]
 
 # Output file path
-output = ".coverage"
+output = "coverage.lcov"
 
 # Output format: "lcov", "html", "json"
 format = "lcov"
 ```
+
+> **Note:** Environment variables `TACH_COVERAGE_OUTPUT` and `TACH_COVERAGE_FORMAT` take precedence over `pyproject.toml` settings.
 
 ### [tool.tach] Options
 
@@ -207,13 +209,13 @@ format = "lcov"
 
 ### [tool.tach.coverage] Options
 
-| Option    | Type    | Default       | Description                   |
-| :-------- | :------ | :------------ | :---------------------------- |
-| `enabled` | boolean | `false`       | Enable coverage collection    |
-| `source`  | array   | `[]`          | Source directories to measure |
-| `omit`    | array   | `[]`          | Patterns to exclude           |
-| `output`  | string  | `".coverage"` | Output file path              |
-| `format`  | string  | `"lcov"`      | Output format                 |
+| Option    | Type    | Default           | Description                   |
+| :-------- | :------ | :---------------- | :---------------------------- |
+| `enabled` | boolean | `false`           | Enable coverage collection    |
+| `source`  | array   | `[]`              | Source directories to measure |
+| `omit`    | array   | `[]`              | Patterns to exclude           |
+| `output`  | string  | `"coverage.lcov"` | Output file path              |
+| `format`  | string  | `"lcov"`          | Output format                 |
 
 ---
 
