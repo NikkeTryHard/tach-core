@@ -43,4 +43,4 @@ Based on architecture design, expected improvements over pytest:
 
 ## Comparison with Other Tools
 
-See [docs/research/external-research.md](research/external-research.md#23-competitive-landscape) for competitive analysis.
+See [docs/research/external-research.md](research/external-research.md#23-rust-based-python-test-runners) for competitive analysis.

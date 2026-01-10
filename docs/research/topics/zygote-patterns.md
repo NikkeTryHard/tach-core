@@ -146,7 +146,7 @@ Tach uses a simplified two-tier model:
 1. **Zygote Process**: Pre-loads Python, pytest, Django (if configured)
 2. **Workers**: Fork from Zygote, apply sandbox, run tests
 
-See [/docs/architecture/zygote.md](/docs/architecture/zygote.md) for implementation details.
+See [zygote.md](../../architecture/zygote.md) for implementation details.
 
 ### Safe vs Toxic Classification
 
@@ -217,7 +217,7 @@ Pre-loading must avoid modules with import-time side effects:
 
 > Source: "Pre-loading a module that initiates a network connection or spawns a thread is dangerous in a zygote, as these resources may not survive a fork()." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
-Tach addresses this via toxicity analysis. See [/docs/architecture/toxicity.md](/docs/architecture/toxicity.md).
+Tach addresses this via toxicity analysis. See [toxicity.md](../../architecture/toxicity.md).
 
 ---
 
@@ -230,9 +230,9 @@ Tach addresses this via toxicity analysis. See [/docs/architecture/toxicity.md](
 
 ### Related Documentation
 
-- [Zygote Lifecycle Architecture](/docs/architecture/zygote.md)
-- [Toxicity Classification](/docs/architecture/toxicity.md)
-- [CHANGELOG 0.4.x](/CHANGELOG.md)
+- [Zygote Lifecycle Architecture](../../architecture/zygote.md)
+- [Toxicity Classification](../../architecture/toxicity.md)
+- [CHANGELOG 0.4.x](../../../CHANGELOG.md)
 
 ### External References
 

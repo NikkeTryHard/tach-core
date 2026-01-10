@@ -26,7 +26,7 @@ Tach implements multiple security layers:
 
 - **Landlock:** Filesystem access control (Linux 5.13+)
 - **Seccomp:** System call filtering
-- See [docs/development.md](docs/development.md#security-hardening) for details
+- See [CLAUDE.md](CLAUDE.md#security-standards) for details
 
 ### Environment Isolation
 
