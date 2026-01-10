@@ -65,6 +65,32 @@ flowchart LR
 
 ## Quick Start
 
+### Recommended: Docker Development Environment
+
+Docker is the **recommended development method** for tach-core. It provides a fully-configured environment with all kernel features enabled, preventing WSL2 crashes and ensuring consistent builds.
+
+```bash
+# Clone repository
+git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
+
+# Start development container
+docker compose up -d
+docker compose exec dev bash
+
+# Inside container - everything is ready
+source .venv/bin/activate
+cargo build --release
+./target/release/tach-core self-test  # Verify all kernel features work
+```
+
+**VS Code Users:** Open the folder and click "Reopen in Container" when prompted. The Dev Container extension handles everything automatically.
+
+See [Docker Development](#docker-development) section below for full details.
+
+### Alternative: Native Linux
+
+For native Linux development (not recommended on WSL2):
+
 ```bash
 # Clone and build
 git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
@@ -166,6 +192,7 @@ Detailed technical documentation for each subsystem:
 | **Security**                                                            |                                                 |
 | [EPERM Doctrine](docs/security/sandbox-enforcement.md)                  | Kernel-level security validation                |
 | **Operations**                                                          |                                                 |
+| [Docker Development](#docker-development)                               | Container-based development environment         |
 | [CI Runner Setup](docs/ci/self-hosted-runner.md)                        | Self-hosted runner configuration                |
 | [WSL2 Setup](docs/wsl2-setup.md)                                        | Platform-specific setup for WSL2                |
 | **Reference**                                                           |                                                 |
@@ -276,6 +303,102 @@ See [Configuration Reference](docs/configuration.md) for full details.
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Docker Development
+
+Docker is the **enforced development standard** for tach-core. It eliminates WSL2 kernel crashes, ensures all kernel features work correctly, and provides a consistent environment across all developers.
+
+### Why Docker?
+
+| Issue                   | Native WSL2                 | Docker Container              |
+| ----------------------- | --------------------------- | ----------------------------- |
+| WSL2 kernel crashes     | Common with userfaultfd     | Stable (privileged mode)      |
+| Landlock availability   | Requires `.wslconfig` setup | Works out of the box          |
+| Environment consistency | Varies by machine           | Identical everywhere          |
+| Onboarding time         | Hours (kernel config)       | Minutes (`docker compose up`) |
+
+### Quick Start
+
+```bash
+# Option 1: Docker Compose (standalone)
+docker compose up -d              # Build and start container
+docker compose exec dev bash      # Enter container shell
+
+# Option 2: VS Code Dev Container
+# Open folder → Click "Reopen in Container" → Done
+```
+
+### What's Included
+
+The development container includes:
+
+| Category    | Tools                           |
+| ----------- | ------------------------------- |
+| **Build**   | Rust 1.88+, Cargo, Clang, CMake |
+| **Python**  | Python 3.12, pip, pytest, venv  |
+| **Debug**   | gdb, strace, perf, htop         |
+| **Search**  | ripgrep, fd-find                |
+| **Editors** | vim                             |
+
+### Container Commands
+
+```bash
+# Build tach-core
+cargo build --release
+
+# Run self-test (verify kernel features)
+./target/release/tach-core self-test
+
+# Run unit tests
+cargo test --lib
+
+# Run Python gauntlet tests
+source .venv/bin/activate
+pytest tests/gauntlet/ -v
+
+# Exit container
+exit
+
+# Stop container
+docker compose down
+```
+
+### Kernel Features
+
+The container runs with `--privileged` mode, enabling all kernel features:
+
+```
+[PASS] Kernel Version: 6.6.87 (requires 5.15+)
+[PASS] userfaultfd: Enabled via vm.unprivileged_userfaultfd=1
+[PASS] Landlock: ABI v4 supported
+[PASS] Seccomp: BPF filters available
+[PASS] Jemalloc: active
+[PASS] ptrace: CAP_SYS_PTRACE available
+[PASS] Python: Python 3.12 (sys.monitoring available)
+```
+
+### Persistent Caches
+
+Docker volumes preserve build caches across restarts:
+
+- `cargo-registry` - Downloaded crates
+- `cargo-git` - Git dependencies
+
+First build: ~3 minutes. Subsequent builds: ~10 seconds (incremental).
+
+### Files
+
+| File                              | Purpose                    |
+| --------------------------------- | -------------------------- |
+| `Dockerfile`                      | Container image definition |
+| `docker-compose.yml`              | Service configuration      |
+| `.devcontainer/devcontainer.json` | VS Code integration        |
+| `.devcontainer/post-create.sh`    | Auto-setup script          |
+| `.dockerignore`                   | Build context optimization |
+
+See [WSL2 Setup Guide](docs/wsl2-setup.md) for additional Docker documentation and WSL2 kernel configuration.
 
 ---
 
