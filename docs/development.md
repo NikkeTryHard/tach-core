@@ -113,7 +113,7 @@ pytest tests/gauntlet_db/ -v       # Database integration
 pytest tests/gauntlet_numpy/ -v    # NumPy compatibility
 pytest tests/gauntlet_coverage/ -v # Coverage tests
 pytest tests/gauntlet_phase*/ -v   # All phase tests
-pytest tests/gauntlet_012/ -v      # Version-specific (0.1.2)
+pytest tests/gauntlet_01[1-4]/ -v  # Version-specific (0.1.1-0.1.4)
 pytest tests/regression/ -v        # Regression suite
 ```
 
