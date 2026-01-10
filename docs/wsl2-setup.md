@@ -159,9 +159,10 @@ docker compose up -d
 # Enter container
 docker compose exec dev bash
 
-# Inside container - first time setup
-source .venv/bin/activate  # Created by post-create.sh or manually
-python3.12 -m venv .venv && source .venv/bin/activate && pip install pytest
+# Inside container - activate Python environment
+# (venv is auto-created by VS Code Dev Container; create manually for docker compose)
+source .venv/bin/activate 2>/dev/null || \
+  (python3.12 -m venv .venv && source .venv/bin/activate && pip install pytest)
 
 # Build and verify
 cargo build --release

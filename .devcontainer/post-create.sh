@@ -22,8 +22,12 @@ pip install pytest
 source /root/.cargo/env
 
 # Build tach-core (release for faster test runs)
+# Timeout after 20 minutes to prevent CI hangs on slow systems
 echo "Building tach-core..."
-cargo build --release
+timeout 1200 cargo build --release || {
+    echo "Build timed out or failed. You can retry with 'cargo build --release'"
+    exit 1
+}
 
 # Run self-test to verify kernel features
 echo ""
