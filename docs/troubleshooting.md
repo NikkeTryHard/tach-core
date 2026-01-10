@@ -44,6 +44,12 @@ export PYO3_PYTHON=$(which python)
 cargo build
 ```
 
+> **WSL2 Users:** Source `.envrc` to automatically set PYO3_PYTHON:
+>
+> ```bash
+> source .envrc
+> ```
+
 ### Wrong Python Version
 
 **Symptom:**
@@ -150,6 +156,12 @@ cat /sys/kernel/security/lsm
 ```bash
 grep CONFIG_SECCOMP /boot/config-$(uname -r)
 # Should show: CONFIG_SECCOMP=y and CONFIG_SECCOMP_FILTER=y
+```
+
+If `/boot/config-*` doesn't exist (common on WSL2 or cloud kernels):
+
+```bash
+zgrep CONFIG_SECCOMP /proc/config.gz
 ```
 
 **Solution:**
