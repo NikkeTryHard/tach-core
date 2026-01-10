@@ -6,13 +6,13 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 
 ## Prerequisites
 
-| Requirement | Version                    | Notes                         |
-| :---------- | :------------------------- | :---------------------------- |
-| Rust        | 1.85+                      | Async traits, Rust 2024 Edition |
-| Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669         |
-| Linux       | Kernel 5.13+               | Landlock filesystem isolation |
-| Build tools | gcc, make, autoconf        | Jemalloc compilation          |
-| iproute2    | Any                        | Network namespace setup       |
+| Requirement | Version                    | Notes                           |
+| :---------- | :------------------------- | :------------------------------ |
+| Rust        | 1.88+                      | Async traits, Rust 2024 Edition |
+| Python      | 3.10+ (3.12+ for coverage) | Coverage uses PEP 669           |
+| Linux       | Kernel 5.13+               | Landlock filesystem isolation   |
+| Build tools | gcc, make, autoconf        | Jemalloc compilation            |
+| iproute2    | Any                        | Network namespace setup         |
 
 **Optional:** perf (profiling), strace (debugging), valgrind (memory leaks)
 

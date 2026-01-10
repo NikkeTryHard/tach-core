@@ -3,13 +3,15 @@
 > **Status**: Decision Document
 > **Date**: 2026-01-04
 > **Author**: Project Tach Development Team
-> **Rust Version**: 1.85.0+ required for Edition 2024
+> **Rust Version**: 1.88.0+ required (MSRV). Edition 2024 stabilized in 1.85.0.
 
 ---
 
 ## Executive Summary
 
 Rust 2024 Edition was stabilized with Rust 1.85.0 (February 20, 2025). This document analyzes whether tach-core should migrate from Edition 2021 to Edition 2024, covering the pros, cons, breaking changes, and impact on our codebase.
+
+> **Note**: Project Tach requires Rust 1.88.0+ as its MSRV (see `Cargo.toml`).
 
 **Recommendation**: Migrate to Edition 2024 after addressing the `static mut` references issue. The edition brings safety improvements that align with our security-first philosophy.
 
@@ -164,9 +166,9 @@ pub extern "C" fn my_function() {}
 
 ### 2. MSRV Bump
 
-- Requires Rust 1.85.0+
+- Requires Rust 1.88.0+
 - May exclude users on older toolchains
-- CI must use 1.85.0+
+- CI must use 1.88.0+
 
 ### 3. Potential Hidden Issues
 
@@ -185,9 +187,9 @@ pub extern "C" fn my_function() {}
 ### Pre-Migration Checklist
 
 ```bash
-# 1. Ensure Rust 1.85.0+
+# 1. Ensure Rust 1.88.0+
 rustup update stable
-rustc --version  # Should show 1.85.0 or later
+rustc --version  # Should show 1.88.0 or later
 
 # 2. Check for static mut usage
 grep -r "static mut" src/
