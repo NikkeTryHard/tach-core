@@ -1,0 +1,47 @@
+# tach-core Development Environment
+#
+# Usage:
+#   docker compose up -d      # Start container in background
+#   docker compose exec dev bash  # Enter container
+#   docker compose down       # Stop container
+#
+# First run will build the image and set up volumes.
+# Subsequent runs reuse cached volumes for fast startup.
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tach-dev:latest
+    container_name: tach-dev
+
+    # Required for userfaultfd, Landlock, Seccomp, and namespace features
+    privileged: true
+
+    volumes:
+      # Source code (bind mount)
+      - .:/workspace
+
+      # Persistent cargo caches (named volumes)
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+
+    working_dir: /workspace
+
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+
+    environment:
+      - PYO3_PYTHON=/workspace/.venv/bin/python
+      - CARGO_TARGET_DIR=/workspace/target
+      - RUST_BACKTRACE=1
+
+    # Use host network for simpler networking (optional)
+    # network_mode: host
+
+# Named volumes persist cargo cache across container restarts
+volumes:
+  cargo-registry:
+  cargo-git:
