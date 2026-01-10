@@ -146,20 +146,74 @@ If your project is on `/mnt/c/`, consider moving it:
 mv /mnt/c/Users/username/project ~/dev/
 ```
 
-### 4. Docker Alternative
+### 4. Docker Development Environment
 
-Run tach-core inside a Docker container with elevated privileges:
+For a fully-configured development environment, use the included Docker setup:
+
+#### Quick Start (Docker Compose)
 
 ```bash
-docker run -it --privileged \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  ubuntu:24.04 bash
+# Build and start container
+docker compose up -d
 
-# Inside container, kernel features work normally
-apt update && apt install -y python3 python3-pip
-pip install pytest
-# ... build and run tach-core
+# Enter container
+docker compose exec dev bash
+
+# Inside container - first time setup
+source .venv/bin/activate  # Created by post-create.sh or manually
+python3.12 -m venv .venv && source .venv/bin/activate && pip install pytest
+
+# Build and verify
+cargo build --release
+./target/release/tach-core self-test
+```
+
+#### VS Code Dev Container
+
+1. Install the "Dev Containers" extension in VS Code
+2. Open the tach-core folder
+3. Click "Reopen in Container" when prompted (or Ctrl+Shift+P → "Dev Containers: Reopen in Container")
+4. Wait for the container to build and setup to complete
+5. Open a terminal - all tools are ready
+
+#### What's Included
+
+| Tool        | Purpose                  |
+| ----------- | ------------------------ |
+| Rust 1.88+  | Build tach-core          |
+| Python 3.12 | Run tests, PyO3 bindings |
+| gdb         | Debug Rust/Python        |
+| strace      | Trace syscalls           |
+| perf        | Performance profiling    |
+| ripgrep, fd | Fast searching           |
+
+#### Kernel Features in Docker
+
+The container runs with `--privileged` mode, which grants access to all kernel features:
+
+```bash
+# Inside container, all features work:
+./target/release/tach-core self-test
+# [PASS] userfaultfd: Enabled
+# [PASS] Landlock: ABI v4 supported
+# [PASS] Seccomp: BPF filters available
+```
+
+Note: The Docker container inherits kernel features from WSL2. If your WSL2 kernel doesn't have a feature enabled (e.g., Landlock LSM not loaded), Docker cannot provide it. See sections above for WSL2 kernel configuration.
+
+#### Persistent Cargo Cache
+
+Docker volumes preserve cargo's package cache between container restarts:
+
+```bash
+# First build downloads all crates
+cargo build  # ~2 minutes
+
+# Container restart
+docker compose down && docker compose up -d
+
+# Subsequent builds use cached crates
+cargo build  # ~10 seconds (incremental)
 ```
 
 ### 5. Accept Graceful Degradation
