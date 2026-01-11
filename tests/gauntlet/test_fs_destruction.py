@@ -67,8 +67,8 @@ def test_symlink_escape_prevention():
     if not os.path.exists(target):
         pytest.skip("Target path doesn't exist")
 
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        symlink_path = f.name + "_symlink"
+    # Generate unique symlink path without creating unnecessary file
+    symlink_path = tempfile.mktemp(suffix="_symlink")
 
     try:
         os.symlink(target, symlink_path)
@@ -78,7 +78,7 @@ def test_symlink_escape_prevention():
             with open(symlink_path, 'r') as f:
                 f.read()
     finally:
-        if os.path.exists(symlink_path):
+        if os.path.islink(symlink_path):
             os.unlink(symlink_path)
 
 
