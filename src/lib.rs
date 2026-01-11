@@ -156,8 +156,20 @@ fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
 /// }
 /// ```
 pub fn discover_with_toxicity(root: &Path) -> Result<(DiscoveryResult, ToxicityGraph)> {
+    discover_with_toxicity_options(root, false)
+}
+
+/// Discover tests with toxicity analysis, with options.
+///
+/// # Arguments
+/// * `root` - The root directory to scan
+/// * `no_ignore` - If true, ignore .gitignore and .ignore files during discovery
+pub fn discover_with_toxicity_options(
+    root: &Path,
+    no_ignore: bool,
+) -> Result<(DiscoveryResult, ToxicityGraph)> {
     // 1. Run standard discovery (finds test files and fixtures)
-    let discovery = discovery::discover(root)?;
+    let discovery = discovery::discover(root, no_ignore)?;
 
     // 2. Collect ALL Python files in project (not just test modules)
     // This is critical for transitive toxicity propagation:

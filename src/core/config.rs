@@ -233,6 +233,14 @@ pub struct Cli {
     #[arg(long)]
     pub force_toxic: bool,
 
+    /// Ignore .gitignore and .ignore files during test discovery.
+    ///
+    /// Bypasses standard ignore files (like .gitignore, .ignore) when
+    /// scanning for test files. Useful when AI tools accidentally add
+    /// *.py to .ignore, which would otherwise hide all tests.
+    #[arg(long)]
+    pub no_ignore: bool,
+
     /// Show timing for slowest N tests.
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,

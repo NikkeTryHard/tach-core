@@ -134,12 +134,17 @@ pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
 }
 
 /// Scan project for test files and parse them in parallel
-pub fn discover(root: &Path) -> Result<DiscoveryResult> {
+///
+/// # Arguments
+/// * `root` - The root directory to scan for test files
+/// * `no_ignore` - If true, ignore .gitignore and .ignore files during discovery
+pub fn discover(root: &Path, no_ignore: bool) -> Result<DiscoveryResult> {
     // Canonicalize root path to resolve symlinks
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
-    let paths: Vec<PathBuf> = WalkBuilder::new(&canonical_root)
-        .standard_filters(true)
+    // Collect absolute paths first, then convert to relative for node IDs
+    let paths: Vec<(PathBuf, PathBuf)> = WalkBuilder::new(&canonical_root)
+        .standard_filters(!no_ignore)
         .follow_links(true) // Follow symlinked directories
         .build()
         .filter_map(|e| e.ok())
@@ -151,43 +156,37 @@ pub fn discover(root: &Path) -> Result<DiscoveryResult> {
                 .canonicalize()
                 .unwrap_or_else(|_| e.path().to_path_buf());
             // Convert to relative path for pytest node_id compatibility
-            canonical_path
+            let relative_path = canonical_path
                 .strip_prefix(&canonical_root)
                 .unwrap_or(&canonical_path)
-                .to_path_buf()
+                .to_path_buf();
+            // Return (absolute_path, relative_path)
+            (canonical_path, relative_path)
         })
         .collect();
 
     let modules: Vec<TestModule> = paths
         .par_iter()
-        .filter_map(|path| parse_module(path).ok())
+        .filter_map(|(abs_path, rel_path)| {
+            // Parse using absolute path, but store relative path in module
+            parse_module_with_relative_path(abs_path, rel_path).ok()
+        })
         .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty())
         .collect();
 
     Ok(DiscoveryResult { modules })
 }
 
-fn is_test_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let ext = path.extension().and_then(|e| e.to_str());
-    if ext != Some("py") {
-        return false;
-    }
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
-}
-
-fn parse_module(path: &Path) -> Result<TestModule> {
-    let source = fs::read_to_string(path)?;
-    let path_str = path.to_string_lossy();
+/// Parse a module from an absolute path but store the relative path
+fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<TestModule> {
+    let source = fs::read_to_string(abs_path)?;
+    let path_str = rel_path.to_string_lossy();
 
     let suite = match ast::Suite::parse(&source, &path_str) {
         Ok(s) => s,
         Err(_) => {
             return Ok(TestModule {
-                path: path.to_path_buf(),
+                path: rel_path.to_path_buf(),
                 tests: vec![],
                 fixtures: vec![],
                 is_toxic: false, // Set later by ToxicityGraph
@@ -306,11 +305,23 @@ fn parse_module(path: &Path) -> Result<TestModule> {
     }
 
     Ok(TestModule {
-        path: path.to_path_buf(),
+        path: rel_path.to_path_buf(),
         tests,
         fixtures,
         is_toxic: false, // Set later by ToxicityGraph
     })
+}
+
+fn is_test_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let ext = path.extension().and_then(|e| e.to_str());
+    if ext != Some("py") {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
 }
 
 fn analyze_function(
@@ -709,7 +720,9 @@ mod tests {
     fn parse_source(source: &str) -> TestModule {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(source.as_bytes()).unwrap();
-        parse_module(file.path()).unwrap()
+        let abs_path = file.path().to_path_buf();
+        let rel_path = PathBuf::from(abs_path.file_name().unwrap());
+        parse_module_with_relative_path(&abs_path, &rel_path).unwrap()
     }
 
     #[test]

@@ -13,7 +13,7 @@ fn test_discover_real_project_tests() {
     // Use the actual tach-core tests directory
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let result = discover(project_root).expect("Discovery should succeed on real project");
+    let result = discover(project_root, false).expect("Discovery should succeed on real project");
 
     // We know the project has at least 1000 tests (from the gauntlet)
     assert!(
@@ -37,7 +37,7 @@ fn test_discover_empty_temp_directory() {
     // Initialize git so WalkBuilder doesn't apply default ignores
     std::fs::create_dir(temp_dir.path().join(".git")).unwrap();
 
-    let result = discover(temp_dir.path()).expect("Discovery should succeed");
+    let result = discover(temp_dir.path(), false).expect("Discovery should succeed");
 
     assert_eq!(result.test_count(), 0, "Empty dir should have no tests");
     assert_eq!(
@@ -59,7 +59,7 @@ fn test_discover_ignores_non_test_files() {
     std::fs::write(root.join("utils.py"), "def helper(): pass").unwrap();
     std::fs::write(root.join("main.py"), "def main(): pass").unwrap();
 
-    let result = discover(root).expect("Discovery should succeed");
+    let result = discover(root, false).expect("Discovery should succeed");
 
     assert_eq!(result.test_count(), 0, "Non-test files should be ignored");
 }
@@ -68,7 +68,7 @@ fn test_discover_ignores_non_test_files() {
 fn test_discovery_result_accessors() {
     // Verify DiscoveryResult methods don't panic
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let result = discover(project_root).unwrap();
+    let result = discover(project_root, false).unwrap();
 
     // These should return reasonable values and not panic
     let test_count = result.test_count();
@@ -83,7 +83,7 @@ fn test_discovery_result_accessors() {
 fn test_discover_finds_specific_test_files() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let result = discover(project_root).expect("Discovery should succeed");
+    let result = discover(project_root, false).expect("Discovery should succeed");
 
     // Check that we find tests from known test files
     let all_test_names: Vec<String> = result
@@ -106,12 +106,46 @@ fn test_discover_finds_specific_test_files() {
     assert!(has_class_tests, "Should find class-based tests");
 }
 
+/// Test that --no-ignore flag bypasses .ignore/.gitignore files
+#[test]
+fn test_discover_respects_no_ignore_flag() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let test_file = dir.path().join("test_example.py");
+    fs::write(&test_file, "def test_foo(): pass").unwrap();
+
+    // Create .ignore that blocks all Python files
+    let ignore_file = dir.path().join(".ignore");
+    fs::write(&ignore_file, "*.py").unwrap();
+
+    // Initialize git so WalkBuilder applies .ignore rules
+    fs::create_dir(dir.path().join(".git")).unwrap();
+
+    // Without no_ignore, should find nothing (blocked by .ignore)
+    let result = discover(dir.path(), false).unwrap();
+    assert!(
+        result.modules.is_empty(),
+        "Should find no tests with .ignore blocking, found {}",
+        result.test_count()
+    );
+
+    // With no_ignore=true, should find the test
+    let result = discover(dir.path(), true).unwrap();
+    assert_eq!(
+        result.modules.len(),
+        1,
+        "Should find test when ignoring .ignore"
+    );
+}
+
 /// Test fixture scope parsing
 #[test]
 fn test_discover_fixture_scopes() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let result = discover(project_root).expect("Discovery should succeed");
+    let result = discover(project_root, false).expect("Discovery should succeed");
 
     // Get all fixture scopes
     let scopes: Vec<_> = result

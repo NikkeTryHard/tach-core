@@ -1,7 +1,7 @@
 use tach_core::config::{self, Cli, Commands, OutputFormat, TracebackStyle};
 use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
-use tach_core::discover_with_toxicity;
+use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
 use tach_core::junit::JunitReporter;
@@ -196,7 +196,7 @@ fn main() -> Result<()> {
     // Handle subcommands
     match &cli.command {
         Some(Commands::List) => {
-            return handle_list_command(&cwd, is_json);
+            return handle_list_command(&cwd, is_json, cli.no_ignore);
         }
         Some(Commands::SelfTest) => {
             return handle_self_test_command();
@@ -222,13 +222,13 @@ fn main() -> Result<()> {
     // --- COLLECT-ONLY MODE (pytest compatibility) ---
     // Alias for 'tach list' command
     if cli.collect_only {
-        return handle_list_command(&cwd, is_json);
+        return handle_list_command(&cwd, is_json, cli.no_ignore);
     }
 
     // --- DRY-RUN MODE ---
     // Discover tests and show what would run without executing
     if cli.dry_run {
-        return handle_dry_run_command(&cwd, is_json, &cli.path);
+        return handle_dry_run_command(&cwd, is_json, &cli.path, cli.no_ignore);
     }
 
     // --- WATCH MODE ---
@@ -244,6 +244,7 @@ fn main() -> Result<()> {
         let path_clone = cli.path.clone();
         let tb_style = cli.traceback;
         let memory_flag = cli.memory;
+        let no_ignore_flag = cli.no_ignore;
 
         return watch::start_watch_loop(&cwd, move || {
             execute_session(
@@ -254,6 +255,7 @@ fn main() -> Result<()> {
                 false,
                 tb_style,
                 memory_flag,
+                no_ignore_flag,
             )
         });
     }
@@ -267,11 +269,13 @@ fn main() -> Result<()> {
         cli.coverage,
         cli.traceback,
         cli.memory,
+        cli.no_ignore,
     )
 }
 
 /// Execute a complete test session (discovery -> resolution -> zygote -> run)
 /// This is the reusable function that watch mode calls repeatedly.
+#[allow(clippy::too_many_arguments)]
 fn execute_session(
     cwd: &PathBuf,
     format: &OutputFormat,
@@ -280,6 +284,7 @@ fn execute_session(
     coverage_enabled: bool,
     traceback_style: TracebackStyle,
     memory_enabled: bool,
+    no_ignore: bool,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
@@ -314,7 +319,7 @@ fn execute_session(
     }
 
     let start = std::time::Instant::now();
-    let (discovery_result, toxicity_graph) = discover_with_toxicity(cwd)?;
+    let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, no_ignore)?;
 
     if !is_json {
         let toxic_count = toxicity_graph.toxic_modules().len();
@@ -629,8 +634,8 @@ fn handle_version_command(verbose: bool) -> Result<()> {
 }
 
 /// Handle the `list` subcommand
-fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
-    let discovery_result = discovery::discover(cwd)?;
+fn handle_list_command(cwd: &Path, is_json: bool, no_ignore: bool) -> Result<()> {
+    let discovery_result = discovery::discover(cwd, no_ignore)?;
 
     if is_json {
         discovery::dump_json(&discovery_result)?;
@@ -648,13 +653,18 @@ fn handle_list_command(cwd: &Path, is_json: bool) -> Result<()> {
 ///
 /// Discovers tests, resolves fixtures, applies path filtering,
 /// and prints a summary of what would be executed without actually running.
-fn handle_dry_run_command(cwd: &Path, is_json: bool, target_path: &str) -> Result<()> {
+fn handle_dry_run_command(
+    cwd: &Path,
+    is_json: bool,
+    target_path: &str,
+    no_ignore: bool,
+) -> Result<()> {
     if !is_json {
         eprintln!("[tach:dry-run] Discovering tests in {}...", cwd.display());
     }
 
     let start = std::time::Instant::now();
-    let (discovery_result, toxicity_graph) = discover_with_toxicity(cwd)?;
+    let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, no_ignore)?;
 
     if !is_json {
         let toxic_count = toxicity_graph.toxic_modules().len();
