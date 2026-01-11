@@ -194,7 +194,7 @@ Detailed technical documentation for each subsystem:
 | **Operations**                                                          |                                                 |
 | [Docker Development](#docker-development)                               | Container-based development environment         |
 | [CI Runner Setup](docs/ci/self-hosted-runner.md)                        | Self-hosted runner configuration                |
-| [WSL2 Setup](docs/wsl2-setup.md)                                        | Platform-specific setup for WSL2                |
+| [WSL2 Setup](docs/quickstart.md#wsl2-setup)                             | Platform-specific setup for WSL2                |
 | **Reference**                                                           |                                                 |
 | [Configuration](docs/configuration.md)                                  | CLI, pyproject.toml, environment variables      |
 | [Development](docs/development.md)                                      | Build, test, project structure                  |
@@ -398,7 +398,7 @@ First build: ~3 minutes. Subsequent builds: ~10 seconds (incremental).
 | `.devcontainer/post-create.sh`    | Auto-setup script          |
 | `.dockerignore`                   | Build context optimization |
 
-See [WSL2 Setup Guide](docs/wsl2-setup.md) for additional Docker documentation and WSL2 kernel configuration.
+See [WSL2 Setup Guide](docs/quickstart.md#wsl2-setup) for additional Docker documentation and WSL2 kernel configuration.
 
 ---
 
