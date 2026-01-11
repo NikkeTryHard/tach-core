@@ -33,7 +33,7 @@ Based on architecture design, expected improvements over pytest:
 
 ## Collected Results
 
-> **TODO:** Add actual benchmark results here after systematic collection.
+_Benchmark results will be added after systematic collection across representative test suites._
 
 ### How to Contribute Benchmarks
 
