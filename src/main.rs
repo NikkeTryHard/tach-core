@@ -26,6 +26,24 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 // =============================================================================
+// SessionConfig: Groups configuration parameters for execute_session
+// =============================================================================
+
+/// Configuration for a test session.
+/// Groups boolean/config parameters to reduce function argument count.
+#[derive(Clone, Copy)]
+struct SessionConfig {
+    /// Enable coverage collection
+    coverage_enabled: bool,
+    /// Traceback display style
+    traceback_style: TracebackStyle,
+    /// Enable memory profiling
+    memory_enabled: bool,
+    /// Skip .ignore/.gitignore patterns
+    no_ignore: bool,
+}
+
+// =============================================================================
 // RunContext: Manages per-session resources including UFFD listener
 // =============================================================================
 
@@ -242,9 +260,12 @@ fn main() -> Result<()> {
         let format = cli.format.clone();
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
-        let tb_style = cli.traceback;
-        let memory_flag = cli.memory;
-        let no_ignore_flag = cli.no_ignore;
+        let session_config = SessionConfig {
+            coverage_enabled: false, // Coverage not supported in watch mode
+            traceback_style: cli.traceback,
+            memory_enabled: cli.memory,
+            no_ignore: cli.no_ignore,
+        };
 
         return watch::start_watch_loop(&cwd, move || {
             execute_session(
@@ -252,10 +273,7 @@ fn main() -> Result<()> {
                 &format,
                 &junit_path,
                 &path_clone,
-                false,
-                tb_style,
-                memory_flag,
-                no_ignore_flag,
+                session_config,
             )
         });
     }
@@ -266,25 +284,23 @@ fn main() -> Result<()> {
         &cli.format,
         &cli.junit_xml,
         &cli.path,
-        cli.coverage,
-        cli.traceback,
-        cli.memory,
-        cli.no_ignore,
+        SessionConfig {
+            coverage_enabled: cli.coverage,
+            traceback_style: cli.traceback,
+            memory_enabled: cli.memory,
+            no_ignore: cli.no_ignore,
+        },
     )
 }
 
 /// Execute a complete test session (discovery -> resolution -> zygote -> run)
 /// This is the reusable function that watch mode calls repeatedly.
-#[allow(clippy::too_many_arguments)]
 fn execute_session(
     cwd: &PathBuf,
     format: &OutputFormat,
     junit_path: &Option<PathBuf>,
     target_path: &str,
-    coverage_enabled: bool,
-    traceback_style: TracebackStyle,
-    memory_enabled: bool,
-    no_ignore: bool,
+    config: SessionConfig,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
@@ -297,11 +313,11 @@ fn execute_session(
             // Use progress bar for interactive terminals, dots for CI
             if ProgressReporter::should_use_progress_bar() {
                 reporters.push(Box::new(ProgressReporter::with_traceback_style(
-                    traceback_style,
+                    config.traceback_style,
                 )));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(
-                    traceback_style,
+                    config.traceback_style,
                 )));
             }
         }
@@ -319,7 +335,7 @@ fn execute_session(
     }
 
     let start = std::time::Instant::now();
-    let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, no_ignore)?;
+    let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, config.no_ignore)?;
 
     if !is_json {
         let toxic_count = toxicity_graph.toxic_modules().len();
@@ -471,8 +487,8 @@ fn execute_session(
         filtered_tests,
         &mut reporter,
         is_json,
-        coverage_enabled,
-        memory_enabled,
+        config.coverage_enabled,
+        config.memory_enabled,
     )?;
 
     // Exit with code 1 if any tests failed
