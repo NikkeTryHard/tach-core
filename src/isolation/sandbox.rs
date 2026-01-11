@@ -196,16 +196,17 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // ========================================================================
     // These paths are allowed read-only access (execute, read_file, read_dir).
     // This includes:
-    // - Project root (the lowerdir of the overlay - tests read source files)
     // - System libraries (/usr, /lib, /lib64, /bin)
     // - Configuration (/etc - Python configs, SSL certs, timezone)
     // - Device nodes (/dev - /dev/null, /dev/urandom, /dev/zero)
     //
-    // SECURITY NOTE: We allow read access to project_root because tests need
-    // to read source files. Writes go to the overlay upperdir, which is
-    // inside /run/tach/worker_{id} (allowed RW below).
+    // NOTE: project_root is added with all_access below because OverlayFS
+    // needs write access to the underlying filesystem for proper operation.
 
-    let ruleset = add_path_rule(ruleset, &project_root, read_access)?;
+    // Project root needs full access for OverlayFS to work correctly.
+    // The overlay provides copy-on-write isolation, but Landlock must allow
+    // the underlying operations for the overlay mount to function.
+    let ruleset = add_path_rule(ruleset, &project_root, all_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/usr", read_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/lib", read_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/lib64", read_access)?;
