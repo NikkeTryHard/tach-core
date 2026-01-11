@@ -286,6 +286,130 @@ The Iron Dome logs warnings and continues with reduced protection on older kerne
 
 ---
 
+## Sandbox Enforcement Testing
+
+### The EPERM Doctrine
+
+> A sandbox is only as strong as the kernel's refusal to cooperate with malicious code.
+
+We do not trust our sandbox implementation based on code inspection. We trust it because:
+
+1. **Seccomp** returns `EPERM` (errno 1) when blocked syscalls are attempted
+2. **Landlock** returns `EACCES` (errno 13) when blocked filesystem access is attempted
+3. **PID Namespaces** return `ESRCH` (errno 3) when attempting to signal invisible processes
+
+```
+Traditional Testing:     "Did our code set up the sandbox correctly?"
+EPERM Doctrine Testing:  "Does the kernel actually block the operation?"
+```
+
+### The Suicide Worker Pattern
+
+The **Suicide Worker** is Project Tach's gold standard for isolation testing. It validates kernel enforcement by deliberately attempting prohibited operations.
+
+```mermaid
+sequenceDiagram
+    participant Parent as Test Process
+    participant Child as Suicide Worker
+    participant Kernel as Linux Kernel
+
+    Parent->>Child: fork()
+    Child->>Child: apply_sandbox()
+    Child->>Kernel: attempt_blocked_syscall()
+    Kernel-->>Child: EPERM/EACCES
+    Child->>Parent: exit(errno)
+    Parent->>Parent: assert!(exit_code == expected_errno)
+```
+
+**Implementation Pattern:**
+
+```rust
+#[test]
+fn test_seccomp_blocks_socket() {
+    match unsafe { fork() }.expect("fork failed") {
+        ForkResult::Child => {
+            apply_seccomp().expect("Failed to apply Seccomp");
+
+            let result = unsafe {
+                libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0)
+            };
+
+            if result == -1 {
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error().unwrap_or(0);
+                std::process::exit(errno);  // Exit with errno
+            } else {
+                std::process::exit(255);  // CRITICAL: Sandbox failed!
+            }
+        }
+        ForkResult::Parent { child } => {
+            match waitpid(child, None).expect("waitpid failed") {
+                WaitStatus::Exited(_, code) => {
+                    assert_eq!(code, libc::EPERM,
+                        "Seccomp should block socket() with EPERM");
+                }
+                status => panic!("Unexpected status: {:?}", status),
+            }
+        }
+    }
+}
+```
+
+**Exit Code Meanings:**
+
+- `exit(1)` = `EPERM` - Seccomp blocked the syscall
+- `exit(13)` = `EACCES` - Landlock blocked filesystem access
+- `exit(255)` = Operation succeeded - **SANDBOX FAILURE**
+
+### Fork-Clone Duality
+
+Modern glibc maps `fork()` to the `clone()` syscall internally. This is critical for Seccomp testing:
+
+```
+User Code:           libc::fork()
+Glibc Translation:   SYS_clone(SIGCHLD, 0, NULL, NULL, 0)
+Kernel Execution:    clone() syscall
+```
+
+| Approach                  | Syscall     | Result                                       |
+| ------------------------- | ----------- | -------------------------------------------- |
+| `libc::fork()`            | `SYS_clone` | Allowed (clone is whitelisted for threading) |
+| `libc::syscall(SYS_fork)` | `SYS_fork`  | Blocked with EPERM                           |
+
+```rust
+// WRONG: Tests clone(), not fork()
+let result = unsafe { libc::fork() };
+
+// CORRECT: Tests actual SYS_fork syscall
+let result = unsafe { libc::syscall(libc::SYS_fork) };
+```
+
+---
+
+## Error Code Reference
+
+| Error    | Code | Context  | Meaning                                 |
+| -------- | ---- | -------- | --------------------------------------- |
+| `EPERM`  | 1    | Seccomp  | Syscall blocked by BPF filter           |
+| `EACCES` | 13   | Landlock | Filesystem access denied                |
+| `ESRCH`  | 3    | kill()   | Process not found (namespace isolation) |
+| `EINVAL` | 22   | Landlock | Invalid ruleset configuration           |
+| `SIGSYS` | 31   | Seccomp  | Process killed (SECCOMP_RET_KILL mode)  |
+
+---
+
+## Kernel Version Requirements
+
+| Feature         | Minimum Kernel | Notes                          |
+| --------------- | -------------- | ------------------------------ |
+| PID Namespaces  | 2.6.24         | Process isolation              |
+| Seccomp-BPF     | 3.17           | Required for syscall filtering |
+| userfaultfd     | 4.11           | Memory snapshot/restore        |
+| Landlock        | 5.13           | Filesystem sandboxing          |
+| Landlock ABI v2 | 5.19           | File truncation rules          |
+
+---
+
 ## Related Documentation
 
 - [Isolation](isolation.md) - Namespace and OverlayFS setup
