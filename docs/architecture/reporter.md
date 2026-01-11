@@ -71,10 +71,10 @@ The reporter uses simple string literals for status values:
 Simple human-readable output to stderr. Example:
 
 ```
-[tach] Running 100 tests...
-  test_foo.py::test_example ... PASS (12ms)
-  test_foo.py::test_another ... FAIL (8ms)
-[tach] 98 passed, 1 failed, 1 skipped in 2.50s
+[tach] Running N tests...
+  test_foo.py::test_example ... PASS (<ms>)
+  test_foo.py::test_another ... FAIL (<ms>)
+[tach] <passed> passed, <failed> failed, <skipped> skipped in <duration>
 ```
 
 ---
@@ -87,7 +87,7 @@ Interactive progress bar using `indicatif`.
 
 ```
 Running tests...
-[=>          ] 45/100  P:40 F:3 S:2
+[=>          ] [pos]/[total]  P:[passed] F:[failed] S:[skipped]
 ```
 
 ### Implementation
@@ -248,10 +248,10 @@ NDJSON output for IDE integration.
 ### Output Format
 
 ```json
-{"event":"run_start","count":100}
+{"event":"run_start","count":<total>}
 {"event":"test_start","id":"test_example.py::test_foo","file":"test_example.py"}
-{"event":"test_finished","id":"test_example.py::test_foo","status":"pass","duration_ms":12}
-{"event":"run_finished","passed":98,"failed":1,"skipped":1,"duration_ms":2500}
+{"event":"test_finished","id":"test_example.py::test_foo","status":"pass","duration_ms":<ms>}
+{"event":"run_finished","passed":<count>,"failed":<count>,"skipped":<count>,"duration_ms":<ms>}
 ```
 
 ### MachineEvent Enum
