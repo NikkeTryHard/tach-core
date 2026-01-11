@@ -334,6 +334,9 @@ fn execute_session(
         );
     }
 
+    // Warn if no tests found and dangerous patterns detected in .ignore
+    warn_if_blocking_patterns(cwd, discovery_result.modules.is_empty(), is_json);
+
     // --- EAGER COMPILATION ---
     // Compile ALL .py files in project and populate global registry BEFORE fork.
     // Workers will inherit this registry via CoW (copy-on-write).
@@ -633,9 +636,30 @@ fn handle_version_command(verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Warn if no tests were discovered and dangerous patterns are detected in .ignore
+///
+/// This helper is called from both `execute_session` and `handle_list_command`
+/// to provide actionable feedback when .ignore patterns may be blocking Python files.
+fn warn_if_blocking_patterns(cwd: &Path, is_empty: bool, is_json: bool) {
+    if is_empty && !is_json {
+        let patterns = discovery::detect_blocking_patterns(cwd);
+        if !patterns.is_empty() {
+            eprintln!("[tach:discovery] WARNING: No tests discovered!");
+            eprintln!("[tach:discovery] These patterns in .ignore may be blocking Python files:");
+            for pattern in &patterns {
+                eprintln!("  - {}", pattern);
+            }
+            eprintln!("[tach:discovery] Try running with --no-ignore");
+        }
+    }
+}
+
 /// Handle the `list` subcommand
 fn handle_list_command(cwd: &Path, is_json: bool, no_ignore: bool) -> Result<()> {
     let discovery_result = discovery::discover(cwd, no_ignore)?;
+
+    // Warn if no tests found and dangerous patterns detected in .ignore
+    warn_if_blocking_patterns(cwd, discovery_result.modules.is_empty(), is_json);
 
     if is_json {
         discovery::dump_json(&discovery_result)?;

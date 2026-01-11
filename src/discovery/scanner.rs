@@ -706,6 +706,46 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
 }
 
 // =============================================================================
+// Dangerous Pattern Detection
+// =============================================================================
+
+/// Detect patterns in .ignore that may block Python test discovery
+///
+/// Returns a list of patterns that are likely to prevent test files from being found.
+/// This is useful for warning users when `tach list` or `tach test` finds zero tests
+/// but there are .ignore patterns that could be causing the problem.
+///
+/// # Arguments
+/// * `root` - The root directory to check for .ignore file
+///
+/// # Returns
+/// A vector of patterns that may block Python test discovery.
+/// Empty if no .ignore file exists or no dangerous patterns are found.
+pub fn detect_blocking_patterns(root: &Path) -> Vec<String> {
+    let ignore_path = root.join(".ignore");
+
+    let content = match std::fs::read_to_string(&ignore_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    // Patterns that would block Python test file discovery
+    let dangerous_keywords = ["*.py", "test_", "tests/", "test/", "conftest"];
+
+    content
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter(|line| {
+            dangerous_keywords
+                .iter()
+                .any(|keyword| line.contains(keyword))
+        })
+        .map(|s| s.to_string())
+        .collect()
+}
+
+// =============================================================================
 // Unit Tests
 
 // =============================================================================

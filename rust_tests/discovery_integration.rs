@@ -140,6 +140,41 @@ fn test_discover_respects_no_ignore_flag() {
     );
 }
 
+/// Test detection of dangerous patterns in .ignore that block Python file discovery
+#[test]
+fn test_detect_blocking_ignore_patterns() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+
+    // Create .ignore with dangerous pattern
+    let ignore_file = dir.path().join(".ignore");
+    fs::write(&ignore_file, "*.py\n__pycache__/").unwrap();
+
+    let patterns = tach_core::discovery::detect_blocking_patterns(dir.path());
+
+    assert_eq!(patterns.len(), 1, "Should detect *.py as dangerous");
+    assert!(patterns[0].contains("*.py"), "Should contain the pattern");
+}
+
+/// Test that safe patterns in .ignore are not flagged as dangerous
+#[test]
+fn test_detect_blocking_patterns_safe_ignore() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+
+    // Create .ignore with only safe patterns
+    let ignore_file = dir.path().join(".ignore");
+    fs::write(&ignore_file, "__pycache__/\n.venv/\ntarget/").unwrap();
+
+    let patterns = tach_core::discovery::detect_blocking_patterns(dir.path());
+
+    assert!(patterns.is_empty(), "Safe patterns should not be flagged");
+}
+
 /// Test fixture scope parsing
 #[test]
 fn test_discover_fixture_scopes() {
