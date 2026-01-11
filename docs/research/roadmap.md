@@ -133,6 +133,17 @@ gantt
 
 Before 1.0.0, verify all critical research requirements are met:
 
+**Tooling and Container Compatibility (added 2026-01-11):**
+
+- [x] **`.ignore` File Interactions**: Document how `ignore` crate affects discovery
+  > See [tooling-conflicts.md](tooling-conflicts.md) — Patterns like `*.py` in `.ignore` block ALL Python files
+- [x] **Container Sandbox Behavior**: Document why tests fail via pytest but pass via tach-core in Docker
+  > See [container-compatibility.md](container-compatibility.md) — Sandbox tests require running through tach-core
+- [x] **Ignored Test Categories**: Catalogue and categorize all 24 ignored tests
+  > See [test-discovery-analysis.md](test-discovery-analysis.md) — Environment (17), Slow (3), Experimental (3)
+
+**Original Research Requirements:**
+
 - [ ] **Allocator Quiesce**: Verify jemalloc `thread.tcache.flush` is called before snapshotting
   > "By invoking this before taking the snapshot, the test runner ensures that the thread-local bins are empty" — _Python Memory Snapshotting with Userfaultfd_
   > **External Ref**: [jemalloc mallctl API](https://jemalloc.net/jemalloc.3.html) — Allocator control documentation
@@ -336,6 +347,58 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 - [x] Research PEP 703 (Free-Threading) implications for worker model
   > **Ref**: [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) — No-GIL Python changes isolation assumptions
   > See [docs/python-compatibility.md](docs/python-compatibility.md) for detailed analysis.
+
+### 0.1.5 - Tooling Integration Research (2026-01-11)
+
+**Target**: Document tooling interactions, container compatibility, and test discovery edge cases.
+
+**Status**: Complete
+
+> **Research conducted**: Investigation of `.ignore` file conflicts, Docker sandbox behavior, and ignored test analysis.
+
+#### Tooling Ecosystem Documentation
+
+- [x] Document `.ignore` crate interaction with developer tools
+  > See [tooling-conflicts.md](tooling-conflicts.md) for comprehensive analysis of `.ignore`, `.gitignore`, and tool conflicts.
+  - [x] Identified tools that READ `.ignore` (ripgrep, fd, tach-core, tokei, watchexec)
+  - [x] Identified tools that WRITE to `.ignore` (Claude Code adds `*.py`)
+  - [x] Documented dangerous patterns that break discovery (`*.py`, `test*.py`, `tests/`)
+  - [x] Recommended safeguards:
+    - Add `--no-ignore` CLI flag
+    - Detect dangerous patterns and warn on zero tests
+    - Document in troubleshooting.md
+- [x] Added troubleshooting section for `.ignore` file blocking test discovery
+  > See [docs/troubleshooting.md](../../troubleshooting.md) → "### .ignore File Blocking Python Files"
+
+#### Container Compatibility Matrix
+
+- [x] Document Docker/container sandbox behavior
+  > See [container-compatibility.md](container-compatibility.md) for full analysis.
+  - [x] Explained why sandbox tests fail via `pytest` but pass via `tach-core`
+  - [x] Created container compatibility matrix (Docker default, privileged, with caps, Podman, K8s)
+  - [x] Documented capability requirements (`SYS_PTRACE`, `SYS_ADMIN`, `privileged: true`)
+  - [x] Provided troubleshooting for container-specific issues
+
+#### Test Suite Analysis
+
+- [x] Catalogue all ignored tests (24 total)
+  > See [test-discovery-analysis.md](test-discovery-analysis.md) for complete analysis.
+  - [x] 17 environment-dependent tests (binary, sudo, Python requirements)
+  - [x] 3 slow/benchmark tests (memory invariant, latency)
+  - [x] 3 WIP/experimental tests (TLS exploration)
+  - [x] 0 flaky tests (all ignored tests have legitimate reasons)
+- [x] Document discovery edge case coverage
+  - [x] 14 edge cases currently tested in integration tests
+  - [x] 9 property-based tests for invariant verification
+  - [x] 11 potential gaps identified (unicode names, autouse fixtures, etc.)
+- [x] Provide commands for running ignored tests by category
+
+#### Future Improvements Identified
+
+- [ ] Add `--no-ignore` CLI flag to bypass `.ignore` files
+- [ ] Detect dangerous patterns in `.ignore` and warn when zero tests found
+- [ ] Add missing discovery edge case tests (autouse fixtures, nested TestClass)
+- [ ] Add CI job for running ignored tests separately
 
 ---
 
