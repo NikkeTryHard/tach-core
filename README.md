@@ -89,20 +89,7 @@ See [Docker Development](#docker-development) section below for full details.
 
 ### Alternative: Native Linux
 
-For native Linux development (not recommended on WSL2):
-
-```bash
-# Clone and build
-git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
-python -m venv .venv && source .venv/bin/activate && pip install pytest
-export PYO3_PYTHON=$(which python) && cargo build --release
-
-# Run tests
-./target/release/tach-core .
-
-# With coverage (Python 3.12+)
-./target/release/tach-core --coverage .
-```
+For native Linux development (not recommended on WSL2), see the [Quickstart Guide](docs/quickstart.md) for detailed per-distribution installation instructions (Ubuntu, Fedora, Arch).
 
 ---
 
