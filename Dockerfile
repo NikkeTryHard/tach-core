@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y \
     linux-tools-generic \
     htop \
     procps \
+    # Network namespace support
+    iproute2 \
     # Utilities
     git \
     curl \
