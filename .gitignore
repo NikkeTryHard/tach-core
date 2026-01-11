@@ -12,3 +12,6 @@ CLAUDE.md
 
 # Git worktrees
 .worktrees/
+
+# Auto-generated documentation
+docs/FULL_DOCUMENTATION.md
