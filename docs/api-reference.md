@@ -604,10 +604,10 @@ See [Configuration Reference](configuration.md#environment-variables) for comple
 ### NDJSON
 
 ```json
-{"event":"run_start","total":100}
+{"event":"run_start","total":<count>}
 {"event":"test_started","test":"test_example.py::test_foo"}
-{"event":"test_finished","test":"test_example.py::test_foo","status":"pass","duration_ms":12}
-{"event":"run_finished","passed":98,"failed":2,"skipped":0}
+{"event":"test_finished","test":"test_example.py::test_foo","status":"pass","duration_ms":<ms>}
+{"event":"run_finished","passed":<count>,"failed":<count>,"skipped":<count>}
 ```
 
 ### LCOV Coverage
