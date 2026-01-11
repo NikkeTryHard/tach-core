@@ -305,6 +305,53 @@ tach-core list .
 python -m py_compile tests/test_example.py
 ```
 
+### .ignore File Blocking Python Files
+
+**Symptom:**
+
+```
+Discovered 0 tests, 0 fixtures
+```
+
+Discovery reports zero tests even though test files exist and have valid syntax.
+
+**Cause:**
+
+The `.ignore` file (used by tools like Claude Code for context filtering) may contain a pattern that blocks Python files:
+
+```
+*.py
+```
+
+Tach uses the `ignore` crate for file discovery, which respects `.ignore` files. This pattern causes ALL Python files to be skipped during test discovery.
+
+**Diagnosis:**
+
+```bash
+# Check if .ignore contains *.py
+grep '^\*\.py$' .ignore && echo "FOUND: *.py in .ignore is blocking discovery"
+
+# Verify files exist but are being ignored
+ls tests/**/*.py  # Files exist
+tach-core list .  # But discovery finds nothing
+```
+
+**Solution:**
+
+Remove `*.py` from `.ignore`:
+
+```bash
+sed -i '/^\*\.py$/d' .ignore
+```
+
+Or edit `.ignore` manually and remove the `*.py` line.
+
+**Prevention:**
+
+If you need to exclude Python files from other tools but not from tach-core, use more specific patterns (e.g., `src/**/*.py` instead of `*.py`).
+
+> **Note:** The `.ignore` file format is shared between multiple tools. Patterns added for one tool may affect others that use the `ignore` crate (ripgrep, fd, tach-core, etc.).
+
 ### Fixtures Not Found
 
 **Symptom:**
