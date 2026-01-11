@@ -343,7 +343,7 @@ pub fn check_userfaultfd() -> DiagnosticResult {
                             "Fix: sudo sysctl vm.unprivileged_userfaultfd=1\n\
                          Or: Run with CAP_SYS_PTRACE capability",
                         )
-                        .with_remediation(Remediation::with_command("Enable unprivileged userfaultfd to allow memory snapshots", "sudo sysctl -w vm.unprivileged_userfaultfd=1").with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005")),
+                        .with_remediation(Remediation::with_command("Enable unprivileged userfaultfd to allow memory snapshots", "sudo sysctl -w vm.unprivileged_userfaultfd=1").with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e005")),
                 }
             }
         }
@@ -358,7 +358,7 @@ pub fn check_userfaultfd() -> DiagnosticResult {
                         "sudo sysctl -w vm.unprivileged_userfaultfd=1",
                     )
                     .with_docs_url(
-                        "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005",
+                        "https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e005",
                     ),
                 ),
             }
@@ -678,7 +678,7 @@ pub fn check_fd_limits() -> DiagnosticResult {
                                     "ulimit -n 65536",
                                 )
                                 .with_docs_url(
-                                    "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e014",
+                                    "https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e014",
                                 ),
                             );
                         }
@@ -712,7 +712,7 @@ pub fn check_fd_limits() -> DiagnosticResult {
                             "ulimit -n 65536",
                         )
                         .with_docs_url(
-                            "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e014",
+                            "https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e014",
                         ),
                     )
                 }
@@ -1062,7 +1062,9 @@ mod tests {
             "Enable userfaultfd",
             "sudo sysctl -w vm.unprivileged_userfaultfd=1",
         )
-        .with_docs_url("https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005");
+        .with_docs_url(
+            "https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e005",
+        );
         assert_eq!(remediation.explanation, "Enable userfaultfd");
         assert_eq!(
             remediation.command,
@@ -1071,7 +1073,7 @@ mod tests {
         assert_eq!(
             remediation.docs_url,
             Some(
-                "https://github.com/NikkeTryHard/tach-core/blob/master/docs/errors.md#e005"
+                "https://github.com/NikkeTryHard/tach-core/blob/master/docs/troubleshooting.md#e005"
                     .to_string()
             )
         );
