@@ -2,20 +2,20 @@
 
 Quick lookup for mapping research papers to Tach implementation.
 
-> **See Also**: [research-investigation.md](research-investigation.md) for paper summaries and the `topics/` folder for detailed analysis.
+> **See Also**: [research-investigation.md](research-investigation.md) for paper summaries and [topic-archive.md](topic-archive.md) for detailed analysis.
 
 ---
 
-## Topic Files
+## Topic Archive
 
-| Topic                                                | Description                                 | Key Papers                                 |
-| :--------------------------------------------------- | :------------------------------------------ | :----------------------------------------- |
-| [Zygote Patterns](topics/zygote-patterns.md)         | DAAC algorithm, hierarchical initialization | Forklift, Zygote Tree Design               |
-| [Memory Snapshotting](topics/memory-snapshotting.md) | userfaultfd, allocator interactions, TLS    | Memory Snapshotting, Allocator Interaction |
-| [Fork Safety](topics/fork-safety.md)                 | Toxic modules, orphaned locks, C-extensions | Fork Safety, Static Analysis               |
-| [Test Isolation](topics/isolation.md)                | Namespaces, Matrix Layer, Shadow Plugin     | Compatibility Layer, Isolation Blueprint   |
-| [Rust Integration](topics/rust-integration.md)       | Kineton engine, zero-copy loading, PyO3     | Rust Breakthroughs, Execution Blueprint    |
-| [Cross-Platform](topics/cross-platform.md)           | macOS Mach, Windows NT cloning              | Cross-Platform Cloning                     |
+| Topic                                                                    | Description                                 | Key Papers                                 |
+| :----------------------------------------------------------------------- | :------------------------------------------ | :----------------------------------------- |
+| [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | DAAC algorithm, hierarchical initialization | Forklift, Zygote Tree Design               |
+| [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | userfaultfd, allocator interactions, TLS    | Memory Snapshotting, Allocator Interaction |
+| [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | Toxic modules, orphaned locks, C-extensions | Fork Safety, Static Analysis               |
+| [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | Namespaces, Matrix Layer, Shadow Plugin     | Compatibility Layer, Isolation Blueprint   |
+| [Rust Integration](topic-archive.md#rust-integration-for-tach)           | Kineton engine, zero-copy loading, PyO3     | Rust Breakthroughs, Execution Blueprint    |
+| [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | macOS Mach, Windows NT cloning              | Cross-Platform Cloning                     |
 
 ---
 
@@ -35,20 +35,20 @@ Quick lookup for mapping research papers to Tach implementation.
 
 ## Paper-to-Document Mapping
 
-| Paper                                         | Topic File                                              | Architecture Doc                |
-| :-------------------------------------------- | :------------------------------------------------------ | :------------------------------ |
-| Forklift: Fitting Zygote Trees                | [zygote-patterns.md](topics/zygote-patterns.md)         | `docs/architecture/zygote.md`   |
-| Python Monorepo Zygote Tree Design            | [zygote-patterns.md](topics/zygote-patterns.md)         | `docs/architecture/zygote.md`   |
-| Python Memory Snapshotting with Userfaultfd   | [memory-snapshotting.md](topics/memory-snapshotting.md) | `docs/architecture/snapshot.md` |
-| Userfaultfd and CPython Allocator Interaction | [memory-snapshotting.md](topics/memory-snapshotting.md) | `docs/architecture/snapshot.md` |
-| Fork Safety of Python C-Extensions            | [fork-safety.md](topics/fork-safety.md)                 | `docs/architecture/toxicity.md` |
-| Rust Static Analysis for Toxic Python Modules | [fork-safety.md](topics/fork-safety.md)                 | `docs/architecture/toxicity.md` |
-| Project Tach Compatibility Layer Blueprint    | [isolation.md](topics/isolation.md)                     | `docs/architecture/loader.md`   |
-| Rust-Python Test Isolation Blueprint          | [isolation.md](topics/isolation.md)                     | `docs/architecture/loader.md`   |
-| Python Testing Engine Rust Breakthroughs      | [rust-integration.md](topics/rust-integration.md)       | —                               |
-| Rust-CPython Execution Blueprint              | [rust-integration.md](topics/rust-integration.md)       | —                               |
-| Zero-Copy Python Module Loading               | [rust-integration.md](topics/rust-integration.md)       | —                               |
-| Cross-Platform Process Cloning Research       | [cross-platform.md](topics/cross-platform.md)           | —                               |
+| Paper                                         | Topic File                                                               | Architecture Doc                |
+| :-------------------------------------------- | :----------------------------------------------------------------------- | :------------------------------ |
+| Forklift: Fitting Zygote Trees                | [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | `docs/architecture/zygote.md`   |
+| Python Monorepo Zygote Tree Design            | [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | `docs/architecture/zygote.md`   |
+| Python Memory Snapshotting with Userfaultfd   | [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | `docs/architecture/snapshot.md` |
+| Userfaultfd and CPython Allocator Interaction | [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | `docs/architecture/snapshot.md` |
+| Fork Safety of Python C-Extensions            | [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | `docs/architecture/toxicity.md` |
+| Rust Static Analysis for Toxic Python Modules | [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | `docs/architecture/toxicity.md` |
+| Project Tach Compatibility Layer Blueprint    | [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | `docs/architecture/loader.md`   |
+| Rust-Python Test Isolation Blueprint          | [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | `docs/architecture/loader.md`   |
+| Python Testing Engine Rust Breakthroughs      | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | —                               |
+| Rust-CPython Execution Blueprint              | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | —                               |
+| Zero-Copy Python Module Loading               | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | —                               |
+| Cross-Platform Process Cloning Research       | [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | —                               |
 
 ---
 

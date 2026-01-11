@@ -1,6 +1,6 @@
 # Project Tach: Research Investigation
 
-> **Quick Reference**: This document provides a high-level overview of the 12 research papers informing Project Tach's architecture. For detailed analysis, see the topic files in `topics/`.
+> **Quick Reference**: This document provides a high-level overview of the 12 research papers informing Project Tach's architecture. For detailed analysis, see `topic-archive.md`.
 
 ---
 
@@ -19,14 +19,14 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 
 ## Topic Index
 
-| Topic                                                | Description                                     | Relevant Papers                                    | CHANGELOG           |
-| :--------------------------------------------------- | :---------------------------------------------- | :------------------------------------------------- | :------------------ |
-| [Zygote Patterns](topics/zygote-patterns.md)         | Hierarchical pre-initialization, DAAC algorithm | Forklift, Zygote Tree Design                       | 0.4.x               |
-| [Memory Snapshotting](topics/memory-snapshotting.md) | userfaultfd, allocator interactions, TLS        | Memory Snapshotting, Allocator Interaction         | 0.7.x               |
-| [Fork Safety](topics/fork-safety.md)                 | Toxic modules, orphaned locks, C-extensions     | Fork Safety, Static Analysis                       | 0.3.x               |
-| [Test Isolation](topics/isolation.md)                | Namespaces, Matrix Layer, Shadow Plugin         | Compatibility Layer, Isolation Blueprint           | 0.2.x               |
-| [Rust Integration](topics/rust-integration.md)       | Kineton engine, zero-copy loading, PyO3         | Rust Breakthroughs, Execution Blueprint, Zero-Copy | 0.1.x, 0.5.x, 0.6.x |
-| [Cross-Platform](topics/cross-platform.md)           | macOS Mach, Windows NT cloning                  | Cross-Platform Cloning                             | 0.8.x+              |
+| Topic                                                                    | Description                                     | Relevant Papers                                    | CHANGELOG           |
+| :----------------------------------------------------------------------- | :---------------------------------------------- | :------------------------------------------------- | :------------------ |
+| [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | Hierarchical pre-initialization, DAAC algorithm | Forklift, Zygote Tree Design                       | 0.4.x               |
+| [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | userfaultfd, allocator interactions, TLS        | Memory Snapshotting, Allocator Interaction         | 0.7.x               |
+| [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | Toxic modules, orphaned locks, C-extensions     | Fork Safety, Static Analysis                       | 0.3.x               |
+| [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | Namespaces, Matrix Layer, Shadow Plugin         | Compatibility Layer, Isolation Blueprint           | 0.2.x               |
+| [Rust Integration](topic-archive.md#rust-integration-for-tach)           | Kineton engine, zero-copy loading, PyO3         | Rust Breakthroughs, Execution Blueprint, Zero-Copy | 0.1.x, 0.5.x, 0.6.x |
+| [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | macOS Mach, Windows NT cloning                  | Cross-Platform Cloning                             | 0.8.x+              |
 
 ---
 

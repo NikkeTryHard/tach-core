@@ -365,7 +365,7 @@ flowchart TB
 
 ### From EPERM Doctrine to Physics
 
-The EPERM Doctrine (documented in `docs/security/sandbox-enforcement.md`) ensures that workers cannot escape their sandbox. The Physics of Restoration ensures that workers cannot corrupt each other through stale memory state.
+The EPERM Doctrine (documented in `docs/architecture/sandbox.md`) ensures that workers cannot escape their sandbox. The Physics of Restoration ensures that workers cannot corrupt each other through stale memory state.
 
 ```mermaid
 graph LR
@@ -476,7 +476,7 @@ sequenceDiagram
 
 ## References
 
-- `docs/security/sandbox-enforcement.md` - EPERM Doctrine
+- `docs/architecture/sandbox.md` - EPERM Doctrine
 - `docs/ci/self-hosted-runner.md` - CI infrastructure requirements
 - `experiments/tls_python_poc.rs` - mimalloc TLS detection (static)
 - `experiments/tls_sentinel_scan.rs` - Runtime TLS offset discovery (dynamic)

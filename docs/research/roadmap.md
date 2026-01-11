@@ -273,7 +273,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   - [x] User errors: test failures, import errors, fixture errors
   - [x] System errors: kernel issues, permission errors, OOM
 - [x] Add error codes for machine-parseable output (E001-E020)
-- [x] Create error reference documentation (`docs/errors.md`)
+- [x] Create error reference documentation (merged into `docs/troubleshooting.md`)
 - [x] Suggest fixes for common errors inline (via `Remediation` struct)
 
 #### Diagnostic Mode
