@@ -283,7 +283,7 @@ tach-core --coverage . 2>&1 | head -20
 **Symptom:**
 
 ```
-Discovered 0 tests in 0 files
+Discovered N tests in M files
 ```
 
 **Common Causes:**
@@ -310,7 +310,7 @@ python -m py_compile tests/test_example.py
 **Symptom:**
 
 ```
-Discovered 0 tests, 0 fixtures
+Discovered N tests, M fixtures
 ```
 
 Discovery reports zero tests even though test files exist and have valid syntax.
