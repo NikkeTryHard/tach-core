@@ -10,6 +10,10 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// =============================================================================
+// Type Definitions
+// =============================================================================
+
 /// Scope of a pytest fixture
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum FixtureScope {
@@ -77,15 +81,6 @@ impl DiscoveryResult {
     }
 }
 
-/// Convert byte offset to line number (1-indexed)
-fn get_line_number(source: &str, byte_offset: usize) -> usize {
-    source[..byte_offset.min(source.len())]
-        .chars()
-        .filter(|&c| c == '\n')
-        .count()
-        + 1
-}
-
 /// JSON-serializable test information for `tach list --json`
 #[derive(Serialize)]
 pub struct JsonTestInfo {
@@ -102,79 +97,416 @@ struct JsonDiscoveryOutput {
     tests: Vec<JsonTestInfo>,
 }
 
-/// Dump discovery result as JSON to stdout
-///
-/// Used by `tach list --format=json` for IDE integration.
-/// Output format:
-/// ```json
-/// { "version": 1, "tests": [{ "id": "...", "file": "...", "line": 1 }] }
-/// ```
-pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
-    let tests: Vec<JsonTestInfo> = result
-        .modules
-        .iter()
-        .flat_map(|module| {
-            module.tests.iter().map(move |test| {
-                let file = module.path.to_string_lossy().to_string();
-                JsonTestInfo {
-                    id: format!("{}::{}", file, test.name),
-                    file,
-                    line: test.line_number,
-                    is_async: test.is_async,
-                }
-            })
-        })
-        .collect();
+// =============================================================================
+// Leaf Helper Functions (no dependencies on other helpers)
+// =============================================================================
 
-    let output = JsonDiscoveryOutput { version: 1, tests };
-
-    // ONLY dump_json touches stdout with JSON
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
+/// Convert byte offset to line number (1-indexed)
+fn get_line_number(source: &str, byte_offset: usize) -> usize {
+    source[..byte_offset.min(source.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+        + 1
 }
 
-/// Scan project for test files and parse them in parallel
+/// Check if a path is a Python test file
+fn is_test_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let ext = path.extension().and_then(|e| e.to_str());
+    if ext != Some("py") {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
+}
+
+/// Extract function arguments, excluding self/cls
+fn extract_args_from_arguments(args: &ast::Arguments) -> Vec<String> {
+    let mut result = vec![];
+    for arg in &args.args {
+        let name = arg.def.arg.as_str();
+        if name != "self" && name != "cls" {
+            result.push(name.to_string());
+        }
+    }
+    result
+}
+
+/// Convert an AST expression to its string representation
+/// Only handles literals (int, str, bool, None)
+fn expr_to_string(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Constant(c) => match &c.value {
+            ast::Constant::Int(i) => Some(i.to_string()),
+            ast::Constant::Str(s) => Some(s.to_string()),
+            ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
+            ast::Constant::None => Some("None".to_string()),
+            ast::Constant::Float(f) => Some(f.to_string()),
+            _ => None,
+        },
+        // Handle simple Name expressions (like exception classes)
+        ast::Expr::Name(n) => Some(n.id.to_string()),
+        _ => None,
+    }
+}
+
+/// Check if a single decorator is a fixture decorator
+fn is_fixture_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_fixture_decorator(&call.func),
+        ast::Expr::Attribute(attr) => attr.attr.as_str() == "fixture",
+        ast::Expr::Name(name) => name.id.as_str() == "fixture",
+        _ => false,
+    }
+}
+
+/// Check if a decorator is @pytest.mark.parametrize
+fn is_parametrize_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_parametrize_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            // Check for pattern: X.parametrize
+            if attr.attr.as_str() == "parametrize" {
+                // Could be pytest.mark.parametrize or mark.parametrize
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Check if a decorator is @patch or @unittest.mock.patch
+fn is_patch_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_patch_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            let name = attr.attr.as_str();
+            // Match: mock.patch, patch.object, etc.
+            name == "patch" || name.starts_with("patch.")
+        }
+        ast::Expr::Name(name) => name.id.as_str() == "patch",
+        _ => false,
+    }
+}
+
+/// Check if a decorator is @pytest.mark.timeout
+fn is_timeout_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => is_timeout_decorator(&call.func),
+        ast::Expr::Attribute(attr) => {
+            // Check for pattern: X.timeout (e.g., pytest.mark.timeout or mark.timeout)
+            attr.attr.as_str() == "timeout"
+        }
+        _ => false,
+    }
+}
+
+// =============================================================================
+// Composite Helper Functions (use leaf helpers)
+// =============================================================================
+
+/// Extract literals from a List or Tuple expression
+/// Returns None if the expression is not a static list of literals
+fn extract_literal_list(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::List(list) => {
+            let mut values = Vec::new();
+            for elt in &list.elts {
+                if let Some(s) = expr_to_string(elt) {
+                    values.push(s);
+                } else {
+                    // Non-literal element - bail out
+                    return None;
+                }
+            }
+            Some(values)
+        }
+        ast::Expr::Tuple(tuple) => {
+            let mut values = Vec::new();
+            for elt in &tuple.elts {
+                if let Some(s) = expr_to_string(elt) {
+                    values.push(s);
+                } else {
+                    return None;
+                }
+            }
+            Some(values)
+        }
+        _ => None, // Dynamic expression (function call, variable, etc.)
+    }
+}
+
+/// Check if any decorator in the list is a fixture decorator
+fn has_fixture_decorator(decorators: &[ast::Expr]) -> bool {
+    decorators.iter().any(is_fixture_decorator)
+}
+
+/// Extract fixture scope from decorators
+fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
+    for decorator in decorators {
+        if let ast::Expr::Call(call) = decorator {
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg
+                    && arg.as_str() == "scope"
+                    && let ast::Expr::Constant(c) = &keyword.value
+                    && let ast::Constant::Str(s) = &c.value
+                {
+                    return match s.as_str() {
+                        "class" => FixtureScope::Class,
+                        "module" => FixtureScope::Module,
+                        "session" => FixtureScope::Session,
+                        _ => FixtureScope::Function,
+                    };
+                }
+            }
+        }
+    }
+    FixtureScope::Function
+}
+
+/// Extract params from @pytest.fixture(params=[...]) decorator
 ///
-/// # Arguments
-/// * `root` - The root directory to scan for test files
-/// * `no_ignore` - If true, ignore .gitignore and .ignore files during discovery
-pub fn discover(root: &Path, no_ignore: bool) -> Result<DiscoveryResult> {
-    // Canonicalize root path to resolve symlinks
-    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+/// Returns None if:
+/// - No params keyword
+/// - Dynamic params (e.g., params=load_from_db())
+///
+/// Returns Some(vec) if static literal list
+fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String>> {
+    for decorator in decorators {
+        if let ast::Expr::Call(call) = decorator {
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg
+                    && arg.as_str() == "params"
+                {
+                    // Try to extract literals from the params value
+                    return extract_literal_list(&keyword.value);
+                }
+            }
+        }
+    }
+    None // No params keyword found
+}
 
-    // Collect absolute paths first, then convert to relative for node IDs
-    let paths: Vec<(PathBuf, PathBuf)> = WalkBuilder::new(&canonical_root)
-        .standard_filters(!no_ignore)
-        .follow_links(true) // Follow symlinked directories
-        .build()
-        .filter_map(|e| e.ok())
-        .filter(|e| is_test_file(e.path()))
-        .map(|e| {
-            // Canonicalize paths to handle symlinks consistently
-            let canonical_path = e
-                .path()
-                .canonicalize()
-                .unwrap_or_else(|_| e.path().to_path_buf());
-            // Convert to relative path for pytest node_id compatibility
-            let relative_path = canonical_path
-                .strip_prefix(&canonical_root)
-                .unwrap_or(&canonical_path)
-                .to_path_buf();
-            // Return (absolute_path, relative_path)
-            (canonical_path, relative_path)
-        })
-        .collect();
+/// Extract argument names from @pytest.mark.parametrize decorators
+/// Handles both formats:
+/// - @pytest.mark.parametrize("arg1,arg2", [...]) - comma-separated string
+/// - @pytest.mark.parametrize(["arg1", "arg2"], [...]) - list of strings
+fn extract_parametrized_args(decorators: &[ast::Expr]) -> Vec<String> {
+    let mut args = Vec::new();
 
-    let modules: Vec<TestModule> = paths
-        .par_iter()
-        .filter_map(|(abs_path, rel_path)| {
-            // Parse using absolute path, but store relative path in module
-            parse_module_with_relative_path(abs_path, rel_path).ok()
-        })
-        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty())
-        .collect();
+    for decorator in decorators {
+        if !is_parametrize_decorator(decorator) {
+            continue;
+        }
 
-    Ok(DiscoveryResult { modules })
+        // Get the call expression
+        if let ast::Expr::Call(call) = decorator {
+            // First argument contains the parameter names
+            if let Some(first_arg) = call.args.first() {
+                match first_arg {
+                    // Case 1: "arg1, arg2" (comma-separated string)
+                    ast::Expr::Constant(c) => {
+                        if let ast::Constant::Str(s) = &c.value {
+                            // Split by comma and trim whitespace
+                            for name in s.as_str().split(',') {
+                                let trimmed = name.trim();
+                                if !trimmed.is_empty() {
+                                    args.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Case 2: ["arg1", "arg2"] (list of strings)
+                    ast::Expr::List(list) => {
+                        for elt in &list.elts {
+                            if let ast::Expr::Constant(c) = elt
+                                && let ast::Constant::Str(s) = &c.value
+                            {
+                                args.push(s.to_string());
+                            }
+                        }
+                    }
+                    // Case 3: ("arg1", "arg2") (tuple of strings)
+                    ast::Expr::Tuple(tuple) => {
+                        for elt in &tuple.elts {
+                            if let ast::Expr::Constant(c) = elt
+                                && let ast::Constant::Str(s) = &c.value
+                            {
+                                args.push(s.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    args
+}
+
+/// Check if a @patch decorator injects a function argument.
+///
+/// @patch(target) - INJECTS arg (the mock)
+/// @patch(target, replacement) - NO injection (replacement is used directly)
+/// @patch(target, new=replacement) - NO injection
+///
+/// We need to distinguish these cases to correctly count injected args.
+fn patch_injects_arg(expr: &ast::Expr) -> bool {
+    if !is_patch_decorator(expr) {
+        return false;
+    }
+
+    // Get the call expression
+    match expr {
+        ast::Expr::Call(call) => {
+            // If there's a second positional arg, it's a replacement value (no injection)
+            if call.args.len() >= 2 {
+                return false;
+            }
+            // If there's a "new" keyword arg, it's also a replacement (no injection)
+            for kw in &call.keywords {
+                if let Some(ref arg_name) = kw.arg
+                    && arg_name.as_str() == "new"
+                {
+                    return false;
+                }
+            }
+            // Otherwise, @patch(target) injects the mock as a function arg
+            true
+        }
+        // Bare @patch without call (unlikely but handle it)
+        _ => false,
+    }
+}
+
+/// Count @patch decorators that inject function arguments.
+/// Only patches without a replacement value inject mock objects as parameters.
+fn count_patch_decorators(decorators: &[ast::Expr]) -> usize {
+    decorators.iter().filter(|d| patch_injects_arg(d)).count()
+}
+
+/// Extract all injected (non-fixture) argument names from decorators
+/// Combines:
+/// 1. @pytest.mark.parametrize args (explicit parameter names)
+/// 2. @patch args (FIRST N args after self/cls, where N = patch decorator count)
+///
+/// unittest.mock.patch injects args at the START (after self),
+/// not at the end. The bottom-most @patch decorator's mock becomes the first arg.
+fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<String> {
+    let mut injected = extract_parametrized_args(decorators);
+
+    // Count @patch decorators - each injects one arg at the START of func_args
+    // (after self/cls which are already filtered out by extract_args_from_arguments)
+    let patch_count = count_patch_decorators(decorators);
+    if patch_count > 0 && func_args.len() >= patch_count {
+        //  Take the FIRST `patch_count` arguments as patch-injected
+        // Example: @patch("a") @patch("b") def test(self, mock_b, mock_a, fixture):
+        //          -> mock_b and mock_a are injected, fixture is a real fixture
+        for arg in func_args.iter().take(patch_count) {
+            if !injected.contains(arg) {
+                injected.push(arg.clone());
+            }
+        }
+    }
+
+    injected
+}
+
+/// Extract timeout value from @pytest.mark.timeout(N) decorators
+///
+/// Handles:
+/// - @pytest.mark.timeout(30) - positional argument
+/// - @pytest.mark.timeout(seconds=30) - keyword argument
+///
+/// Returns None if no timeout marker found, value is not a static literal,
+/// or value is 0 (which means "no timeout" in pytest-timeout)
+fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
+    for decorator in decorators {
+        if !is_timeout_decorator(decorator) {
+            continue;
+        }
+
+        // Get the call expression
+        if let ast::Expr::Call(call) = decorator {
+            // Check positional argument first (most common: @pytest.mark.timeout(30))
+            if let Some(ast::Expr::Constant(c)) = call.args.first()
+                && let ast::Constant::Int(i) = &c.value
+            {
+                // Convert BigInt to u64
+                if let Ok(val) = i.to_string().parse::<u64>() {
+                    // 0 means "no timeout" in pytest-timeout
+                    if val == 0 {
+                        return None;
+                    }
+                    return Some(val);
+                }
+            }
+
+            // Check keyword argument (e.g., @pytest.mark.timeout(seconds=30))
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg {
+                    // Accept both "seconds" and "timeout" keyword args
+                    if (arg.as_str() == "seconds" || arg.as_str() == "timeout")
+                        && let ast::Expr::Constant(c) = &keyword.value
+                        && let ast::Constant::Int(i) = &c.value
+                        && let Ok(val) = i.to_string().parse::<u64>()
+                    {
+                        // 0 means "no timeout" in pytest-timeout
+                        if val == 0 {
+                            return None;
+                        }
+                        return Some(val);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// =============================================================================
+// High-Level Private Functions
+// =============================================================================
+
+/// Analyze a function definition and extract test/fixture information
+fn analyze_function(
+    func: &ast::StmtFunctionDef,
+    source: &str,
+    tests: &mut Vec<TestCase>,
+    fixtures: &mut Vec<FixtureDefinition>,
+    is_async: bool,
+) {
+    let name = func.name.as_str();
+
+    if name.starts_with("test_") {
+        let line_number = get_line_number(source, func.range.start().to_usize());
+        tests.push(TestCase {
+            name: name.to_string(),
+            dependencies: extract_args_from_arguments(&func.args),
+            is_async,
+            line_number,
+            parametrized_args: extract_injected_args(
+                &func.decorator_list,
+                &extract_args_from_arguments(&func.args),
+            ),
+            timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
+        });
+    }
+
+    if has_fixture_decorator(&func.decorator_list) {
+        fixtures.push(FixtureDefinition {
+            name: name.to_string(),
+            scope: extract_scope_from_decorators(&func.decorator_list),
+            dependencies: extract_args_from_arguments(&func.args),
+            params: extract_params_from_decorators(&func.decorator_list),
+            class_scope: None, // Top-level fixture
+        });
+    }
 }
 
 /// Parse a module from an absolute path but store the relative path
@@ -312,402 +644,84 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
     })
 }
 
-fn is_test_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let ext = path.extension().and_then(|e| e.to_str());
-    if ext != Some("py") {
-        return false;
-    }
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
-}
-
-fn analyze_function(
-    func: &ast::StmtFunctionDef,
-    source: &str,
-    tests: &mut Vec<TestCase>,
-    fixtures: &mut Vec<FixtureDefinition>,
-    is_async: bool,
-) {
-    let name = func.name.as_str();
-
-    if name.starts_with("test_") {
-        let line_number = get_line_number(source, func.range.start().to_usize());
-        tests.push(TestCase {
-            name: name.to_string(),
-            dependencies: extract_args_from_arguments(&func.args),
-            is_async,
-            line_number,
-            parametrized_args: extract_injected_args(
-                &func.decorator_list,
-                &extract_args_from_arguments(&func.args),
-            ),
-            timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
-        });
-    }
-
-    if has_fixture_decorator(&func.decorator_list) {
-        fixtures.push(FixtureDefinition {
-            name: name.to_string(),
-            scope: extract_scope_from_decorators(&func.decorator_list),
-            dependencies: extract_args_from_arguments(&func.args),
-            params: extract_params_from_decorators(&func.decorator_list),
-            class_scope: None, // Top-level fixture
-        });
-    }
-}
-
-fn extract_args_from_arguments(args: &ast::Arguments) -> Vec<String> {
-    let mut result = vec![];
-    for arg in &args.args {
-        let name = arg.def.arg.as_str();
-        if name != "self" && name != "cls" {
-            result.push(name.to_string());
-        }
-    }
-    result
-}
-
-fn has_fixture_decorator(decorators: &[ast::Expr]) -> bool {
-    decorators.iter().any(is_fixture_decorator)
-}
-
-fn is_fixture_decorator(expr: &ast::Expr) -> bool {
-    match expr {
-        ast::Expr::Call(call) => is_fixture_decorator(&call.func),
-        ast::Expr::Attribute(attr) => attr.attr.as_str() == "fixture",
-        ast::Expr::Name(name) => name.id.as_str() == "fixture",
-        _ => false,
-    }
-}
-
-fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
-    for decorator in decorators {
-        if let ast::Expr::Call(call) = decorator {
-            for keyword in &call.keywords {
-                if let Some(ref arg) = keyword.arg
-                    && arg.as_str() == "scope"
-                    && let ast::Expr::Constant(c) = &keyword.value
-                    && let ast::Constant::Str(s) = &c.value
-                {
-                    return match s.as_str() {
-                        "class" => FixtureScope::Class,
-                        "module" => FixtureScope::Module,
-                        "session" => FixtureScope::Session,
-                        _ => FixtureScope::Function,
-                    };
-                }
-            }
-        }
-    }
-    FixtureScope::Function
-}
-
-/// Extract params from @pytest.fixture(params=[...]) decorator
-///
-/// Returns None if:
-/// - No params keyword
-/// - Dynamic params (e.g., params=load_from_db())
-///
-/// Returns Some(vec) if static literal list
-fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String>> {
-    for decorator in decorators {
-        if let ast::Expr::Call(call) = decorator {
-            for keyword in &call.keywords {
-                if let Some(ref arg) = keyword.arg
-                    && arg.as_str() == "params"
-                {
-                    // Try to extract literals from the params value
-                    return extract_literal_list(&keyword.value);
-                }
-            }
-        }
-    }
-    None // No params keyword found
-}
-
-/// Extract literals from a List or Tuple expression
-/// Returns None if the expression is not a static list of literals
-fn extract_literal_list(expr: &ast::Expr) -> Option<Vec<String>> {
-    match expr {
-        ast::Expr::List(list) => {
-            let mut values = Vec::new();
-            for elt in &list.elts {
-                if let Some(s) = expr_to_string(elt) {
-                    values.push(s);
-                } else {
-                    // Non-literal element - bail out
-                    return None;
-                }
-            }
-            Some(values)
-        }
-        ast::Expr::Tuple(tuple) => {
-            let mut values = Vec::new();
-            for elt in &tuple.elts {
-                if let Some(s) = expr_to_string(elt) {
-                    values.push(s);
-                } else {
-                    return None;
-                }
-            }
-            Some(values)
-        }
-        _ => None, // Dynamic expression (function call, variable, etc.)
-    }
-}
-
-/// Convert an AST expression to its string representation
-/// Only handles literals (int, str, bool, None)
-fn expr_to_string(expr: &ast::Expr) -> Option<String> {
-    match expr {
-        ast::Expr::Constant(c) => match &c.value {
-            ast::Constant::Int(i) => Some(i.to_string()),
-            ast::Constant::Str(s) => Some(s.to_string()),
-            ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
-            ast::Constant::None => Some("None".to_string()),
-            ast::Constant::Float(f) => Some(f.to_string()),
-            _ => None,
-        },
-        // Handle simple Name expressions (like exception classes)
-        ast::Expr::Name(n) => Some(n.id.to_string()),
-        _ => None,
-    }
-}
-
 // =============================================================================
-// @pytest.mark.parametrize Extraction
+// Public API
 // =============================================================================
 
-/// Check if a decorator is @pytest.mark.parametrize
-fn is_parametrize_decorator(expr: &ast::Expr) -> bool {
-    match expr {
-        ast::Expr::Call(call) => is_parametrize_decorator(&call.func),
-        ast::Expr::Attribute(attr) => {
-            // Check for pattern: X.parametrize
-            if attr.attr.as_str() == "parametrize" {
-                // Could be pytest.mark.parametrize or mark.parametrize
-                return true;
-            }
-            false
-        }
-        _ => false,
-    }
-}
-
-/// Extract argument names from @pytest.mark.parametrize decorators
-/// Handles both formats:
-/// - @pytest.mark.parametrize("arg1,arg2", [...]) - comma-separated string
-/// - @pytest.mark.parametrize(["arg1", "arg2"], [...]) - list of strings
-fn extract_parametrized_args(decorators: &[ast::Expr]) -> Vec<String> {
-    let mut args = Vec::new();
-
-    for decorator in decorators {
-        if !is_parametrize_decorator(decorator) {
-            continue;
-        }
-
-        // Get the call expression
-        if let ast::Expr::Call(call) = decorator {
-            // First argument contains the parameter names
-            if let Some(first_arg) = call.args.first() {
-                match first_arg {
-                    // Case 1: "arg1, arg2" (comma-separated string)
-                    ast::Expr::Constant(c) => {
-                        if let ast::Constant::Str(s) = &c.value {
-                            // Split by comma and trim whitespace
-                            for name in s.as_str().split(',') {
-                                let trimmed = name.trim();
-                                if !trimmed.is_empty() {
-                                    args.push(trimmed.to_string());
-                                }
-                            }
-                        }
-                    }
-                    // Case 2: ["arg1", "arg2"] (list of strings)
-                    ast::Expr::List(list) => {
-                        for elt in &list.elts {
-                            if let ast::Expr::Constant(c) = elt
-                                && let ast::Constant::Str(s) = &c.value
-                            {
-                                args.push(s.to_string());
-                            }
-                        }
-                    }
-                    // Case 3: ("arg1", "arg2") (tuple of strings)
-                    ast::Expr::Tuple(tuple) => {
-                        for elt in &tuple.elts {
-                            if let ast::Expr::Constant(c) = elt
-                                && let ast::Constant::Str(s) = &c.value
-                            {
-                                args.push(s.to_string());
-                            }
-                        }
-                    }
-                    _ => {}
+/// Dump discovery result as JSON to stdout
+///
+/// Used by `tach list --format=json` for IDE integration.
+/// Output format:
+/// ```json
+/// { "version": 1, "tests": [{ "id": "...", "file": "...", "line": 1 }] }
+/// ```
+pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
+    let tests: Vec<JsonTestInfo> = result
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module.tests.iter().map(move |test| {
+                let file = module.path.to_string_lossy().to_string();
+                JsonTestInfo {
+                    id: format!("{}::{}", file, test.name),
+                    file,
+                    line: test.line_number,
+                    is_async: test.is_async,
                 }
-            }
-        }
-    }
+            })
+        })
+        .collect();
 
-    args
+    let output = JsonDiscoveryOutput { version: 1, tests };
+
+    // ONLY dump_json touches stdout with JSON
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
-/// Check if a decorator is @patch or @unittest.mock.patch
-fn is_patch_decorator(expr: &ast::Expr) -> bool {
-    match expr {
-        ast::Expr::Call(call) => is_patch_decorator(&call.func),
-        ast::Expr::Attribute(attr) => {
-            let name = attr.attr.as_str();
-            // Match: mock.patch, patch.object, etc.
-            name == "patch" || name.starts_with("patch.")
-        }
-        ast::Expr::Name(name) => name.id.as_str() == "patch",
-        _ => false,
-    }
-}
-
-/// Check if a @patch decorator injects a function argument.
+/// Scan project for test files and parse them in parallel
 ///
-/// @patch(target) - INJECTS arg (the mock)
-/// @patch(target, replacement) - NO injection (replacement is used directly)
-/// @patch(target, new=replacement) - NO injection
-///
-/// We need to distinguish these cases to correctly count injected args.
-fn patch_injects_arg(expr: &ast::Expr) -> bool {
-    if !is_patch_decorator(expr) {
-        return false;
-    }
+/// # Arguments
+/// * `root` - The root directory to scan for test files
+/// * `no_ignore` - If true, ignore .gitignore and .ignore files during discovery
+pub fn discover(root: &Path, no_ignore: bool) -> Result<DiscoveryResult> {
+    // Canonicalize root path to resolve symlinks
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
-    // Get the call expression
-    match expr {
-        ast::Expr::Call(call) => {
-            // If there's a second positional arg, it's a replacement value (no injection)
-            if call.args.len() >= 2 {
-                return false;
-            }
-            // If there's a "new" keyword arg, it's also a replacement (no injection)
-            for kw in &call.keywords {
-                if let Some(ref arg_name) = kw.arg
-                    && arg_name.as_str() == "new"
-                {
-                    return false;
-                }
-            }
-            // Otherwise, @patch(target) injects the mock as a function arg
-            true
-        }
-        // Bare @patch without call (unlikely but handle it)
-        _ => false,
-    }
+    // Collect absolute paths first, then convert to relative for node IDs
+    let paths: Vec<(PathBuf, PathBuf)> = WalkBuilder::new(&canonical_root)
+        .standard_filters(!no_ignore)
+        .follow_links(true) // Follow symlinked directories
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| is_test_file(e.path()))
+        .map(|e| {
+            // Canonicalize paths to handle symlinks consistently
+            let canonical_path = e
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| e.path().to_path_buf());
+            // Convert to relative path for pytest node_id compatibility
+            let relative_path = canonical_path
+                .strip_prefix(&canonical_root)
+                .unwrap_or(&canonical_path)
+                .to_path_buf();
+            // Return (absolute_path, relative_path)
+            (canonical_path, relative_path)
+        })
+        .collect();
+
+    let modules: Vec<TestModule> = paths
+        .par_iter()
+        .filter_map(|(abs_path, rel_path)| {
+            // Parse using absolute path, but store relative path in module
+            parse_module_with_relative_path(abs_path, rel_path).ok()
+        })
+        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty())
+        .collect();
+
+    Ok(DiscoveryResult { modules })
 }
-
-/// Count @patch decorators that inject function arguments.
-/// Only patches without a replacement value inject mock objects as parameters.
-fn count_patch_decorators(decorators: &[ast::Expr]) -> usize {
-    decorators.iter().filter(|d| patch_injects_arg(d)).count()
-}
-
-/// Extract all injected (non-fixture) argument names from decorators
-/// Combines:
-/// 1. @pytest.mark.parametrize args (explicit parameter names)
-/// 2. @patch args (FIRST N args after self/cls, where N = patch decorator count)
-///
-/// unittest.mock.patch injects args at the START (after self),
-/// not at the end. The bottom-most @patch decorator's mock becomes the first arg.
-fn extract_injected_args(decorators: &[ast::Expr], func_args: &[String]) -> Vec<String> {
-    let mut injected = extract_parametrized_args(decorators);
-
-    // Count @patch decorators - each injects one arg at the START of func_args
-    // (after self/cls which are already filtered out by extract_args_from_arguments)
-    let patch_count = count_patch_decorators(decorators);
-    if patch_count > 0 && func_args.len() >= patch_count {
-        //  Take the FIRST `patch_count` arguments as patch-injected
-        // Example: @patch("a") @patch("b") def test(self, mock_b, mock_a, fixture):
-        //          -> mock_b and mock_a are injected, fixture is a real fixture
-        for arg in func_args.iter().take(patch_count) {
-            if !injected.contains(arg) {
-                injected.push(arg.clone());
-            }
-        }
-    }
-
-    injected
-}
-
-// =============================================================================
-// @pytest.mark.timeout Extraction
-// =============================================================================
-
-/// Check if a decorator is @pytest.mark.timeout
-fn is_timeout_decorator(expr: &ast::Expr) -> bool {
-    match expr {
-        ast::Expr::Call(call) => is_timeout_decorator(&call.func),
-        ast::Expr::Attribute(attr) => {
-            // Check for pattern: X.timeout (e.g., pytest.mark.timeout or mark.timeout)
-            attr.attr.as_str() == "timeout"
-        }
-        _ => false,
-    }
-}
-
-/// Extract timeout value from @pytest.mark.timeout(N) decorators
-///
-/// Handles:
-/// - @pytest.mark.timeout(30) - positional argument
-/// - @pytest.mark.timeout(seconds=30) - keyword argument
-///
-/// Returns None if no timeout marker found, value is not a static literal,
-/// or value is 0 (which means "no timeout" in pytest-timeout)
-fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
-    for decorator in decorators {
-        if !is_timeout_decorator(decorator) {
-            continue;
-        }
-
-        // Get the call expression
-        if let ast::Expr::Call(call) = decorator {
-            // Check positional argument first (most common: @pytest.mark.timeout(30))
-            if let Some(ast::Expr::Constant(c)) = call.args.first()
-                && let ast::Constant::Int(i) = &c.value
-            {
-                // Convert BigInt to u64
-                if let Ok(val) = i.to_string().parse::<u64>() {
-                    // 0 means "no timeout" in pytest-timeout
-                    if val == 0 {
-                        return None;
-                    }
-                    return Some(val);
-                }
-            }
-
-            // Check keyword argument (e.g., @pytest.mark.timeout(seconds=30))
-            for keyword in &call.keywords {
-                if let Some(ref arg) = keyword.arg {
-                    // Accept both "seconds" and "timeout" keyword args
-                    if (arg.as_str() == "seconds" || arg.as_str() == "timeout")
-                        && let ast::Expr::Constant(c) = &keyword.value
-                        && let ast::Constant::Int(i) = &c.value
-                        && let Ok(val) = i.to_string().parse::<u64>()
-                    {
-                        // 0 means "no timeout" in pytest-timeout
-                        if val == 0 {
-                            return None;
-                        }
-                        return Some(val);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-// =============================================================================
-// Dangerous Pattern Detection
-// =============================================================================
 
 /// Detect patterns in .ignore that may block Python test discovery
 ///
@@ -747,7 +761,6 @@ pub fn detect_blocking_patterns(root: &Path) -> Vec<String> {
 
 // =============================================================================
 // Unit Tests
-
 // =============================================================================
 
 #[cfg(test)]
