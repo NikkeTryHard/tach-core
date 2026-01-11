@@ -131,44 +131,29 @@ gantt
 
 ### Research Verification Checklist
 
-Before 1.0.0, verify all critical research requirements are met:
+Before 1.0.0, verify all critical research requirements are met.
 
-**Tooling and Container Compatibility (added 2026-01-11):**
+**Tooling and Container Compatibility (Q1 2026):**
 
-- [x] **`.ignore` File Interactions**: Document how `ignore` crate affects discovery
-  > See [tooling-conflicts.md](tooling-conflicts.md) — Patterns like `*.py` in `.ignore` block ALL Python files
-- [x] **Container Sandbox Behavior**: Document why tests fail via pytest but pass via tach-core in Docker
-  > See [container-compatibility.md](container-compatibility.md) — Sandbox tests require running through tach-core
-- [x] **Ignored Test Categories**: Catalogue and categorize all 24 ignored tests
-  > See [test-discovery-analysis.md](test-discovery-analysis.md) — Environment (17), Slow (3), Experimental (3)
+| Requirement                        | Status | Documentation                                            |
+| ---------------------------------- | ------ | -------------------------------------------------------- |
+| `.ignore` File Interactions        | Done   | [tooling-conflicts.md](tooling-conflicts.md)             |
+| Container Sandbox Behavior         | Done   | [container-compatibility.md](container-compatibility.md) |
+| Ignored Test Categories (24 total) | Done   | [test-discovery-analysis.md](test-discovery-analysis.md) |
 
 **Original Research Requirements:**
 
-- [ ] **Allocator Quiesce**: Verify jemalloc `thread.tcache.flush` is called before snapshotting
-  > "By invoking this before taking the snapshot, the test runner ensures that the thread-local bins are empty" — _Python Memory Snapshotting with Userfaultfd_
-  > **External Ref**: [jemalloc mallctl API](https://jemalloc.net/jemalloc.3.html) — Allocator control documentation
-- [ ] **Toxicity Detection**: Confirm static analysis catches all fork-unsafe patterns
-  > "identify 'toxic' or 'fork-unsafe' Python modules through static analysis of import graphs" — _Rust Static Analysis for Toxic Python Modules_
-  > **External Ref**: [POSIX fork() spec](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) — async-signal-safety requirements
-- [ ] **Namespace Isolation**: Verify CLONE_NEWNS + CLONE_NEWNET provide complete isolation
-  > "Namespaces provide complete, kernel-enforced isolation with acceptable overhead" — _Project Tach Compatibility Layer Blueprint_
-  > **External Ref**: [Landlock kernel docs](https://docs.kernel.org/userspace-api/landlock.html) — ABI version features
-- [ ] **Database Dispose**: Ensure connections are discarded in child processes
-  > "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
-- [ ] **TLS Restoration**: Verify mimalloc TLS state is correctly restored on Python 3.13+
-  > "mimalloc uses TLS for TLABs; fs*base must be tracked and restored" — \_Userfaultfd and CPython Allocator Interaction*
-  > **External Ref**: [mimalloc GitHub](https://github.com/microsoft/mimalloc) — thread-local allocation design
-- [ ] **GIL Management**: Verify PyO3 `py.allow_threads()` is used during Rust-heavy operations
-  > **External Ref**: [PyO3 Parallelism Guide](https://pyo3.rs/main/parallelism) — GIL release patterns
-- [ ] **PyO3 0.26+ API Migration**: Verify codebase uses new GIL API names
-  > PyO3 0.26 renamed: `with_gil`→`attach`, `allow_threads`→`detach`, `prepare_freethreaded_python`→`initialize`
-  > **External Ref**: [PyO3 Migration Guide](https://pyo3.rs/main/migration)
-- [ ] **TLS Segment Registration**: Implement `fs_base` parsing for Python 3.13+ mimalloc TLS
-  > "You must identify and register the TLS memory segments with userfaultfd. This requires parsing the fs*base (via arch_prctl) to find the TLS range." — \_Userfaultfd and CPython Allocator Interaction*
-  > **External Ref**: [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)
-- [ ] **Free-Threaded Python**: Test against Python 3.13t/3.14t builds
-  > Free-threaded builds have ~10% single-thread overhead but enable true parallelism
-  > **External Ref**: [py-free-threading.github.io](https://py-free-threading.github.io/)
+| Requirement                               | Research Source                            | External Ref                                                                         | Status  |
+| ----------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ | ------- |
+| Allocator Quiesce (`thread.tcache.flush`) | _Memory Snapshotting with Userfaultfd_     | [jemalloc mallctl](https://jemalloc.net/jemalloc.3.html)                             | Pending |
+| Toxicity Detection (fork-unsafe patterns) | _Static Analysis for Toxic Python Modules_ | [POSIX fork()](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) | Pending |
+| Namespace Isolation (CLONE_NEWNS/NET)     | _Compatibility Layer Blueprint_            | [Landlock docs](https://docs.kernel.org/userspace-api/landlock.html)                 | Pending |
+| Database Dispose (connection pools)       | _Fork Safety of Python C-Extensions_       | —                                                                                    | Pending |
+| TLS Restoration (mimalloc, Python 3.13+)  | _Userfaultfd and CPython Allocator_        | [mimalloc](https://github.com/microsoft/mimalloc)                                    | Pending |
+| GIL Management (`py.allow_threads()`)     | —                                          | [PyO3 Parallelism](https://pyo3.rs/main/parallelism)                                 | Pending |
+| PyO3 0.26+ API Migration                  | —                                          | [PyO3 Migration](https://pyo3.rs/main/migration)                                     | Pending |
+| TLS Segment Registration (`fs_base`)      | _Userfaultfd and CPython Allocator_        | [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)             | Pending |
+| Free-Threaded Python (3.13t/3.14t)        | —                                          | [py-free-threading](https://py-free-threading.github.io/)                            | Pending |
 
 ---
 
@@ -348,7 +333,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
   > **Ref**: [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) — No-GIL Python changes isolation assumptions
   > See [docs/python-compatibility.md](docs/python-compatibility.md) for detailed analysis.
 
-### 0.1.5 - Tooling Integration Research (2026-01-11)
+### 0.1.5 - Tooling Integration Research (Q1 2026)
 
 **Target**: Document tooling interactions, container compatibility, and test discovery edge cases.
 
