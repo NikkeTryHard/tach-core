@@ -96,7 +96,7 @@ These tests are designed to verify that tach-core's **Iron Dome sandbox** protec
 The test expects the project root (CWD) to be writable via the overlay filesystem. However, Landlock is configured to allow only **read access** to project_root:
 
 ```rust
-// src/isolation/sandbox.rs line 208
+// In src/isolation/sandbox.rs, add_path_rule() for project_root
 let ruleset = add_path_rule(ruleset, &project_root, read_access)?;  // READ-ONLY
 ```
 
