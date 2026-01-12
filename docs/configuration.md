@@ -89,6 +89,7 @@ tach-core [OPTIONS] [COMMAND] [PATH]
 | `--debug`        | Enable debug logging                               | false   |
 | `--trace`        | Enable trace-level logging                         | false   |
 | `--diagnose`     | Run system diagnostics and exit                    | false   |
+| `--no-ignore`    | Bypass .ignore/.gitignore files during discovery   | false   |
 
 #### Passthrough Arguments
 
@@ -129,6 +130,7 @@ tach-core self-test                  # Verify kernel support
 | `TACH_COVERAGE_OUTPUT` | Path to save coverage report                              | `coverage.lcov` |
 | `TACH_COVERAGE_FORMAT` | Coverage format (`lcov`, `html`, `json`)                  | `lcov`          |
 | `TACH_NO_ISOLATION`    | Disable sandbox (`1` or `true`)                           | -               |
+| `TACH_NO_IGNORE`       | Bypass .ignore/.gitignore files (`1` or `true`)           | -               |
 | `TACH_LOG_LEVEL`       | Log verbosity level (`debug`, `trace`, `info`)            | `info`          |
 | `TACH_TARGET_PATH`     | Test path (set internally)                                | `.`             |
 | `TACH_SUPERVISOR_SOCK` | UFFD socket path (set internally)                         | -               |
