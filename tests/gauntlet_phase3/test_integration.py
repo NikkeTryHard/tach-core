@@ -13,9 +13,13 @@ If this passes, Phase 3 is complete for Linux.
 import os
 import random
 import asyncio
+import pytest
 
 # Check if Django is configured for this test suite
 DJANGO_AVAILABLE = os.environ.get("DJANGO_SETTINGS_MODULE") is not None
+
+# Detect if running through tach-core (env var would be set from pyproject.toml)
+RUNNING_THROUGH_TACH = os.environ.get("TACH_PHASE3_VERIFIED") is not None
 
 
 # =============================================================================
@@ -23,6 +27,7 @@ DJANGO_AVAILABLE = os.environ.get("DJANGO_SETTINGS_MODULE") is not None
 # =============================================================================
 
 
+@pytest.mark.skipif(not RUNNING_THROUGH_TACH, reason="Only valid when running through tach-core")
 async def test_async_db_isolation():
     """Tests Async + DB + Env + Isolation all at once.
 
@@ -85,6 +90,7 @@ def test_entropy_large_range():
 # =============================================================================
 
 
+@pytest.mark.skipif(not RUNNING_THROUGH_TACH, reason="Only valid when running through tach-core")
 def test_env_propagation():
     """Verify environment variables propagate through Zygote to Workers."""
     val = os.environ.get("TACH_PHASE3_VERIFIED")
@@ -104,6 +110,7 @@ def test_env_does_not_leak_write():
 # =============================================================================
 
 
+@pytest.mark.skipif(not RUNNING_THROUGH_TACH, reason="Only valid when running through tach-core")
 async def test_async_env():
     """Verify env is present in async context."""
     await asyncio.sleep(0.001)
