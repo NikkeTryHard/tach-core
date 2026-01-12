@@ -950,6 +950,23 @@ Tach uses structured error codes to help diagnose issues. Error codes follow the
 
 ---
 
+## Known Limitations
+
+### Static Discovery Limitations
+
+Tach uses static AST analysis for test discovery, which cannot detect:
+
+| Feature                 | Limitation                                     | Workaround                             |
+| ----------------------- | ---------------------------------------------- | -------------------------------------- |
+| `pytest_generate_tests` | Dynamic test generation not visible statically | Use explicit parametrize decorators    |
+| Autouse fixtures        | May not be fully detected in all cases         | Document in test or use explicit marks |
+| Nested TestClass        | Deeply nested classes may not be discovered    | Flatten test class hierarchy           |
+| Plugin-generated tests  | Tests created by plugins at runtime            | Run with `--collect-only` to verify    |
+
+These limitations are inherent to static analysis. If tests are missing, use `--no-ignore` to verify they aren't being filtered, or run `pytest --collect-only` to compare discovery results.
+
+---
+
 ## Related Documentation
 
 - [README](../README.md) - Project overview and quick start
