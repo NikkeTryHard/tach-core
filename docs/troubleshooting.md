@@ -460,7 +460,7 @@ Under high concurrency (100+ workers), userfaultfd page fault handling may exper
 | < 6.4          | Global lock        | May spike to 50ms under load |
 | >= 6.4         | Per-VMA locking    | Consistent sub-100us         |
 
-**Recommendation**: For production CI with high parallelism, use Linux 6.4+.
+**Recommendation**: For production CI with high parallelism, use Linux 6.4+ (requires `CONFIG_PER_VMA_LOCK=y` in kernel config).
 
 ---
 
