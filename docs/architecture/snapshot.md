@@ -448,6 +448,24 @@ fn should_snapshot(region: &MemoryRegion) -> bool {
 
 ---
 
+## File Descriptor Hazards After Fork
+
+When a process is forked, file descriptors are inherited but point to the same kernel `struct file` object. This creates hazards:
+
+1. **Shared Offsets**: Read/write position is shared between parent and child
+2. **Race Conditions**: Concurrent writes interleave at kernel level
+3. **Ghost Writes**: Child's `shutdown()` affects parent's connection
+
+**Tach Mitigation**:
+
+- Django connections are closed via `connections.close_all()` before each test
+- Tests should not maintain persistent connections to external services
+- Use `@pytest.mark.toxic` for tests that require network isolation
+
+**User Guidance**: If your tests use database connections, ensure your framework re-establishes connections lazily after fork.
+
+---
+
 ## Related Documentation
 
 - [Allocator](allocator.md) - Jemalloc quiesce sequence

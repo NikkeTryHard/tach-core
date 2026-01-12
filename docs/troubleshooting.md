@@ -451,6 +451,17 @@ perf record -g ./target/release/tach-core .
 perf report
 ```
 
+### High-Concurrency Performance (Linux 6.4+)
+
+Under high concurrency (100+ workers), userfaultfd page fault handling may experience latency spikes due to `mmap_lock` contention. Linux 6.4+ includes Per-VMA locking which eliminates this bottleneck.
+
+| Kernel Version | mmap_lock Behavior | High-Concurrency Performance |
+| -------------- | ------------------ | ---------------------------- |
+| < 6.4          | Global lock        | May spike to 50ms under load |
+| >= 6.4         | Per-VMA locking    | Consistent sub-100us         |
+
+**Recommendation**: For production CI with high parallelism, use Linux 6.4+.
+
 ---
 
 ## Docker Issues

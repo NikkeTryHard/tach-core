@@ -641,12 +641,26 @@ sys.breakpointhook = tach_breakpointhook
 
 def inject_entropy():
     """Re-seed RNGs and reset fork-unsafe state to break the Clone Curse."""
+    import os
     import random
     import logging
     import threading
 
     seed = time.time_ns() % (2**32)
     random.seed(seed)
+
+    # Reseed OpenSSL DRBG to prevent identical SSL nonces across forked workers
+    try:
+        import ctypes
+        import ctypes.util
+        ssl_lib_path = ctypes.util.find_library('ssl')
+        if ssl_lib_path:
+            ssl_lib = ctypes.CDLL(ssl_lib_path)
+            ssl_lib.RAND_add.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
+            entropy_bytes = os.urandom(32)
+            ssl_lib.RAND_add(entropy_bytes, 32, 32.0)
+    except Exception:
+        pass  # Best effort - OpenSSL may not be loaded
 
     # CRITICAL: Reset logging module locks after fork
     # The logging module uses RLocks that become corrupted after fork()
