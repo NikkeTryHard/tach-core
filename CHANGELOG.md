@@ -9,6 +9,42 @@ All notable changes to Project Tach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/NikkeTryHard/tach-core/compare/v0.1.4...v0.2.0) (2026-01-12)
+
+
+### Features
+
+* add --no-ignore flag to bypass .ignore/.gitignore in discovery ([913b443](https://github.com/NikkeTryHard/tach-core/commit/913b44312e815ff171795f50b51afef9bd46df3b))
+* add .dockerignore to optimize build context ([196248e](https://github.com/NikkeTryHard/tach-core/commit/196248e344d99f5f5b21c5ab69644d5ca37cc09b))
+* add docker-compose.yml for easy container management ([a44bab1](https://github.com/NikkeTryHard/tach-core/commit/a44bab1f1f048f28ab79370a0903b5cc0261b1a0))
+* add Dockerfile for development environment ([52ac11b](https://github.com/NikkeTryHard/tach-core/commit/52ac11b7c145b5b8d5fd2855aaf98717f9f25d96))
+* add post-create.sh setup script ([9c21f81](https://github.com/NikkeTryHard/tach-core/commit/9c21f81596eb288483a0ea99b83424d607e5bdbf))
+* add VS Code devcontainer.json ([0475562](https://github.com/NikkeTryHard/tach-core/commit/0475562604f4e92f198420f011f4f98602f01ff7))
+* detect and warn about .ignore patterns blocking Python discovery ([884e774](https://github.com/NikkeTryHard/tach-core/commit/884e7741dac2f7f44a63c18831c3aa527519cfb0))
+* integrate research insights for pytest parity ([1067f51](https://github.com/NikkeTryHard/tach-core/commit/1067f5125e48fc23f346896dd3d0aded2eb63b1a))
+* warn about blocking patterns even when some tests found ([7425447](https://github.com/NikkeTryHard/tach-core/commit/7425447b01dc72b13b040839a81565515752fc1e))
+
+
+### Bug Fixes
+
+* add iproute2 to Docker image for network namespace support ([9c3e1b1](https://github.com/NikkeTryHard/tach-core/commit/9c3e1b16033ad7cf22b4c5ce384b3a69bce7a8a7))
+* add llvm-cov target directory to binary path detection ([4d70214](https://github.com/NikkeTryHard/tach-core/commit/4d7021499ea510cd4880772b8f0012a85e7604ce))
+* address code review issues ([5a6e4a1](https://github.com/NikkeTryHard/tach-core/commit/5a6e4a124bacc3c45829723d5601b3a6e08c1f60))
+* address minor code review issues ([b97e335](https://github.com/NikkeTryHard/tach-core/commit/b97e3354c9191ce296b6db7f97dbc0d29d5fcfa3))
+* adjust coverage threshold and improve test stability ([a3992b6](https://github.com/NikkeTryHard/tach-core/commit/a3992b64766f77c0877fee967b1a3ccb262b8cf1))
+* allow write access to project_root in Landlock for OverlayFS ([e8bb534](https://github.com/NikkeTryHard/tach-core/commit/e8bb534bfc390abaeefb8223032fc445ecebf147))
+* **build:** correct rust-version MSRV to 1.88 and fix clippy warnings ([1740388](https://github.com/NikkeTryHard/tach-core/commit/17403881b2ce2fcfcc11735dfff5a69678c768dc))
+* **ci:** move crash signal tests to tests/crash_test/ ([e651bea](https://github.com/NikkeTryHard/tach-core/commit/e651bea1815e29ed916058dcf73925041128ac89))
+* **ci:** split coverage lcov and html generation ([cb35716](https://github.com/NikkeTryHard/tach-core/commit/cb35716bccf66a1d42d24ec82acbc1a5bf4a567c))
+* handle Python 3.14 immortalization behavior in refcount test ([f7e40e0](https://github.com/NikkeTryHard/tach-core/commit/f7e40e03de1a8aed014bad695af6dfc69fa97c45))
+* make golden tests opt-in via GOLDEN_TESTS=1 ([c022a5d](https://github.com/NikkeTryHard/tach-core/commit/c022a5dae546624c7882893abf5ad33ab7ab0310))
+* prioritize release binary in Rust tests and add missing __init__.py ([9895696](https://github.com/NikkeTryHard/tach-core/commit/989569697cee2c311004cf7416c546f493451f81))
+* prioritize release binary in test files for CI compatibility ([9ef6649](https://github.com/NikkeTryHard/tach-core/commit/9ef66498bddccf0afde0fe3bc33154cf09c2b906))
+* resolve remaining CI failures ([10e4a84](https://github.com/NikkeTryHard/tach-core/commit/10e4a84ab307b43fa3e078b4b970033c5958edb5))
+* skip tach-specific tests and improve coverage parsing ([b45c29c](https://github.com/NikkeTryHard/tach-core/commit/b45c29c864f4b790c8e368ec2f79dd72e0bfc3a9))
+* update symlink escape test to target path outside Landlock allow-list ([ecddee7](https://github.com/NikkeTryHard/tach-core/commit/ecddee7e56034b5408c4ab11dd93658d428f3c4a))
+* use correct immortal refcount for Python 3.14 ([8e4beb0](https://github.com/NikkeTryHard/tach-core/commit/8e4beb074848da37cb382edcf57b83f966d7d876))
+
 ## [Unreleased]
 
 See [docs/research/roadmap.md](docs/research/roadmap.md) for the complete development roadmap including:
