@@ -59,13 +59,22 @@ def test_symlink_escape_prevention():
     import pytest
     import tempfile
 
-    # Target a path NOT in Landlock allow-list
-    # /root is not allowed, /etc is (for Python compatibility)
-    target = "/root/.bashrc"
+    # Try multiple targets that should be protected but readable by root
+    # /root is not allowed by Landlock, so symlinks pointing there should fail
+    targets = [
+        "/root/.bashrc",      # Common in containers
+        "/root/.profile",     # Alternative shell config
+        "/root/.bash_profile",  # Another shell config
+    ]
 
-    # Skip if target doesn't exist (non-root environments)
-    if not os.path.exists(target):
-        pytest.skip("Target path doesn't exist")
+    target = None
+    for t in targets:
+        if os.path.exists(t):
+            target = t
+            break
+
+    if target is None:
+        pytest.skip("No suitable symlink target found (no /root files exist)")
 
     # Generate unique symlink path without creating unnecessary file
     symlink_path = tempfile.mktemp(suffix="_symlink")
