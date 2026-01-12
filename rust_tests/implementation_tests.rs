@@ -7,17 +7,30 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-/// Get the path to the built binary (check release first for CI, then debug for local dev)
+/// Get the path to the built binary (check multiple locations for different build profiles)
 fn binary_path() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let release_path = format!("{}/target/release/tach-core", manifest_dir);
-    let debug_path = format!("{}/target/debug/tach-core", manifest_dir);
 
-    if std::path::Path::new(&release_path).exists() {
-        release_path
-    } else {
-        debug_path
+    // Check in priority order:
+    // 1. Release build (for CI)
+    // 2. Debug build (for local dev)
+    // 3. llvm-cov release build (for coverage CI)
+    // 4. llvm-cov debug build (for coverage local)
+    let paths = [
+        format!("{}/target/release/tach-core", manifest_dir),
+        format!("{}/target/debug/tach-core", manifest_dir),
+        format!("{}/target/llvm-cov-target/release/tach-core", manifest_dir),
+        format!("{}/target/llvm-cov-target/debug/tach-core", manifest_dir),
+    ];
+
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            return path.clone();
+        }
     }
+
+    // Fall back to debug path (will error with clear message if not found)
+    paths[1].clone()
 }
 
 /// Get the project root directory

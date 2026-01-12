@@ -16,23 +16,30 @@ use std::process::{Command, Output};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-/// Path to the tach-core binary (built by cargo)
+/// Path to the tach-core binary (check multiple locations for different build profiles)
 fn tach_binary() -> String {
-    // Use the target directory based on profile
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
-    // Try release first (for CI), then debug (for local dev)
-    let release_path = format!("{}/target/release/tach-core", manifest_dir);
-    let debug_path = format!("{}/target/debug/tach-core", manifest_dir);
+    // Check in priority order:
+    // 1. Release build (for CI)
+    // 2. Debug build (for local dev)
+    // 3. llvm-cov release build (for coverage CI)
+    // 4. llvm-cov debug build (for coverage local)
+    let paths = [
+        format!("{}/target/release/tach-core", manifest_dir),
+        format!("{}/target/debug/tach-core", manifest_dir),
+        format!("{}/target/llvm-cov-target/release/tach-core", manifest_dir),
+        format!("{}/target/llvm-cov-target/debug/tach-core", manifest_dir),
+    ];
 
-    if std::path::Path::new(&release_path).exists() {
-        release_path
-    } else if std::path::Path::new(&debug_path).exists() {
-        debug_path
-    } else {
-        // Fall back to cargo run approach
-        "cargo".to_string()
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            return path.clone();
+        }
     }
+
+    // Fall back to cargo run approach
+    "cargo".to_string()
 }
 
 /// Run a command and ensure it doesn't crash (has an exit code)
