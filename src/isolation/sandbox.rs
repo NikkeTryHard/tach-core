@@ -181,7 +181,8 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // Safe write access for project_root: excludes dangerous device/socket creation
     // SECURITY: Prevents device node creation escape attacks via os.mknod()
     // A malicious test could create /dev/sda inside project_root and access host disk
-    // Excluded: MAKE_CHAR, MAKE_BLOCK, MAKE_FIFO, MAKE_SOCK
+    // Safe write operations only - device creation (MAKE_CHAR, MAKE_BLOCK) and
+    // IPC creation (MAKE_FIFO, MAKE_SOCK) are intentionally omitted for security.
     let safe_write_access = AccessFs::ReadFile
         | AccessFs::WriteFile
         | AccessFs::ReadDir

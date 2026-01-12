@@ -673,7 +673,7 @@ fn warn_if_blocking_patterns(cwd: &Path, is_empty: bool, is_json: bool) {
         eprintln!("[tach:discovery] WARNING: No tests discovered!");
         eprintln!("[tach:discovery] These patterns in .ignore may be blocking Python files:");
     } else {
-        eprintln!("[tach:discovery] NOTE: These patterns in .ignore may be blocking some tests:");
+        eprintln!("[tach:discovery] NOTE: These patterns in .ignore may be hiding some tests:");
     }
 
     for pattern in &patterns {
