@@ -16,18 +16,10 @@ fn test_discover_real_project_tests() {
     let result = discover(project_root, false).expect("Discovery should succeed on real project");
 
     // We know the project has at least 1000 tests (from the gauntlet)
-    assert!(
-        result.test_count() >= 100,
-        "Should find many tests in real project, found {}",
-        result.test_count()
-    );
+    assert!(result.test_count() >= 100, "Should find many tests in real project, found {}", result.test_count());
 
     // We know the project has fixtures
-    assert!(
-        result.fixture_count() >= 1,
-        "Should find fixtures in real project, found {}",
-        result.fixture_count()
-    );
+    assert!(result.fixture_count() >= 1, "Should find fixtures in real project, found {}", result.fixture_count());
 }
 
 #[test]
@@ -40,11 +32,7 @@ fn test_discover_empty_temp_directory() {
     let result = discover(temp_dir.path(), false).expect("Discovery should succeed");
 
     assert_eq!(result.test_count(), 0, "Empty dir should have no tests");
-    assert_eq!(
-        result.fixture_count(),
-        0,
-        "Empty dir should have no fixtures"
-    );
+    assert_eq!(result.fixture_count(), 0, "Empty dir should have no fixtures");
 }
 
 #[test]
@@ -86,18 +74,10 @@ fn test_discover_finds_specific_test_files() {
     let result = discover(project_root, false).expect("Discovery should succeed");
 
     // Check that we find tests from known test files
-    let all_test_names: Vec<String> = result
-        .modules
-        .iter()
-        .flat_map(|m| m.tests.iter().map(|t| t.name.clone()))
-        .collect();
+    let all_test_names: Vec<String> = result.modules.iter().flat_map(|m| m.tests.iter().map(|t| t.name.clone())).collect();
 
     // We should find some async tests
-    let has_async_tests = result
-        .modules
-        .iter()
-        .flat_map(|m| &m.tests)
-        .any(|t| t.is_async);
+    let has_async_tests = result.modules.iter().flat_map(|m| &m.tests).any(|t| t.is_async);
 
     assert!(has_async_tests, "Should find at least one async test");
 
@@ -125,19 +105,11 @@ fn test_discover_respects_no_ignore_flag() {
 
     // Without no_ignore, should find nothing (blocked by .ignore)
     let result = discover(dir.path(), false).unwrap();
-    assert!(
-        result.modules.is_empty(),
-        "Should find no tests with .ignore blocking, found {}",
-        result.test_count()
-    );
+    assert!(result.modules.is_empty(), "Should find no tests with .ignore blocking, found {}", result.test_count());
 
     // With no_ignore=true, should find the test
     let result = discover(dir.path(), true).unwrap();
-    assert_eq!(
-        result.modules.len(),
-        1,
-        "Should find test when ignoring .ignore"
-    );
+    assert_eq!(result.modules.len(), 1, "Should find test when ignoring .ignore");
 }
 
 /// Test detection of dangerous patterns in .ignore that block Python file discovery
@@ -175,6 +147,33 @@ fn test_detect_blocking_patterns_safe_ignore() {
     assert!(patterns.is_empty(), "Safe patterns should not be flagged");
 }
 
+/// Test that blocking patterns are detected even when some tests are found
+/// This tests the "proactive warning" feature - patterns should be detected
+/// regardless of whether discovery finds tests or not.
+#[test]
+fn test_detect_blocking_patterns_with_partial_block() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+
+    // Create a test file that won't be blocked
+    fs::write(dir.path().join("test_valid.py"), "def test_pass(): pass").unwrap();
+
+    // Create .ignore that blocks a pattern (but not test_valid.py)
+    let ignore_file = dir.path().join(".ignore");
+    fs::write(&ignore_file, "test_blocked_*.py").unwrap();
+
+    // Verify detection finds the blocking pattern
+    let patterns = tach_core::discovery::detect_blocking_patterns(dir.path());
+    assert!(!patterns.is_empty(), "Should detect blocking pattern");
+    assert!(patterns.iter().any(|p| p.contains("test_blocked")), "Should contain the blocking pattern");
+
+    // Verify discovery still finds the valid test
+    let result = discover(dir.path(), false).unwrap();
+    assert!(!result.modules.is_empty(), "Should find test_valid.py despite blocking pattern");
+}
+
 /// Test fixture scope parsing
 #[test]
 fn test_discover_fixture_scopes() {
@@ -183,16 +182,8 @@ fn test_discover_fixture_scopes() {
     let result = discover(project_root, false).expect("Discovery should succeed");
 
     // Get all fixture scopes
-    let scopes: Vec<_> = result
-        .modules
-        .iter()
-        .flat_map(|m| &m.fixtures)
-        .map(|f| f.scope.clone())
-        .collect();
+    let scopes: Vec<_> = result.modules.iter().flat_map(|m| &m.fixtures).map(|f| f.scope.clone()).collect();
 
     // Should have at least one fixture
-    assert!(
-        !scopes.is_empty(),
-        "Should find at least one fixture with a scope"
-    );
+    assert!(!scopes.is_empty(), "Should find at least one fixture with a scope");
 }
