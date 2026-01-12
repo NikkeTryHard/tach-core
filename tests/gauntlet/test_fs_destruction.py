@@ -59,12 +59,13 @@ def test_symlink_escape_prevention():
     import pytest
     import tempfile
 
-    # Try multiple targets that should be protected but readable by root
-    # /root is not allowed by Landlock, so symlinks pointing there should fail
+    # Try multiple targets - prefer /root (not in Landlock allow list)
+    # Fall back to system files that exist but should be protected
     targets = [
-        "/root/.bashrc",      # Common in containers
+        "/root/.bashrc",      # Common in containers (not in Landlock allow list)
         "/root/.profile",     # Alternative shell config
-        "/root/.bash_profile",  # Another shell config
+        "/etc/shadow",        # Always exists, should be read-protected
+        "/etc/gshadow",       # Always exists, should be read-protected
     ]
 
     target = None
