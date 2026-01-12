@@ -39,10 +39,27 @@ PYTHON_HAS_IMMORTAL = sys.version_info >= (3, 12)
 
 
 def is_immortal(obj) -> bool:
-    """Check if an object is immortal (Python 3.12+ PEP 683)."""
+    """Check if an object is immortal (Python 3.12+ PEP 683).
+
+    In Python 3.12+, small integers, None, True, False are immortal.
+    In Python 3.14+, more aggressive immortalization may apply.
+    """
     if not PYTHON_HAS_IMMORTAL:
         return False
-    return sys.getrefcount(obj) == IMMORTAL_REFCOUNT
+    refcount = sys.getrefcount(obj)
+    # Immortal objects have very high refcounts (either exact IMMORTAL_REFCOUNT
+    # or refcount that doesn't change when creating references)
+    if refcount == IMMORTAL_REFCOUNT:
+        return True
+    # Python 3.14+ may use different immortalization behavior
+    # Test by creating a reference and checking if refcount changes
+    if sys.version_info >= (3, 14):
+        refs = [obj]  # Create a reference
+        new_refcount = sys.getrefcount(obj)
+        del refs
+        # If refcount didn't change, object is effectively immortal
+        return new_refcount == refcount
+    return False
 
 
 class TestJemallocVerification:
