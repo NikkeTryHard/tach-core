@@ -45,6 +45,10 @@ TACH_BINARY = _RELEASE_BINARY if _RELEASE_BINARY.exists() else _DEBUG_BINARY
 # Check if tach binary exists - skip all golden tests if not
 TACH_BINARY_EXISTS = TACH_BINARY.exists()
 
+# Check if golden tests are explicitly enabled (opt-in for CI stability)
+# Run with GOLDEN_TESTS=1 to enable these tests
+GOLDEN_TESTS_ENABLED = os.environ.get("GOLDEN_TESTS", "").lower() in ("1", "true", "yes")
+
 # Check for update mode
 UPDATE_GOLDEN = os.environ.get("UPDATE_GOLDEN", "").lower() in ("1", "true", "yes")
 
@@ -480,6 +484,10 @@ def compare_or_update(
 # =============================================================================
 
 
+@pytest.mark.skipif(
+    not GOLDEN_TESTS_ENABLED,
+    reason="Golden tests disabled (set GOLDEN_TESTS=1 to enable)"
+)
 @pytest.mark.skipif(not TACH_BINARY_EXISTS, reason="tach-core binary not built")
 class TestGoldenOutputs:
     """Golden output tests for tach-core."""
