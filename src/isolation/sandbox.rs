@@ -246,8 +246,10 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
 
     let ruleset = add_path_rule_if_exists(ruleset, "/tmp", all_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, &worker_scratch, all_access)?;
-    // /run is needed for the worker scratch space parent
-    let ruleset = add_path_rule_if_exists(ruleset, "/run", all_access)?;
+    // /run/tach is the parent directory for worker scratch spaces.
+    // SECURITY: Do NOT grant access to /run directly - it contains sensitive files
+    // like docker.sock, systemd state, etc. Workers only need /run/tach/.
+    let ruleset = add_path_rule_if_exists(ruleset, "/run/tach", all_access)?;
 
     // ========================================================================
     // ENFORCE RULESET
