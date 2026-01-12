@@ -42,6 +42,9 @@ _RELEASE_BINARY = PROJECT_ROOT / "target" / "release" / "tach-core"
 _DEBUG_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
 TACH_BINARY = _RELEASE_BINARY if _RELEASE_BINARY.exists() else _DEBUG_BINARY
 
+# Check if tach binary exists - skip all golden tests if not
+TACH_BINARY_EXISTS = TACH_BINARY.exists()
+
 # Check for update mode
 UPDATE_GOLDEN = os.environ.get("UPDATE_GOLDEN", "").lower() in ("1", "true", "yes")
 
@@ -477,16 +480,9 @@ def compare_or_update(
 # =============================================================================
 
 
+@pytest.mark.skipif(not TACH_BINARY_EXISTS, reason="tach-core binary not built")
 class TestGoldenOutputs:
     """Golden output tests for tach-core."""
-
-    @classmethod
-    def setup_class(cls):
-        """Verify tach-core binary exists before running tests."""
-        if not TACH_BINARY.exists():
-            raise RuntimeError(
-                f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build"
-            )
 
     def test_gauntlet_stdout(self):
         """Test stdout output for gauntlet tests."""
