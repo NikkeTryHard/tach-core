@@ -14,13 +14,11 @@ import sys
 
 import pytest
 
-# Get the path to the tach-core binary
-TACH_BINARY = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "target",
-    "debug",
-    "tach-core",
-)
+# Get the path to the tach-core binary (check release first for CI, then debug for local dev)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+_RELEASE_BINARY = os.path.join(_PROJECT_ROOT, "target", "release", "tach-core")
+_DEBUG_BINARY = os.path.join(_PROJECT_ROOT, "target", "debug", "tach-core")
+TACH_BINARY = _RELEASE_BINARY if os.path.exists(_RELEASE_BINARY) else _DEBUG_BINARY
 
 # Set PYO3_PYTHON for version detection
 TACH_ENV = os.environ.copy()

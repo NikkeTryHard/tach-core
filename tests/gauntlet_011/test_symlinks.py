@@ -14,13 +14,11 @@ import tempfile
 
 import pytest
 
-# Path to tach-core binary
-TACH_BINARY = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "target",
-    "debug",
-    "tach-core",
-)
+# Path to tach-core binary (check release first for CI, then debug for local dev)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+_RELEASE_BINARY = os.path.join(_PROJECT_ROOT, "target", "release", "tach-core")
+_DEBUG_BINARY = os.path.join(_PROJECT_ROOT, "target", "debug", "tach-core")
+TACH_BINARY = _RELEASE_BINARY if os.path.exists(_RELEASE_BINARY) else _DEBUG_BINARY
 
 
 def run_tach(*args, check=True, cwd=None):

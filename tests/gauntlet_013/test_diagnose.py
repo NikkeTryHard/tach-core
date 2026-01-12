@@ -22,17 +22,17 @@ import sys
 
 def get_tach_binary():
     """Get the path to the tach-core binary."""
-    # Try debug build first, then release
+    # Try release build first (for CI), then debug (for local dev)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(script_dir))
 
-    debug_path = os.path.join(project_root, "target", "debug", "tach-core")
     release_path = os.path.join(project_root, "target", "release", "tach-core")
+    debug_path = os.path.join(project_root, "target", "debug", "tach-core")
 
-    if os.path.exists(debug_path):
-        return debug_path
-    elif os.path.exists(release_path):
+    if os.path.exists(release_path):
         return release_path
+    elif os.path.exists(debug_path):
+        return debug_path
     return None
 
 

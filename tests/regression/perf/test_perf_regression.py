@@ -35,8 +35,10 @@ TEST_DIR = Path(__file__).parent
 BASELINES_DIR = TEST_DIR / "baselines"
 PROJECT_ROOT = TEST_DIR.parent.parent.parent
 
-# Binary path
-TACH_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
+# Binary path (check release first for CI, then debug for local dev)
+_RELEASE_BINARY = PROJECT_ROOT / "target" / "release" / "tach-core"
+_DEBUG_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
+TACH_BINARY = _RELEASE_BINARY if _RELEASE_BINARY.exists() else _DEBUG_BINARY
 
 # Check for skip/update modes
 SKIP_PERF_TESTS = os.environ.get("SKIP_PERF_TESTS", "").lower() in ("1", "true", "yes")

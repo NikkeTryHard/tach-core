@@ -26,8 +26,10 @@ TEST_DIR = Path(__file__).parent
 SAMPLE_TESTS_DIR = TEST_DIR / "sample_tests"
 PROJECT_ROOT = TEST_DIR.parent.parent.parent
 
-# Binary path
-TACH_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
+# Binary path (check release first for CI, then debug for local dev)
+_RELEASE_BINARY = PROJECT_ROOT / "target" / "release" / "tach-core"
+_DEBUG_BINARY = PROJECT_ROOT / "target" / "debug" / "tach-core"
+TACH_BINARY = _RELEASE_BINARY if _RELEASE_BINARY.exists() else _DEBUG_BINARY
 
 
 def find_venv_python() -> Path:
