@@ -10,15 +10,24 @@ Test Strategy:
    - If cleanup fails: marker module persists, test fails
 
 The tests are named alphabetically to ensure execution order.
+
+NOTE: These tests only pass when running through tach-core with worker isolation.
+When running through regular pytest, they are skipped.
 """
 
+import os
 import sys
+import pytest
 
 
 # Unique marker module name that should NEVER be in baseline
 _POLLUTION_MARKER = "_tach_phase5_pollution_marker_12345"
 
+# Detect if running through tach-core (workers would clean up between tests)
+RUNNING_THROUGH_TACH = os.environ.get("TACH_WORKER_ID") is not None
 
+
+@pytest.mark.skipif(not RUNNING_THROUGH_TACH, reason="Hot reload tests only valid when running through tach-core")
 def test_a_module_pollution_marker_set():
     """First test: Set a pollution marker in sys.modules.
 
@@ -45,6 +54,7 @@ def test_a_module_pollution_marker_set():
     print(f"[test] Set pollution marker: {_POLLUTION_MARKER}")
 
 
+@pytest.mark.skipif(not RUNNING_THROUGH_TACH, reason="Hot reload tests only valid when running through tach-core")
 def test_b_module_pollution_marker_absent():
     """Second test: Verify the pollution marker was cleaned up.
 
