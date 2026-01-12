@@ -652,22 +652,34 @@ fn handle_version_command(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Warn if no tests were discovered and dangerous patterns are detected in .ignore
+/// Warn if dangerous patterns are detected in .ignore that may block tests
 ///
 /// This helper is called from both `execute_session` and `handle_list_command`
 /// to provide actionable feedback when .ignore patterns may be blocking Python files.
+///
+/// - If no tests found: WARNING level (critical - user likely has a problem)
+/// - If some tests found: NOTE level (informational - patterns may be intentional)
 fn warn_if_blocking_patterns(cwd: &Path, is_empty: bool, is_json: bool) {
-    if is_empty && !is_json {
-        let patterns = discovery::detect_blocking_patterns(cwd);
-        if !patterns.is_empty() {
-            eprintln!("[tach:discovery] WARNING: No tests discovered!");
-            eprintln!("[tach:discovery] These patterns in .ignore may be blocking Python files:");
-            for pattern in &patterns {
-                eprintln!("  - {}", pattern);
-            }
-            eprintln!("[tach:discovery] Try running with --no-ignore");
-        }
+    if is_json {
+        return;
     }
+
+    let patterns = discovery::detect_blocking_patterns(cwd);
+    if patterns.is_empty() {
+        return;
+    }
+
+    if is_empty {
+        eprintln!("[tach:discovery] WARNING: No tests discovered!");
+        eprintln!("[tach:discovery] These patterns in .ignore may be blocking Python files:");
+    } else {
+        eprintln!("[tach:discovery] NOTE: These patterns in .ignore may be blocking some tests:");
+    }
+
+    for pattern in &patterns {
+        eprintln!("  - {}", pattern);
+    }
+    eprintln!("[tach:discovery] Try running with --no-ignore to verify.");
 }
 
 /// Handle the `list` subcommand
