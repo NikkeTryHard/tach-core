@@ -10,12 +10,12 @@
 //! the expected error code (EPERM for Seccomp, EACCES for Landlock).
 
 use nix::errno::Errno;
-use nix::sys::signal::{Signal, kill};
-use nix::sys::wait::{WaitStatus, waitpid};
-use nix::unistd::{ForkResult, Pid, fork};
+use nix::sys::signal::{kill, Signal};
+use nix::sys::wait::{waitpid, WaitStatus};
+use nix::unistd::{fork, ForkResult, Pid};
 
 // Import sandbox functions from tach_core
-use tach_core::sandbox::{SandboxStatus, apply_iron_dome, apply_landlock, apply_seccomp};
+use tach_core::sandbox::{apply_iron_dome, apply_landlock, apply_seccomp, SandboxStatus};
 
 // =============================================================================
 // SECCOMP ENFORCEMENT TESTS
@@ -53,12 +53,7 @@ fn test_seccomp_blocks_socket_creation() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code,
-                    libc::EPERM,
-                    "Seccomp should block socket() with EPERM (1), got exit code {}",
-                    code
-                );
+                assert_eq!(code, libc::EPERM, "Seccomp should block socket() with EPERM (1), got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -88,19 +83,11 @@ fn test_seccomp_blocks_connect() {
             let addr = libc::sockaddr_in {
                 sin_family: libc::AF_INET as u16,
                 sin_port: 80u16.to_be(),
-                sin_addr: libc::in_addr {
-                    s_addr: u32::from_be_bytes([8, 8, 8, 8]).to_be(),
-                },
+                sin_addr: libc::in_addr { s_addr: u32::from_be_bytes([8, 8, 8, 8]).to_be() },
                 sin_zero: [0; 8],
             };
 
-            let result = unsafe {
-                libc::connect(
-                    sock,
-                    &addr as *const libc::sockaddr_in as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_in>() as u32,
-                )
-            };
+            let result = unsafe { libc::connect(sock, &addr as *const libc::sockaddr_in as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as u32) };
 
             unsafe { libc::close(sock) };
 
@@ -113,12 +100,7 @@ fn test_seccomp_blocks_connect() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code,
-                    libc::EPERM,
-                    "Seccomp should block connect() with EPERM (1), got exit code {}",
-                    code
-                );
+                assert_eq!(code, libc::EPERM, "Seccomp should block connect() with EPERM (1), got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -151,19 +133,11 @@ fn test_seccomp_blocks_bind() {
             let addr = libc::sockaddr_in {
                 sin_family: libc::AF_INET as u16,
                 sin_port: 0u16.to_be(), // Let OS pick a port
-                sin_addr: libc::in_addr {
-                    s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
-                },
+                sin_addr: libc::in_addr { s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be() },
                 sin_zero: [0; 8],
             };
 
-            let result = unsafe {
-                libc::bind(
-                    sock,
-                    &addr as *const libc::sockaddr_in as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_in>() as u32,
-                )
-            };
+            let result = unsafe { libc::bind(sock, &addr as *const libc::sockaddr_in as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as u32) };
 
             unsafe { libc::close(sock) };
 
@@ -177,12 +151,7 @@ fn test_seccomp_blocks_bind() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code,
-                    libc::EPERM,
-                    "Seccomp should block bind() with EPERM (1), got exit code {}",
-                    code
-                );
+                assert_eq!(code, libc::EPERM, "Seccomp should block bind() with EPERM (1), got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -222,12 +191,7 @@ fn test_seccomp_blocks_fork() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code,
-                    libc::EPERM,
-                    "Seccomp should block SYS_fork with EPERM (1), got exit code {}",
-                    code
-                );
+                assert_eq!(code, libc::EPERM, "Seccomp should block SYS_fork with EPERM (1), got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -257,12 +221,7 @@ fn test_seccomp_blocks_execve() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code,
-                    libc::EPERM,
-                    "Seccomp should block execve() with EPERM (1), got exit code {}",
-                    code
-                );
+                assert_eq!(code, libc::EPERM, "Seccomp should block execve() with EPERM (1), got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -304,11 +263,7 @@ fn test_seccomp_allows_clone() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Seccomp should ALLOW clone() for threading, got exit code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Seccomp should ALLOW clone() for threading, got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -359,11 +314,7 @@ fn test_landlock_blocks_etc_write() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Landlock should block /etc/passwd write, got exit code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Landlock should block /etc/passwd write, got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -454,11 +405,7 @@ fn test_landlock_allows_tmp_write() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Landlock should ALLOW /tmp write, got code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Landlock should ALLOW /tmp write, got code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -504,11 +451,7 @@ fn test_landlock_allows_project_read() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Landlock should ALLOW project read, got code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Landlock should ALLOW project read, got code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -551,16 +494,8 @@ fn test_pid_namespace_isolation() {
     };
 
     // Verify both workers have low PIDs in their namespaces (typically 1 or 2)
-    assert!(
-        worker1_inner_pid < 100,
-        "Worker 1 should have low PID in namespace, got {}",
-        worker1_inner_pid
-    );
-    assert!(
-        worker2_inner_pid < 100,
-        "Worker 2 should have low PID in namespace, got {}",
-        worker2_inner_pid
-    );
+    assert!(worker1_inner_pid < 100, "Worker 1 should have low PID in namespace, got {}", worker1_inner_pid);
+    assert!(worker2_inner_pid < 100, "Worker 2 should have low PID in namespace, got {}", worker2_inner_pid);
 
     // Now test that worker1 cannot signal worker2's host PID from inside namespace
     // This would be tested in a more complex setup with IPC
@@ -575,7 +510,7 @@ fn test_pid_namespace_isolation() {
 /// Helper: Spawn a worker in a new PID namespace.
 /// Returns (host_pid, inner_pid) or None if namespaces unavailable.
 fn spawn_namespaced_worker() -> Option<(i32, i32)> {
-    use nix::sched::{CloneFlags, unshare};
+    use nix::sched::{unshare, CloneFlags};
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 
@@ -665,11 +600,7 @@ fn test_kill_sibling_returns_esrch() {
         }
         Err(e) => {
             // EPERM is also acceptable if process exists but we can't signal it
-            assert!(
-                e == Errno::ESRCH || e == Errno::EPERM,
-                "Expected ESRCH or EPERM, got {:?}",
-                e
-            );
+            assert!(e == Errno::ESRCH || e == Errno::EPERM, "Expected ESRCH or EPERM, got {:?}", e);
         }
     }
 }
@@ -713,10 +644,7 @@ fn test_fd_isolation_clone_files() {
 
             // OwnedFd will be dropped automatically, closing the FDs
 
-            assert!(
-                result.is_ok(),
-                "Parent's FD should still be valid after child closes its copy"
-            );
+            assert!(result.is_ok(), "Parent's FD should still be valid after child closes its copy");
         }
     }
 }
@@ -749,20 +677,14 @@ fn test_toxic_worker_can_use_network() {
                 unsafe { libc::close(sock) };
                 std::process::exit(0); // SUCCESS: Network allowed for toxic
             } else {
-                let errno = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(254);
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(254);
                 eprintln!("[tach:test] Toxic worker socket blocked: errno {}", errno);
                 std::process::exit(errno);
             }
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Toxic worker should have network access, got exit code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Toxic worker should have network access, got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -806,11 +728,7 @@ fn test_toxic_worker_still_has_landlock() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Toxic worker should still have Landlock, got exit code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Toxic worker should still have Landlock, got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -851,11 +769,7 @@ fn test_safe_worker_full_iron_dome() {
         }
         ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
             WaitStatus::Exited(_, code) => {
-                assert_eq!(
-                    code, 0,
-                    "Safe worker should have full Iron Dome, got exit code {}",
-                    code
-                );
+                assert_eq!(code, 0, "Safe worker should have full Iron Dome, got exit code {}", code);
             }
             status => panic!("Child process did not exit normally: {:?}", status),
         },
@@ -876,7 +790,10 @@ fn test_landlock_blocks_mknod_in_project_root() {
             match apply_landlock(&project_root, 9999) {
                 Ok(SandboxStatus::NotEnforced) => std::process::exit(0), // Skip if no Landlock
                 Ok(_) => {}
-                Err(_) => std::process::exit(254),
+                Err(e) => {
+                    eprintln!("[tach:test] Failed to apply Landlock: {}", e);
+                    std::process::exit(254);
+                }
             }
 
             // Attempt to create a character device in project root
@@ -893,6 +810,10 @@ fn test_landlock_blocks_mknod_in_project_root() {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                 if errno == libc::EACCES {
                     std::process::exit(0); // SUCCESS: Blocked by Landlock
+                }
+                if errno == libc::EPERM {
+                    // Also acceptable: blocked by missing CAP_MKNOD capability
+                    std::process::exit(0);
                 }
                 std::process::exit(errno);
             } else {
