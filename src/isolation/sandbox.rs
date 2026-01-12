@@ -437,6 +437,16 @@ pub fn apply_seccomp() -> Result<()> {
     rules.insert(libc::SYS_execveat, vec![]); // Execute program (fd-relative)
 
     // ------------------------------------------------------------------------
+    // MEMORY SYSCALLS
+    // ------------------------------------------------------------------------
+    // Block syscalls that allow cross-process memory access or could
+    // interfere with the supervisor's userfaultfd handling.
+
+    rules.insert(libc::SYS_userfaultfd, vec![]); // Child could interfere with supervisor's UFFD handling
+    rules.insert(libc::SYS_process_vm_readv, vec![]); // Cross-process memory read
+    rules.insert(libc::SYS_process_vm_writev, vec![]); // Cross-process memory write
+
+    // ------------------------------------------------------------------------
     // PRIVILEGE ESCALATION SYSCALLS
     // ------------------------------------------------------------------------
     // Block syscalls that could be used to escape the sandbox or gain
@@ -447,6 +457,10 @@ pub fn apply_seccomp() -> Result<()> {
     rules.insert(libc::SYS_umount2, vec![]); // Unmount filesystems
     rules.insert(libc::SYS_unshare, vec![]); // Create new namespaces
     rules.insert(libc::SYS_setns, vec![]); // Join existing namespaces
+    rules.insert(libc::SYS_keyctl, vec![]); // Kernel keyring manipulation
+    rules.insert(libc::SYS_kexec_load, vec![]); // Load new kernel
+    rules.insert(libc::SYS_init_module, vec![]); // Load kernel modules
+    rules.insert(libc::SYS_finit_module, vec![]); // Load kernel modules from fd
 
     // ========================================================================
     // CREATE SECCOMP FILTER
@@ -830,15 +844,24 @@ mod tests {
         rules.insert(libc::SYS_execve, vec![]);
         rules.insert(libc::SYS_execveat, vec![]);
 
+        // Memory syscalls
+        rules.insert(libc::SYS_userfaultfd, vec![]);
+        rules.insert(libc::SYS_process_vm_readv, vec![]);
+        rules.insert(libc::SYS_process_vm_writev, vec![]);
+
         // Privilege escalation syscalls
         rules.insert(libc::SYS_ptrace, vec![]);
         rules.insert(libc::SYS_mount, vec![]);
         rules.insert(libc::SYS_umount2, vec![]);
         rules.insert(libc::SYS_unshare, vec![]);
         rules.insert(libc::SYS_setns, vec![]);
+        rules.insert(libc::SYS_keyctl, vec![]);
+        rules.insert(libc::SYS_kexec_load, vec![]);
+        rules.insert(libc::SYS_init_module, vec![]);
+        rules.insert(libc::SYS_finit_module, vec![]);
 
-        // Verify we have all 15 blocked syscalls
-        assert_eq!(rules.len(), 15, "Expected 15 blocked syscalls");
+        // Verify we have all 22 blocked syscalls
+        assert_eq!(rules.len(), 22, "Expected 22 blocked syscalls");
 
         // Verify filter creation succeeds
         let filter = SeccompFilter::new(
