@@ -12,10 +12,17 @@
 use serde_json::Value;
 use std::process::{Command, Stdio};
 
-/// Get the path to the built binary
+/// Get the path to the built binary (check release first for CI, then debug for local dev)
 fn binary_path() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    format!("{}/target/debug/tach-core", manifest_dir)
+    let release_path = format!("{}/target/release/tach-core", manifest_dir);
+    let debug_path = format!("{}/target/debug/tach-core", manifest_dir);
+
+    if std::path::Path::new(&release_path).exists() {
+        release_path
+    } else {
+        debug_path
+    }
 }
 
 /// Get the project root directory
