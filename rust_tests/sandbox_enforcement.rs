@@ -861,3 +861,51 @@ fn test_safe_worker_full_iron_dome() {
         },
     }
 }
+
+/// Test that Landlock blocks mknod (device node creation) in project_root.
+///
+/// This verifies the security fix that removed MAKE_CHAR and MAKE_BLOCK
+/// from the project_root permissions to prevent device node escape attacks.
+#[test]
+fn test_landlock_blocks_mknod_in_project_root() {
+    match unsafe { fork() }.expect("fork failed") {
+        ForkResult::Child => {
+            let project_root = std::env::current_dir().expect("Failed to get cwd");
+
+            // Apply Landlock - project_root gets safe_write_access (no MakeChar/MakeBlock)
+            match apply_landlock(&project_root, 9999) {
+                Ok(SandboxStatus::NotEnforced) => std::process::exit(0), // Skip if no Landlock
+                Ok(_) => {}
+                Err(_) => std::process::exit(254),
+            }
+
+            // Attempt to create a character device in project root
+            let path = project_root.join("test_dev_node");
+            let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+
+            // S_IFCHR is character device, makedev(1, 3) is /dev/null
+            let dev = libc::makedev(1, 3);
+            let mode = libc::S_IFCHR | 0o666;
+
+            let result = unsafe { libc::mknod(c_path.as_ptr(), mode, dev) };
+
+            if result == -1 {
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if errno == libc::EACCES {
+                    std::process::exit(0); // SUCCESS: Blocked by Landlock
+                }
+                std::process::exit(errno);
+            } else {
+                // SECURITY FAILURE: mknod succeeded!
+                let _ = std::fs::remove_file(path);
+                std::process::exit(255);
+            }
+        }
+        ForkResult::Parent { child } => match waitpid(child, None).expect("waitpid failed") {
+            WaitStatus::Exited(_, code) => {
+                assert_eq!(code, 0, "mknod should be blocked with EACCES (exit 0)");
+            }
+            status => panic!("Child process did not exit normally: {:?}", status),
+        },
+    }
+}
