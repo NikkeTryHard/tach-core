@@ -35,7 +35,14 @@ fn run_tach(args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(project_root())
         .env("PYTHONHOME", "")
-        .env("PYTHONPATH", format!("{}/.venv/lib/python3.12/site-packages:{}", project_root(), project_root()))
+        .env(
+            "PYTHONPATH",
+            format!(
+                "{}/.venv/lib/python3.12/site-packages:{}",
+                project_root(),
+                project_root()
+            ),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -53,7 +60,14 @@ fn run_tach_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::proces
         .args(args)
         .current_dir(project_root())
         .env("PYTHONHOME", "")
-        .env("PYTHONPATH", format!("{}/.venv/lib/python3.12/site-packages:{}", project_root(), project_root()))
+        .env(
+            "PYTHONPATH",
+            format!(
+                "{}/.venv/lib/python3.12/site-packages:{}",
+                project_root(),
+                project_root()
+            ),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -78,7 +92,11 @@ fn run_tach_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::proces
 #[ignore] // Requires sudo and built binary
 fn test_binary_discovers_tests() {
     // First ensure binary is built
-    let build_status = Command::new("cargo").args(["build"]).current_dir(project_root()).status().expect("Failed to build");
+    let build_status = Command::new("cargo")
+        .args(["build"])
+        .current_dir(project_root())
+        .status()
+        .expect("Failed to build");
     assert!(build_status.success(), "Build should succeed");
 
     let output = run_tach(&["tests/dummy_project/"]);
@@ -86,7 +104,11 @@ fn test_binary_discovers_tests() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should report discovered tests
-    assert!(stderr.contains("Discovered") && stderr.contains("tests"), "Should report discovered tests. Got: {}", stderr);
+    assert!(
+        stderr.contains("Discovered") && stderr.contains("tests"),
+        "Should report discovered tests. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -97,7 +119,14 @@ fn test_binary_runs_simple_test() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should show test running or at least Zygote creation
-    assert!(stderr.contains("test_simple") || stderr.contains("Complete") || stderr.contains("Zygote") || stderr.contains("Discovered"), "Should attempt to run tests. Got: {}", stderr);
+    assert!(
+        stderr.contains("test_simple")
+            || stderr.contains("Complete")
+            || stderr.contains("Zygote")
+            || stderr.contains("Discovered"),
+        "Should attempt to run tests. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -108,7 +137,11 @@ fn test_binary_handles_env_vars() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should load env vars from pyproject.toml
-    assert!(stderr.contains("[config] Set env:"), "Should load env vars. Got: {}", stderr);
+    assert!(
+        stderr.contains("[config] Set env:"),
+        "Should load env vars. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -119,7 +152,11 @@ fn test_binary_reports_pass_fail_counts() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should report pass/fail counts
-    assert!(stderr.contains("passed") || stderr.contains("failed") || stderr.contains("Complete"), "Should report test results. Got: {}", stderr);
+    assert!(
+        stderr.contains("passed") || stderr.contains("failed") || stderr.contains("Complete"),
+        "Should report test results. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -130,7 +167,11 @@ fn test_binary_creates_zygote() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should show Zygote creation
-    assert!(stderr.contains("Zygote") || stderr.contains("zygote"), "Should create Zygote. Got: {}", stderr);
+    assert!(
+        stderr.contains("Zygote") || stderr.contains("zygote"),
+        "Should create Zygote. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -141,7 +182,14 @@ fn test_binary_handles_async_tests() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should discover async tests (even if execution fails due to env)
-    assert!(stderr.contains("async") || stderr.contains("Complete") || stderr.contains("Discovered") || stderr.contains("Zygote"), "Should discover async tests. Got: {}", stderr);
+    assert!(
+        stderr.contains("async")
+            || stderr.contains("Complete")
+            || stderr.contains("Discovered")
+            || stderr.contains("Zygote"),
+        "Should discover async tests. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -152,7 +200,14 @@ fn test_binary_isolation_protects_host() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should either show isolation working or at least discover the test
-    assert!(stderr.contains("protected") || stderr.contains("Read-only") || stderr.contains("Discovered") || stderr.contains("Zygote"), "Should show isolation or discovery. Got: {}", stderr);
+    assert!(
+        stderr.contains("protected")
+            || stderr.contains("Read-only")
+            || stderr.contains("Discovered")
+            || stderr.contains("Zygote"),
+        "Should show isolation or discovery. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -164,7 +219,14 @@ fn test_binary_handles_missing_directory() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Either error message or empty results
-    assert!(stderr.contains("error") || stderr.contains("Error") || stderr.contains("No tests") || stderr.contains("0 tests"), "Should handle missing directory. Got: {}", stderr);
+    assert!(
+        stderr.contains("error")
+            || stderr.contains("Error")
+            || stderr.contains("No tests")
+            || stderr.contains("0 tests"),
+        "Should handle missing directory. Got: {}",
+        stderr
+    );
 }
 
 // =============================================================================
@@ -179,7 +241,11 @@ fn test_binary_list_command_human() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should output test names in human format
-    assert!(stderr.contains("test_") || stderr.contains("::"), "List command should output test names. Got: {}", stderr);
+    assert!(
+        stderr.contains("test_") || stderr.contains("::"),
+        "List command should output test names. Got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -190,7 +256,11 @@ fn test_binary_list_command_json() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should output valid JSON with tests array
-    assert!(stdout.contains("\"tests\"") && stdout.contains("["), "JSON list should contain tests array. Got: {}", stdout);
+    assert!(
+        stdout.contains("\"tests\"") && stdout.contains("["),
+        "JSON list should contain tests array. Got: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -204,7 +274,11 @@ fn test_binary_json_format_to_stdout() {
     assert!(!stdout.is_empty(), "JSON output should be on stdout");
 
     // Should be parseable JSON
-    assert!(stdout.starts_with("{") || stdout.starts_with("["), "JSON output should start with {{ or [. Got: {}", &stdout[..stdout.len().min(100)]);
+    assert!(
+        stdout.starts_with("{") || stdout.starts_with("["),
+        "JSON output should start with {{ or [. Got: {}",
+        &stdout[..stdout.len().min(100)]
+    );
 }
 
 #[test]
@@ -212,11 +286,18 @@ fn test_binary_json_format_to_stdout() {
 fn test_binary_help_shows_watch_flag() {
     let binary = binary_path();
 
-    let output = Command::new(&binary).arg("--help").output().expect("Failed to run --help");
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(stdout.contains("--watch") || stdout.contains("-w"), "Help should show --watch flag. Got: {}", stdout);
+    assert!(
+        stdout.contains("--watch") || stdout.contains("-w"),
+        "Help should show --watch flag. Got: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -224,11 +305,18 @@ fn test_binary_help_shows_watch_flag() {
 fn test_binary_help_shows_format_flag() {
     let binary = binary_path();
 
-    let output = Command::new(&binary).arg("--help").output().expect("Failed to run --help");
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(stdout.contains("--format"), "Help should show --format flag. Got: {}", stdout);
+    assert!(
+        stdout.contains("--format"),
+        "Help should show --format flag. Got: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -236,11 +324,18 @@ fn test_binary_help_shows_format_flag() {
 fn test_binary_help_shows_junit_xml_flag() {
     let binary = binary_path();
 
-    let output = Command::new(&binary).arg("--help").output().expect("Failed to run --help");
+    let output = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("Failed to run --help");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(stdout.contains("--junit-xml"), "Help should show --junit-xml flag. Got: {}", stdout);
+    assert!(
+        stdout.contains("--junit-xml"),
+        "Help should show --junit-xml flag. Got: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -251,5 +346,9 @@ fn test_binary_json_discovery_has_line_numbers() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // JSON should contain line numbers for tests
-    assert!(stdout.contains("\"line\""), "JSON discovery should include line numbers. Got: {}", stdout);
+    assert!(
+        stdout.contains("\"line\""),
+        "JSON discovery should include line numbers. Got: {}",
+        stdout
+    );
 }

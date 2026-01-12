@@ -43,9 +43,17 @@ fn run_command(args: &[&str]) -> Output {
         // Use cargo run for cases where binary isn't built yet
         let mut cmd_args = vec!["run", "--quiet", "--"];
         cmd_args.extend(args);
-        Command::new("cargo").args(&cmd_args).current_dir(env!("CARGO_MANIFEST_DIR")).output().expect("Failed to execute cargo run")
+        Command::new("cargo")
+            .args(&cmd_args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("Failed to execute cargo run")
     } else {
-        Command::new(&binary).args(args).current_dir(env!("CARGO_MANIFEST_DIR")).output().expect("Failed to execute tach-core binary")
+        Command::new(&binary)
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("Failed to execute tach-core binary")
     }
 }
 
@@ -96,7 +104,11 @@ fn run_command_with_timeout(args: &[&str], timeout_secs: u64) -> Option<Output> 
                 })
                 .unwrap_or_default();
 
-            Some(Output { status, stdout, stderr })
+            Some(Output {
+                status,
+                stdout,
+                stderr,
+            })
         }
         Ok(None) => {
             // Timeout - kill the process
@@ -126,22 +138,42 @@ fn test_self_test_reports_kernel_features() {
     let output = run_command(&["self-test"]);
 
     // Process should have exited (not crashed)
-    assert!(output.status.code().is_some(), "self-test should exit with a code, not crash");
+    assert!(
+        output.status.code().is_some(),
+        "self-test should exit with a code, not crash"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT contain panic indicators
-    assert!(!combined.contains("panicked at"), "self-test should not panic");
-    assert!(!combined.contains("SIGSEGV"), "self-test should not segfault");
-    assert!(!combined.contains("stack backtrace"), "self-test should not produce backtrace from crash");
+    assert!(
+        !combined.contains("panicked at"),
+        "self-test should not panic"
+    );
+    assert!(
+        !combined.contains("SIGSEGV"),
+        "self-test should not segfault"
+    );
+    assert!(
+        !combined.contains("stack backtrace"),
+        "self-test should not produce backtrace from crash"
+    );
 
     // Should report on key features (present in diagnostics output)
     // These are the feature names from diagnostics.rs
-    let has_diagnostic_output = combined.contains("Kernel Version") || combined.contains("userfaultfd") || combined.contains("Landlock") || combined.contains("Seccomp") || combined.contains("Pre-Flight Diagnostics");
+    let has_diagnostic_output = combined.contains("Kernel Version")
+        || combined.contains("userfaultfd")
+        || combined.contains("Landlock")
+        || combined.contains("Seccomp")
+        || combined.contains("Pre-Flight Diagnostics");
 
-    assert!(has_diagnostic_output, "self-test should report kernel features. Got: {}", combined);
+    assert!(
+        has_diagnostic_output,
+        "self-test should report kernel features. Got: {}",
+        combined
+    );
 }
 
 /// Test that self-test produces [PASS] or [WARN] or [FAIL] markers.
@@ -154,9 +186,14 @@ fn test_self_test_produces_status_markers() {
     let combined = format!("{}{}", stdout, stderr);
 
     // Should contain at least one status marker
-    let has_status_marker = combined.contains("[PASS]") || combined.contains("[WARN]") || combined.contains("[FAIL]");
+    let has_status_marker =
+        combined.contains("[PASS]") || combined.contains("[WARN]") || combined.contains("[FAIL]");
 
-    assert!(has_status_marker, "self-test should produce [PASS]/[WARN]/[FAIL] markers. Got: {}", combined);
+    assert!(
+        has_status_marker,
+        "self-test should produce [PASS]/[WARN]/[FAIL] markers. Got: {}",
+        combined
+    );
 }
 
 // =============================================================================
@@ -179,10 +216,17 @@ fn test_no_isolation_mode_flag_recognized() {
     let combined = format!("{}{}", stdout, stderr);
 
     // Process should complete successfully
-    assert!(output.status.code().is_some(), "--help should exit with a code");
+    assert!(
+        output.status.code().is_some(),
+        "--help should exit with a code"
+    );
 
     // Should recognize --no-isolation flag
-    assert!(combined.contains("no-isolation") || combined.contains("NO_ISOLATION"), "--help should show --no-isolation flag. Got: {}", combined);
+    assert!(
+        combined.contains("no-isolation") || combined.contains("NO_ISOLATION"),
+        "--help should show --no-isolation flag. Got: {}",
+        combined
+    );
 }
 
 /// Test that --no-isolation with --dry-run works without crashing.
@@ -198,26 +242,50 @@ fn test_no_isolation_with_dry_run() {
     // Run with --no-isolation --dry-run on the temp directory
     let binary = tach_binary();
     let output = if binary == "cargo" {
-        Command::new("cargo").args(["run", "--quiet", "--", "--no-isolation", "--dry-run"]).arg(temp_dir.path()).current_dir(env!("CARGO_MANIFEST_DIR")).output().expect("Failed to execute")
+        Command::new("cargo")
+            .args(["run", "--quiet", "--", "--no-isolation", "--dry-run"])
+            .arg(temp_dir.path())
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("Failed to execute")
     } else {
-        Command::new(&binary).args(["--no-isolation", "--dry-run"]).arg(temp_dir.path()).output().expect("Failed to execute")
+        Command::new(&binary)
+            .args(["--no-isolation", "--dry-run"])
+            .arg(temp_dir.path())
+            .output()
+            .expect("Failed to execute")
     };
 
     // Should complete without crashing
-    assert!(output.status.code().is_some(), "--no-isolation --dry-run should not crash");
+    assert!(
+        output.status.code().is_some(),
+        "--no-isolation --dry-run should not crash"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT contain panic
-    assert!(!combined.contains("panicked at"), "--no-isolation should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "--no-isolation should not panic"
+    );
 
     // Should indicate isolation is disabled OR complete normally
     // (Output varies based on whether tests were found)
-    let valid_output = combined.contains("Isolation disabled") || combined.contains("No tests") || combined.contains("dry-run") || combined.contains("DRY RUN") || combined.contains("test_dummy") || output.status.success();
+    let valid_output = combined.contains("Isolation disabled")
+        || combined.contains("No tests")
+        || combined.contains("dry-run")
+        || combined.contains("DRY RUN")
+        || combined.contains("test_dummy")
+        || output.status.success();
 
-    assert!(valid_output, "--no-isolation --dry-run should work. Got: {}", combined);
+    assert!(
+        valid_output,
+        "--no-isolation --dry-run should work. Got: {}",
+        combined
+    );
 }
 
 // =============================================================================
@@ -233,18 +301,28 @@ fn test_graceful_degradation_version_command() {
     // The version command should work regardless of kernel features
     let output = run_command(&["version"]);
 
-    assert!(output.status.code().is_some(), "version command should exit with a code");
+    assert!(
+        output.status.code().is_some(),
+        "version command should exit with a code"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT panic
-    assert!(!combined.contains("panicked at"), "version should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "version should not panic"
+    );
 
     // Should show version info
     let shows_version = combined.contains("tach") || combined.contains(env!("CARGO_PKG_VERSION"));
-    assert!(shows_version, "version command should show version info. Got: {}", combined);
+    assert!(
+        shows_version,
+        "version command should show version info. Got: {}",
+        combined
+    );
 }
 
 /// Test that listing tests works without requiring isolation features.
@@ -253,30 +331,54 @@ fn test_list_command_no_isolation_required() {
     // Create a minimal test directory
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let test_file = temp_dir.path().join("test_example.py");
-    std::fs::write(&test_file, "def test_a():\n    pass\n\ndef test_b():\n    pass\n").expect("Failed to write test file");
+    std::fs::write(
+        &test_file,
+        "def test_a():\n    pass\n\ndef test_b():\n    pass\n",
+    )
+    .expect("Failed to write test file");
 
     // Note: The path must come BEFORE the subcommand in the CLI
     // Usage: tach-core [OPTIONS] [PATH] [COMMAND]
     let binary = tach_binary();
     let output = if binary == "cargo" {
-        Command::new("cargo").args(["run", "--quiet", "--"]).arg(temp_dir.path()).arg("list").current_dir(env!("CARGO_MANIFEST_DIR")).output().expect("Failed to execute")
+        Command::new("cargo")
+            .args(["run", "--quiet", "--"])
+            .arg(temp_dir.path())
+            .arg("list")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("Failed to execute")
     } else {
-        Command::new(&binary).arg(temp_dir.path()).arg("list").output().expect("Failed to execute")
+        Command::new(&binary)
+            .arg(temp_dir.path())
+            .arg("list")
+            .output()
+            .expect("Failed to execute")
     };
 
     // Should complete without crashing
-    assert!(output.status.code().is_some(), "list command should not crash");
+    assert!(
+        output.status.code().is_some(),
+        "list command should not crash"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT panic
-    assert!(!combined.contains("panicked at"), "list command should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "list command should not panic"
+    );
 
     // Should list the tests we created
     let has_tests = combined.contains("test_a") || combined.contains("test_b");
-    assert!(has_tests || combined.contains("No tests") || output.status.success(), "list command should show tests or complete successfully. Got: {}", combined);
+    assert!(
+        has_tests || combined.contains("No tests") || output.status.success(),
+        "list command should show tests or complete successfully. Got: {}",
+        combined
+    );
 }
 
 // =============================================================================
@@ -293,21 +395,33 @@ fn test_version_verbose_shows_landlock_status() {
     // Usage: tach-core [OPTIONS] [PATH] [COMMAND]
     let output = run_command(&["-v", "version"]);
 
-    assert!(output.status.code().is_some(), "-v version should exit with a code");
+    assert!(
+        output.status.code().is_some(),
+        "-v version should exit with a code"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT panic
-    assert!(!combined.contains("panicked at"), "-v version should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "-v version should not panic"
+    );
 
     // Verbose mode should show Landlock status
     // Note: On systems where Landlock is available, it shows "ABI vN"
     // On older systems, it shows "unavailable"
-    let shows_landlock_info = combined.contains("Landlock") || combined.contains("Capabilities") || combined.contains("ABI");
+    let shows_landlock_info = combined.contains("Landlock")
+        || combined.contains("Capabilities")
+        || combined.contains("ABI");
 
-    assert!(shows_landlock_info, "-v version should show Landlock status. Got: {}", combined);
+    assert!(
+        shows_landlock_info,
+        "-v version should show Landlock status. Got: {}",
+        combined
+    );
 }
 
 /// Test that self-test reports Landlock status appropriately.
@@ -323,16 +437,26 @@ fn test_landlock_status_in_self_test() {
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT crash
-    assert!(output.status.code().is_some(), "self-test should not crash when checking Landlock");
+    assert!(
+        output.status.code().is_some(),
+        "self-test should not crash when checking Landlock"
+    );
 
     // Should report on Landlock
     let mentions_landlock = combined.contains("Landlock");
-    assert!(mentions_landlock, "self-test should mention Landlock. Got: {}", combined);
+    assert!(
+        mentions_landlock,
+        "self-test should mention Landlock. Got: {}",
+        combined
+    );
 
     // If Landlock is unavailable, should be a WARN not a crash
     if combined.contains("unavailable") || combined.contains("Unavailable") {
         // This is graceful degradation - the test passes
-        assert!(combined.contains("[WARN]") || combined.contains("[PASS]"), "Landlock unavailability should be handled gracefully");
+        assert!(
+            combined.contains("[WARN]") || combined.contains("[PASS]"),
+            "Landlock unavailability should be handled gracefully"
+        );
     }
 }
 
@@ -354,18 +478,33 @@ fn test_version_command_shows_capabilities() {
     // Usage: tach-core [OPTIONS] [PATH] [COMMAND]
     let output = run_command(&["-v", "version"]);
 
-    assert!(output.status.success() || output.status.code().is_some(), "-v version should complete");
+    assert!(
+        output.status.success() || output.status.code().is_some(),
+        "-v version should complete"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT panic
-    assert!(!combined.contains("panicked at"), "-v version should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "-v version should not panic"
+    );
 
     // Should show various capability information
     // Note: exact format depends on system, but should have some of these
-    let capability_indicators = ["userfaultfd", "Landlock", "Seccomp", "Python", "Kernel", "Capabilities", "Allocator", "Jemalloc"];
+    let capability_indicators = [
+        "userfaultfd",
+        "Landlock",
+        "Seccomp",
+        "Python",
+        "Kernel",
+        "Capabilities",
+        "Allocator",
+        "Jemalloc",
+    ];
 
     let mut found_indicators = 0;
     for indicator in &capability_indicators {
@@ -374,7 +513,11 @@ fn test_version_command_shows_capabilities() {
         }
     }
 
-    assert!(found_indicators >= 2, "-v version should show at least 2 capability indicators. Got: {}", combined);
+    assert!(
+        found_indicators >= 2,
+        "-v version should show at least 2 capability indicators. Got: {}",
+        combined
+    );
 }
 
 // =============================================================================
@@ -393,7 +536,11 @@ fn test_help_command_works() {
     let combined = format!("{}{}", stdout, stderr);
 
     // Should show usage information
-    assert!(combined.contains("Usage") || combined.contains("USAGE") || combined.contains("tach"), "--help should show usage. Got: {}", combined);
+    assert!(
+        combined.contains("Usage") || combined.contains("USAGE") || combined.contains("tach"),
+        "--help should show usage. Got: {}",
+        combined
+    );
 }
 
 /// Test that invalid subcommand doesn't crash, just shows error.
@@ -402,17 +549,27 @@ fn test_invalid_subcommand_graceful() {
     let output = run_command(&["nonexistent-command"]);
 
     // Should exit with an error code, not crash
-    assert!(output.status.code().is_some(), "Invalid subcommand should exit with a code, not crash");
+    assert!(
+        output.status.code().is_some(),
+        "Invalid subcommand should exit with a code, not crash"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
 
     // Should NOT panic
-    assert!(!combined.contains("panicked at"), "Invalid subcommand should not panic");
+    assert!(
+        !combined.contains("panicked at"),
+        "Invalid subcommand should not panic"
+    );
 
     // Should show an error message
-    assert!(combined.contains("error") || combined.contains("Error") || !output.status.success(), "Invalid subcommand should produce an error. Got: {}", combined);
+    assert!(
+        combined.contains("error") || combined.contains("Error") || !output.status.success(),
+        "Invalid subcommand should produce an error. Got: {}",
+        combined
+    );
 }
 
 /// Test that self-test doesn't hang (with timeout).
@@ -421,10 +578,16 @@ fn test_self_test_completes_in_reasonable_time() {
     // self-test should complete within 30 seconds
     let result = run_command_with_timeout(&["self-test"], 30);
 
-    assert!(result.is_some(), "self-test should complete within 30 seconds, not hang");
+    assert!(
+        result.is_some(),
+        "self-test should complete within 30 seconds, not hang"
+    );
 
     let output = result.unwrap();
-    assert!(output.status.code().is_some(), "self-test should have an exit code");
+    assert!(
+        output.status.code().is_some(),
+        "self-test should have an exit code"
+    );
 }
 
 /// Test that version command is fast (doesn't do heavy initialization).
@@ -450,9 +613,15 @@ fn test_self_test_reports_jemalloc() {
     let combined = format!("{}{}", stdout, stderr);
 
     // Should mention jemalloc (either PASS or FAIL)
-    let mentions_allocator = combined.contains("Jemalloc") || combined.contains("jemalloc") || combined.contains("allocator");
+    let mentions_allocator = combined.contains("Jemalloc")
+        || combined.contains("jemalloc")
+        || combined.contains("allocator");
 
-    assert!(mentions_allocator, "self-test should report allocator status. Got: {}", combined);
+    assert!(
+        mentions_allocator,
+        "self-test should report allocator status. Got: {}",
+        combined
+    );
 }
 
 // =============================================================================
@@ -471,12 +640,19 @@ fn test_userfaultfd_status_reported() {
     // Should mention userfaultfd
     let mentions_uffd = combined.contains("userfaultfd");
 
-    assert!(mentions_uffd, "self-test should report userfaultfd status. Got: {}", combined);
+    assert!(
+        mentions_uffd,
+        "self-test should report userfaultfd status. Got: {}",
+        combined
+    );
 
     // If userfaultfd is unavailable, it should be handled gracefully
     // (shown as WARN or FAIL with explanation, not a panic)
     if combined.contains("Disabled") || combined.contains("Unavailable") {
-        assert!(!combined.contains("panicked"), "userfaultfd unavailability should not cause panic");
+        assert!(
+            !combined.contains("panicked"),
+            "userfaultfd unavailability should not cause panic"
+        );
     }
 }
 
@@ -496,7 +672,11 @@ fn test_seccomp_status_reported() {
     // Should mention Seccomp
     let mentions_seccomp = combined.contains("Seccomp") || combined.contains("seccomp");
 
-    assert!(mentions_seccomp, "self-test should report Seccomp status. Got: {}", combined);
+    assert!(
+        mentions_seccomp,
+        "self-test should report Seccomp status. Got: {}",
+        combined
+    );
 }
 
 /// Test that Seccomp unavailability doesn't crash tach.
@@ -507,8 +687,14 @@ fn test_seccomp_unavailable_graceful() {
     let output = run_command(&["self-test"]);
 
     // Should complete without crashing
-    assert!(output.status.code().is_some(), "self-test should complete even if Seccomp is unavailable");
+    assert!(
+        output.status.code().is_some(),
+        "self-test should complete even if Seccomp is unavailable"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("panicked at"), "Seccomp checks should not cause panics");
+    assert!(
+        !stderr.contains("panicked at"),
+        "Seccomp checks should not cause panics"
+    );
 }
