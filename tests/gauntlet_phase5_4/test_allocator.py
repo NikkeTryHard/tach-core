@@ -33,8 +33,11 @@ except ImportError:
     TACH_RUST_AVAILABLE = False
 
 # Python 3.12+ uses immortal objects (PEP 683)
-# Immortal objects have refcount = 0xFFFFFFFF (4294967295)
-IMMORTAL_REFCOUNT = 0xFFFFFFFF
+# Immortal objects have refcount = 0xFFFFFFFF (4294967295) in Python 3.12-3.13
+# In Python 3.14+, the immortal refcount changed to 0xC0000000 (3221225472)
+IMMORTAL_REFCOUNT_OLD = 0xFFFFFFFF  # 4294967295 - Python 3.12-3.13
+IMMORTAL_REFCOUNT_NEW = 0xC0000000  # 3221225472 - Python 3.14+
+IMMORTAL_REFCOUNT = IMMORTAL_REFCOUNT_NEW if sys.version_info >= (3, 14) else IMMORTAL_REFCOUNT_OLD
 PYTHON_HAS_IMMORTAL = sys.version_info >= (3, 12)
 
 
@@ -42,24 +45,15 @@ def is_immortal(obj) -> bool:
     """Check if an object is immortal (Python 3.12+ PEP 683).
 
     In Python 3.12+, small integers, None, True, False are immortal.
-    In Python 3.14+, more aggressive immortalization may apply.
+    The immortal refcount value differs between Python versions:
+    - Python 3.12-3.13: 0xFFFFFFFF
+    - Python 3.14+: 0xC0000000
     """
     if not PYTHON_HAS_IMMORTAL:
         return False
     refcount = sys.getrefcount(obj)
-    # Immortal objects have very high refcounts (either exact IMMORTAL_REFCOUNT
-    # or refcount that doesn't change when creating references)
-    if refcount == IMMORTAL_REFCOUNT:
-        return True
-    # Python 3.14+ may use different immortalization behavior
-    # Test by creating a reference and checking if refcount changes
-    if sys.version_info >= (3, 14):
-        refs = [obj]  # Create a reference
-        new_refcount = sys.getrefcount(obj)
-        del refs
-        # If refcount didn't change, object is effectively immortal
-        return new_refcount == refcount
-    return False
+    # Check against both known immortal refcount values for robustness
+    return refcount in (IMMORTAL_REFCOUNT_OLD, IMMORTAL_REFCOUNT_NEW)
 
 
 class TestJemallocVerification:
