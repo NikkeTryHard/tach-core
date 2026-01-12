@@ -178,6 +178,20 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     let all_access = AccessFs::from_all(abi);
     let read_access = AccessFs::from_read(abi);
 
+    // Safe write access for project_root: excludes dangerous device/socket creation
+    // SECURITY: Prevents device node creation escape attacks via os.mknod()
+    // A malicious test could create /dev/sda inside project_root and access host disk
+    // Excluded: MAKE_CHAR, MAKE_BLOCK, MAKE_FIFO, MAKE_SOCK
+    let safe_write_access = AccessFs::ReadFile
+        | AccessFs::WriteFile
+        | AccessFs::ReadDir
+        | AccessFs::RemoveDir
+        | AccessFs::RemoveFile
+        | AccessFs::MakeDir
+        | AccessFs::MakeReg
+        | AccessFs::MakeSym
+        | AccessFs::Execute;
+
     // ========================================================================
     // CREATE RULESET
     // ========================================================================
@@ -200,13 +214,14 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     // - Configuration (/etc - Python configs, SSL certs, timezone)
     // - Device nodes (/dev - /dev/null, /dev/urandom, /dev/zero)
     //
-    // NOTE: project_root is added with all_access below because OverlayFS
-    // needs write access to the underlying filesystem for proper operation.
+    // NOTE: project_root is added with safe_write_access below which allows
+    // normal file operations but blocks device node creation (MAKE_CHAR/BLOCK).
 
-    // Project root needs full access for OverlayFS to work correctly.
+    // Project root needs write access for OverlayFS to work correctly.
     // The overlay provides copy-on-write isolation, but Landlock must allow
     // the underlying operations for the overlay mount to function.
-    let ruleset = add_path_rule(ruleset, &project_root, all_access)?;
+    // SECURITY: Use safe_write_access to prevent device node creation attacks
+    let ruleset = add_path_rule(ruleset, &project_root, safe_write_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/usr", read_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/lib", read_access)?;
     let ruleset = add_path_rule_if_exists(ruleset, "/lib64", read_access)?;
