@@ -402,9 +402,15 @@ class TestOuter:
     );
 
     // Document whether nested classes are supported
-    // If this assertion fails, nested classes are NOT supported (known limitation)
-    // If it passes, nested classes ARE supported
     let has_nested = test_names.iter().any(|n| n.contains("TestInner"));
+
+    // Assert current behavior: nested TestClass is NOT supported
+    // If this starts passing, update docs to reflect new capability
+    assert!(
+        !has_nested,
+        "Nested TestClass support has changed - update documentation if this is intentional"
+    );
+
     println!(
         "Nested TestClass support: {}",
         if has_nested {
