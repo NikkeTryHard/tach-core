@@ -172,14 +172,17 @@ pub fn discover_with_toxicity_options(
     // 1. Run standard discovery (finds test files and fixtures)
     let discovery = discovery::discover(root, no_ignore)?;
 
-    // 2. Collect ALL Python files in project (not just test modules)
+    // 2. Build hook registry from discovered hooks
+    let registry = discovery.build_hook_registry();
+
+    // 3. Collect ALL Python files in project (not just test modules)
     // This is critical for transitive toxicity propagation:
     // If test_foo.py imports helper.py which imports threading,
     // we need helper.py in the graph to propagate toxicity to test_foo.py
     let all_py_files = collect_all_py_files(root);
 
-    // 3. Build toxicity graph (analyzes all files and propagates toxicity)
-    let graph = ToxicityGraph::build(&all_py_files, root);
+    // 4. Build toxicity graph (analyzes all files, includes hook toxicity, propagates)
+    let graph = ToxicityGraph::build(&all_py_files, root, &registry);
 
     Ok((discovery, graph))
 }
