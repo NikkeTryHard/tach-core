@@ -98,6 +98,11 @@ impl HookRegistry {
     pub fn get_hooks_for_file(&self, path: &std::path::Path) -> Vec<&Hook> {
         self.hooks.values().flatten().filter(|h| h.source == path).collect()
     }
+
+    /// Get all registered hooks (for debugging)
+    pub fn all_hooks(&self) -> impl Iterator<Item = &Hook> {
+        self.hooks.values().flatten()
+    }
 }
 
 /// Well-known pytest hooks with their specifications

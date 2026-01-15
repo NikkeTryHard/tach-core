@@ -116,16 +116,24 @@ impl DiscoveryResult {
     }
 
     /// Build a HookRegistry from discovered hooks
-    pub fn build_hook_registry(&self) -> HookRegistry {
+    ///
+    /// # Arguments
+    /// * `project_root` - The project root directory for path resolution.
+    ///   Hook sources will be stored as canonical absolute paths to match
+    ///   how ToxicityGraph looks them up.
+    pub fn build_hook_registry(&self, project_root: &std::path::Path) -> HookRegistry {
         let specs = builtin_hook_specs();
         let mut registry = HookRegistry::new();
 
         for module in &self.modules {
             for hook_def in &module.hooks {
                 if let Some(spec) = specs.get(&hook_def.name) {
+                    // Build absolute path and canonicalize to match ToxicityGraph lookup
+                    let abs_path = project_root.join(&module.path);
+                    let source = abs_path.canonicalize().unwrap_or(abs_path);
                     registry.register(Hook {
                         spec: spec.clone(),
-                        source: module.path.clone(),
+                        source,
                         function_name: hook_def.name.clone(),
                         line_number: hook_def.line_number,
                     });

@@ -121,14 +121,22 @@ fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
         .filter(|e| {
             let path = e.path();
             // Include only .py files
-            path.extension().is_some_and(|ext| ext == "py")
-                // Exclude hidden directories, __pycache__, .git, etc.
-                && !path.ancestors().any(|p| {
-                    p.file_name().is_some_and(|name| {
-                        let n = name.to_string_lossy();
-                        n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
-                    })
+            if !path.extension().is_some_and(|ext| ext == "py") {
+                return false;
+            }
+            // Get path relative to root to avoid filtering out files when root
+            // itself is under a dot-prefixed directory (e.g., /tmp/.tmpXXX)
+            let rel_path = match path.strip_prefix(root) {
+                Ok(p) => p,
+                Err(_) => return true, // Keep files we can't make relative
+            };
+            // Exclude hidden directories, __pycache__, .git, etc. within the project
+            !rel_path.ancestors().any(|p| {
+                p.file_name().is_some_and(|name| {
+                    let n = name.to_string_lossy();
+                    n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
                 })
+            })
         })
         .map(|e| e.path().to_path_buf())
         .collect()
@@ -172,8 +180,8 @@ pub fn discover_with_toxicity_options(
     // 1. Run standard discovery (finds test files and fixtures)
     let discovery = discovery::discover(root, no_ignore)?;
 
-    // 2. Build hook registry from discovered hooks
-    let registry = discovery.build_hook_registry();
+    // 2. Build hook registry from discovered hooks (pass root for path canonicalization)
+    let registry = discovery.build_hook_registry(root);
 
     // 3. Collect ALL Python files in project (not just test modules)
     // This is critical for transitive toxicity propagation:

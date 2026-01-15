@@ -363,7 +363,7 @@ def pytest_configure(config):
     let result = discover(root, false).expect("Discovery should succeed");
 
     // Build hook registry from discovery result
-    let registry = result.build_hook_registry();
+    let registry = result.build_hook_registry(root);
 
     assert_eq!(registry.hook_count(), 1);
     assert!(registry.has_global_state_hooks());
@@ -516,7 +516,7 @@ def pytest_configure(config):
     let (discovery, graph) = tach_core::discover_with_toxicity_options(root, false).expect("Discovery should succeed");
 
     // Verify hooks were discovered
-    let registry = discovery.build_hook_registry();
+    let registry = discovery.build_hook_registry(root);
     assert_eq!(registry.hook_count(), 1, "Should find pytest_configure hook");
     assert!(registry.has_global_state_hooks(), "pytest_configure should be marked as modifying global state");
 
