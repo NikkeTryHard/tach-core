@@ -547,6 +547,10 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
     None
 }
 
+/// Markers that are decorators, not test selection markers.
+/// These should not appear in the markers list for `-m` filtering.
+const DECORATOR_ONLY_MARKERS: &[&str] = &["parametrize", "usefixtures", "filterwarnings"];
+
 /// Extract marker names from @pytest.mark.* decorators
 ///
 /// Handles:
@@ -554,6 +558,7 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
 /// - @pytest.mark.name(args) - marker with arguments
 ///
 /// Returns a list of marker names (e.g., ["django_db", "slow", "skip"])
+/// Excludes decorator-only markers like parametrize, usefixtures, filterwarnings.
 fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
     let mut markers = vec![];
 
@@ -565,7 +570,10 @@ fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
             && name.id.as_str() == "pytest"
             && inner.attr.as_str() == "mark"
         {
-            markers.push(attr.attr.to_string());
+            let marker_name = attr.attr.to_string();
+            if !DECORATOR_ONLY_MARKERS.contains(&marker_name.as_str()) {
+                markers.push(marker_name);
+            }
         }
         // Handle @pytest.mark.name(args)
         if let ast::Expr::Call(call) = decorator
@@ -575,7 +583,10 @@ fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
             && name.id.as_str() == "pytest"
             && inner.attr.as_str() == "mark"
         {
-            markers.push(attr.attr.to_string());
+            let marker_name = attr.attr.to_string();
+            if !DECORATOR_ONLY_MARKERS.contains(&marker_name.as_str()) {
+                markers.push(marker_name);
+            }
         }
     }
 

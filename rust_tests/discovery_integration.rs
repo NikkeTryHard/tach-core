@@ -563,3 +563,59 @@ def test_without_db():
         .unwrap();
     assert!(!without_db.markers.contains(&"django_db".to_string()));
 }
+
+/// Test that decorator-only markers are excluded from the markers list
+/// parametrize, usefixtures, filterwarnings are not test selection markers
+#[test]
+fn test_markers_exclude_decorator_only_markers() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("test_markers.py"),
+        r#"
+import pytest
+
+@pytest.mark.django_db
+@pytest.mark.slow
+@pytest.mark.parametrize("x", [1, 2])
+@pytest.mark.usefixtures("some_fixture")
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_many_markers(x):
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_markers.py"))
+        .unwrap();
+    let test = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_many_markers")
+        .unwrap();
+
+    // Should include real markers
+    assert!(test.markers.contains(&"django_db".to_string()));
+    assert!(test.markers.contains(&"slow".to_string()));
+
+    // Should exclude decorator-only markers
+    assert!(
+        !test.markers.contains(&"parametrize".to_string()),
+        "parametrize should be filtered"
+    );
+    assert!(
+        !test.markers.contains(&"usefixtures".to_string()),
+        "usefixtures should be filtered"
+    );
+    assert!(
+        !test.markers.contains(&"filterwarnings".to_string()),
+        "filterwarnings should be filtered"
+    );
+}
