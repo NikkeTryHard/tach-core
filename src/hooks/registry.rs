@@ -143,6 +143,60 @@ pub fn builtin_hook_specs() -> HashMap<String, HookSpec> {
         },
     );
 
+    specs.insert(
+        "pytest_unconfigure".to_string(),
+        HookSpec {
+            name: "pytest_unconfigure".to_string(),
+            modifies_global_state: true, // Counterpart to configure
+            cacheable: true,
+        },
+    );
+
+    specs.insert(
+        "pytest_collection_finish".to_string(),
+        HookSpec {
+            name: "pytest_collection_finish".to_string(),
+            modifies_global_state: false,
+            cacheable: true,
+        },
+    );
+
+    specs.insert(
+        "pytest_runtest_call".to_string(),
+        HookSpec {
+            name: "pytest_runtest_call".to_string(),
+            modifies_global_state: false,
+            cacheable: false, // Called per-test
+        },
+    );
+
+    specs.insert(
+        "pytest_runtest_makereport".to_string(),
+        HookSpec {
+            name: "pytest_runtest_makereport".to_string(),
+            modifies_global_state: false,
+            cacheable: false, // Called per-test
+        },
+    );
+
+    specs.insert(
+        "pytest_sessionstart".to_string(),
+        HookSpec {
+            name: "pytest_sessionstart".to_string(),
+            modifies_global_state: true, // Session-level
+            cacheable: true,
+        },
+    );
+
+    specs.insert(
+        "pytest_sessionfinish".to_string(),
+        HookSpec {
+            name: "pytest_sessionfinish".to_string(),
+            modifies_global_state: true, // Session-level
+            cacheable: true,
+        },
+    );
+
     specs
 }
 
@@ -179,7 +233,16 @@ mod tests {
     #[test]
     fn test_builtin_specs() {
         let specs = builtin_hook_specs();
+        assert_eq!(specs.len(), 10, "Should have 10 builtin hook specs");
         assert!(specs.contains_key("pytest_configure"));
+        assert!(specs.contains_key("pytest_unconfigure"));
+        assert!(specs.contains_key("pytest_collection_modifyitems"));
+        assert!(specs.contains_key("pytest_collection_finish"));
         assert!(specs.contains_key("pytest_runtest_setup"));
+        assert!(specs.contains_key("pytest_runtest_call"));
+        assert!(specs.contains_key("pytest_runtest_teardown"));
+        assert!(specs.contains_key("pytest_runtest_makereport"));
+        assert!(specs.contains_key("pytest_sessionstart"));
+        assert!(specs.contains_key("pytest_sessionfinish"));
     }
 }
