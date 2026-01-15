@@ -266,3 +266,49 @@ jobs:
         timeout-minutes: 15
         env:
           PROPTEST_CASES: 256
+
+  # Runs ignored tests that require built binary or sudo
+  # These are environment-dependent and may fail on some runners
+  ignored-tests:
+    name: Ignored Tests (Binary Required)
+    runs-on: ubuntu-latest
+    needs: [changes, check, gauntlet] # Run after main tests pass
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    continue-on-error: true # Don't fail CI if these tests fail
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set PYO3_PYTHON
+        run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
+
+      - name: Install Python dependencies
+        run: pip install pytest pytest-asyncio
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run ignored implementation tests
+        run: |
+          echo "Running implementation tests (require built binary)..."
+          cargo test --test implementation_tests -- --ignored --test-threads=1 || echo "Some implementation tests failed (expected on GitHub runners)"
+
+      - name: Run ignored memory invariant tests
+        run: |
+          echo "Running memory invariant tests (slow)..."
+          cargo test --test memory_invariant -- --ignored --test-threads=1 --nocapture || echo "Memory tests skipped or failed"
+        timeout-minutes: 10
