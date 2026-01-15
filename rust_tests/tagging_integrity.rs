@@ -99,6 +99,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     timeout_secs: None,
                 }],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false, // Will be tagged by graph
             },
             TestModule {
@@ -112,6 +113,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     timeout_secs: None,
                 }],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false,
             },
         ],
@@ -257,6 +259,7 @@ def test_network_stuff():
                 timeout_secs: None,
             }],
             fixtures: vec![],
+            hooks: vec![],
             is_toxic: false,
         }],
     };
@@ -356,6 +359,7 @@ fn test_transitive_toxicity_propagation() {
                 timeout_secs: None,
             }],
             fixtures: vec![],
+            hooks: vec![],
             is_toxic: false,
         }],
     };

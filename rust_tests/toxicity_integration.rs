@@ -237,6 +237,7 @@ def test_toxic():
                     timeout_secs: None,
                 }],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false,
             },
             TestModule {
@@ -250,6 +251,7 @@ def test_toxic():
                     timeout_secs: None,
                 }],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false,
             },
         ],

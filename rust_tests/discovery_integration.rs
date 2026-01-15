@@ -299,6 +299,56 @@ fn test_discover_fixture_scopes() {
     );
 }
 
+/// Test pytest hook detection in conftest.py
+#[test]
+fn test_discover_pytest_hooks_in_conftest() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+import pytest
+
+def pytest_configure(config):
+    """Called after command line options parsed."""
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+
+def pytest_collection_modifyitems(config, items):
+    """Called after collection is complete."""
+    items.sort(key=lambda x: x.name)
+
+def pytest_runtest_setup(item):
+    """Called before each test."""
+    pass
+
+def not_a_hook():
+    """Regular function, not a hook."""
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    let conftest = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("conftest.py"))
+        .expect("Should find conftest.py");
+
+    // Check hooks are detected
+    assert_eq!(conftest.hooks.len(), 3, "Should find 3 pytest hooks");
+
+    let hook_names: Vec<&str> = conftest.hooks.iter().map(|h| h.name.as_str()).collect();
+    assert!(hook_names.contains(&"pytest_configure"));
+    assert!(hook_names.contains(&"pytest_collection_modifyitems"));
+    assert!(hook_names.contains(&"pytest_runtest_setup"));
+    assert!(!hook_names.contains(&"not_a_hook"));
+}
+
 /// Test nested TestClass detection behavior
 /// This test documents whether nested classes (class inside class) are supported.
 /// Pytest supports nested test classes, but static AST discovery may not fully support them.

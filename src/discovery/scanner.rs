@@ -24,6 +24,32 @@ pub enum FixtureScope {
     Session,
 }
 
+/// A pytest hook definition found in conftest.py
+#[derive(Debug, Clone)]
+pub struct HookDefinition {
+    pub name: String,
+    pub line_number: usize,
+}
+
+/// Known pytest hook prefixes
+const PYTEST_HOOKS: &[&str] = &[
+    "pytest_configure",
+    "pytest_unconfigure",
+    "pytest_collection_modifyitems",
+    "pytest_collection_finish",
+    "pytest_runtest_setup",
+    "pytest_runtest_call",
+    "pytest_runtest_teardown",
+    "pytest_runtest_makereport",
+    "pytest_sessionstart",
+    "pytest_sessionfinish",
+];
+
+/// Check if a function name is a known pytest hook
+fn is_pytest_hook(name: &str) -> bool {
+    PYTEST_HOOKS.contains(&name)
+}
+
 /// A pytest fixture definition
 #[derive(Debug, Clone)]
 pub struct FixtureDefinition {
@@ -62,6 +88,8 @@ pub struct TestModule {
     pub path: PathBuf,
     pub tests: Vec<TestCase>,
     pub fixtures: Vec<FixtureDefinition>,
+    /// Pytest hooks defined in this module (e.g., pytest_configure, pytest_runtest_setup)
+    pub hooks: Vec<HookDefinition>,
     /// Whether this module is toxic (requires fork/kill instead of reset)
     /// Set by toxicity analysis
     pub is_toxic: bool,
@@ -546,6 +574,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                 path: rel_path.to_path_buf(),
                 tests: vec![],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false, // Set later by ToxicityGraph
             });
         }
@@ -553,14 +582,32 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
 
     let mut tests = vec![];
     let mut fixtures = vec![];
+    let mut hooks = vec![];
 
     for stmt in suite {
         match stmt {
             ast::Stmt::FunctionDef(func) => {
+                let name = func.name.as_str();
+                // Check for pytest hooks (must be before analyze_function since hooks are top-level functions)
+                if is_pytest_hook(name) {
+                    let line_number = get_line_number(&source, func.range.start().to_usize());
+                    hooks.push(HookDefinition {
+                        name: name.to_string(),
+                        line_number,
+                    });
+                }
                 analyze_function(&func, &source, &mut tests, &mut fixtures, false);
             }
             ast::Stmt::AsyncFunctionDef(func) => {
                 let name = func.name.as_str();
+                // Check for async pytest hooks
+                if is_pytest_hook(name) {
+                    let line_number = get_line_number(&source, func.range.start().to_usize());
+                    hooks.push(HookDefinition {
+                        name: name.to_string(),
+                        line_number,
+                    });
+                }
                 if name.starts_with("test_") {
                     let line_number = get_line_number(&source, func.range.start().to_usize());
                     tests.push(TestCase {
@@ -668,6 +715,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
         path: rel_path.to_path_buf(),
         tests,
         fixtures,
+        hooks,
         is_toxic: false, // Set later by ToxicityGraph
     })
 }
@@ -745,7 +793,7 @@ pub fn discover(root: &Path, no_ignore: bool) -> Result<DiscoveryResult> {
             // Parse using absolute path, but store relative path in module
             parse_module_with_relative_path(abs_path, rel_path).ok()
         })
-        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty())
+        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty() || !m.hooks.is_empty())
         .collect();
 
     Ok(DiscoveryResult { modules })
@@ -843,6 +891,7 @@ mod tests {
                         class_scope: None,
                         autouse: false,
                     }],
+                    hooks: vec![],
                     is_toxic: false,
                 },
                 TestModule {
@@ -856,6 +905,7 @@ mod tests {
                         timeout_secs: None,
                     }],
                     fixtures: vec![],
+                    hooks: vec![],
                     is_toxic: false,
                 },
             ],

@@ -39,6 +39,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         autouse: false,
                     },
                 ],
+                hooks: vec![],
                 is_toxic: false,
             },
             // Module with tests
@@ -71,6 +72,7 @@ fn create_test_discovery() -> DiscoveryResult {
                     },
                 ],
                 fixtures: vec![],
+                hooks: vec![],
                 is_toxic: false,
             },
         ],
@@ -142,6 +144,7 @@ fn test_missing_fixture_error() {
                 timeout_secs: None,
             }],
             fixtures: vec![],
+            hooks: vec![],
             is_toxic: false,
         }],
     };
@@ -195,6 +198,7 @@ fn test_cyclic_dependency_error() {
                     autouse: false,
                 },
             ],
+            hooks: vec![],
             is_toxic: false,
         }],
     };
