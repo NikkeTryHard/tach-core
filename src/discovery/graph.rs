@@ -90,12 +90,14 @@ impl ToxicityGraph {
             let mut report = analyze_file(&source, path);
 
             // Check for toxic hooks in this file
-            if registry.file_has_toxic_hooks(path) {
+            // Canonicalize path to match how hooks are stored in registry (from discovery)
+            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            if registry.file_has_toxic_hooks(&canonical_path) {
                 if !report.is_toxic {
                     report.is_toxic = true;
                 }
                 // Add reason for each toxic hook
-                for hook in registry.get_hooks_for_file(path) {
+                for hook in registry.get_hooks_for_file(&canonical_path) {
                     if hook.spec.modifies_global_state {
                         report.reasons.push(format!("Contains toxic hook '{}' (modifies global state)", hook.spec.name));
                     }
