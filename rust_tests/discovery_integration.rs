@@ -442,3 +442,72 @@ def pytest_configure(config):
     assert_eq!(registry.hook_count(), 1);
     assert!(registry.has_global_state_hooks());
 }
+
+/// Test detection of @pytest.mark.django_db and other pytest markers
+#[test]
+fn test_discover_django_db_marker() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("test_django.py"),
+        r#"
+import pytest
+
+@pytest.mark.django_db
+def test_with_db():
+    pass
+
+@pytest.mark.django_db(transaction=True)
+def test_with_transaction():
+    pass
+
+@pytest.mark.django_db(reset_sequences=True)
+def test_with_reset():
+    pass
+
+def test_without_db():
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_django.py"))
+        .expect("Should find test_django.py");
+
+    // Find tests and check django_db marker
+    let with_db = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_with_db")
+        .unwrap();
+    assert!(with_db.markers.contains(&"django_db".to_string()));
+
+    let with_transaction = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_with_transaction")
+        .unwrap();
+    assert!(with_transaction.markers.contains(&"django_db".to_string()));
+
+    let with_reset = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_with_reset")
+        .unwrap();
+    assert!(with_reset.markers.contains(&"django_db".to_string()));
+
+    let without_db = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_without_db")
+        .unwrap();
+    assert!(!without_db.markers.contains(&"django_db".to_string()));
+}

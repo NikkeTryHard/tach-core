@@ -82,6 +82,9 @@ pub struct TestCase {
     /// Per-test timeout in seconds from @pytest.mark.timeout(N)
     /// None means use global timeout
     pub timeout_secs: Option<u64>,
+    /// Pytest markers applied to this test (e.g., "django_db", "slow", "skip")
+    /// Extracted from @pytest.mark.<name> decorators
+    pub markers: Vec<String>,
 }
 
 /// A Python test module (.py file)
@@ -544,6 +547,41 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
     None
 }
 
+/// Extract marker names from @pytest.mark.* decorators
+///
+/// Handles:
+/// - @pytest.mark.name - bare marker
+/// - @pytest.mark.name(args) - marker with arguments
+///
+/// Returns a list of marker names (e.g., ["django_db", "slow", "skip"])
+fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
+    let mut markers = vec![];
+
+    for decorator in decorators {
+        // Handle @pytest.mark.name (bare marker)
+        if let ast::Expr::Attribute(attr) = decorator
+            && let ast::Expr::Attribute(inner) = &*attr.value
+            && let ast::Expr::Name(name) = &*inner.value
+            && name.id.as_str() == "pytest"
+            && inner.attr.as_str() == "mark"
+        {
+            markers.push(attr.attr.to_string());
+        }
+        // Handle @pytest.mark.name(args)
+        if let ast::Expr::Call(call) = decorator
+            && let ast::Expr::Attribute(attr) = &*call.func
+            && let ast::Expr::Attribute(inner) = &*attr.value
+            && let ast::Expr::Name(name) = &*inner.value
+            && name.id.as_str() == "pytest"
+            && inner.attr.as_str() == "mark"
+        {
+            markers.push(attr.attr.to_string());
+        }
+    }
+
+    markers
+}
+
 // =============================================================================
 // High-Level Private Functions
 // =============================================================================
@@ -570,6 +608,7 @@ fn analyze_function(
                 &extract_args_from_arguments(&func.args),
             ),
             timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
+            markers: extract_markers_from_decorators(&func.decorator_list),
         });
     }
 
@@ -643,6 +682,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             &extract_args_from_arguments(&func.args),
                         ),
                         timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
+                        markers: extract_markers_from_decorators(&func.decorator_list),
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -691,6 +731,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     timeout_secs: extract_timeout_from_decorators(
                                         &func.decorator_list,
                                     ),
+                                    markers: extract_markers_from_decorators(&func.decorator_list),
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
@@ -724,6 +765,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     timeout_secs: extract_timeout_from_decorators(
                                         &func.decorator_list,
                                     ),
+                                    markers: extract_markers_from_decorators(&func.decorator_list),
                                 });
                             }
                         }
@@ -896,6 +938,7 @@ mod tests {
                             line_number: 1,
                             parametrized_args: vec![],
                             timeout_secs: None,
+                            markers: vec![],
                         },
                         TestCase {
                             name: "test_2".into(),
@@ -904,6 +947,7 @@ mod tests {
                             line_number: 1,
                             parametrized_args: vec![],
                             timeout_secs: None,
+                            markers: vec![],
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -926,6 +970,7 @@ mod tests {
                         line_number: 1,
                         parametrized_args: vec![],
                         timeout_secs: None,
+                        markers: vec![],
                     }],
                     fixtures: vec![],
                     hooks: vec![],

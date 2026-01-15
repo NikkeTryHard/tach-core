@@ -450,6 +450,7 @@ mod tests {
             line_number: 1,
             parametrized_args: vec![],
             timeout_secs: None,
+            markers: vec![],
         }
     }
 

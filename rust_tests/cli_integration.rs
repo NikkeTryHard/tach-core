@@ -20,6 +20,7 @@ fn test_testcase_has_line_number() {
         line_number: 42,
         parametrized_args: vec![],
         timeout_secs: None,
+        markers: vec![],
     };
     assert_eq!(test.line_number, 42);
 }
@@ -35,6 +36,7 @@ fn test_line_number_not_always_one() {
         line_number: 5,
         parametrized_args: vec![],
         timeout_secs: None,
+        markers: vec![],
     };
     let test2 = TestCase {
         name: "test_second".to_string(),
@@ -43,6 +45,7 @@ fn test_line_number_not_always_one() {
         line_number: 15,
         parametrized_args: vec![],
         timeout_secs: None,
+        markers: vec![],
     };
 
     assert_ne!(test1.line_number, test2.line_number);
@@ -83,6 +86,7 @@ fn test_discovery_result_with_line_numbers() {
                     line_number: 5,
                     parametrized_args: vec![],
                     timeout_secs: None,
+                    markers: vec![],
                 },
                 TestCase {
                     name: "test_second".to_string(),
@@ -91,6 +95,7 @@ fn test_discovery_result_with_line_numbers() {
                     line_number: 20,
                     parametrized_args: vec![],
                     timeout_secs: None,
+                    markers: vec![],
                 },
             ],
             fixtures: vec![],
