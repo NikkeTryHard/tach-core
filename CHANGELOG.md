@@ -26,6 +26,56 @@ See [docs/research/roadmap.md](docs/research/roadmap.md) for the complete develo
 
 ---
 
+## [0.1.5] - 2026-01-14
+
+### Tooling Integration Research
+
+This release completes the 0.1.x Foundation phase with tooling ecosystem documentation, container compatibility research, and developer experience improvements.
+
+### Added
+
+- **Docker Development Environment**: Full containerized dev setup with Dockerfile, docker-compose.yml, VS Code devcontainer.json, and post-create.sh script
+- **`--no-ignore` CLI Flag**: Bypass `.ignore`/`.gitignore` files during test discovery
+- **`.ignore` Pattern Warnings**: Detect and warn when `.ignore` patterns block Python file discovery
+- **Research Documentation**: Container compatibility matrix, tooling conflicts analysis, and test discovery edge case catalogue
+
+### Changed
+
+- **CI Coverage Threshold**: Enforced 90% coverage as hard failure
+- **Golden Tests**: Now opt-in via `GOLDEN_TESTS=1` environment variable
+- **MSRV**: Updated minimum supported Rust version to 1.88
+
+### Fixed
+
+- **Python 3.14 Support**: Handle immortalization behavior in refcount tests
+- **Landlock Security**: Restrict project_root access, remove excessive /run access, fix symlink escape paths
+- **CI Stability**: Prioritize release binary in tests, fix coverage parsing, add missing test directories
+
+### Security
+
+- Restricted Landlock access for project_root (write access only where needed for OverlayFS)
+- Removed excessive /run filesystem access from Landlock rules
+- Added mknod blocking test for Landlock enforcement
+
+### Documentation
+
+- Consolidated research topics into single archive
+- Merged errors.md into troubleshooting.md, wsl2-setup.md into quickstart.md
+- Added container compatibility research with empirical testing
+- Removed volatile data (test counts, line numbers) from documentation
+
+---
+
+## [0.1.4] - 2026-01-07
+
+### Dependency Updates
+
+Completed the Foundation phase with dependency updates and Python compatibility testing.
+
+See [docs/research/roadmap.md](docs/research/roadmap.md) for details on 0.1.4 deliverables.
+
+---
+
 ## [0.1.0] - 2026-01-04
 
 ### Initial Alpha Release
@@ -166,6 +216,7 @@ Run `tach self-test` to verify system compatibility.
 > **Note:** Versions 0.1.1-0.1.4 were developed in parallel during the Foundation phase.
 > v0.1.4 is the first tagged release after v0.1.0.
 
-[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.1.0
