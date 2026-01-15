@@ -10,6 +10,8 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::hooks::{Hook, HookRegistry, builtin_hook_specs};
+
 // =============================================================================
 // Type Definitions
 // =============================================================================
@@ -108,6 +110,27 @@ impl DiscoveryResult {
 
     pub fn fixture_count(&self) -> usize {
         self.modules.iter().map(|m| m.fixtures.len()).sum()
+    }
+
+    /// Build a HookRegistry from discovered hooks
+    pub fn build_hook_registry(&self) -> HookRegistry {
+        let specs = builtin_hook_specs();
+        let mut registry = HookRegistry::new();
+
+        for module in &self.modules {
+            for hook_def in &module.hooks {
+                if let Some(spec) = specs.get(&hook_def.name) {
+                    registry.register(Hook {
+                        spec: spec.clone(),
+                        source: module.path.clone(),
+                        function_name: hook_def.name.clone(),
+                        line_number: hook_def.line_number,
+                    });
+                }
+            }
+        }
+
+        registry
     }
 }
 

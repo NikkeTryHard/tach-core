@@ -22,4 +22,4 @@
 
 mod registry;
 
-pub use registry::{Hook, HookEffect, HookRegistry, HookSpec};
+pub use registry::{Hook, HookEffect, HookRegistry, HookSpec, builtin_hook_specs};

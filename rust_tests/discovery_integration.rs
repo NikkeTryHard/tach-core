@@ -414,3 +414,31 @@ class TestOuter:
         }
     );
 }
+
+/// Test that discovery can populate a HookRegistry from discovered hooks
+#[test]
+fn test_discovery_populates_hook_registry() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+def pytest_configure(config):
+    pass
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(root.join("test_example.py"), "def test_one(): pass\n").unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    // Build hook registry from discovery result
+    let registry = result.build_hook_registry();
+
+    assert_eq!(registry.hook_count(), 1);
+    assert!(registry.has_global_state_hooks());
+}
