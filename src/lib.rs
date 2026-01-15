@@ -62,6 +62,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 pub mod core;
 pub mod discovery;
 pub mod execution;
+pub mod hooks;
 pub mod isolation;
 pub mod reporting;
 
