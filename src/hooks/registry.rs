@@ -3,8 +3,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Specification for a pytest hook
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookSpec {
     /// Hook name (e.g., "pytest_configure")
     pub name: String,
@@ -15,7 +17,7 @@ pub struct HookSpec {
 }
 
 /// A registered hook implementation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hook {
     /// Hook specification
     pub spec: HookSpec,
@@ -28,7 +30,7 @@ pub struct Hook {
 }
 
 /// Effects produced by hook execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HookEffect {
     /// Hook set an environment variable
     SetEnv { key: String, value: String },
@@ -46,7 +48,7 @@ pub enum HookEffect {
 }
 
 /// Registry of all discovered hooks
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HookRegistry {
     /// Hooks indexed by hook name
     hooks: HashMap<String, Vec<Hook>>,
