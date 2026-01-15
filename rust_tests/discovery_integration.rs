@@ -443,6 +443,58 @@ def pytest_configure(config):
     assert!(registry.has_global_state_hooks());
 }
 
+/// Test that hooks are only detected in conftest.py files, not regular test files
+/// pytest only processes hooks from conftest.py, so we should not detect them elsewhere
+#[test]
+fn test_hooks_only_detected_in_conftest() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    // Hook in conftest.py - should be detected
+    std::fs::write(
+        root.join("conftest.py"),
+        "def pytest_configure(config): pass\n",
+    )
+    .unwrap();
+
+    // Hook in regular test file - should NOT be detected
+    std::fs::write(
+        root.join("test_example.py"),
+        r#"
+def pytest_configure(config):
+    pass  # This should be ignored - not in conftest
+
+def test_something():
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    // conftest.py should have the hook
+    let conftest = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("conftest.py"))
+        .unwrap();
+    assert_eq!(conftest.hooks.len(), 1, "conftest.py should have 1 hook");
+
+    // test_example.py should NOT have hooks
+    let test_file = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_example.py"))
+        .unwrap();
+    assert_eq!(
+        test_file.hooks.len(),
+        0,
+        "test_example.py should have 0 hooks (hooks only in conftest)"
+    );
+}
+
 /// Test detection of @pytest.mark.django_db and other pytest markers
 #[test]
 fn test_discover_django_db_marker() {

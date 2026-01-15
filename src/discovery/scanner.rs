@@ -646,12 +646,19 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
     let mut fixtures = vec![];
     let mut hooks = vec![];
 
+    // Only detect hooks in conftest.py files (pytest only processes hooks from conftest.py)
+    let is_conftest = abs_path
+        .file_name()
+        .map(|n| n == "conftest.py")
+        .unwrap_or(false);
+
     for stmt in suite {
         match stmt {
             ast::Stmt::FunctionDef(func) => {
                 let name = func.name.as_str();
                 // Check for pytest hooks (must be before analyze_function since hooks are top-level functions)
-                if is_pytest_hook(name) {
+                // Only detect hooks in conftest.py files
+                if is_conftest && is_pytest_hook(name) {
                     let line_number = get_line_number(&source, func.range.start().to_usize());
                     hooks.push(HookDefinition {
                         name: name.to_string(),
@@ -662,8 +669,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
             }
             ast::Stmt::AsyncFunctionDef(func) => {
                 let name = func.name.as_str();
-                // Check for async pytest hooks
-                if is_pytest_hook(name) {
+                // Check for async pytest hooks (only in conftest.py)
+                if is_conftest && is_pytest_hook(name) {
                     let line_number = get_line_number(&source, func.range.start().to_usize());
                     hooks.push(HookDefinition {
                         name: name.to_string(),
