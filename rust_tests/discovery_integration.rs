@@ -208,6 +208,75 @@ fn test_detect_blocking_patterns_with_partial_block() {
     );
 }
 
+/// Test autouse fixture detection
+#[test]
+fn test_discover_autouse_fixture() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    // Initialize git
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    // Create test file with autouse fixture
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+import pytest
+
+@pytest.fixture(autouse=True)
+def setup_env():
+    """This fixture runs automatically for every test."""
+    pass
+
+@pytest.fixture(autouse=True, scope="module")
+def module_setup():
+    """Module-scoped autouse fixture."""
+    pass
+
+@pytest.fixture
+def regular_fixture():
+    """Non-autouse fixture."""
+    pass
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(root.join("test_example.py"), "def test_something(): pass\n").unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    // Find the conftest module
+    let conftest = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("conftest.py"))
+        .expect("Should find conftest.py");
+
+    assert_eq!(conftest.fixtures.len(), 3, "Should find 3 fixtures");
+
+    // Check autouse detection
+    let setup_env = conftest
+        .fixtures
+        .iter()
+        .find(|f| f.name == "setup_env")
+        .unwrap();
+    assert!(setup_env.autouse, "setup_env should be autouse=True");
+
+    let module_setup = conftest
+        .fixtures
+        .iter()
+        .find(|f| f.name == "module_setup")
+        .unwrap();
+    assert!(module_setup.autouse, "module_setup should be autouse=True");
+
+    let regular = conftest
+        .fixtures
+        .iter()
+        .find(|f| f.name == "regular_fixture")
+        .unwrap();
+    assert!(!regular.autouse, "regular_fixture should be autouse=False");
+}
+
 /// Test fixture scope parsing
 #[test]
 fn test_discover_fixture_scopes() {

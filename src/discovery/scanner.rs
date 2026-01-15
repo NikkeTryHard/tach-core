@@ -37,6 +37,8 @@ pub struct FixtureDefinition {
     pub params: Option<Vec<String>>,
     /// If Some, this fixture is scoped to the given class (class-method fixture)
     pub class_scope: Option<String>,
+    /// Whether this fixture runs automatically for all tests in scope
+    pub autouse: bool,
 }
 
 /// A test case (function)
@@ -291,6 +293,28 @@ fn extract_params_from_decorators(decorators: &[ast::Expr]) -> Option<Vec<String
     None // No params keyword found
 }
 
+/// Extract autouse=True/False from @pytest.fixture decorator
+fn extract_autouse_from_decorators(decorators: &[ast::Expr]) -> bool {
+    for decorator in decorators {
+        if let ast::Expr::Call(call) = decorator {
+            // Check if this is a fixture decorator
+            if !is_fixture_decorator(decorator) {
+                continue;
+            }
+            for keyword in &call.keywords {
+                if let Some(ref arg) = keyword.arg
+                    && arg.as_str() == "autouse"
+                    && let ast::Expr::Constant(c) = &keyword.value
+                    && let ast::Constant::Bool(value) = &c.value
+                {
+                    return *value;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Extract argument names from @pytest.mark.parametrize decorators
 /// Handles both formats:
 /// - @pytest.mark.parametrize("arg1,arg2", [...]) - comma-separated string
@@ -505,6 +529,7 @@ fn analyze_function(
             dependencies: extract_args_from_arguments(&func.args),
             params: extract_params_from_decorators(&func.decorator_list),
             class_scope: None, // Top-level fixture
+            autouse: extract_autouse_from_decorators(&func.decorator_list),
         });
     }
 }
@@ -557,6 +582,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                         dependencies: extract_args_from_arguments(&func.args),
                         params: extract_params_from_decorators(&func.decorator_list),
                         class_scope: None, // Top-level async fixture
+                        autouse: extract_autouse_from_decorators(&func.decorator_list),
                     });
                 }
             }
@@ -575,6 +601,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     dependencies: extract_args_from_arguments(&func.args),
                                     params: extract_params_from_decorators(&func.decorator_list),
                                     class_scope: Some(class_name.to_string()),
+                                    autouse: extract_autouse_from_decorators(&func.decorator_list),
                                 });
                             }
 
@@ -607,6 +634,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     dependencies: extract_args_from_arguments(&func.args),
                                     params: extract_params_from_decorators(&func.decorator_list),
                                     class_scope: Some(class_name.to_string()),
+                                    autouse: extract_autouse_from_decorators(&func.decorator_list),
                                 });
                             }
 
@@ -813,6 +841,7 @@ mod tests {
                         dependencies: vec![],
                         params: None,
                         class_scope: None,
+                        autouse: false,
                     }],
                     is_toxic: false,
                 },

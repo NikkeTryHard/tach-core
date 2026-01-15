@@ -437,6 +437,7 @@ mod tests {
             dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
             params: None,
             class_scope: None,
+            autouse: false,
         }
     }
 

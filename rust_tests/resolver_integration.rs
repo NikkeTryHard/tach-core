@@ -20,6 +20,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         dependencies: vec![],
                         params: None,
                         class_scope: None,
+                        autouse: false,
                     },
                     FixtureDefinition {
                         name: "redis_cache".to_string(),
@@ -27,6 +28,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         dependencies: vec!["db".to_string()],
                         params: None,
                         class_scope: None,
+                        autouse: false,
                     },
                     FixtureDefinition {
                         name: "client".to_string(),
@@ -34,6 +36,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         dependencies: vec!["db".to_string(), "redis_cache".to_string()],
                         params: None,
                         class_scope: None,
+                        autouse: false,
                     },
                 ],
                 is_toxic: false,
@@ -181,6 +184,7 @@ fn test_cyclic_dependency_error() {
                     dependencies: vec!["fixture_b".to_string()],
                     params: None,
                     class_scope: None,
+                    autouse: false,
                 },
                 FixtureDefinition {
                     name: "fixture_b".to_string(),
@@ -188,6 +192,7 @@ fn test_cyclic_dependency_error() {
                     dependencies: vec!["fixture_a".to_string()],
                     params: None,
                     class_scope: None,
+                    autouse: false,
                 },
             ],
             is_toxic: false,
