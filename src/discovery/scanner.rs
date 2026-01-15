@@ -144,6 +144,7 @@ pub struct JsonTestInfo {
     pub file: String,
     pub line: usize,
     pub is_async: bool,
+    pub markers: Vec<String>,
 }
 
 /// JSON output for discovery listing
@@ -826,6 +827,7 @@ pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
                     file,
                     line: test.line_number,
                     is_async: test.is_async,
+                    markers: test.markers.clone(),
                 }
             })
         })
