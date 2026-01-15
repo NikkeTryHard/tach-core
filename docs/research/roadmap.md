@@ -1,6 +1,6 @@
 # Tach Roadmap
 
-> **Current Version:** 0.1.x (see [CHANGELOG.md](../../CHANGELOG.md) for release notes)
+> **Current Version:** 0.1.5 (see [CHANGELOG.md](../../CHANGELOG.md) for release notes)
 
 This document outlines the planned development trajectory for Tach. Items are aspirational and subject to change based on community feedback and technical discoveries.
 
@@ -157,9 +157,11 @@ Before 1.0.0, verify all critical research requirements are met.
 
 ---
 
-## 0.1.x - Foundation (Current)
+## 0.1.x - Foundation (Complete)
 
 > **Focus**: Alpha stabilization, documentation, error handling improvements, and minor bug fixes.
+>
+> **Status**: Complete - v0.1.5 released 2026-01-14
 >
 > **Research Foundation**: Implements the "Kineton" engine concept from _Python Testing Engine Rust Breakthroughs_.
 >
@@ -380,8 +382,8 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 #### Future Improvements Identified
 
-- [ ] Add `--no-ignore` CLI flag to bypass `.ignore` files
-- [ ] Detect dangerous patterns in `.ignore` and warn when zero tests found
+- [x] Add `--no-ignore` CLI flag to bypass `.ignore` files
+- [x] Detect dangerous patterns in `.ignore` and warn when zero tests found
 - [ ] Add missing discovery edge case tests (autouse fixtures, nested TestClass)
 - [ ] Add CI job for running ignored tests separately
 

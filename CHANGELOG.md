@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See [docs/research/roadmap.md](docs/research/roadmap.md) for the complete development roadmap including:
 
-- 0.1.x - Foundation (current, complete)
+- 0.1.x - Foundation (v0.1.5 released, complete)
 - 0.2.x - Plugin Compatibility
 - 0.3.x - Database Integration
 - 0.4.x - Fixture Lifecycle
