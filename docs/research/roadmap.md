@@ -384,8 +384,8 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 - [x] Add `--no-ignore` CLI flag to bypass `.ignore` files
 - [x] Detect dangerous patterns in `.ignore` and warn when zero tests found
-- [ ] Add missing discovery edge case tests (autouse fixtures, nested TestClass)
-- [ ] Add CI job for running ignored tests separately
+- [x] Add missing discovery edge case tests (autouse fixtures, nested TestClass)
+- [x] Add CI job for running ignored tests separately
 
 ---
 
