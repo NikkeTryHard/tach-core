@@ -404,17 +404,19 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Core infrastructure for intercepting pytest hooks.
 
+**Status**: In Progress
+
 #### Hook System Architecture
 
-- [ ] Design hook interception architecture
+- [x] Design hook interception architecture
   > **Ref**: "Most pytest plugins perform one of three actions: Metadata modification, Fixture setup, or Reporting. Only (1) and (2) must be captured" — _Project Tach Compatibility Layer Blueprint_
-  - [ ] Hook registry for tracking available hooks
+  - [x] Hook registry for tracking available hooks
   - [ ] Hook caller that invokes registered handlers
   - [ ] Hook result aggregation (first-result, all-results)
   - [ ] Hook wrapper specifications
 - [ ] Implement `conftest.py` discovery and loading
-  - [ ] Scan for `conftest.py` in test directories
-  - [ ] Parse hook function definitions
+  - [x] Scan for `conftest.py` in test directories (existing)
+  - [x] Parse hook function definitions
   - [ ] Build hook dependency graph
   - [ ] Handle conftest inheritance
 
