@@ -404,19 +404,27 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Core infrastructure for intercepting pytest hooks.
 
-**Status**: In Progress
+**Status**: In Progress (~40% complete)
+
+> **Completed**: Hook registry types with Serde, 10 builtin hook specs, hook detection in conftest.py, marker extraction from decorators (with JSON output), autouse fixture detection.
+>
+> **Remaining**: Hook execution (caller, aggregation, wrappers), conftest inheritance, plugin registration.
 
 #### Hook System Architecture
 
 - [x] Design hook interception architecture
   > **Ref**: "Most pytest plugins perform one of three actions: Metadata modification, Fixture setup, or Reporting. Only (1) and (2) must be captured" — _Project Tach Compatibility Layer Blueprint_
   - [x] Hook registry for tracking available hooks
+  - [x] Hook types with Serde derives for IPC serialization
+  - [x] 10 builtin hook specs (pytest*configure, pytest_runtest*\*, etc.)
   - [ ] Hook caller that invokes registered handlers
   - [ ] Hook result aggregation (first-result, all-results)
   - [ ] Hook wrapper specifications
-- [ ] Implement `conftest.py` discovery and loading
+- [x] Implement `conftest.py` discovery and loading
   - [x] Scan for `conftest.py` in test directories (existing)
   - [x] Parse hook function definitions
+  - [x] Extract pytest markers from @pytest.mark.\* decorators
+  - [x] Detect autouse fixtures
   - [ ] Build hook dependency graph
   - [ ] Handle conftest inheritance
 
@@ -443,6 +451,8 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 ### 0.2.1 - pytest-django Support
 
 **Target**: First-class Django test support.
+
+> **Note**: Marker detection (`django_db`, `urls`, etc.) is already implemented in core discovery. Tests marked with `@pytest.mark.django_db` are detected and the marker name is available in `TestCase.markers`. The items below are about _executing_ the marker behavior.
 
 #### Marker Support
 
@@ -485,8 +495,9 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 #### Async Detection
 
-- [ ] Detect async test functions (`async def test_...`)
-- [ ] Detect async fixtures (`@pytest.fixture` on async functions)
+- [x] Detect async test functions (`async def test_...`)
+  > Already implemented in core discovery - TestCase.is_async field
+- [x] Detect async fixtures (`@pytest.fixture` on async functions)
 - [ ] Handle sync tests that use async fixtures
 - [ ] Support async context managers
 - [ ] Handle async generators

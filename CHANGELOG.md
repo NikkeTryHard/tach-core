@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Hook Registry**: Foundation for pytest plugin compatibility (0.2.0)
-  - HookSpec, Hook, HookEffect types
+  - HookSpec, Hook, HookEffect types with Serde derives for IPC serialization
   - HookRegistry for tracking discovered hooks
-  - builtin_hook_specs() for known pytest hooks
-- **Hook Detection**: Discover pytest hooks in conftest.py files
+  - builtin_hook_specs() for 10 known pytest hooks
+- **Hook Detection**: Discover pytest hooks in conftest.py files (only conftest.py, not test files)
 - **Marker Detection**: Extract pytest markers from test decorators
+  - Markers included in `tach list --json` output
+  - Excludes decorator-only markers (parametrize, usefixtures, filterwarnings)
 - **Autouse Fixture Detection**: Parse autouse=True from @pytest.fixture
 
 ### Changed
@@ -26,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TestModule now includes hooks field
 - TestCase now includes markers field
 - FixtureDefinition now includes autouse field
+- JsonTestInfo now includes markers field for JSON discovery output
 
 See [docs/research/roadmap.md](docs/research/roadmap.md) for the complete development roadmap including:
 
