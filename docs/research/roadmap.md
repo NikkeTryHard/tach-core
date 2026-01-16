@@ -1,6 +1,6 @@
 # Tach Roadmap
 
-> **Current Version:** 0.1.5 (see [CHANGELOG.md](../../CHANGELOG.md) for release notes)
+> **Current Version:** See [CHANGELOG.md](../../CHANGELOG.md) for the latest release and version history.
 
 This document outlines the planned development trajectory for Tach. Items are aspirational and subject to change based on community feedback and technical discoveries.
 
