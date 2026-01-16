@@ -23,7 +23,7 @@ fn test_effect_bincode_roundtrip() {
         },
         HookEffect::RegisterMarker {
             name: "slow".to_string(),
-            description: Some("marks tests as slow".to_string()),
+            description: "marks tests as slow".to_string(),
         },
         HookEffect::NoEffect,
     ];
@@ -32,8 +32,7 @@ fn test_effect_bincode_roundtrip() {
     let encoded = bincode::serialize(&effects).expect("Should serialize effects");
 
     // Deserialize effects (as Supervisor does)
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize effects");
+    let decoded: Vec<HookEffect> = bincode::deserialize(&encoded).expect("Should deserialize effects");
 
     assert_eq!(effects.len(), decoded.len());
     assert_eq!(effects, decoded);
@@ -54,15 +53,15 @@ fn test_effect_registry_storage() {
         path: "/app/plugins".to_string(),
     };
 
-    registry.record_effect(effect1.clone());
-    registry.record_effect(effect2.clone());
+    registry.record_effect("pytest_configure", effect1.clone());
+    registry.record_effect("pytest_configure", effect2.clone());
 
     // Retrieve effects (as Scheduler does for worker dispatch)
-    let stored_effects = registry.get_effects();
+    let stored_effects = registry.get_effects("pytest_configure");
 
     assert_eq!(stored_effects.len(), 2);
-    assert_eq!(stored_effects[0], effect1);
-    assert_eq!(stored_effects[1], effect2);
+    assert_eq!(&stored_effects[0], &effect1);
+    assert_eq!(&stored_effects[1], &effect2);
 }
 
 /// Test the full IPC simulation: serialize -> transmit -> deserialize -> store -> retrieve
@@ -77,7 +76,7 @@ fn test_full_effect_ipc_path() {
         },
         HookEffect::RegisterMarker {
             name: "integration".to_string(),
-            description: Some("marks integration tests".to_string()),
+            description: "marks integration tests".to_string(),
         },
         HookEffect::ModifySysPath {
             action: SysPathAction::Prepend,
@@ -94,18 +93,17 @@ fn test_full_effect_ipc_path() {
 
     // === SUPERVISOR SIDE ===
     // Deserialize received effects
-    let received_effects: Vec<HookEffect> =
-        bincode::deserialize(&wire_data).expect("Supervisor should deserialize effects");
+    let received_effects: Vec<HookEffect> = bincode::deserialize(&wire_data).expect("Supervisor should deserialize effects");
 
     // Store in HookRegistry
     let mut registry = HookRegistry::default();
     for effect in received_effects {
-        registry.record_effect(effect);
+        registry.record_effect("pytest_configure", effect);
     }
 
     // === SCHEDULER/WORKER SIDE ===
     // Retrieve effects for worker application
-    let worker_effects = registry.get_effects();
+    let worker_effects = registry.get_effects("pytest_configure");
 
     // Verify all effects made it through the full path
     assert_eq!(worker_effects.len(), 3);
@@ -122,7 +120,7 @@ fn test_full_effect_ipc_path() {
     match &worker_effects[1] {
         HookEffect::RegisterMarker { name, description } => {
             assert_eq!(name, "integration");
-            assert_eq!(description.as_deref(), Some("marks integration tests"));
+            assert_eq!(description, "marks integration tests");
         }
         _ => panic!("Expected RegisterMarker effect"),
     }
@@ -139,16 +137,11 @@ fn test_full_effect_ipc_path() {
 /// Test SysPathAction enum serialization
 #[test]
 fn test_syspathaction_serialization() {
-    let actions = vec![
-        SysPathAction::Prepend,
-        SysPathAction::Append,
-        SysPathAction::Remove,
-    ];
+    let actions = vec![SysPathAction::Prepend, SysPathAction::Append, SysPathAction::Remove];
 
     for action in actions {
         let encoded = bincode::serialize(&action).expect("Should serialize action");
-        let decoded: SysPathAction =
-            bincode::deserialize(&encoded).expect("Should deserialize action");
+        let decoded: SysPathAction = bincode::deserialize(&encoded).expect("Should deserialize action");
         assert_eq!(action, decoded);
     }
 }
@@ -159,8 +152,7 @@ fn test_empty_effects_ipc() {
     let empty_effects: Vec<HookEffect> = vec![];
 
     let encoded = bincode::serialize(&empty_effects).expect("Should serialize empty vec");
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize empty vec");
+    let decoded: Vec<HookEffect> = bincode::deserialize(&encoded).expect("Should deserialize empty vec");
 
     assert!(decoded.is_empty());
 }
@@ -169,22 +161,15 @@ fn test_empty_effects_ipc() {
 #[test]
 fn test_modify_items_effect_ipc() {
     let effect = HookEffect::ModifyItems {
-        added: vec!["test_new.py::test_added".to_string()],
         removed: vec!["test_old.py::test_removed".to_string()],
         reordered: true,
     };
 
     let encoded = bincode::serialize(&effect).expect("Should serialize ModifyItems");
-    let decoded: HookEffect =
-        bincode::deserialize(&encoded).expect("Should deserialize ModifyItems");
+    let decoded: HookEffect = bincode::deserialize(&encoded).expect("Should deserialize ModifyItems");
 
     match decoded {
-        HookEffect::ModifyItems {
-            added,
-            removed,
-            reordered,
-        } => {
-            assert_eq!(added, vec!["test_new.py::test_added"]);
+        HookEffect::ModifyItems { removed, reordered } => {
             assert_eq!(removed, vec!["test_old.py::test_removed"]);
             assert!(reordered);
         }
@@ -201,10 +186,7 @@ fn test_malformed_bincode_data() {
     assert!(result.is_err(), "Should fail to deserialize garbage data");
 
     // Truncated data (valid start but incomplete)
-    let effects = vec![HookEffect::SetEnv {
-        key: "TEST".to_string(),
-        value: "value".to_string(),
-    }];
+    let effects = vec![HookEffect::SetEnv { key: "TEST".to_string(), value: "value".to_string() }];
     let mut encoded = bincode::serialize(&effects).expect("Should serialize");
     encoded.truncate(encoded.len() / 2); // Cut in half
     let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&encoded);
@@ -229,23 +211,16 @@ fn test_large_effect_list() {
     let mut effects: Vec<HookEffect> = Vec::with_capacity(EFFECT_COUNT);
     for i in 0..EFFECT_COUNT {
         let effect = match i % 5 {
-            0 => HookEffect::SetEnv {
-                key: format!("VAR_{}", i),
-                value: format!("value_{}", i),
-            },
+            0 => HookEffect::SetEnv { key: format!("VAR_{}", i), value: format!("value_{}", i) },
             1 => HookEffect::ModifySysPath {
                 action: SysPathAction::Prepend,
                 path: format!("/path/to/module_{}", i),
             },
             2 => HookEffect::RegisterMarker {
                 name: format!("marker_{}", i),
-                description: Some(format!("Description for marker {}", i)),
+                description: format!("Description for marker {}", i),
             },
-            3 => HookEffect::ModifyItems {
-                added: vec![format!("test_{}.py::test_added", i)],
-                removed: vec![],
-                reordered: false,
-            },
+            3 => HookEffect::ModifyItems { removed: vec![], reordered: false },
             _ => HookEffect::NoEffect,
         };
         effects.push(effect);
@@ -255,8 +230,7 @@ fn test_large_effect_list() {
     let encoded = bincode::serialize(&effects).expect("Should serialize large effect list");
 
     // Deserialize and verify
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize large effect list");
+    let decoded: Vec<HookEffect> = bincode::deserialize(&encoded).expect("Should deserialize large effect list");
 
     assert_eq!(decoded.len(), EFFECT_COUNT);
 
@@ -277,9 +251,9 @@ fn test_large_effect_list() {
     // Store in registry and verify retrieval
     let mut registry = HookRegistry::default();
     for effect in decoded {
-        registry.record_effect(effect);
+        registry.record_effect("pytest_configure", effect);
     }
-    assert_eq!(registry.get_effects().len(), EFFECT_COUNT);
+    assert_eq!(registry.get_effects("pytest_configure").len(), EFFECT_COUNT);
 }
 
 /// Test special characters in effect strings (Unicode, newlines, escape sequences)
@@ -297,10 +271,7 @@ fn test_special_characters_in_effects() {
             value: "line1\nline2\nline3\ttabbed".to_string(),
         },
         // Empty strings
-        HookEffect::SetEnv {
-            key: "".to_string(),
-            value: "".to_string(),
-        },
+        HookEffect::SetEnv { key: "".to_string(), value: "".to_string() },
         // Escape sequences and special chars
         HookEffect::ModifySysPath {
             action: SysPathAction::Append,
@@ -309,7 +280,7 @@ fn test_special_characters_in_effects() {
         // Japanese characters
         HookEffect::RegisterMarker {
             name: "test_marker".to_string(),
-            description: Some("This is a test with Japanese: \u{65E5}\u{672C}\u{8A9E}".to_string()),
+            description: "This is a test with Japanese: \u{65E5}\u{672C}\u{8A9E}".to_string(),
         },
         // Null-like strings (not actual null bytes, but the word)
         HookEffect::SetEnv {
@@ -317,10 +288,7 @@ fn test_special_characters_in_effects() {
             value: "null\0embedded".to_string(), // Actual null byte
         },
         // Very long string
-        HookEffect::SetEnv {
-            key: "LONG_KEY".to_string(),
-            value: "x".repeat(10000),
-        },
+        HookEffect::SetEnv { key: "LONG_KEY".to_string(), value: "x".repeat(10000) },
         // Path with unusual but valid characters
         HookEffect::ModifySysPath {
             action: SysPathAction::Remove,
@@ -332,8 +300,7 @@ fn test_special_characters_in_effects() {
     let encoded = bincode::serialize(&effects).expect("Should serialize special characters");
 
     // Deserialize
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize special characters");
+    let decoded: Vec<HookEffect> = bincode::deserialize(&encoded).expect("Should deserialize special characters");
 
     assert_eq!(decoded.len(), effects.len());
 
