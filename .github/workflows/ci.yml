@@ -35,6 +35,7 @@ jobs:
           filters: |
             code:
               - 'src/**'
+              - 'rust_tests/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'tests/**'
