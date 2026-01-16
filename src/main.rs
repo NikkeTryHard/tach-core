@@ -857,6 +857,7 @@ fn handle_dry_run_command(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tests(
     cleanup: &CleanupGuard,
     runnable_tests: Vec<resolver::RunnableTest>,
