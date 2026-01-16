@@ -954,7 +954,7 @@ Tach uses `rustpython-parser` for AST-based test discovery without executing Pyt
 
 > **Implementation Note:** Tach uses `rustpython-parser` for AST analysis. Research papers referenced `ruff_python_parser` as an alternative approach.
 
-> Source: "ruff*python_parser, the Rust-based parsing engine powering the Ruff linter. This parser is designed for extreme performance, capable of processing gigabytes of source code per second" -- \_Rust-CPython Execution Blueprint Research*
+> Source: "`ruff_python_parser`, the Rust-based parsing engine powering the Ruff linter. This parser is designed for extreme performance, capable of processing gigabytes of source code per second" -- _Rust-CPython Execution Blueprint Research_
 
 Discovery extracts import statements (dependency graphs), function definitions (`test_*` patterns), and decorators (`@pytest.mark.parametrize` values).
 
@@ -996,7 +996,7 @@ Code objects are deserialized directly from mapped memory:
 PyObject* PyMarshal_ReadObjectFromString(const char *data, Py_ssize_t len)
 ```
 
-> Source: "The Rust Control Plane fetches the bytecode blob from the CAS. It does not instruct Python to 'import' the file. Instead, it creates the code object directly using PyMarshal*ReadObjectFromString" -- \_Rust-CPython Execution Blueprint Research*
+> Source: "The Rust Control Plane fetches the bytecode blob from the CAS. It does not instruct Python to 'import' the file. Instead, it creates the code object directly using `PyMarshal_ReadObjectFromString`" -- _Rust-CPython Execution Blueprint Research_
 
 The 16-byte `.pyc` header must be skipped. Use `PyImport_ExecCodeModuleObject` for proper `sys.modules` registration.
 
@@ -1046,7 +1046,7 @@ py.allow_threads(|| {
 })
 ```
 
-> Source: "Always release GIL (Python::allow*threads) during heavy Rust ops" -- \_CLAUDE.md*
+> Source: "Always release GIL (`Python::allow_threads`) during heavy Rust ops" -- _CLAUDE.md_
 
 ### Rayon Parallelism
 
