@@ -8,6 +8,17 @@
 
 use tach_core::hooks::{HookEffect, HookRegistry, SysPathAction};
 
+/// Helper to encode effects using bincode 2.x API
+fn encode<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    bincode::serde::encode_to_vec(value, bincode::config::standard()).expect("Should encode")
+}
+
+/// Helper to decode effects using bincode 2.x API
+fn decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, bincode::error::DecodeError> {
+    let (value, _): (T, usize) = bincode::serde::decode_from_slice(data, bincode::config::standard())?;
+    Ok(value)
+}
+
 /// Test that HookEffect can be serialized and deserialized via bincode
 /// This mirrors the IPC path between Zygote and Supervisor
 #[test]
@@ -29,11 +40,10 @@ fn test_effect_bincode_roundtrip() {
     ];
 
     // Serialize effects (as Zygote does)
-    let encoded = bincode::serialize(&effects).expect("Should serialize effects");
+    let encoded = encode(&effects);
 
     // Deserialize effects (as Supervisor does)
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize effects");
+    let decoded: Vec<HookEffect> = decode(&encoded).expect("Should deserialize effects");
 
     assert_eq!(effects.len(), decoded.len());
     assert_eq!(effects, decoded);
@@ -86,7 +96,7 @@ fn test_full_effect_ipc_path() {
     ];
 
     // Serialize for IPC transmission
-    let wire_data = bincode::serialize(&zygote_effects).expect("Zygote should serialize effects");
+    let wire_data = encode(&zygote_effects);
 
     // === IPC TRANSMISSION ===
     // In real code, this goes through a pipe/socket
@@ -94,8 +104,7 @@ fn test_full_effect_ipc_path() {
 
     // === SUPERVISOR SIDE ===
     // Deserialize received effects
-    let received_effects: Vec<HookEffect> =
-        bincode::deserialize(&wire_data).expect("Supervisor should deserialize effects");
+    let received_effects: Vec<HookEffect> = decode(&wire_data).expect("Supervisor should deserialize effects");
 
     // Store in HookRegistry
     let mut registry = HookRegistry::default();
@@ -139,16 +148,11 @@ fn test_full_effect_ipc_path() {
 /// Test SysPathAction enum serialization
 #[test]
 fn test_syspathaction_serialization() {
-    let actions = vec![
-        SysPathAction::Prepend,
-        SysPathAction::Append,
-        SysPathAction::Remove,
-    ];
+    let actions = vec![SysPathAction::Prepend, SysPathAction::Append, SysPathAction::Remove];
 
     for action in actions {
-        let encoded = bincode::serialize(&action).expect("Should serialize action");
-        let decoded: SysPathAction =
-            bincode::deserialize(&encoded).expect("Should deserialize action");
+        let encoded = encode(&action);
+        let decoded: SysPathAction = decode(&encoded).expect("Should deserialize action");
         assert_eq!(action, decoded);
     }
 }
@@ -158,9 +162,8 @@ fn test_syspathaction_serialization() {
 fn test_empty_effects_ipc() {
     let empty_effects: Vec<HookEffect> = vec![];
 
-    let encoded = bincode::serialize(&empty_effects).expect("Should serialize empty vec");
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize empty vec");
+    let encoded = encode(&empty_effects);
+    let decoded: Vec<HookEffect> = decode(&encoded).expect("Should deserialize empty vec");
 
     assert!(decoded.is_empty());
 }
@@ -173,9 +176,8 @@ fn test_modify_items_effect_ipc() {
         reordered: true,
     };
 
-    let encoded = bincode::serialize(&effect).expect("Should serialize ModifyItems");
-    let decoded: HookEffect =
-        bincode::deserialize(&encoded).expect("Should deserialize ModifyItems");
+    let encoded = encode(&effect);
+    let decoded: HookEffect = decode(&encoded).expect("Should deserialize ModifyItems");
 
     match decoded {
         HookEffect::ModifyItems { removed, reordered } => {
@@ -191,24 +193,21 @@ fn test_modify_items_effect_ipc() {
 fn test_malformed_bincode_data() {
     // Completely invalid data
     let garbage: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01, 0x02];
-    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&garbage);
+    let result: Result<Vec<HookEffect>, _> = decode(&garbage);
     assert!(result.is_err(), "Should fail to deserialize garbage data");
 
     // Truncated data (valid start but incomplete)
-    let effects = vec![HookEffect::SetEnv {
-        key: "TEST".to_string(),
-        value: "value".to_string(),
-    }];
-    let mut encoded = bincode::serialize(&effects).expect("Should serialize");
+    let effects = vec![HookEffect::SetEnv { key: "TEST".to_string(), value: "value".to_string() }];
+    let mut encoded = encode(&effects);
     encoded.truncate(encoded.len() / 2); // Cut in half
-    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&encoded);
+    let result: Result<Vec<HookEffect>, _> = decode(&encoded);
     assert!(result.is_err(), "Should fail to deserialize truncated data");
 
     // Wrong type marker (try to deserialize as wrong enum variant)
     let single_effect = HookEffect::NoEffect;
-    let encoded = bincode::serialize(&single_effect).expect("Should serialize");
+    let encoded = encode(&single_effect);
     // Try to deserialize single effect as Vec - should fail or produce unexpected result
-    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&encoded);
+    let result: Result<Vec<HookEffect>, _> = decode(&encoded);
     // This may succeed with wrong data or fail - either way we handle it gracefully
     // The key is no panic occurs
     let _ = result;
@@ -223,10 +222,7 @@ fn test_large_effect_list() {
     let mut effects: Vec<HookEffect> = Vec::with_capacity(EFFECT_COUNT);
     for i in 0..EFFECT_COUNT {
         let effect = match i % 5 {
-            0 => HookEffect::SetEnv {
-                key: format!("VAR_{}", i),
-                value: format!("value_{}", i),
-            },
+            0 => HookEffect::SetEnv { key: format!("VAR_{}", i), value: format!("value_{}", i) },
             1 => HookEffect::ModifySysPath {
                 action: SysPathAction::Prepend,
                 path: format!("/path/to/module_{}", i),
@@ -235,21 +231,17 @@ fn test_large_effect_list() {
                 name: format!("marker_{}", i),
                 description: format!("Description for marker {}", i),
             },
-            3 => HookEffect::ModifyItems {
-                removed: vec![],
-                reordered: false,
-            },
+            3 => HookEffect::ModifyItems { removed: vec![], reordered: false },
             _ => HookEffect::NoEffect,
         };
         effects.push(effect);
     }
 
     // Serialize large list
-    let encoded = bincode::serialize(&effects).expect("Should serialize large effect list");
+    let encoded = encode(&effects);
 
     // Deserialize and verify
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize large effect list");
+    let decoded: Vec<HookEffect> = decode(&encoded).expect("Should deserialize large effect list");
 
     assert_eq!(decoded.len(), EFFECT_COUNT);
 
@@ -290,10 +282,7 @@ fn test_special_characters_in_effects() {
             value: "line1\nline2\nline3\ttabbed".to_string(),
         },
         // Empty strings
-        HookEffect::SetEnv {
-            key: "".to_string(),
-            value: "".to_string(),
-        },
+        HookEffect::SetEnv { key: "".to_string(), value: "".to_string() },
         // Escape sequences and special chars
         HookEffect::ModifySysPath {
             action: SysPathAction::Append,
@@ -310,10 +299,7 @@ fn test_special_characters_in_effects() {
             value: "null\0embedded".to_string(), // Actual null byte
         },
         // Very long string
-        HookEffect::SetEnv {
-            key: "LONG_KEY".to_string(),
-            value: "x".repeat(10000),
-        },
+        HookEffect::SetEnv { key: "LONG_KEY".to_string(), value: "x".repeat(10000) },
         // Path with unusual but valid characters
         HookEffect::ModifySysPath {
             action: SysPathAction::Remove,
@@ -322,11 +308,10 @@ fn test_special_characters_in_effects() {
     ];
 
     // Serialize
-    let encoded = bincode::serialize(&effects).expect("Should serialize special characters");
+    let encoded = encode(&effects);
 
     // Deserialize
-    let decoded: Vec<HookEffect> =
-        bincode::deserialize(&encoded).expect("Should deserialize special characters");
+    let decoded: Vec<HookEffect> = decode(&encoded).expect("Should deserialize special characters");
 
     assert_eq!(decoded.len(), effects.len());
 

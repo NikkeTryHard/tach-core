@@ -53,7 +53,7 @@ pub struct Hook {
 }
 
 /// Effects produced by hook execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HookEffect {
     /// Hook set an environment variable
     SetEnv { key: String, value: String },
