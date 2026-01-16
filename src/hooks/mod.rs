@@ -3,7 +3,6 @@
 //! This module provides a lightweight hook system that intercepts common
 //! pytest hooks without requiring full pluggy support. It records hook
 //! effects in the supervisor and replays them in workers.
-//!
 //! # Architecture
 //!
 //! ```text
