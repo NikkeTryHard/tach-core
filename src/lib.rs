@@ -2,6 +2,7 @@
 //!
 //! This library exposes the core modules for integration testing.
 //! The binary entry point is in main.rs.
+//!
 
 // Lint configuration for code quality
 #![warn(unused_imports)]
