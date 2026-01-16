@@ -2,6 +2,8 @@
 
 Guide for building, testing, and contributing to Tach - the Runtime Hypervisor for Python tests.
 
+> **See [README.md](../README.md)** for project overview, Docker setup, quick start, and system requirements.
+
 ---
 
 ## Prerequisites
@@ -18,12 +20,20 @@ Guide for building, testing, and contributing to Tach - the Runtime Hypervisor f
 
 ---
 
-## Quick Start
+## Native Linux Setup
+
+For native Linux development (as opposed to Docker), ensure the following:
 
 ```bash
+# Clone and setup
 git clone https://github.com/NikkeTryHard/tach-core.git && cd tach-core
 python -m venv .venv && source .venv/bin/activate && pip install pytest
-export PYO3_PYTHON=$(which python) && cargo build
+
+# Set PyO3 Python path (or source .envrc)
+export PYO3_PYTHON=$(which python)
+
+# Build and verify
+cargo build
 cargo test --lib
 ```
 
@@ -41,20 +51,6 @@ cargo test --lib
 
 ```bash
 MALLOC_CONF="background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0" ./target/release/tach-core
-```
-
----
-
-## Build Commands
-
-```bash
-export PYO3_PYTHON=$(which python)
-cargo build                    # Development
-cargo build --release          # Release
-cargo check                    # Check only
-cargo fmt                      # Format
-cargo clippy                   # Lint
-cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib  # Full CI
 ```
 
 ---
@@ -127,37 +123,15 @@ cargo test --lib allocator -- --ignored
 
 ## Project Structure
 
-```
-tach-core/
-  src/
-    main.rs, lib.rs, tach_harness.py
-    core/         # allocator, config, environment, lifecycle, protocol, signals
-    discovery/    # scanner, resolver, loader, graph, analysis
-    execution/    # scheduler, watch, zygote
-    isolation/    # namespace, sandbox, snapshot
-    reporting/    # reporter, junit, logcapture, debugger, coverage
+> See [README.md Architecture section](../README.md#architecture) for the full project structure diagram and [Architecture Overview](architecture/overview.md) for detailed component documentation.
 
-  rust_tests/     # Integration tests
-  tests/          # Python gauntlet tests (phase1-5)
-  docs/           # Documentation
-  .tach/          # Generated cache (gitignored)
-```
+**Key source directories:**
 
----
-
-## Key Files
-
-| File                          | Purpose                                 |
-| :---------------------------- | :-------------------------------------- |
-| `src/execution/zygote.rs`     | Process lifecycle, worker spawning, FFI |
-| `src/isolation/sandbox.rs`    | Landlock + Seccomp (Iron Dome)          |
-| `src/isolation/namespace.rs`  | Linux Namespaces + OverlayFS            |
-| `src/reporting/coverage.rs`   | Zero-overhead coverage                  |
-| `src/reporting/logcapture.rs` | memfd-based stdout/stderr capture       |
-| `src/core/allocator.rs`       | Jemalloc configuration                  |
-| `src/isolation/snapshot.rs`   | userfaultfd memory snapshots            |
-| `src/core/config.rs`          | Configuration, CLI, env denylist        |
-| `src/execution/scheduler.rs`  | Dual-path test scheduling               |
+- `src/core/` - Allocator, config, environment, lifecycle, protocol, signals
+- `src/discovery/` - Scanner, resolver, loader, graph, analysis
+- `src/execution/` - Scheduler, watch, zygote
+- `src/isolation/` - Namespace, sandbox, snapshot
+- `src/reporting/` - Reporter, junit, logcapture, debugger, coverage
 
 ---
 
