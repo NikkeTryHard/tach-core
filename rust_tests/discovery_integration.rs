@@ -529,3 +529,38 @@ def pytest_configure(config):
         assert!(reasons.iter().any(|r| r.contains("pytest_configure")), "Reasons should mention pytest_configure: {:?}", reasons);
     }
 }
+
+/// Test conftest.py hook inheritance hierarchy
+#[test]
+fn test_conftest_hook_inheritance() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("tests/sub")).unwrap();
+
+    // Root conftest
+    std::fs::write(root.join("conftest.py"), "def pytest_configure(config): pass\n").unwrap();
+
+    // tests/ conftest
+    std::fs::write(root.join("tests/conftest.py"), "def pytest_runtest_setup(item): pass\n").unwrap();
+
+    // tests/sub/ conftest
+    std::fs::write(root.join("tests/sub/conftest.py"), "def pytest_runtest_teardown(item): pass\n").unwrap();
+
+    // Test file in tests/sub/
+    std::fs::write(root.join("tests/sub/test_nested.py"), "def test_example(): pass\n").unwrap();
+
+    let (discovery, _graph) = tach_core::discover_with_toxicity_options(root, false).unwrap();
+    let registry = discovery.build_hook_registry(root);
+
+    // Resolve hooks for the nested test
+    let test_path = root.join("tests/sub/test_nested.py").canonicalize().unwrap();
+    let hooks = registry.resolve_hooks_for_path(&test_path, root);
+
+    // Should get all 3 hooks in order: root -> tests -> tests/sub
+    assert_eq!(hooks.len(), 3, "Should inherit hooks from all parent conftest.py files");
+    assert!(hooks[0].source.ends_with("conftest.py"));
+    assert!(hooks[1].source.ends_with("tests/conftest.py"));
+    assert!(hooks[2].source.ends_with("tests/sub/conftest.py"));
+}
