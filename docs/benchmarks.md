@@ -37,7 +37,7 @@ _Benchmark results will be added after systematic collection across representati
 
 ### How to Contribute Benchmarks
 
-1. Run: `./scripts/benchmark.sh` (when available)
+1. Benchmark scripts will be added in a future release.
 2. Include system specs in results
 3. Submit via PR to `docs/benchmarks.md`
 
