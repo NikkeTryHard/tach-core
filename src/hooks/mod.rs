@@ -21,4 +21,7 @@
 
 mod registry;
 
-pub use registry::{Hook, HookEffect, HookRegistry, HookSpec, SysPathAction, builtin_hook_specs};
+pub use registry::{
+    AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, HookSpec, SysPathAction,
+    aggregate_results, builtin_hook_specs,
+};

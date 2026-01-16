@@ -52,6 +52,99 @@ pub struct Hook {
     pub line_number: usize,
 }
 
+/// Result from executing a single hook function
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HookResult {
+    /// Return value from hook (JSON-serialized for flexibility)
+    pub return_value: Option<String>,
+    /// All return values when using AllResults aggregation
+    pub all_values: Vec<String>,
+    /// Side effects captured during hook execution
+    pub effects: Vec<HookEffect>,
+    /// Source file of the hook that produced this result
+    pub source: Option<PathBuf>,
+    /// Error message if hook failed
+    pub error: Option<String>,
+}
+
+impl HookResult {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_value(value: Option<String>) -> Self {
+        Self {
+            return_value: value,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_error(error: String, source: PathBuf) -> Self {
+        Self {
+            error: Some(error),
+            source: Some(source),
+            ..Default::default()
+        }
+    }
+
+    pub fn add_effect(&mut self, effect: HookEffect) {
+        self.effects.push(effect);
+    }
+}
+
+/// How to aggregate results from multiple hook implementations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AggregationStrategy {
+    /// Return first non-None result (pytest default for most hooks)
+    #[default]
+    FirstResult,
+    /// Collect all results into a list
+    AllResults,
+    /// No return value expected (side-effect only hooks)
+    NoReturn,
+}
+
+/// Aggregate multiple hook results based on strategy
+pub fn aggregate_results(results: &[HookResult], strategy: AggregationStrategy) -> HookResult {
+    let mut aggregated = HookResult::new();
+
+    // Collect all effects and track first error
+    for result in results {
+        aggregated.effects.extend(result.effects.clone());
+
+        if let Some(ref err) = result.error
+            && aggregated.error.is_none()
+        {
+            aggregated.error = Some(err.clone());
+            aggregated.source = result.source.clone();
+        }
+    }
+
+    // Aggregate return values based on strategy
+    match strategy {
+        AggregationStrategy::FirstResult => {
+            for result in results {
+                if result.return_value.is_some() {
+                    aggregated.return_value = result.return_value.clone();
+                    break;
+                }
+            }
+        }
+        AggregationStrategy::AllResults => {
+            for result in results {
+                if let Some(ref val) = result.return_value {
+                    aggregated.all_values.push(val.clone());
+                }
+            }
+        }
+        AggregationStrategy::NoReturn => {
+            // No return value aggregation needed
+        }
+    }
+
+    aggregated
+}
+
 /// Effects produced by hook execution
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HookEffect {

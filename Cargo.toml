@@ -270,3 +270,7 @@ path = "rust_tests/durations_flag_tests.rs"
 [[test]]
 name = "cli_integration"
 path = "rust_tests/cli_integration.rs"
+
+[[test]]
+name = "hooks_test"
+path = "rust_tests/hooks_test.rs"
