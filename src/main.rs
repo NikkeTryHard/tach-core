@@ -4,6 +4,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
+use tach_core::hooks::HookRegistry;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -481,6 +482,10 @@ fn execute_session(
         return Ok(());
     }
 
+    // --- BUILD HOOK REGISTRY ---
+    // Build the hook registry from discovery results before forking
+    let hook_registry = discovery_result.build_hook_registry(cwd);
+
     // --- RUN TESTS ---
     let failed_count = run_tests(
         &cleanup,
@@ -489,6 +494,8 @@ fn execute_session(
         is_json,
         config.coverage_enabled,
         config.memory_enabled,
+        hook_registry,
+        cwd.clone(),
     )?;
 
     // Exit with code 1 if any tests failed
@@ -857,6 +864,8 @@ fn run_tests(
     is_json: bool,
     coverage_enabled: bool,
     memory_enabled: bool,
+    hook_registry: HookRegistry,
+    project_root: PathBuf,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
 
@@ -1012,6 +1021,8 @@ fn run_tests(
                 debug_socket_path,
                 global_timeout,
                 timeout_hook,
+                hook_registry,
+                project_root,
             )?;
 
             let stats = scheduler.run(runnable_tests, reporter)?;
