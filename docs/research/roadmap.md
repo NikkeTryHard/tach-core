@@ -404,9 +404,9 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Core infrastructure for intercepting pytest hooks.
 
-**Status**: In Progress (~40% complete)
+**Status**: In Progress (~75% complete)
 
-> **Completed**: Hook registry types with Serde, 10 builtin hook specs, hook detection in conftest.py, marker extraction from decorators (with JSON output), autouse fixture detection.
+> **Completed**: Hook registry types with Serde, 10 builtin hook specs, hook detection in conftest.py, marker extraction from decorators (with JSON output), autouse fixture detection, path canonicalization for hook matching, SysPathAction enum (type-safe), session effects IPC bridge (Zygote → Supervisor → Workers), debug logging for effect application, pytest_sessionstart in SESSION_HOOKS, HookEffect enum with all variants, toxicity integration for global-state-modifying hooks.
 >
 > **Remaining**: Hook execution (caller, aggregation, wrappers), conftest inheritance, plugin registration.
 
