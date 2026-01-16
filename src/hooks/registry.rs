@@ -1,7 +1,7 @@
 //! Hook registry for tracking and dispatching pytest hooks.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +102,45 @@ impl HookRegistry {
     /// Get all registered hooks (for debugging)
     pub fn all_hooks(&self) -> impl Iterator<Item = &Hook> {
         self.hooks.values().flatten()
+    }
+
+    /// Resolve all hooks that apply to a given test path
+    ///
+    /// Traverses from the test's directory up to project root,
+    /// collecting hooks from each conftest.py in order (root first).
+    ///
+    /// # Arguments
+    /// * `test_path` - Path to the test file
+    /// * `project_root` - Project root directory
+    ///
+    /// # Returns
+    /// Vec of hooks in application order (root conftest first, leaf last)
+    pub fn resolve_hooks_for_path(&self, test_path: &Path, project_root: &Path) -> Vec<Hook> {
+        let mut conftest_dirs = Vec::new();
+        let mut current = test_path.parent();
+
+        // Collect directories from test up to root
+        while let Some(dir) = current {
+            conftest_dirs.push(dir.to_path_buf());
+            if dir == project_root {
+                break;
+            }
+            current = dir.parent();
+        }
+
+        // Reverse to get root-first order
+        conftest_dirs.reverse();
+
+        // Collect hooks from each conftest.py
+        let mut result = Vec::new();
+        for dir in conftest_dirs {
+            let conftest_path = dir.join("conftest.py");
+            for hook in self.get_hooks_for_file(&conftest_path) {
+                result.push(hook.clone());
+            }
+        }
+
+        result
     }
 }
 
@@ -316,5 +355,44 @@ mod tests {
 
         let hooks = registry.get_hooks_for_file(&PathBuf::from("other.py"));
         assert!(hooks.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_hooks_for_path() {
+        let mut registry = HookRegistry::new();
+
+        // Root conftest hook
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_configure".to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: PathBuf::from("/project/conftest.py"),
+            function_name: "pytest_configure".to_string(),
+            line_number: 1,
+        });
+
+        // Sub-directory conftest hook
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_runtest_setup".to_string(),
+                modifies_global_state: false,
+                cacheable: false,
+            },
+            source: PathBuf::from("/project/tests/conftest.py"),
+            function_name: "pytest_runtest_setup".to_string(),
+            line_number: 1,
+        });
+
+        // Resolve hooks for a test in tests/
+        let project_root = Path::new("/project");
+        let test_path = Path::new("/project/tests/test_example.py");
+        let hooks = registry.resolve_hooks_for_path(test_path, project_root);
+
+        // Should get both hooks: root first, then subdirectory
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].source, PathBuf::from("/project/conftest.py"));
+        assert_eq!(hooks[1].source, PathBuf::from("/project/tests/conftest.py"));
     }
 }
