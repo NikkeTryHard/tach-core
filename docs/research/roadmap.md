@@ -36,7 +36,7 @@ gantt
 
 ## Strategic Context
 
-> **Research Foundation**: This roadmap is informed by 12 research papers and competitive analysis of 10+ Rust-Python test tools. See [research-investigation.md](research-investigation.md) for paper analysis, [external-research.md](external-research.md) for competitive landscape, and [research-reference.md](research-reference.md) for implementation mapping.
+> **Research Foundation**: This roadmap is informed by 12 research papers and competitive analysis of 10+ Rust-Python test tools. See [research/README.md](README.md) for paper analysis and implementation mapping, and [external-research.md](external-research.md) for competitive landscape.
 
 ### Competitive Landscape Summary
 

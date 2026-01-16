@@ -680,4 +680,4 @@ This implementation is informed by the following research papers (see `docs/pdfs
 - **setjmp/longjmp Limitation**: `longjmp` restores RSP but NOT stack contents - full stack memory must be tracked and restored
 - **mimalloc TLS Hazard**: Python 3.13+ stores `mi_heap_t` pointers in TLS via `fs_base` - must use `arch_prctl(ARCH_GET_FS)` to capture
 
-See [Research Investigation](../research-investigation.md) for complete analysis.
+See [Research Overview](../research/README.md) for complete analysis.

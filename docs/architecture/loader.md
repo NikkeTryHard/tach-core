@@ -558,4 +558,4 @@ This implementation is informed by the following research papers (see `docs/pdfs
 - **Relative Import Hazard**: Must manually set `__package__` and `__path__` attributes or relative imports will fail
 - **sys.modules Injection**: Use `PyImport_ExecCodeModuleObject` (preferred over `PyImport_ExecCodeModule`) for full control over module attributes
 
-See [Research Investigation](../research-investigation.md) for complete analysis.
+See [Research Overview](../research/README.md) for complete analysis.

@@ -474,4 +474,4 @@ This implementation is informed by the following research papers (see `docs/pdfs
 - **Tree Depth Limit**: Deep trees (depth > 3) increase OS scheduler latency - prefer wider, shallower trees
 - **macOS Alternative**: Use `mach_vm_remap` with `VM_FLAGS_OVERWRITE` + `copy=TRUE` for CoW semantics without fork()
 
-See [Research Investigation](../research-investigation.md) for complete analysis.
+See [Research Overview](../research/README.md) for complete analysis.

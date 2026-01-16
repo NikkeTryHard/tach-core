@@ -369,4 +369,4 @@ This implementation is informed by the following research papers (see `docs/pdfs
 - **C-Extension Blindspot**: Static analysis cannot see into compiled `.so` files - consider `ld-linux.so` auditing for thread spawning detection
 - **if **name** == "**main**" Guard**: Must not flag code inside this guard as toxic (only runs when executed as main)
 
-See [Research Investigation](../research-investigation.md) for complete analysis.
+See [Research Overview](../research/README.md) for complete analysis.
