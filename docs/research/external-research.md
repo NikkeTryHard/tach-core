@@ -1170,9 +1170,9 @@ graph TB
 
 **Tach Comparison**:
 
-- Maelstrom: 50-100ms container startup per test
-- Tach: <1ms fork+CoW startup per test
-- **Tach is 50-100x faster** for per-test isolation
+- Maelstrom: Container startup overhead per test (tens of milliseconds)
+- Tach: Sub-millisecond fork+CoW startup per test
+- **Tach is significantly faster** for per-test isolation
 
 **What Tach Can Learn**:
 
@@ -1423,19 +1423,19 @@ Next-generation test runner for **Rust projects** (not Python):
 
 ### Python Test Runner Comparison
 
-| Feature      | Tach        | Maelstrom  | rtest  | karva  | snob       |
-| ------------ | ----------- | ---------- | ------ | ------ | ---------- |
-| Target       | Python      | Multi      | Python | Python | Python     |
-| Startup time | <1ms        | 50-100ms   | N/A    | ~8ms   | N/A        |
-| Isolation    | userfaultfd | Containers | None   | None   | N/A        |
-| Fixtures     | Full        | Limited    | None   | None   | N/A        |
-| Test Select  | Planned     | No         | No     | No     | **Yes**    |
-| Distribution | Planned     | Yes        | No     | No     | No         |
-| Status       | In Progress | Production | v0.0.x | v0.0.1 | Production |
+| Feature      | Tach            | Maelstrom  | rtest  | karva  | snob       |
+| ------------ | --------------- | ---------- | ------ | ------ | ---------- |
+| Target       | Python          | Multi      | Python | Python | Python     |
+| Startup time | Sub-millisecond | Tens of ms | N/A    | Fast   | N/A        |
+| Isolation    | userfaultfd     | Containers | None   | None   | N/A        |
+| Fixtures     | Full            | Limited    | None   | None   | N/A        |
+| Test Select  | Planned         | No         | No     | No     | **Yes**    |
+| Distribution | Planned         | Yes        | No     | No     | No         |
+| Status       | In Progress     | Production | v0.0.x | v0.0.1 | Production |
 
 **Tach Advantages**:
 
-1. **Speed**: 50-100x faster isolation than Maelstrom
+1. **Speed**: Significantly faster isolation than container-based approaches
 2. **Memory efficiency**: userfaultfd CoW vs container duplication
 3. **Compatibility**: Full pytest fixture support
 4. **Granularity**: Microsecond-scale reset vs container recreation
@@ -1456,9 +1456,8 @@ Community discussion about Rust/Go collector rewrite:
 
 **Problem Statement**:
 
-- "34891 tests collected in 197.54s" (sometimes 7-9 minutes)
-- Large projects suffer from slow collection
-- Proposed 10x speedup via Rust rewrite
+- Large projects suffer from slow collection (sometimes minutes)
+- Proposed significant speedup via Rust rewrite
 
 **pytest Maintainer Response**:
 
@@ -1473,19 +1472,19 @@ Community discussion about Rust/Go collector rewrite:
 
 | Plugin          | Isolation Method | Overhead    | Limitations                |
 | --------------- | ---------------- | ----------- | -------------------------- |
-| pytest-forked   | fork() per test  | ~500-1000μs | No memory reset            |
-| pytest-isolate  | fork() per test  | ~500-1000μs | Fork of pytest-forked      |
-| pytest-parallel | Process pool     | ~100-200μs  | No isolation between tests |
-| pytest-xdist    | execnet workers  | ~50-100ms   | Pickle serialization       |
-| **Tach**        | userfaultfd+fork | **<50μs**   | Linux only, kernel 5.10+   |
+| pytest-forked   | fork() per test  | High        | No memory reset            |
+| pytest-isolate  | fork() per test  | High        | Fork of pytest-forked      |
+| pytest-parallel | Process pool     | Medium      | No isolation between tests |
+| pytest-xdist    | execnet workers  | Very high   | Pickle serialization       |
+| **Tach**        | userfaultfd+fork | **Minimal** | Linux only, kernel 5.10+   |
 
-**Key Insight**: All existing pytest isolation plugins use naive fork() which copies entire process state. Tach's userfaultfd approach provides 10-100x faster reset by only restoring touched pages.
+**Key Insight**: All existing pytest isolation plugins use naive fork() which copies entire process state. Tach's userfaultfd approach provides significantly faster reset by only restoring touched pages.
 
 ---
 
 ## 24. What Tach Must Learn (Priority Order)
 
-> **Goal**: Drop-in pytest replacement that's 10-100x faster out of the box.
+> **Goal**: Drop-in pytest replacement that's significantly faster out of the box.
 
 ### Tier 1: Adoption Blockers
 
