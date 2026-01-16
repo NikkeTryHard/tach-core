@@ -198,13 +198,16 @@ Reads the file and converts its AST into a `TestModule`.
 
 ### analyze_function
 
-Extracts test/fixture data from function definitions.
+Extracts test/fixture data from function definitions and populates the provided vectors.
 
 ```rust
 fn analyze_function(
     func: &ast::StmtFunctionDef,
-    class_name: Option<&str>,
-) -> Option<TestOrFixture>
+    source: &str,
+    tests: &mut Vec<TestCase>,
+    fixtures: &mut Vec<FixtureDefinition>,
+    is_async: bool,
+)
 ```
 
 ### extract_injected_args
