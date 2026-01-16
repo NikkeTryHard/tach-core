@@ -168,18 +168,18 @@ impl HookRegistry {
                     return h.spec.modifies_global_state;
                 }
                 // Also try canonicalizing the stored hook source
-                if let Ok(hook_canon) = h.source.canonicalize() {
-                    if &hook_canon == canon {
-                        return h.spec.modifies_global_state;
-                    }
+                if let Ok(hook_canon) = h.source.canonicalize()
+                    && &hook_canon == canon
+                {
+                    return h.spec.modifies_global_state;
                 }
             }
 
             // Try canonicalizing just the hook source against original input
-            if let Ok(hook_canon) = h.source.canonicalize() {
-                if hook_canon == path {
-                    return h.spec.modifies_global_state;
-                }
+            if let Ok(hook_canon) = h.source.canonicalize()
+                && hook_canon == path
+            {
+                return h.spec.modifies_global_state;
             }
 
             false
@@ -209,18 +209,18 @@ impl HookRegistry {
                         return true;
                     }
                     // Also try canonicalizing the stored hook source
-                    if let Ok(hook_canon) = h.source.canonicalize() {
-                        if &hook_canon == canon {
-                            return true;
-                        }
+                    if let Ok(hook_canon) = h.source.canonicalize()
+                        && &hook_canon == canon
+                    {
+                        return true;
                     }
                 }
 
                 // Try canonicalizing just the hook source against original input
-                if let Ok(hook_canon) = h.source.canonicalize() {
-                    if hook_canon == path {
-                        return true;
-                    }
+                if let Ok(hook_canon) = h.source.canonicalize()
+                    && hook_canon == path
+                {
+                    return true;
                 }
 
                 false
