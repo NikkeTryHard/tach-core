@@ -1137,7 +1137,10 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
         let effect = match effect_type.as_str() {
             "SetEnv" => {
                 let key: String = match dict.get_item("key") {
-                    Ok(Some(k)) => k.extract().unwrap_or_default(),
+                    Ok(Some(k)) => match k.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        _ => continue, // Skip invalid or empty keys
+                    },
                     _ => continue,
                 };
                 let value: String = match dict.get_item("value") {
@@ -1152,14 +1155,20 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                     _ => "append".to_string(),
                 };
                 let path: String = match dict.get_item("path") {
-                    Ok(Some(p)) => p.extract().unwrap_or_default(),
+                    Ok(Some(p)) => match p.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        _ => continue, // Skip invalid or empty paths
+                    },
                     _ => continue,
                 };
                 crate::hooks::HookEffect::ModifySysPath { action, path }
             }
             "RegisterMarker" => {
                 let name: String = match dict.get_item("name") {
-                    Ok(Some(n)) => n.extract().unwrap_or_default(),
+                    Ok(Some(n)) => match n.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        _ => continue, // Skip invalid or empty marker names
+                    },
                     _ => continue,
                 };
                 let description: String = match dict.get_item("description") {

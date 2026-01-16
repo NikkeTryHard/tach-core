@@ -442,8 +442,7 @@ impl Scheduler {
             timeout_secs: test.timeout_secs,
             hooks,
             cached_effects,
-            // TODO: Add markers to RunnableTest and populate here
-            markers: vec![],
+            markers: test.markers.clone(),
         };
 
         // Use encode_with_length which includes protocol header
@@ -824,6 +823,7 @@ mod tests {
             fixtures: vec![],
             is_toxic,
             timeout_secs: None,
+            markers: vec![],
         }
     }
 
@@ -1081,6 +1081,7 @@ mod tests {
             ],
             is_toxic: false,
             timeout_secs: Some(30),
+            markers: vec!["slow".to_string()],
         };
 
         assert_eq!(test.test_name, "test_with_fixtures");

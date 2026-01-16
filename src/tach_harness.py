@@ -1225,31 +1225,25 @@ def _compute_env_delta(before: dict, after: dict) -> list:
     return effects
 
 
-def record_session_hook_effects() -> list:
-    """Record effects from session-level hooks (pytest_configure).
+def _get_recorded_session_effects() -> list:
+    """Internal: Get pre-recorded session effects (deprecated, use get_session_hook_effects).
 
-    This is called during Zygote initialization, AFTER pytest config is done.
-    The effects are returned as a list of HookEffect-compatible dicts.
+    Note: This function exists for backwards compatibility. The actual recording
+    happens in init_session() which captures env and sys.path changes during
+    pytest configuration. Use get_session_hook_effects() instead.
 
     Returns:
         List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'
     """
-    global _SESSION_HOOK_EFFECTS
-
-    # Return cached effects if already recorded
-    if _SESSION_HOOK_EFFECTS:
-        return _SESSION_HOOK_EFFECTS
-
-    # Note: By the time this is called, pytest_configure has already run
-    # during _prepareconfig() and cfg._do_configure()
-    # We can't capture the "before" state retroactively
-
-    # For MVP, return empty list - the actual recording happens in init_session
     return _SESSION_HOOK_EFFECTS
 
 
 def get_session_hook_effects() -> list:
     """Get recorded session-level hook effects for transmission to workers.
+
+    This is the primary API for retrieving effects recorded during init_session().
+    The Zygote calls this after init_session() completes to get effects for
+    transmission to the Supervisor.
 
     Returns:
         List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'

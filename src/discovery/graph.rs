@@ -91,7 +91,13 @@ impl ToxicityGraph {
 
             // Check for toxic hooks in this file
             // Canonicalize path to match how hooks are stored in registry (from discovery)
-            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let canonical_path = path.canonicalize().unwrap_or_else(|e| {
+                eprintln!(
+                    "[tach:graph] Warning: Failed to canonicalize path {:?}: {}",
+                    path, e
+                );
+                path.to_path_buf()
+            });
             if registry.file_has_toxic_hooks(&canonical_path) {
                 if !report.is_toxic {
                     report.is_toxic = true;
