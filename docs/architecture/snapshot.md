@@ -470,7 +470,196 @@ When a process is forked, file descriptors are inherited but point to the same k
 
 - [Allocator](allocator.md) - Jemalloc quiesce sequence
 - [Zygote Lifecycle](zygote.md) - Worker initialization
-- [IPC Protocol](protocol.md) - SCM_RIGHTS fd passing
+- [Architecture Overview](overview.md) - System architecture and IPC protocol
+
+---
+
+## Restoration Physics
+
+This section defines the invariants that must hold for successful test isolation and documents critical memory synchronization requirements.
+
+### Restoration Invariants
+
+#### Invariant 1: Bit-Perfect Alignment
+
+A successful restore is **NOT** just "no crash." It is a **bit-perfect** alignment of:
+
+| Component | Location                      | Validation                           |
+| --------- | ----------------------------- | ------------------------------------ |
+| **TCB**   | `fs_base` register            | `self_ptr == fs_base`                |
+| **BSS**   | libpython .data/.bss segments | `sha256(restored) == sha256(golden)` |
+| **Heap**  | Anonymous mappings + `[heap]` | `sha256(restored) == sha256(golden)` |
+| **Stack** | `[stack]` region              | `sha256(restored) == sha256(golden)` |
+
+#### Invariant 2: Pointer Consistency
+
+All pointers from BSS to Heap must point to valid, restored objects:
+
+```
+BEFORE RESTORE:
+  BSS: PyFloat_FreeList -> 0x7f1234560000 (heap object A)
+  Heap: Object A at 0x7f1234560000, next -> Object B
+
+AFTER RESTORE (CORRECT):
+  BSS: PyFloat_FreeList -> 0x7f1234560000 (SAME address)
+  Heap: Object A at 0x7f1234560000 (RESTORED content)
+
+AFTER RESTORE (FAILURE):
+  BSS: PyFloat_FreeList -> 0x7f1234560000 (old address)
+  Heap: 0x7f1234560000 is ZEROED (MADV_DONTNEED zapped it)
+  RESULT: Next float allocation follows NULL/garbage pointer -> SIGSEGV
+```
+
+#### Invariant 3: TLS Synchronization
+
+Thread Local Storage must be restored alongside Heap when using allocators that cache state in TLS (mimalloc in Python 3.13+):
+
+```
+TCB at fs_base:
+  +0x0ad8: mi_heap_t* -> points into anonymous heap region
+  +0x0ae0: mi_tld_t* -> thread-local data
+
+If Heap is restored but TLS is not:
+  mi_heap_t* points to RESTORED memory
+  BUT mi_heap_t->pages still references STALE page list
+  RESULT: Allocator returns memory that was "freed" in snapshot
+```
+
+#### Invariant 4: GC Stability
+
+Post-restoration, the garbage collector must traverse all objects without fault:
+
+```python
+# Verification: Run 100 times without SIGSEGV
+for _ in range(100):
+    gc.collect()
+```
+
+If any of the following occur, restoration has FAILED:
+
+- `SIGSEGV` (invalid pointer dereference)
+- `SIGBUS` (unaligned access)
+- Python exception from gc internals
+- Memory leak detected by gc
+
+#### Invariant 5: Stack Integrity
+
+The C stack must be restored with valid return addresses and frame pointers. Stack restoration requires **two-phase restoration**:
+
+1. **Memory Restoration**: userfaultfd restores the stack memory contents
+2. **Register Restoration**: `longjmp` restores RSP/RBP to point to the correct stack frame
+
+**Critical**: `longjmp` only restores **registers** (RSP, RBP, RIP). The actual stack **memory** must already be restored via userfaultfd before longjmp is called.
+
+### The mimalloc Offset Registry
+
+Python 3.13 uses mimalloc as its memory allocator. mimalloc stores thread-local state at fixed offsets from `fs_base`.
+
+#### Discovered Offsets (Python 3.13, x86_64, glibc)
+
+| Offset from fs_base | Structure    | Description                         |
+| ------------------- | ------------ | ----------------------------------- |
+| `+0x0ad8`           | `mi_heap_t*` | **Primary heap pointer** (CRITICAL) |
+| `+0x0ae0`           | `mi_tld_t*`  | Thread-local data                   |
+| `+0x0af8`           | Unknown      | Secondary heap reference            |
+| `+0x0b00`           | Unknown      | Page list pointer                   |
+
+#### Version Compatibility Matrix
+
+| Python Version | Allocator | TLS Offsets               | Status     |
+| -------------- | --------- | ------------------------- | ---------- |
+| 3.11.x         | pymalloc  | N/A (no TLS caching)      | Safe       |
+| 3.12.x         | pymalloc  | N/A (no TLS caching)      | Safe       |
+| 3.13.x         | mimalloc  | `fs_base+0xad8` (primary) | **HAZARD** |
+| 3.14.x         | TBD       | TBD                       | Unknown    |
+
+#### Detection Method
+
+The mimalloc TLS offsets are discovered at runtime using **Sentinel Scan**:
+
+1. Allocate a unique sentinel pattern in Python heap via ctypes
+2. Read `fs_base` via `arch_prctl(ARCH_GET_FS)`
+3. Parse `/proc/self/maps` to identify TLS region boundaries
+4. Scan TLS range for pointers targeting the sentinel or heap regions
+5. Record offsets where valid heap pointers are found
+
+**Why Runtime Discovery?** Hardcoded offsets vary with Python version, glibc version, libpython build configuration, and ASLR state.
+
+### The Split-Brain Hazard
+
+The **Split-Brain Hazard** occurs when BSS and Heap are restored independently, leaving cross-segment pointers in an inconsistent state.
+
+```mermaid
+sequenceDiagram
+    participant BSS as BSS (.data)
+    participant Heap as Heap
+    participant GC as gc.collect()
+
+    Note over BSS,Heap: GOLDEN SNAPSHOT
+    BSS->>Heap: FreeList head -> Object A
+    Heap->>Heap: Object A.next -> Object B
+
+    Note over BSS,Heap: TEST EXECUTION (DIRTY)
+    BSS->>Heap: FreeList head -> Object C (new)
+    Heap->>Heap: Object C.next -> Object D (new)
+
+    Note over BSS,Heap: RESTORE (INCORRECT)
+    BSS->>BSS: Restored to -> Object A
+    Heap->>Heap: NOT restored (still Object C, D)
+
+    GC->>BSS: Read FreeList head
+    BSS-->>GC: Returns Object A address
+    GC->>Heap: Access Object A
+    Heap-->>GC: SIGSEGV (Object A doesn't exist)
+```
+
+**Mitigation**: Both BSS and Heap are invalidated in a single `madvise(MADV_DONTNEED)` pass, and all page faults are resolved from the golden snapshot.
+
+### The Free List Architecture
+
+Python caches freed objects in singly-linked free lists. For example, `PyFloat_FreeList`:
+
+```c
+// In Objects/floatobject.c
+static PyFloatObject *free_list = NULL;  // BSS segment
+static int numfree = 0;                   // BSS segment
+
+// When a float is freed:
+void float_dealloc(PyFloatObject *op) {
+    op->ob_type = (PyTypeObject *)free_list;  // Heap modification
+    free_list = op;                            // BSS modification
+}
+```
+
+For correct restoration, BSS must contain the `free_list` pointer from the golden snapshot, and the Heap must contain the exact `PyFloatObject` that `free_list` points to. If BSS is restored but Heap is not, the next `float_alloc()` returns a corrupted object.
+
+### Security Integration
+
+The sandbox enforcement (documented in `sandbox.md`) ensures workers cannot escape. The Physics of Restoration ensures workers cannot corrupt each other through stale memory state.
+
+```mermaid
+graph LR
+    subgraph Security["SANDBOX ENFORCEMENT"]
+        S1[Seccomp blocks syscalls]
+        S2[Landlock blocks filesystem]
+        S3[PID namespace isolates processes]
+    end
+
+    subgraph Physics["RESTORATION PHYSICS"]
+        P1[userfaultfd captures faults]
+        P2[Golden snapshot provides source of truth]
+        P3[TLS restoration prevents allocator desync]
+    end
+
+    subgraph Result["IRON DOME"]
+        R1[Workers cannot escape]
+        R2[Workers cannot corrupt]
+        R3[Workers are perfectly recyclable]
+    end
+
+    Security --> Result
+    Physics --> Result
+```
 
 ---
 
