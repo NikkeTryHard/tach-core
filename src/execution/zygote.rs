@@ -712,7 +712,7 @@ except Exception as e:
         // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
         // We retrieve them here and will send them to the Supervisor for HookRegistry population.
         let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
-        let session_effects: &Bound<'_, PyList> = session_effects_obj.cast::<PyList>();
+        let session_effects: &Bound<'_, PyList> = session_effects_obj.cast::<PyList>()?;
         let effects = convert_py_effects_to_rust(session_effects);
 
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
@@ -1142,7 +1142,7 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
 
     for (idx, item) in py_list.iter().enumerate() {
         // Each item should be a dict - use cast (downcast is deprecated in PyO3 0.27+)
-        let dict: &Bound<'_, PyDict> = match item.downcast::<PyDict>() {
+        let dict: &Bound<'_, PyDict> = match item.cast::<PyDict>() {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(
