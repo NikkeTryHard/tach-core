@@ -58,7 +58,12 @@ fn test_queue_split_separates_safe_and_toxic() {
 
 #[test]
 fn test_priority_dispatch_safe_first() {
-    let tests = vec![create_runnable_test("test_toxic_1", true), create_runnable_test("test_safe_1", false), create_runnable_test("test_toxic_2", true), create_runnable_test("test_safe_2", false)];
+    let tests = vec![
+        create_runnable_test("test_toxic_1", true),
+        create_runnable_test("test_safe_1", false),
+        create_runnable_test("test_toxic_2", true),
+        create_runnable_test("test_safe_2", false),
+    ];
 
     // Split into queues
     let mut safe_queue: VecDeque<RunnableTest> = VecDeque::new();
@@ -114,10 +119,18 @@ fn decide_worker_action(is_toxic: bool) -> WorkerAction {
 #[test]
 fn test_dual_path_decision_logic() {
     // Safe test -> Reset
-    assert_eq!(decide_worker_action(false), WorkerAction::ResetAndContinue, "Safe test should trigger ResetAndContinue");
+    assert_eq!(
+        decide_worker_action(false),
+        WorkerAction::ResetAndContinue,
+        "Safe test should trigger ResetAndContinue"
+    );
 
     // Toxic test -> Exit
-    assert_eq!(decide_worker_action(true), WorkerAction::ExitImmediately, "Toxic test should trigger ExitImmediately");
+    assert_eq!(
+        decide_worker_action(true),
+        WorkerAction::ExitImmediately,
+        "Toxic test should trigger ExitImmediately"
+    );
 }
 
 // =============================================================================
@@ -158,12 +171,24 @@ fn test_payload_is_toxic_propagation() {
     };
 
     // Verify is_toxic is correctly set
-    assert!(!safe_payload.is_toxic, "Safe payload should have is_toxic=false");
-    assert!(toxic_payload.is_toxic, "Toxic payload should have is_toxic=true");
+    assert!(
+        !safe_payload.is_toxic,
+        "Safe payload should have is_toxic=false"
+    );
+    assert!(
+        toxic_payload.is_toxic,
+        "Toxic payload should have is_toxic=true"
+    );
 
     // Verify decision based on payload
-    assert_eq!(decide_worker_action(safe_payload.is_toxic), WorkerAction::ResetAndContinue);
-    assert_eq!(decide_worker_action(toxic_payload.is_toxic), WorkerAction::ExitImmediately);
+    assert_eq!(
+        decide_worker_action(safe_payload.is_toxic),
+        WorkerAction::ResetAndContinue
+    );
+    assert_eq!(
+        decide_worker_action(toxic_payload.is_toxic),
+        WorkerAction::ExitImmediately
+    );
 }
 
 // =============================================================================
@@ -242,7 +267,11 @@ fn test_mixed_queue_execution_simulation() {
 
 #[test]
 fn test_all_safe_tests_no_exits() {
-    let tests = vec![create_runnable_test("test_1", false), create_runnable_test("test_2", false), create_runnable_test("test_3", false)];
+    let tests = vec![
+        create_runnable_test("test_1", false),
+        create_runnable_test("test_2", false),
+        create_runnable_test("test_3", false),
+    ];
 
     let mut exit_count = 0;
     let mut reset_count = 0;
@@ -264,7 +293,11 @@ fn test_all_safe_tests_no_exits() {
 
 #[test]
 fn test_all_toxic_tests_all_exits() {
-    let tests = vec![create_runnable_test("test_1", true), create_runnable_test("test_2", true), create_runnable_test("test_3", true)];
+    let tests = vec![
+        create_runnable_test("test_1", true),
+        create_runnable_test("test_2", true),
+        create_runnable_test("test_3", true),
+    ];
 
     let mut exit_count = 0;
     let mut reset_count = 0;
@@ -304,7 +337,10 @@ fn test_empty_queues() {
 
     // next_test() should return None
     let next = safe_queue.pop_front().or_else(|| toxic_queue.pop_front());
-    assert!(next.is_none(), "next_test() should return None for empty queues");
+    assert!(
+        next.is_none(),
+        "next_test() should return None for empty queues"
+    );
 }
 
 // =============================================================================
@@ -320,9 +356,19 @@ fn test_scheduler_stats_tracking() {
         toxic_count: usize,
     }
 
-    let tests = vec![create_runnable_test("test_1", false), create_runnable_test("test_2", true), create_runnable_test("test_3", false), create_runnable_test("test_4", true), create_runnable_test("test_5", false)];
+    let tests = vec![
+        create_runnable_test("test_1", false),
+        create_runnable_test("test_2", true),
+        create_runnable_test("test_3", false),
+        create_runnable_test("test_4", true),
+        create_runnable_test("test_5", false),
+    ];
 
-    let mut stats = SchedulerStats { total: tests.len(), safe_count: 0, toxic_count: 0 };
+    let mut stats = SchedulerStats {
+        total: tests.len(),
+        safe_count: 0,
+        toxic_count: 0,
+    };
 
     for test in &tests {
         if test.is_toxic {
@@ -357,16 +403,28 @@ fn test_result_before_exit_invariant() {
         let mut events = Vec::new();
 
         // 1. Execute test
-        events.push(WorkerEvent { event_type: "execute", test_id });
+        events.push(WorkerEvent {
+            event_type: "execute",
+            test_id,
+        });
 
         // 2. Send result (ALWAYS happens before exit decision)
-        events.push(WorkerEvent { event_type: "send_result", test_id });
+        events.push(WorkerEvent {
+            event_type: "send_result",
+            test_id,
+        });
 
         // 3. Exit decision (AFTER result is sent)
         if is_toxic {
-            events.push(WorkerEvent { event_type: "exit", test_id });
+            events.push(WorkerEvent {
+                event_type: "exit",
+                test_id,
+            });
         } else {
-            events.push(WorkerEvent { event_type: "reset", test_id });
+            events.push(WorkerEvent {
+                event_type: "reset",
+                test_id,
+            });
         }
 
         events

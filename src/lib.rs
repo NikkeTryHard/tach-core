@@ -121,7 +121,7 @@ fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
         .filter(|e| {
             let path = e.path();
             // Include only .py files
-            if !path.extension().is_some_and(|ext| ext == "py") {
+            if path.extension().is_none_or(|ext| ext != "py") {
                 return false;
             }
             // Get path relative to root to avoid filtering out files when root

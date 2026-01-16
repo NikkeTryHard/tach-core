@@ -864,7 +864,7 @@ fn run_tests(
     is_json: bool,
     coverage_enabled: bool,
     memory_enabled: bool,
-    hook_registry: HookRegistry,
+    mut hook_registry: HookRegistry,
     project_root: PathBuf,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
@@ -1008,6 +1008,43 @@ fn run_tests(
 
             if ready_buf[0] == 0x42 && !is_json {
                 eprintln!("[tach:supervisor] Zygote is READY.\n");
+            }
+
+            // HOOK EFFECT BRIDGE (v0.2.0): Receive session effects from Zygote
+            // The Zygote sends bincode-encoded Vec<HookEffect> after the ready byte
+            // Format: length (4 bytes LE) + bincode data
+            let mut effects_len_buf = [0u8; 4];
+            cmd_sock_clone.read_exact(&mut effects_len_buf)?;
+            let effects_len = u32::from_le_bytes(effects_len_buf) as usize;
+
+            if effects_len > 0 {
+                let mut effects_buf = vec![0u8; effects_len];
+                cmd_sock_clone.read_exact(&mut effects_buf)?;
+
+                let session_effects: Vec<tach_core::hooks::HookEffect> =
+                    bincode::serde::decode_from_slice(&effects_buf, bincode::config::standard())
+                        .map(|(effects, _)| effects)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "[tach:supervisor] Warning: Failed to decode session effects: {}",
+                                e
+                            );
+                            Vec::new()
+                        });
+
+                if !session_effects.is_empty() {
+                    if !is_json {
+                        eprintln!(
+                            "[tach:supervisor] Received {} session hook effects from Zygote",
+                            session_effects.len()
+                        );
+                    }
+                    // Populate HookRegistry with session effects
+                    // These are recorded under "pytest_configure" as they come from session initialization
+                    for effect in session_effects {
+                        hook_registry.record_effect("pytest_configure", effect);
+                    }
+                }
             }
 
             // --- SCHEDULER ---

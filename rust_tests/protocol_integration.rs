@@ -1,6 +1,10 @@
 //! Integration tests for the protocol module
 
-use tach_core::protocol::{decode_with_limit, encode_with_length, FixtureInfo, TestPayload, TestResult, CMD_EXIT, CMD_FORK, HEADER_SIZE, MAX_PAYLOAD_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, STATUS_CRASH, STATUS_FAIL, STATUS_PASS, STATUS_SKIP};
+use tach_core::protocol::{
+    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, PROTOCOL_MAGIC,
+    PROTOCOL_VERSION, STATUS_CRASH, STATUS_FAIL, STATUS_PASS, STATUS_SKIP, TestPayload, TestResult,
+    decode_with_limit, encode_with_length,
+};
 
 #[test]
 fn test_serialize_test_payload() {
@@ -9,7 +13,10 @@ fn test_serialize_test_payload() {
         file_path: "tests/test_example.py".to_string(),
         test_name: "test_something".to_string(),
         is_async: false,
-        fixtures: vec![FixtureInfo { name: "db".to_string(), scope: "module".to_string() }],
+        fixtures: vec![FixtureInfo {
+            name: "db".to_string(),
+            scope: "module".to_string(),
+        }],
         log_fd: 5,
         debug_socket_path: String::new(),
         is_toxic: false,
@@ -25,13 +32,21 @@ fn test_serialize_test_payload() {
     assert!(encoded.len() > HEADER_SIZE, "Encoded should have header");
 
     // Verify header format
-    assert_eq!(&encoded[0..2], &PROTOCOL_MAGIC, "Magic bytes should be 'TA'");
+    assert_eq!(
+        &encoded[0..2],
+        &PROTOCOL_MAGIC,
+        "Magic bytes should be 'TA'"
+    );
     assert_eq!(encoded[2], PROTOCOL_VERSION, "Version should match");
     assert_eq!(encoded[3], 0, "Reserved byte should be 0");
 
     // Extract length from bytes 4-7 (little-endian u32)
     let len = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]);
-    assert_eq!(len as usize, encoded.len() - HEADER_SIZE, "Length field should match payload size");
+    assert_eq!(
+        len as usize,
+        encoded.len() - HEADER_SIZE,
+        "Length field should match payload size"
+    );
 }
 
 #[test]
@@ -91,7 +106,8 @@ fn test_roundtrip_test_payload() {
     let encoded = encode_with_length(&original).expect("Should serialize");
 
     // Decode using decode_with_limit (validates header)
-    let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Should deserialize");
+    let decoded: TestPayload =
+        decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Should deserialize");
 
     assert_eq!(decoded.test_id, original.test_id);
     assert_eq!(decoded.file_path, original.file_path);
@@ -114,7 +130,8 @@ fn test_roundtrip_test_result() {
     let encoded = encode_with_length(&original).expect("Should serialize");
 
     // Decode using decode_with_limit (validates header)
-    let decoded: TestResult = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Should deserialize");
+    let decoded: TestResult =
+        decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).expect("Should deserialize");
 
     assert_eq!(decoded.test_id, original.test_id);
     assert_eq!(decoded.status, original.status);

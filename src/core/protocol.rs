@@ -228,7 +228,9 @@ pub const HEADER_SIZE: usize = 8;
 /// - Reserved (1 byte): Reserved for future use (always 0)
 /// - Length (4 bytes): Payload size in little-endian u32
 /// - Payload: bincode-encoded data
-pub fn encode_with_length<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, bincode::error::EncodeError> {
+pub fn encode_with_length<T: serde::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, bincode::error::EncodeError> {
     let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
     let len = payload.len() as u32;
     let mut result = Vec::with_capacity(HEADER_SIZE + payload.len());
@@ -264,7 +266,11 @@ impl std::fmt::Display for DecodeWithLimitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PayloadTooLarge { claimed, limit } => {
-                write!(f, "payload claims {} bytes, exceeds limit of {}", claimed, limit)
+                write!(
+                    f,
+                    "payload claims {} bytes, exceeds limit of {}",
+                    claimed, limit
+                )
             }
             Self::InsufficientData { needed, available } => {
                 write!(f, "need {} bytes but only {} available", needed, available)
@@ -272,7 +278,11 @@ impl std::fmt::Display for DecodeWithLimitError {
             Self::Bincode(e) => write!(f, "bincode decode error: {}", e),
             Self::InvalidMagic => write!(f, "invalid protocol magic bytes"),
             Self::VersionMismatch { expected, found } => {
-                write!(f, "protocol version mismatch: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "protocol version mismatch: expected {}, found {}",
+                    expected, found
+                )
             }
         }
     }
@@ -313,10 +323,16 @@ impl std::error::Error for DecodeWithLimitError {
 /// let encoded = encode_with_length(&payload)?;
 /// let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE)?;
 /// ```
-pub fn decode_with_limit<T: serde::de::DeserializeOwned>(data: &[u8], max_size: usize) -> Result<T, DecodeWithLimitError> {
+pub fn decode_with_limit<T: serde::de::DeserializeOwned>(
+    data: &[u8],
+    max_size: usize,
+) -> Result<T, DecodeWithLimitError> {
     // Need at least HEADER_SIZE bytes for full header
     if data.len() < HEADER_SIZE {
-        return Err(DecodeWithLimitError::InsufficientData { needed: HEADER_SIZE, available: data.len() });
+        return Err(DecodeWithLimitError::InsufficientData {
+            needed: HEADER_SIZE,
+            available: data.len(),
+        });
     }
 
     // Validate magic bytes
@@ -327,7 +343,10 @@ pub fn decode_with_limit<T: serde::de::DeserializeOwned>(data: &[u8], max_size: 
     // Validate protocol version
     let version = data[2];
     if version != PROTOCOL_VERSION {
-        return Err(DecodeWithLimitError::VersionMismatch { expected: PROTOCOL_VERSION, found: version });
+        return Err(DecodeWithLimitError::VersionMismatch {
+            expected: PROTOCOL_VERSION,
+            found: version,
+        });
     }
 
     // Reserved byte at data[3] is ignored (forward compatibility)
@@ -337,12 +356,18 @@ pub fn decode_with_limit<T: serde::de::DeserializeOwned>(data: &[u8], max_size: 
 
     // Check against size limit BEFORE any allocation
     if len > max_size {
-        return Err(DecodeWithLimitError::PayloadTooLarge { claimed: len, limit: max_size });
+        return Err(DecodeWithLimitError::PayloadTooLarge {
+            claimed: len,
+            limit: max_size,
+        });
     }
 
     // Verify we have enough bytes for header + payload
     if data.len() < HEADER_SIZE + len {
-        return Err(DecodeWithLimitError::InsufficientData { needed: HEADER_SIZE + len, available: data.len() });
+        return Err(DecodeWithLimitError::InsufficientData {
+            needed: HEADER_SIZE + len,
+            available: data.len(),
+        });
     }
 
     // Safe to decode now - size is within limit
@@ -350,7 +375,11 @@ pub fn decode_with_limit<T: serde::de::DeserializeOwned>(data: &[u8], max_size: 
     // Since we've validated the outer message size, and TestPayload has fixed-size
     // fields (u16, u64, String), the internal structure cannot claim more bytes
     // than the validated payload size allows.
-    let (value, _): (T, usize) = bincode::serde::decode_from_slice(&data[HEADER_SIZE..HEADER_SIZE + len], bincode::config::standard()).map_err(DecodeWithLimitError::Bincode)?;
+    let (value, _): (T, usize) = bincode::serde::decode_from_slice(
+        &data[HEADER_SIZE..HEADER_SIZE + len],
+        bincode::config::standard(),
+    )
+    .map_err(DecodeWithLimitError::Bincode)?;
 
     Ok(value)
 }
@@ -455,7 +484,10 @@ mod tests {
             file_path: "tests/test_foo.py".to_string(),
             test_name: "test_bar".to_string(),
             is_async: true,
-            fixtures: vec![FixtureInfo { name: "db".to_string(), scope: "module".to_string() }],
+            fixtures: vec![FixtureInfo {
+                name: "db".to_string(),
+                scope: "module".to_string(),
+            }],
             log_fd: -1,
             debug_socket_path: String::new(),
             is_toxic: false,
@@ -468,13 +500,21 @@ mod tests {
         let encoded = encode_with_length(&payload).unwrap();
 
         // Verify header format: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
-        assert_eq!(&encoded[0..2], &PROTOCOL_MAGIC, "Magic bytes should be 'TA'");
+        assert_eq!(
+            &encoded[0..2],
+            &PROTOCOL_MAGIC,
+            "Magic bytes should be 'TA'"
+        );
         assert_eq!(encoded[2], PROTOCOL_VERSION, "Version should match");
         assert_eq!(encoded[3], 0, "Reserved byte should be 0");
 
         // Extract length from bytes 4-7 (little-endian u32)
         let len = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
-        assert_eq!(len, encoded.len() - HEADER_SIZE, "Length should match payload size");
+        assert_eq!(
+            len,
+            encoded.len() - HEADER_SIZE,
+            "Length should match payload size"
+        );
 
         // Verify we can deserialize the payload correctly
         let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
@@ -489,10 +529,22 @@ mod tests {
 
     #[test]
     fn test_fixture_info_from_scope() {
-        assert_eq!(FixtureInfo::from_scope("db".into(), &FixtureScope::Function).scope, "function");
-        assert_eq!(FixtureInfo::from_scope("db".into(), &FixtureScope::Class).scope, "class");
-        assert_eq!(FixtureInfo::from_scope("db".into(), &FixtureScope::Module).scope, "module");
-        assert_eq!(FixtureInfo::from_scope("db".into(), &FixtureScope::Session).scope, "session");
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Function).scope,
+            "function"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Class).scope,
+            "class"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Module).scope,
+            "module"
+        );
+        assert_eq!(
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Session).scope,
+            "session"
+        );
     }
 
     #[test]
@@ -502,14 +554,20 @@ mod tests {
         let memory = read_process_memory_rss(pid);
 
         // Should return Some value on Linux
-        assert!(memory.is_some(), "Should be able to read own process memory");
+        assert!(
+            memory.is_some(),
+            "Should be able to read own process memory"
+        );
 
         // Memory should be non-zero (we're running)
         let rss = memory.unwrap();
         assert!(rss > 0, "Process should have non-zero memory usage");
 
         // Should be less than 10GB (sanity check for reasonable value)
-        assert!(rss < 10 * 1024 * 1024 * 1024, "Memory should be less than 10GB");
+        assert!(
+            rss < 10 * 1024 * 1024 * 1024,
+            "Memory should be less than 10GB"
+        );
     }
 
     #[test]
@@ -610,11 +668,23 @@ mod tests {
     fn test_decode_with_limit_handles_insufficient_data() {
         // Empty buffer - needs at least HEADER_SIZE (8) bytes
         let result: Result<TestPayload, _> = decode_with_limit(&[], MAX_PAYLOAD_SIZE);
-        assert!(matches!(result, Err(DecodeWithLimitError::InsufficientData { needed: 8, available: 0 })));
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 8,
+                available: 0
+            })
+        ));
 
         // Only 2 bytes (less than 8-byte header)
         let result: Result<TestPayload, _> = decode_with_limit(&[0, 0], MAX_PAYLOAD_SIZE);
-        assert!(matches!(result, Err(DecodeWithLimitError::InsufficientData { needed: 8, available: 2 })));
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 8,
+                available: 2
+            })
+        ));
 
         // Valid header but claims 100 bytes, only 12 available (8 header + 4 payload)
         // Header: magic(2) + version(1) + reserved(1) + length(4)
@@ -622,7 +692,13 @@ mod tests {
         data.extend_from_slice(&100u32.to_le_bytes()); // length = 100
         data.extend_from_slice(&[0; 4]); // only 4 more bytes, not 100
         let result: Result<TestPayload, _> = decode_with_limit(&data, MAX_PAYLOAD_SIZE);
-        assert!(matches!(result, Err(DecodeWithLimitError::InsufficientData { needed: 108, available: 12 })));
+        assert!(matches!(
+            result,
+            Err(DecodeWithLimitError::InsufficientData {
+                needed: 108,
+                available: 12
+            })
+        ));
     }
 
     #[test]
@@ -632,7 +708,16 @@ mod tests {
             file_path: "tests/integration/test_db.py".to_string(),
             test_name: "test_complex_query".to_string(),
             is_async: true,
-            fixtures: vec![FixtureInfo { name: "db".to_string(), scope: "module".to_string() }, FixtureInfo { name: "client".to_string(), scope: "function".to_string() }],
+            fixtures: vec![
+                FixtureInfo {
+                    name: "db".to_string(),
+                    scope: "module".to_string(),
+                },
+                FixtureInfo {
+                    name: "client".to_string(),
+                    scope: "function".to_string(),
+                },
+            ],
             log_fd: 42,
             debug_socket_path: "/tmp/debug.sock".to_string(),
             is_toxic: true,
@@ -684,7 +769,11 @@ mod tests {
         data.extend_from_slice(&[0; 10]); // payload
 
         let result: Result<TestPayload, _> = decode_with_limit(&data, MAX_PAYLOAD_SIZE);
-        assert!(matches!(result, Err(DecodeWithLimitError::InvalidMagic)), "Should reject invalid magic bytes, got {:?}", result);
+        assert!(
+            matches!(result, Err(DecodeWithLimitError::InvalidMagic)),
+            "Should reject invalid magic bytes, got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -711,15 +800,23 @@ mod tests {
         let encoded = encode_with_length(&result).unwrap();
 
         // Verify header structure
-        assert!(encoded.len() >= HEADER_SIZE, "Encoded message should have at least header bytes");
+        assert!(
+            encoded.len() >= HEADER_SIZE,
+            "Encoded message should have at least header bytes"
+        );
         assert_eq!(encoded[0], b'T', "First byte should be 'T'");
         assert_eq!(encoded[1], b'A', "Second byte should be 'A'");
         assert_eq!(encoded[2], PROTOCOL_VERSION, "Third byte should be version");
         assert_eq!(encoded[3], 0, "Fourth byte should be reserved (0)");
 
         // Verify length matches
-        let claimed_len = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
-        assert_eq!(claimed_len, encoded.len() - HEADER_SIZE, "Length field should match actual payload size");
+        let claimed_len =
+            u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
+        assert_eq!(
+            claimed_len,
+            encoded.len() - HEADER_SIZE,
+            "Length field should match actual payload size"
+        );
     }
 
     #[test]
@@ -734,6 +831,9 @@ mod tests {
 
         // Should fail on magic check, not try to allocate 4GB
         let result: Result<TestPayload, _> = decode_with_limit(&data, MAX_PAYLOAD_SIZE);
-        assert!(matches!(result, Err(DecodeWithLimitError::InvalidMagic)), "Should reject invalid magic before checking length");
+        assert!(
+            matches!(result, Err(DecodeWithLimitError::InvalidMagic)),
+            "Should reject invalid magic before checking length"
+        );
     }
 }
