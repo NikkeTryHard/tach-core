@@ -191,3 +191,184 @@ fn test_modify_items_effect_ipc() {
         _ => panic!("Expected ModifyItems effect"),
     }
 }
+
+/// Test graceful error handling when deserializing malformed bincode data
+#[test]
+fn test_malformed_bincode_data() {
+    // Completely invalid data
+    let garbage: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01, 0x02];
+    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&garbage);
+    assert!(result.is_err(), "Should fail to deserialize garbage data");
+
+    // Truncated data (valid start but incomplete)
+    let effects = vec![HookEffect::SetEnv {
+        key: "TEST".to_string(),
+        value: "value".to_string(),
+    }];
+    let mut encoded = bincode::serialize(&effects).expect("Should serialize");
+    encoded.truncate(encoded.len() / 2); // Cut in half
+    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&encoded);
+    assert!(result.is_err(), "Should fail to deserialize truncated data");
+
+    // Wrong type marker (try to deserialize as wrong enum variant)
+    let single_effect = HookEffect::NoEffect;
+    let encoded = bincode::serialize(&single_effect).expect("Should serialize");
+    // Try to deserialize single effect as Vec - should fail or produce unexpected result
+    let result: Result<Vec<HookEffect>, _> = bincode::deserialize(&encoded);
+    // This may succeed with wrong data or fail - either way we handle it gracefully
+    // The key is no panic occurs
+    let _ = result;
+}
+
+/// Stress test with large number of effects
+#[test]
+fn test_large_effect_list() {
+    const EFFECT_COUNT: usize = 1000;
+
+    // Create a large list of mixed effects
+    let mut effects: Vec<HookEffect> = Vec::with_capacity(EFFECT_COUNT);
+    for i in 0..EFFECT_COUNT {
+        let effect = match i % 5 {
+            0 => HookEffect::SetEnv {
+                key: format!("VAR_{}", i),
+                value: format!("value_{}", i),
+            },
+            1 => HookEffect::ModifySysPath {
+                action: SysPathAction::Prepend,
+                path: format!("/path/to/module_{}", i),
+            },
+            2 => HookEffect::RegisterMarker {
+                name: format!("marker_{}", i),
+                description: Some(format!("Description for marker {}", i)),
+            },
+            3 => HookEffect::ModifyItems {
+                added: vec![format!("test_{}.py::test_added", i)],
+                removed: vec![],
+                reordered: false,
+            },
+            _ => HookEffect::NoEffect,
+        };
+        effects.push(effect);
+    }
+
+    // Serialize large list
+    let encoded = bincode::serialize(&effects).expect("Should serialize large effect list");
+
+    // Deserialize and verify
+    let decoded: Vec<HookEffect> =
+        bincode::deserialize(&encoded).expect("Should deserialize large effect list");
+
+    assert_eq!(decoded.len(), EFFECT_COUNT);
+
+    // Verify first and last effects
+    match &decoded[0] {
+        HookEffect::SetEnv { key, value } => {
+            assert_eq!(key, "VAR_0");
+            assert_eq!(value, "value_0");
+        }
+        _ => panic!("Expected SetEnv for index 0"),
+    }
+
+    match &decoded[EFFECT_COUNT - 1] {
+        HookEffect::NoEffect => {} // 999 % 5 = 4, which maps to NoEffect
+        _ => panic!("Expected NoEffect for last index"),
+    }
+
+    // Store in registry and verify retrieval
+    let mut registry = HookRegistry::default();
+    for effect in decoded {
+        registry.record_effect(effect);
+    }
+    assert_eq!(registry.get_effects().len(), EFFECT_COUNT);
+}
+
+/// Test special characters in effect strings (Unicode, newlines, escape sequences)
+#[test]
+fn test_special_characters_in_effects() {
+    let effects = vec![
+        // Unicode characters
+        HookEffect::SetEnv {
+            key: "UNICODE_VAR".to_string(),
+            value: "Hello \u{1F680} World \u{2603} Test".to_string(), // Rocket and snowman emoji
+        },
+        // Newlines and tabs
+        HookEffect::SetEnv {
+            key: "MULTILINE".to_string(),
+            value: "line1\nline2\nline3\ttabbed".to_string(),
+        },
+        // Empty strings
+        HookEffect::SetEnv {
+            key: "".to_string(),
+            value: "".to_string(),
+        },
+        // Escape sequences and special chars
+        HookEffect::ModifySysPath {
+            action: SysPathAction::Append,
+            path: "/path/with spaces/and\"quotes\"/and\\backslashes".to_string(),
+        },
+        // Japanese characters
+        HookEffect::RegisterMarker {
+            name: "test_marker".to_string(),
+            description: Some("This is a test with Japanese: \u{65E5}\u{672C}\u{8A9E}".to_string()),
+        },
+        // Null-like strings (not actual null bytes, but the word)
+        HookEffect::SetEnv {
+            key: "NULL_TEST".to_string(),
+            value: "null\0embedded".to_string(), // Actual null byte
+        },
+        // Very long string
+        HookEffect::SetEnv {
+            key: "LONG_KEY".to_string(),
+            value: "x".repeat(10000),
+        },
+        // Path with unusual but valid characters
+        HookEffect::ModifySysPath {
+            action: SysPathAction::Remove,
+            path: "/tmp/test-file_name.2024@host#tag".to_string(),
+        },
+    ];
+
+    // Serialize
+    let encoded = bincode::serialize(&effects).expect("Should serialize special characters");
+
+    // Deserialize
+    let decoded: Vec<HookEffect> =
+        bincode::deserialize(&encoded).expect("Should deserialize special characters");
+
+    assert_eq!(decoded.len(), effects.len());
+
+    // Verify Unicode preserved
+    match &decoded[0] {
+        HookEffect::SetEnv { value, .. } => {
+            assert!(value.contains('\u{1F680}')); // Rocket emoji
+            assert!(value.contains('\u{2603}')); // Snowman
+        }
+        _ => panic!("Expected SetEnv"),
+    }
+
+    // Verify newlines preserved
+    match &decoded[1] {
+        HookEffect::SetEnv { value, .. } => {
+            assert!(value.contains('\n'));
+            assert!(value.contains('\t'));
+        }
+        _ => panic!("Expected SetEnv"),
+    }
+
+    // Verify empty strings work
+    match &decoded[2] {
+        HookEffect::SetEnv { key, value } => {
+            assert!(key.is_empty());
+            assert!(value.is_empty());
+        }
+        _ => panic!("Expected SetEnv"),
+    }
+
+    // Verify long string preserved
+    match &decoded[6] {
+        HookEffect::SetEnv { value, .. } => {
+            assert_eq!(value.len(), 10000);
+        }
+        _ => panic!("Expected SetEnv"),
+    }
+}

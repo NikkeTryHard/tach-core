@@ -426,25 +426,25 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
   - [x] Extract pytest markers from @pytest.mark.\* decorators
   - [x] Detect autouse fixtures
   - [ ] Build hook dependency graph
-  - [ ] Handle conftest inheritance
+  - [x] Handle conftest inheritance
 
 #### Core Hook Support
 
-- [ ] `pytest_configure(config)` - Plugin configuration
+- [x] `pytest_configure(config)` - Plugin configuration
 - [ ] `pytest_collection_modifyitems(items)` - Test collection modification
   > **Ref**: "By recording effects in the parent and replaying them in the child, Tach avoids the need to re-run complex plugin logic in every worker" — _Project Tach Compatibility Layer Blueprint_
 - [ ] `pytest_runtest_setup(item)` - Pre-test setup
 - [ ] `pytest_runtest_teardown(item)` - Post-test teardown
 - [ ] `pytest_runtest_makereport(item, call)` - Result reporting
-- [ ] `pytest_sessionstart(session)` - Session initialization
+- [x] `pytest_sessionstart(session)` - Session initialization
 - [ ] `pytest_sessionfinish(session)` - Session cleanup
 
 #### Plugin Registration
 
-- [ ] Detect installed pytest plugins via `pkg_resources`
+- [x] Detect installed pytest plugins via `pkg_resources`
 - [ ] Create plugin shim registry
   > **Ref**: "The Tach supervisor creates a per-worker isolated namespace at clone time" — _Project Tach Compatibility Layer Blueprint_
-- [ ] Log warnings for unsupported plugins
+- [x] Log warnings for unsupported plugins
 - [ ] Allow disabling specific plugins via config
 - [ ] Support plugin ordering/priority
 
