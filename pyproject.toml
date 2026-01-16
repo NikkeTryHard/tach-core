@@ -1,6 +1,7 @@
 [project]
 name = "tach-core"
-version = "0.1.5"
+# Version is managed in Cargo.toml - this file uses dynamic versioning
+dynamic = ["version"]
 description = "Hypervisor-accelerated Python test runner"
 readme = "README.md"
 license = "MIT"

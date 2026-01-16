@@ -1,6 +1,6 @@
 # Tach Performance Benchmarks
 
-> **Status:** Benchmark framework established. Results pending systematic collection.
+> **Status:** Work in Progress - Benchmark infrastructure is defined but data collection is pending.
 
 ## Methodology
 
