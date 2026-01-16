@@ -1,3 +1,33 @@
+[project]
+name = "tach-core"
+version = "0.1.5"
+description = "Hypervisor-accelerated Python test runner"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "NikkeTryHard" }
+]
+keywords = ["testing", "pytest", "performance", "isolation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/NikkeTryHard/tach-core"
+Repository = "https://github.com/NikkeTryHard/tach-core"
+Changelog = "https://github.com/NikkeTryHard/tach-core/blob/master/CHANGELOG.md"
+
 [tool.pytest_env]
 TACH_TEST_VAR = "hello_from_pyproject"
 TACH_DEBUG_MODE = "true"
