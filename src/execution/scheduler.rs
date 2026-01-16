@@ -422,6 +422,10 @@ impl Scheduler {
             .hook_registry
             .resolve_hooks_for_path(&test.file_path, &self.project_root);
 
+        // Get session-level cached effects for replay in workers (v0.2.0 Hook Interception)
+        // These effects (from pytest_configure) are applied before each test runs
+        let cached_effects = self.hook_registry.get_session_effects();
+
         let payload = TestPayload {
             test_id,
             file_path: test.file_path.to_string_lossy().to_string(),
@@ -437,7 +441,7 @@ impl Scheduler {
             is_toxic: test.is_toxic,
             timeout_secs: test.timeout_secs,
             hooks,
-            cached_effects: vec![],
+            cached_effects,
             // TODO: Add markers to RunnableTest and populate here
             markers: vec![],
         };

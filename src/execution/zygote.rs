@@ -1035,6 +1035,54 @@ except Exception as e:
     Ok(())
 }
 
+/// Convert HookEffect enum to Python list of dicts for effect replay in workers.
+///
+/// This converts the cached_effects from TestPayload (Rust HookEffect enum) to
+/// a Python list of dicts that can be consumed by tach_harness.apply_cached_effects().
+fn convert_cached_effects_to_py<'py>(
+    py: Python<'py>,
+    effects: &[crate::hooks::HookEffect],
+) -> Result<Bound<'py, pyo3::types::PyList>, PyErr> {
+    use pyo3::types::{PyDict, PyList};
+
+    let py_list = PyList::empty(py);
+
+    for effect in effects {
+        let py_dict = PyDict::new(py);
+
+        match effect {
+            crate::hooks::HookEffect::SetEnv { key, value } => {
+                py_dict.set_item("type", "SetEnv")?;
+                py_dict.set_item("key", key)?;
+                py_dict.set_item("value", value)?;
+            }
+            crate::hooks::HookEffect::ModifySysPath { action, path } => {
+                py_dict.set_item("type", "ModifySysPath")?;
+                py_dict.set_item("action", action)?;
+                py_dict.set_item("path", path)?;
+            }
+            crate::hooks::HookEffect::RegisterMarker { name, description } => {
+                py_dict.set_item("type", "RegisterMarker")?;
+                py_dict.set_item("name", name)?;
+                py_dict.set_item("description", description)?;
+            }
+            crate::hooks::HookEffect::ModifyItems { removed, reordered } => {
+                py_dict.set_item("type", "ModifyItems")?;
+                py_dict.set_item("removed", removed.clone())?;
+                py_dict.set_item("reordered", *reordered)?;
+            }
+            crate::hooks::HookEffect::NoEffect => {
+                // Skip NoEffect - nothing to apply
+                continue;
+            }
+        }
+
+        py_list.append(py_dict)?;
+    }
+
+    Ok(py_list)
+}
+
 fn run_worker(payload: &TestPayload) -> TestResult {
     use crate::protocol::{STATUS_HARNESS_ERROR, read_process_memory_rss};
 
@@ -1050,13 +1098,17 @@ fn run_worker(payload: &TestPayload) -> TestResult {
         payload.fixtures.iter().map(|f| &f.name).collect::<Vec<_>>()
     );
 
-    // Call Python harness
+    // Call Python harness with cached effects (v0.2.0 Hook Interception)
     let result = Python::attach(|py| -> Result<(u8, f64, String, bool), PyErr> {
         let harness = py.import("tach_harness")?;
         let run_test = harness.getattr("run_test")?;
 
-        // Pass file_path and FULL node_id to harness
-        let result = run_test.call1((&payload.file_path, &full_node_id))?;
+        // Convert cached_effects to Python list of dicts
+        // HookEffect enum -> Python dict with 'type' key
+        let cached_effects = convert_cached_effects_to_py(py, &payload.cached_effects)?;
+
+        // Pass file_path, FULL node_id, and cached_effects to harness
+        let result = run_test.call1((&payload.file_path, &full_node_id, cached_effects))?;
         let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
     });

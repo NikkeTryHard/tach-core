@@ -1147,6 +1147,161 @@ def _format_enhanced_failure(
 
 
 # =============================================================================
+# HOOK EFFECT RECORDING (v0.2.0)
+# Captures env and sys.path changes from session-level hooks (pytest_configure)
+# These effects are cached and replayed in workers before test execution
+# =============================================================================
+
+# Global storage for recorded session-level hook effects
+# Format: list of dicts with 'type' key ('SetEnv' or 'ModifySysPath')
+_SESSION_HOOK_EFFECTS: list = []
+
+
+def _capture_sys_path_snapshot() -> list:
+    """Capture current sys.path as a list (copy)."""
+    return list(sys.path)
+
+
+def _compute_sys_path_delta(before: list, after: list) -> list:
+    """Compute sys.path changes between two snapshots.
+
+    Returns list of SysPathEffect-compatible dicts.
+    """
+    effects = []
+
+    # Find paths added (in after but not in before)
+    # Check position to determine if prepended or appended
+    for path in after:
+        if path not in before:
+            # Determine action based on position
+            idx = after.index(path)
+            if idx == 0 or (idx < len(before) // 2):
+                action = "prepend"
+            else:
+                action = "append"
+            effects.append({
+                "type": "ModifySysPath",
+                "action": action,
+                "path": path,
+            })
+
+    # Find paths removed (in before but not in after)
+    for path in before:
+        if path not in after:
+            effects.append({
+                "type": "ModifySysPath",
+                "action": "remove",
+                "path": path,
+            })
+
+    return effects
+
+
+def _compute_env_delta(before: dict, after: dict) -> list:
+    """Compute environment variable changes between two snapshots.
+
+    Returns list of SetEnv effect dicts compatible with HookEffect.
+    """
+    effects = []
+
+    # Find added or changed variables
+    for key, value in after.items():
+        if key not in before:
+            effects.append({
+                "type": "SetEnv",
+                "key": key,
+                "value": value,
+            })
+        elif before[key] != value:
+            effects.append({
+                "type": "SetEnv",
+                "key": key,
+                "value": value,
+            })
+
+    # Note: We don't track unset env vars for session-level hooks
+    # as pytest_configure typically only adds env vars
+
+    return effects
+
+
+def record_session_hook_effects() -> list:
+    """Record effects from session-level hooks (pytest_configure).
+
+    This is called during Zygote initialization, AFTER pytest config is done.
+    The effects are returned as a list of HookEffect-compatible dicts.
+
+    Returns:
+        List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'
+    """
+    global _SESSION_HOOK_EFFECTS
+
+    # Return cached effects if already recorded
+    if _SESSION_HOOK_EFFECTS:
+        return _SESSION_HOOK_EFFECTS
+
+    # Note: By the time this is called, pytest_configure has already run
+    # during _prepareconfig() and cfg._do_configure()
+    # We can't capture the "before" state retroactively
+
+    # For MVP, return empty list - the actual recording happens in init_session
+    return _SESSION_HOOK_EFFECTS
+
+
+def get_session_hook_effects() -> list:
+    """Get recorded session-level hook effects for transmission to workers.
+
+    Returns:
+        List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'
+    """
+    return _SESSION_HOOK_EFFECTS
+
+
+def apply_cached_effects(effects: list) -> int:
+    """Apply cached effects to the worker process.
+
+    Args:
+        effects: List of effect dicts from TestPayload.cached_effects
+
+    Returns:
+        Number of effects applied
+    """
+    applied = 0
+
+    for effect in effects:
+        effect_type = effect.get("type")
+
+        if effect_type == "SetEnv":
+            key = effect.get("key")
+            value = effect.get("value")
+            if key and value is not None:
+                os.environ[key] = value
+                applied += 1
+
+        elif effect_type == "ModifySysPath":
+            action = effect.get("action", "append")
+            path = effect.get("path")
+            if path:
+                if action == "prepend":
+                    if path not in sys.path:
+                        sys.path.insert(0, path)
+                        applied += 1
+                elif action == "append":
+                    if path not in sys.path:
+                        sys.path.append(path)
+                        applied += 1
+                elif action == "remove":
+                    if path in sys.path:
+                        sys.path.remove(path)
+                        applied += 1
+
+    if applied > 0:
+        print(f"[harness] Applied {applied} cached hook effects", file=sys.stderr)
+
+    return applied
+
+
+# =============================================================================
 # ZYGOTE COLLECTION PATTERN
 # Pytest session is initialized ONCE in Zygote, workers inherit via fork CoW
 # =============================================================================
@@ -1160,11 +1315,19 @@ def init_session(root_dir: str):
 
     This pays the "Pytest Tax" (config parsing, plugin loading, test collection)
     exactly ONCE. Workers inherit the session via Copy-on-Write fork semantics.
+
+    Hook Effect Recording (v0.2.0):
+    We capture env and sys.path before and after pytest configuration to record
+    effects from session-level hooks (pytest_configure). These effects are cached
+    and replayed in workers before test execution.
     """
-    global _SESSION, _ITEMS_MAP
-    import os
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
 
     os.write(2, f"[harness] init_session: {root_dir}\n".encode())
+
+    # HOOK EFFECT RECORDING: Capture state BEFORE pytest configuration
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
 
     args = [
         root_dir,
@@ -1192,6 +1355,23 @@ def init_session(root_dir: str):
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
+    # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
+    # At this point, pytest_configure hooks have run via cfg._do_configure()
+    env_after = dict(os.environ)
+    sys_path_after = _capture_sys_path_snapshot()
+
+    # Compute deltas and store as session hook effects
+    env_effects = _compute_env_delta(env_before, env_after)
+    sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+    _SESSION_HOOK_EFFECTS = env_effects + sys_path_effects
+
+    if _SESSION_HOOK_EFFECTS:
+        os.write(
+            2,
+            f"[harness] Recorded {len(_SESSION_HOOK_EFFECTS)} session hook effects "
+            f"({len(env_effects)} env, {len(sys_path_effects)} sys.path)\n".encode(),
+        )
+
     _SESSION = _pytest.main.Session.from_config(cfg)
     cfg.hook.pytest_sessionstart(session=_SESSION)
 
@@ -1203,12 +1383,22 @@ def init_session(root_dir: str):
     os.write(2, f"[harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
 
 
-def run_test(file_path: str, node_id: str) -> tuple:
+def run_test(file_path: str, node_id: str, cached_effects: list = None) -> tuple:
     """
     Execute a single pytest test item using pre-collected session.
 
     FAST PATH: Item lookup is O(1) from _ITEMS_MAP.
     No pytest config, no collection, just run the test.
+
+    Hook Effect Replay (v0.2.0):
+    Before running the test, we apply cached effects from session-level hooks.
+    This ensures that environment variables and sys.path modifications from
+    pytest_configure are restored after memory reset.
+
+    Args:
+        file_path: Path to the test file
+        node_id: Pytest node ID (e.g., "tests/test_foo.py::test_bar")
+        cached_effects: Optional list of effects to apply before test (from TestPayload)
 
     Returns:
         Tuple of (status, duration, message, thread_leaked)
@@ -1228,6 +1418,18 @@ def run_test(file_path: str, node_id: str) -> tuple:
     import threading
 
     logging._lock = threading.RLock()
+
+    # HOOK EFFECT REPLAY (v0.2.0):
+    # Apply cached effects before running the test
+    # If cached_effects is provided (from TestPayload), use those
+    # Otherwise, use session hook effects from Python globals (inherited from Zygote)
+    if cached_effects:
+        apply_cached_effects(cached_effects)
+    else:
+        # Apply session-level hook effects from Python globals
+        session_effects = get_session_hook_effects()
+        if session_effects:
+            apply_cached_effects(session_effects)
 
     inject_entropy()
     start = time.perf_counter()

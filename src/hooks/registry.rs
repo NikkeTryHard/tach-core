@@ -39,7 +39,10 @@ pub enum HookEffect {
     /// Hook registered a marker
     RegisterMarker { name: String, description: String },
     /// Hook modified test collection
-    ModifyItems { removed: Vec<String>, reordered: bool },
+    ModifyItems {
+        removed: Vec<String>,
+        reordered: bool,
+    },
     /// Hook has no observable effects
     NoEffect,
 }
@@ -61,7 +64,10 @@ impl HookRegistry {
 
     /// Register a hook from a conftest.py file
     pub fn register(&mut self, hook: Hook) {
-        self.hooks.entry(hook.spec.name.clone()).or_default().push(hook);
+        self.hooks
+            .entry(hook.spec.name.clone())
+            .or_default()
+            .push(hook);
     }
 
     /// Get all hooks for a given hook name
@@ -71,17 +77,40 @@ impl HookRegistry {
 
     /// Check if any hooks modify global state (makes tests toxic)
     pub fn has_global_state_hooks(&self) -> bool {
-        self.hooks.values().flatten().any(|h| h.spec.modifies_global_state)
+        self.hooks
+            .values()
+            .flatten()
+            .any(|h| h.spec.modifies_global_state)
     }
 
     /// Record an effect from hook execution
     pub fn record_effect(&mut self, hook_name: &str, effect: HookEffect) {
-        self.effects.entry(hook_name.to_string()).or_default().push(effect);
+        self.effects
+            .entry(hook_name.to_string())
+            .or_default()
+            .push(effect);
     }
 
     /// Get cached effects for replay in workers
     pub fn get_effects(&self, hook_name: &str) -> &[HookEffect] {
-        self.effects.get(hook_name).map(|v| v.as_slice()).unwrap_or(&[])
+        self.effects
+            .get(hook_name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get all session-level effects for replay in workers.
+    /// Session-level hooks are those that run once per session (pytest_configure).
+    /// These effects should be applied to each worker before running tests.
+    pub fn get_session_effects(&self) -> Vec<HookEffect> {
+        // Session-level hooks that should be replayed in workers
+        const SESSION_HOOKS: &[&str] = &["pytest_configure"];
+
+        let mut effects = Vec::new();
+        for hook_name in SESSION_HOOKS {
+            effects.extend(self.get_effects(hook_name).iter().cloned());
+        }
+        effects
     }
 
     /// Number of registered hooks
@@ -91,12 +120,19 @@ impl HookRegistry {
 
     /// Check if a specific file contains any hooks that modify global state
     pub fn file_has_toxic_hooks(&self, path: &std::path::Path) -> bool {
-        self.hooks.values().flatten().any(|h| h.source == path && h.spec.modifies_global_state)
+        self.hooks
+            .values()
+            .flatten()
+            .any(|h| h.source == path && h.spec.modifies_global_state)
     }
 
     /// Get all hooks defined in a specific file
     pub fn get_hooks_for_file(&self, path: &std::path::Path) -> Vec<&Hook> {
-        self.hooks.values().flatten().filter(|h| h.source == path).collect()
+        self.hooks
+            .values()
+            .flatten()
+            .filter(|h| h.source == path)
+            .collect()
     }
 
     /// Get all registered hooks (for debugging)
@@ -415,5 +451,65 @@ mod tests {
         } else {
             panic!("Wrong variant");
         }
+    }
+
+    #[test]
+    fn test_get_session_effects() {
+        let mut registry = HookRegistry::new();
+
+        // Record effects for pytest_configure (session-level hook)
+        registry.record_effect(
+            "pytest_configure",
+            HookEffect::SetEnv {
+                key: "TEST_VAR".to_string(),
+                value: "test_value".to_string(),
+            },
+        );
+        registry.record_effect(
+            "pytest_configure",
+            HookEffect::ModifySysPath {
+                action: "append".to_string(),
+                path: "/test/path".to_string(),
+            },
+        );
+
+        // Record effects for a non-session-level hook (should NOT be included)
+        registry.record_effect(
+            "pytest_runtest_setup",
+            HookEffect::SetEnv {
+                key: "PER_TEST_VAR".to_string(),
+                value: "should_not_appear".to_string(),
+            },
+        );
+
+        // Get session effects - should only include pytest_configure effects
+        let session_effects = registry.get_session_effects();
+
+        assert_eq!(session_effects.len(), 2);
+
+        // Verify the effects are from pytest_configure
+        let has_env_effect = session_effects.iter().any(|e| {
+            matches!(
+                e,
+                HookEffect::SetEnv { key, value }
+                    if key == "TEST_VAR" && value == "test_value"
+            )
+        });
+        assert!(
+            has_env_effect,
+            "Should have SetEnv effect from pytest_configure"
+        );
+
+        let has_path_effect = session_effects.iter().any(|e| {
+            matches!(
+                e,
+                HookEffect::ModifySysPath { action, path }
+                    if action == "append" && path == "/test/path"
+            )
+        });
+        assert!(
+            has_path_effect,
+            "Should have ModifySysPath effect from pytest_configure"
+        );
     }
 }

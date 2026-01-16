@@ -12,7 +12,7 @@
 use proptest::prelude::*;
 
 // Re-export coverage types for testing
-use tach_core::coverage::{CoverageEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE, MappingEntry};
+use tach_core::coverage::{CoverageEntry, MappingEntry, ENTRY_SIZE, MAPPING_ENTRY_SIZE};
 
 // =============================================================================
 // CoverageEntry Property Tests
@@ -146,6 +146,9 @@ proptest! {
             log_fd,
             debug_socket_path: String::new(),
             timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let serialized = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).expect("Failed to serialize");

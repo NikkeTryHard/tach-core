@@ -7,6 +7,7 @@
 
 use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::graph::ToxicityGraph;
+use tach_core::hooks::HookRegistry;
 use tach_core::protocol::{FixtureInfo, TestPayload};
 use tach_core::resolver::{FixtureRegistry, Resolver};
 use tempfile::TempDir;
@@ -46,17 +47,11 @@ def test_safe_function():
 
     // Build toxicity graph directly (bypassing discovery's relative path issue)
     let paths = vec![root.join("test_bad.py"), root.join("test_good.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Verify toxicity detection
-    assert!(
-        graph.is_toxic(&root.join("test_bad.py")),
-        "test_bad.py should be toxic (imports threading)"
-    );
-    assert!(
-        !graph.is_toxic(&root.join("test_good.py")),
-        "test_good.py should NOT be toxic"
-    );
+    assert!(graph.is_toxic(&root.join("test_bad.py")), "test_bad.py should be toxic (imports threading)");
+    assert!(!graph.is_toxic(&root.join("test_good.py")), "test_good.py should NOT be toxic");
 }
 
 // =============================================================================
@@ -69,21 +64,13 @@ fn test_toxicity_discovery_to_runnable_test() {
     let root = tmp.path();
 
     // Create test files
-    std::fs::write(
-        root.join("test_toxic.py"),
-        "import multiprocessing\ndef test_toxic(): pass",
-    )
-    .unwrap();
+    std::fs::write(root.join("test_toxic.py"), "import multiprocessing\ndef test_toxic(): pass").unwrap();
 
-    std::fs::write(
-        root.join("test_safe.py"),
-        "import json\ndef test_safe(): pass",
-    )
-    .unwrap();
+    std::fs::write(root.join("test_safe.py"), "import json\ndef test_safe(): pass").unwrap();
 
     // Build toxicity graph
     let paths = vec![root.join("test_toxic.py"), root.join("test_safe.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Create mock discovery result with absolute paths
     let discovery = DiscoveryResult {
@@ -135,23 +122,11 @@ fn test_toxicity_discovery_to_runnable_test() {
     }
 
     // Verify tagging
-    let toxic_test = runnable_tests
-        .iter()
-        .find(|t| t.test_name == "test_toxic")
-        .expect("Should find test_toxic");
-    let safe_test = runnable_tests
-        .iter()
-        .find(|t| t.test_name == "test_safe")
-        .expect("Should find test_safe");
+    let toxic_test = runnable_tests.iter().find(|t| t.test_name == "test_toxic").expect("Should find test_toxic");
+    let safe_test = runnable_tests.iter().find(|t| t.test_name == "test_safe").expect("Should find test_safe");
 
-    assert!(
-        toxic_test.is_toxic,
-        "RunnableTest for test_toxic should have is_toxic=true"
-    );
-    assert!(
-        !safe_test.is_toxic,
-        "RunnableTest for test_safe should have is_toxic=false"
-    );
+    assert!(toxic_test.is_toxic, "RunnableTest for test_toxic should have is_toxic=true");
+    assert!(!safe_test.is_toxic, "RunnableTest for test_safe should have is_toxic=false");
 }
 
 // =============================================================================
@@ -171,6 +146,9 @@ fn test_toxicity_survives_serialization_roundtrip() {
         debug_socket_path: String::new(),
         is_toxic: true, // <-- THE CRITICAL FLAG
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Create a safe TestPayload
@@ -184,31 +162,22 @@ fn test_toxicity_survives_serialization_roundtrip() {
         debug_socket_path: String::new(),
         is_toxic: false, // <-- THE CRITICAL FLAG
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Serialize using bincode (same as scheduler.rs)
-    let toxic_bytes = bincode::serde::encode_to_vec(&toxic_payload, bincode::config::standard())
-        .expect("Serialization should succeed");
-    let safe_bytes = bincode::serde::encode_to_vec(&safe_payload, bincode::config::standard())
-        .expect("Serialization should succeed");
+    let toxic_bytes = bincode::serde::encode_to_vec(&toxic_payload, bincode::config::standard()).expect("Serialization should succeed");
+    let safe_bytes = bincode::serde::encode_to_vec(&safe_payload, bincode::config::standard()).expect("Serialization should succeed");
 
     // Deserialize (same as zygote.rs would do)
-    let (toxic_decoded, _): (TestPayload, usize) =
-        bincode::serde::decode_from_slice(&toxic_bytes, bincode::config::standard())
-            .expect("Deserialization should succeed");
-    let (safe_decoded, _): (TestPayload, usize) =
-        bincode::serde::decode_from_slice(&safe_bytes, bincode::config::standard())
-            .expect("Deserialization should succeed");
+    let (toxic_decoded, _): (TestPayload, usize) = bincode::serde::decode_from_slice(&toxic_bytes, bincode::config::standard()).expect("Deserialization should succeed");
+    let (safe_decoded, _): (TestPayload, usize) = bincode::serde::decode_from_slice(&safe_bytes, bincode::config::standard()).expect("Deserialization should succeed");
 
     // CRITICAL ASSERTIONS: is_toxic must survive the round-trip
-    assert!(
-        toxic_decoded.is_toxic,
-        "CRITICAL: is_toxic=true did NOT survive serialization round-trip!"
-    );
-    assert!(
-        !safe_decoded.is_toxic,
-        "CRITICAL: is_toxic=false did NOT survive serialization round-trip!"
-    );
+    assert!(toxic_decoded.is_toxic, "CRITICAL: is_toxic=true did NOT survive serialization round-trip!");
+    assert!(!safe_decoded.is_toxic, "CRITICAL: is_toxic=false did NOT survive serialization round-trip!");
 
     // Verify other fields survived too
     assert_eq!(toxic_decoded.test_id, 1);
@@ -240,13 +209,10 @@ def test_network_stuff():
 
     // Step 1: Build toxicity graph
     let paths = vec![root.join("test_pipeline.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Step 2: Verify source is toxic
-    assert!(
-        graph.is_toxic(&root.join("test_pipeline.py")),
-        "Source file should be detected as toxic"
-    );
+    assert!(graph.is_toxic(&root.join("test_pipeline.py")), "Source file should be detected as toxic");
 
     // Step 3: Create mock discovery and resolve
     let discovery = DiscoveryResult {
@@ -285,30 +251,22 @@ def test_network_stuff():
         file_path: runnable.file_path.to_string_lossy().to_string(),
         test_name: runnable.test_name.clone(),
         is_async: runnable.is_async,
-        fixtures: runnable
-            .fixtures
-            .iter()
-            .map(|f| FixtureInfo {
-                name: f.name.clone(),
-                scope: "function".to_string(),
-            })
-            .collect(),
+        fixtures: runnable.fixtures.iter().map(|f| FixtureInfo { name: f.name.clone(), scope: "function".to_string() }).collect(),
         log_fd: -1,
         debug_socket_path: String::new(),
         is_toxic: runnable.is_toxic, // <-- PROPAGATED FROM RUNNABLE
         timeout_secs: runnable.timeout_secs,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)
     let bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
-    let (decoded, _): (TestPayload, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+    let (decoded, _): (TestPayload, usize) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
 
     // Step 7: FINAL VERIFICATION
-    assert!(
-        decoded.is_toxic,
-        "CRITICAL: is_toxic did NOT propagate through full pipeline!"
-    );
+    assert!(decoded.is_toxic, "CRITICAL: is_toxic did NOT propagate through full pipeline!");
     assert_eq!(decoded.test_name, "test_network_stuff");
 }
 
@@ -322,32 +280,18 @@ fn test_transitive_toxicity_propagation() {
     let root = tmp.path();
 
     // Create a toxic helper (not a test file)
-    std::fs::write(
-        root.join("toxic_utils.py"),
-        "import ctypes\ndef ffi_call(): pass",
-    )
-    .unwrap();
+    std::fs::write(root.join("toxic_utils.py"), "import ctypes\ndef ffi_call(): pass").unwrap();
 
     // Create a test that imports the toxic helper
-    std::fs::write(
-        root.join("test_uses_toxic.py"),
-        "import toxic_utils\ndef test_indirect(): pass",
-    )
-    .unwrap();
+    std::fs::write(root.join("test_uses_toxic.py"), "import toxic_utils\ndef test_indirect(): pass").unwrap();
 
     // Build graph with BOTH files
     let paths = vec![root.join("toxic_utils.py"), root.join("test_uses_toxic.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Verify transitive toxicity
-    assert!(
-        graph.is_toxic(&root.join("toxic_utils.py")),
-        "toxic_utils.py should be directly toxic"
-    );
-    assert!(
-        graph.is_toxic(&root.join("test_uses_toxic.py")),
-        "test_uses_toxic.py should be transitively toxic"
-    );
+    assert!(graph.is_toxic(&root.join("toxic_utils.py")), "toxic_utils.py should be directly toxic");
+    assert!(graph.is_toxic(&root.join("test_uses_toxic.py")), "test_uses_toxic.py should be transitively toxic");
 
     // Create payload and verify
     let discovery = DiscoveryResult {
@@ -376,8 +320,5 @@ fn test_transitive_toxicity_propagation() {
         test.is_toxic = graph.is_toxic(&test.file_path);
     }
 
-    assert!(
-        runnable_tests[0].is_toxic,
-        "Transitive toxicity should propagate to RunnableTest"
-    );
+    assert!(runnable_tests[0].is_toxic, "Transitive toxicity should propagate to RunnableTest");
 }
