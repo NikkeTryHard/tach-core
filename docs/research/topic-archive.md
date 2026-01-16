@@ -5,11 +5,10 @@
 
 ---
 
-
 # Cross-Platform Process Cloning
 
 > **Status:** Future work (CHANGELOG 0.8.x+)
-> **Deep Dive:** [Cross-Platform Process Cloning Research](../papers-very-verbose/Cross-Platform%20Process%20Cloning%20Research.txt)
+> **Deep Dive:** [Cross-Platform Process Cloning Research](../../archive/research-papers/Cross-Platform%20Process%20Cloning%20Research.txt)
 
 ---
 
@@ -163,7 +162,7 @@ Micro-VMs are not viable for Tach's latency requirements. Userspace cloning prim
 
 # Fork Safety in Tach
 
-> **Source Papers**: See [Fork Safety of Python C-Extensions](../papers-very-verbose/Fork%20Safety%20of%20Python%20C-Extensions.txt) and [Rust Static Analysis for Toxic Python Modules](../papers-very-verbose/Rust%20Static%20Analysis%20for%20Toxic%20Python%20Modules.txt) for complete analysis.
+> **Source Papers**: See [Fork Safety of Python C-Extensions](../../archive/research-papers/Fork%20Safety%20of%20Python%20C-Extensions.txt) and [Rust Static Analysis for Toxic Python Modules](../../archive/research-papers/Rust%20Static%20Analysis%20for%20Toxic%20Python%20Modules.txt) for complete analysis.
 
 ---
 
@@ -448,8 +447,8 @@ This document summarizes isolation strategies for Tach based on research bluepri
 
 For deep dives, see:
 
-- [Project Tach Compatibility Layer Blueprint](../papers-very-verbose/Project%20Tach%20Compatibility%20Layer%20Blueprint.txt)
-- [Rust-Python Test Isolation Blueprint](../papers-very-verbose/Rust-Python%20Test%20Isolation%20Blueprint.txt)
+- [Project Tach Compatibility Layer Blueprint](../../archive/research-papers/Project%20Tach%20Compatibility%20Layer%20Blueprint.txt)
+- [Rust-Python Test Isolation Blueprint](../../archive/research-papers/Rust-Python%20Test%20Isolation%20Blueprint.txt)
 
 ---
 
@@ -673,8 +672,8 @@ Tach uses Linux userfaultfd (UFFD) to achieve microsecond-scale memory resets be
 
 For detailed analysis, see:
 
-- [Python Memory Snapshotting with Userfaultfd](../papers-very-verbose/Python%20Memory%20Snapshotting%20with%20Userfaultfd.txt)
-- [Userfaultfd and CPython Allocator Interaction](../papers-very-verbose/Userfaultfd%20and%20CPython%20Allocator%20Interaction.txt)
+- [Python Memory Snapshotting with Userfaultfd](../../archive/research-papers/Python%20Memory%20Snapshotting%20with%20Userfaultfd.txt)
+- [Userfaultfd and CPython Allocator Interaction](../../archive/research-papers/Userfaultfd%20and%20CPython%20Allocator%20Interaction.txt)
 
 ---
 
@@ -955,7 +954,7 @@ Tach uses `rustpython-parser` for AST-based test discovery without executing Pyt
 
 > **Implementation Note:** Tach uses `rustpython-parser` for AST analysis. Research papers referenced `ruff_python_parser` as an alternative approach.
 
-> Source: "ruff_python_parser, the Rust-based parsing engine powering the Ruff linter. This parser is designed for extreme performance, capable of processing gigabytes of source code per second" -- _Rust-CPython Execution Blueprint Research_
+> Source: "ruff*python_parser, the Rust-based parsing engine powering the Ruff linter. This parser is designed for extreme performance, capable of processing gigabytes of source code per second" -- \_Rust-CPython Execution Blueprint Research*
 
 Discovery extracts import statements (dependency graphs), function definitions (`test_*` patterns), and decorators (`@pytest.mark.parametrize` values).
 
@@ -997,7 +996,7 @@ Code objects are deserialized directly from mapped memory:
 PyObject* PyMarshal_ReadObjectFromString(const char *data, Py_ssize_t len)
 ```
 
-> Source: "The Rust Control Plane fetches the bytecode blob from the CAS. It does not instruct Python to 'import' the file. Instead, it creates the code object directly using PyMarshal_ReadObjectFromString" -- _Rust-CPython Execution Blueprint Research_
+> Source: "The Rust Control Plane fetches the bytecode blob from the CAS. It does not instruct Python to 'import' the file. Instead, it creates the code object directly using PyMarshal*ReadObjectFromString" -- \_Rust-CPython Execution Blueprint Research*
 
 The 16-byte `.pyc` header must be skipped. Use `PyImport_ExecCodeModuleObject` for proper `sys.modules` registration.
 
@@ -1047,7 +1046,7 @@ py.allow_threads(|| {
 })
 ```
 
-> Source: "Always release GIL (Python::allow_threads) during heavy Rust ops" -- _CLAUDE.md_
+> Source: "Always release GIL (Python::allow*threads) during heavy Rust ops" -- \_CLAUDE.md*
 
 ### Rayon Parallelism
 
@@ -1087,13 +1086,13 @@ The CHANGELOG maps research concepts to version milestones:
 ### Primary Papers
 
 1. **Python Testing Engine Rust Breakthroughs** - Kineton, semantic hashing, PEP 523
-   - [Full paper](../papers-very-verbose/Python%20Testing%20Engine%20Rust%20Breakthroughs.txt)
+   - [Full paper](../../archive/research-papers/Python%20Testing%20Engine%20Rust%20Breakthroughs.txt)
 
 2. **Rust-CPython Execution Blueprint Research** - PEP 684, PEP 669, Tokio
-   - [Full paper](../papers-very-verbose/Rust-CPython%20Execution%20Blueprint%20Research.txt)
+   - [Full paper](../../archive/research-papers/Rust-CPython%20Execution%20Blueprint%20Research.txt)
 
 3. **Zero-Copy Python Module Loading** - mmap, PyMarshal, importlib bypass
-   - [Full paper](../papers-very-verbose/Zero-Copy%20Python%20Module%20Loading.txt)
+   - [Full paper](../../archive/research-papers/Zero-Copy%20Python%20Module%20Loading.txt)
 
 ### External References
 
@@ -1133,7 +1132,7 @@ This document synthesizes zygote initialization research for Tach's hierarchical
 
 A **zygote** is a pre-initialized process that has loaded common dependencies but not yet executed application logic. When a new worker is needed, the system forks the zygote rather than creating a process from scratch.
 
-> Source: "A zygote process pre-imports frequently-used modules, but does not run any specific application. Applications needing those modules provision the processes by creating copy-on-write clones of the zygote." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "A zygote process pre-imports frequently-used modules, but does not run any specific application. Applications needing those modules provision the processes by creating copy-on-write clones of the zygote." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### Why Zygotes Matter
 
@@ -1141,13 +1140,13 @@ A **zygote** is a pre-initialized process that has loaded common dependencies bu
 2. **Efficiency**: Physical memory containing code is shared via CoW
 3. **Isolation**: Modifications trigger copy-on-write, preventing pollution
 
-> Source: "This approach is fast, efficient (physical memory containing code is shared across different processes), and isolated (processes attempting to modify shared pages trigger copy on write)." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "This approach is fast, efficient (physical memory containing code is shared across different processes), and isolated (processes attempting to modify shared pages trigger copy on write)." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### The Cold Start Problem
 
 Module initialization dominates Python startup time:
 
-> Source: "Profiling data from large-scale deployments indicates that module initialization--specifically the parsing, compiling, and executing of top-level code in dependencies--accounts for 60% to 80% of cold start duration." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "Profiling data from large-scale deployments indicates that module initialization--specifically the parsing, compiling, and executing of top-level code in dependencies--accounts for 60% to 80% of cold start duration." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ---
 
@@ -1157,7 +1156,7 @@ Module initialization dominates Python startup time:
 
 A single global zygote is insufficient for diverse workloads:
 
-> Source: "A data science function requiring pandas and scipy shares little with a lightweight webhook handler using requests and cryptography. A single global zygote containing all these libraries would be bloated." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "A data science function requiring pandas and scipy shares little with a lightweight webhook handler using requests and cryptography. A single global zygote containing all these libraries would be bloated." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ### The Tiered Structure
 
@@ -1176,13 +1175,13 @@ Root Zygote (bare Python + stdlib)
             +-- API Zygote (+ fastapi)
 ```
 
-> Source: "The root node contains universally shared modules (e.g., os, sys). Child nodes branch off to specialize (e.g., a 'Data Science Zygote' adds numpy, a 'Web Zygote' adds fastapi)." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "The root node contains universally shared modules (e.g., os, sys). Child nodes branch off to specialize (e.g., a 'Data Science Zygote' adds numpy, a 'Web Zygote' adds fastapi)." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ### Depth Limits
 
 Tree depth should be constrained:
 
-> Source: "Deep process hierarchies negatively impact OS scheduler performance. We enforce a maximum tree depth (e.g., 3 levels: Root -> Domain Zygote -> App Zygote -> Leaf)." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "Deep process hierarchies negatively impact OS scheduler performance. We enforce a maximum tree depth (e.g., 3 levels: Root -> Domain Zygote -> App Zygote -> Leaf)." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ---
 
@@ -1192,7 +1191,7 @@ The Forklift algorithm constructs zygote trees from historical invocation data.
 
 ### Core Concept
 
-> Source: "Forklift, a new algorithm for training zygote trees based on invocation history. Each zygote pre-imports some modules and can be forked to create other zygotes or function instances." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "Forklift, a new algorithm for training zygote trees based on invocation history. Each zygote pre-imports some modules and can be forked to create other zygotes or function instances." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### Tree Construction Process
 
@@ -1203,31 +1202,31 @@ The algorithm iteratively builds the tree:
 3. Select the highest-utility child to add
 4. Repeat until desired tree size is reached
 
-> Source: "The BUILD_TREE function starts with a single-node tree, then repeatedly adds nodes to the tree until the tree is a desired size. Each node (except the root) indicates what package the zygote should pre-load." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "The BUILD_TREE function starts with a single-node tree, then repeatedly adds nodes to the tree until the tree is a desired size. Each node (except the root) indicates what package the zygote should pre-load." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### Utility Function
 
 Utility measures the benefit of adding a zygote node:
 
-> Source: "The utility of a candidate is computed as the sum over the column corresponding to the package/version that the candidate's zygote would pre-load; in other words, utility (for now) is simply a measure of usage frequency." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "The utility of a candidate is computed as the sum over the column corresponding to the package/version that the candidate's zygote would pre-load; in other words, utility (for now) is simply a measure of usage frequency." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### DAAC Clustering
 
 The **Dependency-Aware Agglomerative Clustering** algorithm groups tests by shared dependencies:
 
-> Source: "A novel 'Dependency-Aware Agglomerative Clustering' (DAAC) algorithm that synthesizes the dependency graph into an optimal initialization tree." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "A novel 'Dependency-Aware Agglomerative Clustering' (DAAC) algorithm that synthesizes the dependency graph into an optimal initialization tree." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 #### Weighted Jaccard Similarity
 
 DAAC uses weighted similarity to prioritize heavy packages:
 
-> Source: "Standard Jaccard similarity treats all modules equally. However, sharing pandas (50MB, 500ms load) is far more valuable than sharing textwrap (10KB, 1ms load)." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "Standard Jaccard similarity treats all modules equally. However, sharing pandas (50MB, 500ms load) is far more valuable than sharing textwrap (10KB, 1ms load)." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 #### Merge Gain Threshold
 
 Clustering stops when merging provides insufficient benefit:
 
-> Source: "If the max Gain is below a defined threshold (e.g., merging saves < 10MB of memory), stop clustering. This prevents creating useless zygotes that share trivial dependencies." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "If the max Gain is below a defined threshold (e.g., merging saves < 10MB of memory), stop clustering. This prevents creating useless zygotes that share trivial dependencies." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ### Key Optimizations
 
@@ -1235,19 +1234,19 @@ Clustering stops when merging provides insufficient benefit:
 
 Nodes should load multiple packages together:
 
-> Source: "We observe that assigning multiple packages to a single zygote is a critical optimization; the trees that do so double throughput relative to their single-package equivalents." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "We observe that assigning multiple packages to a single zygote is a critical optimization; the trees that do so double throughput relative to their single-package equivalents." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 #### Time-Based Weighting
 
 Weight packages by import latency, not just frequency:
 
-> Source: "We profile packages and give more weight to those with slow module imports. We implement priority by replacing the 1's in the binary calls matrix with the weight values." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "We profile packages and give more weight to those with slow module imports. We implement priority by replacing the 1's in the binary calls matrix with the weight values." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 #### Lazy Zygote Creation
 
 Create zygotes on-demand for faster startup:
 
-> Source: "To speed up restart, zygotes are created lazily upon first use. Zygotes may be evicted under memory pressure." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "To speed up restart, zygotes are created lazily upon first use. Zygotes may be evicted under memory pressure." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ---
 
@@ -1280,13 +1279,13 @@ Tach replaces complex clustering with toxicity classification:
 - **Safe tests**: Reuse workers via memory reset
 - **Toxic tests**: Require fresh fork (exit after test)
 
-> Source: "Toxic modules are 'Must-Link' constraints for the leaf node but 'Cannot-Link' constraints for any shared zygote." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "Toxic modules are 'Must-Link' constraints for the leaf node but 'Cannot-Link' constraints for any shared zygote." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ### Fixture Lifecycle (0.4.x)
 
 Session-scoped fixtures map to the zygote concept:
 
-> Source: "The forked process receives the list of modules to add via a pipe. It imports them. This process becomes the 'DataScience Zygote'." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "The forked process receives the list of modules to add via a pipe. It imports them. This process becomes the 'DataScience Zygote'." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 Tach's approach:
 
@@ -1302,7 +1301,7 @@ Tach's approach:
 
 The research demonstrates significant improvements:
 
-> Source: "The best trees improve invocation latency by 5x while consuming <6 GB of RAM." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "The best trees improve invocation latency by 5x while consuming <6 GB of RAM." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 Median latency improvements:
 
@@ -1316,7 +1315,7 @@ Median latency improvements:
 
 A small set of packages provides most benefit:
 
-> Source: "The top 15 packages alone account for more than 50% of the files for both requirements.txt and complete.txt." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "The top 15 packages alone account for more than 50% of the files for both requirements.txt and complete.txt." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 This justifies Tach's approach of pre-loading pytest and Django rather than building complex trees.
 
@@ -1324,7 +1323,7 @@ This justifies Tach's approach of pre-loading pytest and Django rather than buil
 
 Multi-package trees outperform despite lower hit rates:
 
-> Source: "The multi-package, uniform-weighted tree has the best hit rates (over 90%); the fact that the time-weighted tree is the fastest indicates that not all misses are equal (some package imports are slower than others)." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "The multi-package, uniform-weighted tree has the best hit rates (over 90%); the fact that the time-weighted tree is the fastest indicates that not all misses are equal (some package imports are slower than others)." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ---
 
@@ -1334,13 +1333,13 @@ Multi-package trees outperform despite lower hit rates:
 
 Only fork from zygotes containing requested packages:
 
-> Source: "If a zygote Z provides a package a function F does not need, it would be insecure to initialize F from Z, as packages are neither vetted nor trusted." -- [Forklift](../papers-very-verbose/forklift.txt)
+> Source: "If a zygote Z provides a package a function F does not need, it would be insecure to initialize F from Z, as packages are neither vetted nor trusted." -- [Forklift](../../archive/research-papers/forklift.txt)
 
 ### Side-Effect Isolation
 
 Pre-loading must avoid modules with import-time side effects:
 
-> Source: "Pre-loading a module that initiates a network connection or spawns a thread is dangerous in a zygote, as these resources may not survive a fork()." -- [Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+> Source: "Pre-loading a module that initiates a network connection or spawns a thread is dangerous in a zygote, as these resources may not survive a fork()." -- [Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 Tach addresses this via toxicity analysis. See [toxicity.md](../../architecture/toxicity.md).
 
@@ -1350,8 +1349,8 @@ Tach addresses this via toxicity analysis. See [toxicity.md](../../architecture/
 
 ### Primary Sources
 
-- [Forklift: Fitting Zygote Trees for Faster Package Initialization](../papers-very-verbose/forklift.txt) (WoSC 2024)
-- [Python Monorepo Zygote Tree Design](../papers-very-verbose/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
+- [Forklift: Fitting Zygote Trees for Faster Package Initialization](../../archive/research-papers/forklift.txt) (WoSC 2024)
+- [Python Monorepo Zygote Tree Design](../../archive/research-papers/Python%20Monorepo%20Zygote%20Tree%20Design.txt)
 
 ### Related Documentation
 
