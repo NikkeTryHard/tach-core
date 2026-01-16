@@ -1147,6 +1147,139 @@ def _format_enhanced_failure(
 
 
 # =============================================================================
+# PLUGIN DETECTION (v0.2.0)
+# Detects installed pytest plugins and warns about unsupported ones
+# =============================================================================
+
+# Plugins that are known to work with Tach (or are explicitly disabled)
+_SUPPORTED_PLUGINS: set = {
+    "pytest",  # Core pytest
+    "pytest-timeout",  # We handle timeouts ourselves
+    "pytest-xdist",  # We disable this, but it's known
+    "pytest-cov",  # We disable this, but it's known
+    "pytest-sugar",  # We disable this, but it's known
+    "pytest-asyncio",  # We disable this, but it's known
+    "pytest-trio",  # We disable this, but it's known
+    "pytest-django",  # We disable this, but markers are detected
+    "pytest-mock",  # Works with Tach
+    "pytest-env",  # Environment variables - effects are replayed
+    "pytest-randomly",  # Test ordering - we handle in supervisor
+    "pytest-order",  # Test ordering - we handle in supervisor
+    "pytest-lazy-fixture",  # Fixture handling
+    "pytest-factoryboy",  # Fixtures
+    "pytest-freezegun",  # Time mocking
+    "pytest-httpx",  # HTTP mocking
+    "pytest-responses",  # HTTP mocking
+    "pytest-vcr",  # HTTP recording
+    "pytest-benchmark",  # Benchmarking (may have issues with fork)
+}
+
+# Plugins that are known to NOT work with Tach
+_UNSUPPORTED_PLUGINS: dict = {
+    "pytest-parallel": "Uses multiprocessing, conflicts with Tach workers",
+    "pytest-forked": "Fork-based isolation conflicts with Tach's fork model",
+    "pytest-testmon": "Requires file watching, not compatible with snapshot model",
+    "pytest-picked": "Git-based selection conflicts with static discovery",
+    "pytest-split": "Test splitting conflicts with Tach's scheduler",
+}
+
+
+def detect_installed_plugins() -> dict:
+    """Detect installed pytest plugins using importlib.metadata.
+
+    Returns:
+        Dict with keys:
+        - 'installed': List of installed plugin names
+        - 'supported': List of supported plugins
+        - 'unsupported': Dict of unsupported plugins with reasons
+        - 'unknown': List of unknown plugins (may or may not work)
+    """
+    try:
+        from importlib.metadata import distributions
+    except ImportError:
+        # Python < 3.8 fallback
+        try:
+            from importlib_metadata import distributions
+        except ImportError:
+            return {
+                "installed": [],
+                "supported": [],
+                "unsupported": {},
+                "unknown": [],
+                "error": "importlib.metadata not available",
+            }
+
+    installed = []
+    supported = []
+    unsupported = {}
+    unknown = []
+
+    for dist in distributions():
+        name = dist.metadata.get("Name", "").lower()
+        # Check if it's a pytest plugin (entry point group pytest11)
+        try:
+            eps = dist.entry_points
+            is_pytest_plugin = any(
+                ep.group == "pytest11" for ep in eps
+            )
+        except Exception:
+            is_pytest_plugin = name.startswith("pytest-") or name.startswith("pytest_")
+
+        if is_pytest_plugin or name.startswith("pytest-") or name.startswith("pytest_"):
+            installed.append(name)
+
+            if name in _SUPPORTED_PLUGINS:
+                supported.append(name)
+            elif name in _UNSUPPORTED_PLUGINS:
+                unsupported[name] = _UNSUPPORTED_PLUGINS[name]
+            else:
+                unknown.append(name)
+
+    return {
+        "installed": sorted(installed),
+        "supported": sorted(supported),
+        "unsupported": unsupported,
+        "unknown": sorted(unknown),
+    }
+
+
+def log_plugin_warnings() -> None:
+    """Log warnings for unsupported or unknown plugins.
+
+    Called during Zygote initialization to warn users about potential issues.
+    """
+    result = detect_installed_plugins()
+
+    if result.get("error"):
+        os.write(2, f"[tach:plugins] Warning: {result['error']}\n".encode())
+        return
+
+    # Log unsupported plugins as warnings
+    for plugin, reason in result.get("unsupported", {}).items():
+        os.write(
+            2,
+            f"[tach:plugins] WARNING: Plugin '{plugin}' is not supported: {reason}\n".encode(),
+        )
+
+    # Log unknown plugins as info (they might work)
+    unknown = result.get("unknown", [])
+    if unknown:
+        os.write(
+            2,
+            f"[tach:plugins] INFO: Unknown plugins detected (may or may not work): {', '.join(unknown)}\n".encode(),
+        )
+
+    # Log summary
+    installed_count = len(result.get("installed", []))
+    supported_count = len(result.get("supported", []))
+    if installed_count > 0:
+        os.write(
+            2,
+            f"[tach:plugins] Detected {installed_count} pytest plugins ({supported_count} supported)\n".encode(),
+        )
+
+
+# =============================================================================
 # HOOK EFFECT RECORDING (v0.2.0)
 # Captures env and sys.path changes from session-level hooks (pytest_configure)
 # These effects are cached and replayed in workers before test execution
@@ -1314,10 +1447,16 @@ def init_session(root_dir: str):
     We capture env and sys.path before and after pytest configuration to record
     effects from session-level hooks (pytest_configure). These effects are cached
     and replayed in workers before test execution.
+
+    Plugin Detection (v0.2.0):
+    We detect installed pytest plugins and warn about unsupported ones.
     """
     global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
 
     os.write(2, f"[harness] init_session: {root_dir}\n".encode())
+
+    # PLUGIN DETECTION (v0.2.0): Warn about unsupported plugins
+    log_plugin_warnings()
 
     # HOOK EFFECT RECORDING: Capture state BEFORE pytest configuration
     env_before = dict(os.environ)
