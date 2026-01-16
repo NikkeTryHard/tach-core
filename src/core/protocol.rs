@@ -2,6 +2,7 @@
 //! Uses bincode for zero-copy serialization.
 
 use crate::discovery::FixtureScope;
+use crate::hooks::{Hook, HookEffect};
 use serde::{Deserialize, Serialize};
 
 // Command bytes
@@ -40,6 +41,19 @@ pub struct TestPayload {
     /// Per-test timeout in seconds from @pytest.mark.timeout(N)
     /// None means use global timeout
     pub timeout_secs: Option<u64>,
+
+    /// Hooks applicable to this test (from conftest inheritance)
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
+
+    /// Cached effects from session-level hooks (pytest_configure, etc.)
+    /// These should be applied before running the test
+    #[serde(default)]
+    pub cached_effects: Vec<HookEffect>,
+
+    /// Pytest markers on this test (for filtering/behavior)
+    #[serde(default)]
+    pub markers: Vec<String>,
 }
 
 /// Fixture info for payload
@@ -478,6 +492,9 @@ mod tests {
             debug_socket_path: String::new(),
             is_toxic: false,
             timeout_secs: Some(30),
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -598,6 +615,9 @@ mod tests {
             debug_socket_path: String::new(),
             is_toxic: false,
             timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -623,6 +643,9 @@ mod tests {
             debug_socket_path: String::new(),
             is_toxic: false,
             timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
         let encoded = encode_with_length(&payload).unwrap();
 
@@ -699,6 +722,9 @@ mod tests {
             debug_socket_path: "/tmp/debug.sock".to_string(),
             is_toxic: true,
             timeout_secs: Some(120),
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();

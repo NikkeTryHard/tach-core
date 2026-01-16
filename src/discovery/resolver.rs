@@ -86,6 +86,8 @@ pub struct RunnableTest {
     /// Per-test timeout in seconds from @pytest.mark.timeout(N)
     /// None means use global timeout
     pub timeout_secs: Option<u64>,
+    /// Pytest markers on this test (e.g., "slow", "skip", "django_db")
+    pub markers: Vec<String>,
 }
 
 /// A resolved fixture with full context
@@ -353,6 +355,7 @@ impl<'a> Resolver<'a> {
             fixtures: resolved_fixtures,
             is_toxic: false, // Set later by ToxicityGraph
             timeout_secs: test.timeout_secs,
+            markers: test.markers.clone(),
         })
     }
 

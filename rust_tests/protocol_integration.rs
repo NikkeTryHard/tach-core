@@ -21,6 +21,9 @@ fn test_serialize_test_payload() {
         debug_socket_path: String::new(),
         is_toxic: false,
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");
@@ -95,6 +98,9 @@ fn test_roundtrip_test_payload() {
         debug_socket_path: "/tmp/tach_debug_test.sock".to_string(),
         is_toxic: false,
         timeout_secs: Some(60),
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     let encoded = encode_with_length(&original).expect("Should serialize");
@@ -167,6 +173,9 @@ fn test_empty_fixtures_payload() {
         debug_socket_path: String::new(),
         is_toxic: false,
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize empty fixtures");
@@ -185,6 +194,9 @@ fn test_async_payload() {
         debug_socket_path: String::new(),
         is_toxic: false,
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");

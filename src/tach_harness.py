@@ -1147,6 +1147,294 @@ def _format_enhanced_failure(
 
 
 # =============================================================================
+# PLUGIN DETECTION (v0.2.0)
+# Detects installed pytest plugins and warns about unsupported ones
+# =============================================================================
+
+# Plugins that are known to work with Tach (or are explicitly disabled)
+_SUPPORTED_PLUGINS: set = {
+    "pytest",  # Core pytest
+    "pytest-timeout",  # We handle timeouts ourselves
+    "pytest-xdist",  # We disable this, but it's known
+    "pytest-cov",  # We disable this, but it's known
+    "pytest-sugar",  # We disable this, but it's known
+    "pytest-asyncio",  # We disable this, but it's known
+    "pytest-trio",  # We disable this, but it's known
+    "pytest-django",  # We disable this, but markers are detected
+    "pytest-mock",  # Works with Tach
+    "pytest-env",  # Environment variables - effects are replayed
+    "pytest-randomly",  # Test ordering - we handle in supervisor
+    "pytest-order",  # Test ordering - we handle in supervisor
+    "pytest-lazy-fixture",  # Fixture handling
+    "pytest-factoryboy",  # Fixtures
+    "pytest-freezegun",  # Time mocking
+    "pytest-httpx",  # HTTP mocking
+    "pytest-responses",  # HTTP mocking
+    "pytest-vcr",  # HTTP recording
+    "pytest-benchmark",  # Benchmarking (may have issues with fork)
+}
+
+# Plugins that are known to NOT work with Tach
+_UNSUPPORTED_PLUGINS: dict = {
+    "pytest-parallel": "Uses multiprocessing, conflicts with Tach workers",
+    "pytest-forked": "Fork-based isolation conflicts with Tach's fork model",
+    "pytest-testmon": "Requires file watching, not compatible with snapshot model",
+    "pytest-picked": "Git-based selection conflicts with static discovery",
+    "pytest-split": "Test splitting conflicts with Tach's scheduler",
+}
+
+
+def detect_installed_plugins() -> dict:
+    """Detect installed pytest plugins using importlib.metadata.
+
+    Returns:
+        Dict with keys:
+        - 'installed': List of installed plugin names
+        - 'supported': List of supported plugins
+        - 'unsupported': Dict of unsupported plugins with reasons
+        - 'unknown': List of unknown plugins (may or may not work)
+    """
+    try:
+        from importlib.metadata import distributions
+    except ImportError:
+        # Python < 3.8 fallback
+        try:
+            from importlib_metadata import distributions
+        except ImportError:
+            return {
+                "installed": [],
+                "supported": [],
+                "unsupported": {},
+                "unknown": [],
+                "error": "importlib.metadata not available",
+            }
+
+    installed = []
+    supported = []
+    unsupported = {}
+    unknown = []
+
+    for dist in distributions():
+        name = dist.metadata.get("Name", "").lower()
+        # Check if it's a pytest plugin (entry point group pytest11)
+        try:
+            eps = dist.entry_points
+            is_pytest_plugin = any(
+                ep.group == "pytest11" for ep in eps
+            )
+        except Exception:
+            is_pytest_plugin = name.startswith("pytest-") or name.startswith("pytest_")
+
+        if is_pytest_plugin or name.startswith("pytest-") or name.startswith("pytest_"):
+            installed.append(name)
+
+            if name in _SUPPORTED_PLUGINS:
+                supported.append(name)
+            elif name in _UNSUPPORTED_PLUGINS:
+                unsupported[name] = _UNSUPPORTED_PLUGINS[name]
+            else:
+                unknown.append(name)
+
+    return {
+        "installed": sorted(installed),
+        "supported": sorted(supported),
+        "unsupported": unsupported,
+        "unknown": sorted(unknown),
+    }
+
+
+def log_plugin_warnings() -> None:
+    """Log warnings for unsupported or unknown plugins.
+
+    Called during Zygote initialization to warn users about potential issues.
+    """
+    result = detect_installed_plugins()
+
+    if result.get("error"):
+        os.write(2, f"[tach:plugins] Warning: {result['error']}\n".encode())
+        return
+
+    # Log unsupported plugins as warnings
+    for plugin, reason in result.get("unsupported", {}).items():
+        os.write(
+            2,
+            f"[tach:plugins] WARNING: Plugin '{plugin}' is not supported: {reason}\n".encode(),
+        )
+
+    # Log unknown plugins as info (they might work)
+    unknown = result.get("unknown", [])
+    if unknown:
+        os.write(
+            2,
+            f"[tach:plugins] INFO: Unknown plugins detected (may or may not work): {', '.join(unknown)}\n".encode(),
+        )
+
+    # Log summary
+    installed_count = len(result.get("installed", []))
+    supported_count = len(result.get("supported", []))
+    if installed_count > 0:
+        os.write(
+            2,
+            f"[tach:plugins] Detected {installed_count} pytest plugins ({supported_count} supported)\n".encode(),
+        )
+
+
+# =============================================================================
+# HOOK EFFECT RECORDING (v0.2.0)
+# Captures env and sys.path changes from session-level hooks (pytest_configure)
+# These effects are cached and replayed in workers before test execution
+# =============================================================================
+
+# Global storage for recorded session-level hook effects
+# Format: list of dicts with 'type' key ('SetEnv' or 'ModifySysPath')
+_SESSION_HOOK_EFFECTS: list = []
+
+
+def _capture_sys_path_snapshot() -> list:
+    """Capture current sys.path as a list (copy)."""
+    return list(sys.path)
+
+
+def _compute_sys_path_delta(before: list, after: list) -> list:
+    """Compute sys.path changes between two snapshots.
+
+    Returns list of SysPathEffect-compatible dicts.
+    """
+    effects = []
+
+    # Find paths added (in after but not in before)
+    # Check position to determine if prepended or appended
+    for path in after:
+        if path not in before:
+            # Determine action based on position
+            idx = after.index(path)
+            if idx == 0 or (idx < len(before) // 2):
+                action = "prepend"
+            else:
+                action = "append"
+            effects.append({
+                "type": "ModifySysPath",
+                "action": action,
+                "path": path,
+            })
+
+    # Find paths removed (in before but not in after)
+    for path in before:
+        if path not in after:
+            effects.append({
+                "type": "ModifySysPath",
+                "action": "remove",
+                "path": path,
+            })
+
+    return effects
+
+
+def _compute_env_delta(before: dict, after: dict) -> list:
+    """Compute environment variable changes between two snapshots.
+
+    Returns list of SetEnv effect dicts compatible with HookEffect.
+    """
+    effects = []
+
+    # Find added or changed variables
+    for key, value in after.items():
+        if key not in before:
+            effects.append({
+                "type": "SetEnv",
+                "key": key,
+                "value": value,
+            })
+        elif before[key] != value:
+            effects.append({
+                "type": "SetEnv",
+                "key": key,
+                "value": value,
+            })
+
+    # Note: We don't track unset env vars for session-level hooks
+    # as pytest_configure typically only adds env vars
+
+    return effects
+
+
+def _get_recorded_session_effects() -> list:
+    """Internal: Get pre-recorded session effects (deprecated, use get_session_hook_effects).
+
+    Note: This function exists for backwards compatibility. The actual recording
+    happens in init_session() which captures env and sys.path changes during
+    pytest configuration. Use get_session_hook_effects() instead.
+
+    Returns:
+        List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'
+    """
+    return _SESSION_HOOK_EFFECTS
+
+
+def get_session_hook_effects() -> list:
+    """Get recorded session-level hook effects for transmission to workers.
+
+    This is the primary API for retrieving effects recorded during init_session().
+    The Zygote calls this after init_session() completes to get effects for
+    transmission to the Supervisor.
+
+    Returns:
+        List of effect dicts with 'type' key being 'SetEnv' or 'ModifySysPath'
+    """
+    return _SESSION_HOOK_EFFECTS
+
+
+def apply_cached_effects(effects: list) -> int:
+    """Apply cached effects to the worker process.
+
+    Args:
+        effects: List of effect dicts from TestPayload.cached_effects
+
+    Returns:
+        Number of effects applied
+    """
+    provided = len(effects)
+    applied = 0
+
+    for effect in effects:
+        effect_type = effect.get("type")
+
+        if effect_type == "SetEnv":
+            key = effect.get("key")
+            value = effect.get("value")
+            if key and value is not None:
+                os.environ[key] = value
+                applied += 1
+
+        elif effect_type == "ModifySysPath":
+            action = effect.get("action", "append")
+            path = effect.get("path")
+            if path:
+                if action == "prepend":
+                    if path not in sys.path:
+                        sys.path.insert(0, path)
+                        applied += 1
+                elif action == "append":
+                    if path not in sys.path:
+                        sys.path.append(path)
+                        applied += 1
+                elif action == "remove":
+                    if path in sys.path:
+                        sys.path.remove(path)
+                        applied += 1
+
+    # Debug logging: show count of effects provided vs applied
+    if provided > 0:
+        if applied > 0:
+            print(f"[tach:harness] Applied {applied}/{provided} cached hook effects", file=sys.stderr)
+        else:
+            # Warning: effects were provided but none were applied
+            print(f"[tach:harness] WARNING: {provided} effects provided but 0 applied (possible mismatch)", file=sys.stderr)
+
+    return applied
+
+
+# =============================================================================
 # ZYGOTE COLLECTION PATTERN
 # Pytest session is initialized ONCE in Zygote, workers inherit via fork CoW
 # =============================================================================
@@ -1160,11 +1448,25 @@ def init_session(root_dir: str):
 
     This pays the "Pytest Tax" (config parsing, plugin loading, test collection)
     exactly ONCE. Workers inherit the session via Copy-on-Write fork semantics.
+
+    Hook Effect Recording (v0.2.0):
+    We capture env and sys.path before and after pytest configuration to record
+    effects from session-level hooks (pytest_configure). These effects are cached
+    and replayed in workers before test execution.
+
+    Plugin Detection (v0.2.0):
+    We detect installed pytest plugins and warn about unsupported ones.
     """
-    global _SESSION, _ITEMS_MAP
-    import os
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
 
     os.write(2, f"[harness] init_session: {root_dir}\n".encode())
+
+    # PLUGIN DETECTION (v0.2.0): Warn about unsupported plugins
+    log_plugin_warnings()
+
+    # HOOK EFFECT RECORDING: Capture state BEFORE pytest configuration
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
 
     args = [
         root_dir,
@@ -1192,6 +1494,23 @@ def init_session(root_dir: str):
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
+    # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
+    # At this point, pytest_configure hooks have run via cfg._do_configure()
+    env_after = dict(os.environ)
+    sys_path_after = _capture_sys_path_snapshot()
+
+    # Compute deltas and store as session hook effects
+    env_effects = _compute_env_delta(env_before, env_after)
+    sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+    _SESSION_HOOK_EFFECTS = env_effects + sys_path_effects
+
+    if _SESSION_HOOK_EFFECTS:
+        os.write(
+            2,
+            f"[harness] Recorded {len(_SESSION_HOOK_EFFECTS)} session hook effects "
+            f"({len(env_effects)} env, {len(sys_path_effects)} sys.path)\n".encode(),
+        )
+
     _SESSION = _pytest.main.Session.from_config(cfg)
     cfg.hook.pytest_sessionstart(session=_SESSION)
 
@@ -1203,12 +1522,22 @@ def init_session(root_dir: str):
     os.write(2, f"[harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
 
 
-def run_test(file_path: str, node_id: str) -> tuple:
+def run_test(file_path: str, node_id: str, cached_effects: list = None) -> tuple:
     """
     Execute a single pytest test item using pre-collected session.
 
     FAST PATH: Item lookup is O(1) from _ITEMS_MAP.
     No pytest config, no collection, just run the test.
+
+    Hook Effect Replay (v0.2.0):
+    Before running the test, we apply cached effects from session-level hooks.
+    This ensures that environment variables and sys.path modifications from
+    pytest_configure are restored after memory reset.
+
+    Args:
+        file_path: Path to the test file
+        node_id: Pytest node ID (e.g., "tests/test_foo.py::test_bar")
+        cached_effects: Optional list of effects to apply before test (from TestPayload)
 
     Returns:
         Tuple of (status, duration, message, thread_leaked)
@@ -1228,6 +1557,18 @@ def run_test(file_path: str, node_id: str) -> tuple:
     import threading
 
     logging._lock = threading.RLock()
+
+    # HOOK EFFECT REPLAY (v0.2.0):
+    # Apply cached effects before running the test
+    # If cached_effects is provided (from TestPayload), use those
+    # Otherwise, use session hook effects from Python globals (inherited from Zygote)
+    if cached_effects:
+        apply_cached_effects(cached_effects)
+    else:
+        # Apply session-level hook effects from Python globals
+        session_effects = get_session_hook_effects()
+        if session_effects:
+            apply_cached_effects(session_effects)
 
     inject_entropy()
     start = time.perf_counter()

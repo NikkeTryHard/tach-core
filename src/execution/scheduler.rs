@@ -4,6 +4,7 @@
 //! - Safe tests run first (high throughput via Hypervisor Mode)
 //! - Toxic tests run last (containment via Isolation Mode)
 
+use crate::hooks::HookRegistry;
 use crate::logcapture::LogCapture;
 use crate::protocol::{
     CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, TestPayload,
@@ -58,6 +59,10 @@ pub struct Scheduler {
     /// Optional Python callback hook for timeout events.
     /// Format: "module.path:function_name"
     timeout_hook: Option<String>,
+    /// Registry of hooks for test execution
+    hook_registry: HookRegistry,
+    /// Project root directory for resolving hook paths
+    project_root: PathBuf,
 }
 
 impl Scheduler {
@@ -66,6 +71,8 @@ impl Scheduler {
         result_socket: UnixStream,
         log_capture: LogCapture,
         debug_socket_path: PathBuf,
+        hook_registry: HookRegistry,
+        project_root: PathBuf,
     ) -> Result<Self> {
         Self::with_config(
             cmd_socket,
@@ -74,6 +81,8 @@ impl Scheduler {
             debug_socket_path,
             60,
             None,
+            hook_registry,
+            project_root,
         )
     }
 
@@ -84,6 +93,8 @@ impl Scheduler {
         log_capture: LogCapture,
         debug_socket_path: PathBuf,
         global_timeout: u64,
+        hook_registry: HookRegistry,
+        project_root: PathBuf,
     ) -> Result<Self> {
         Self::with_config(
             cmd_socket,
@@ -92,6 +103,8 @@ impl Scheduler {
             debug_socket_path,
             global_timeout,
             None,
+            hook_registry,
+            project_root,
         )
     }
 
@@ -103,6 +116,8 @@ impl Scheduler {
         debug_socket_path: PathBuf,
         global_timeout: u64,
         timeout_hook: Option<String>,
+        hook_registry: HookRegistry,
+        project_root: PathBuf,
     ) -> Result<Self> {
         let max_workers = log_capture.slot_count();
 
@@ -121,6 +136,8 @@ impl Scheduler {
             toxic_queue: VecDeque::new(),
             global_timeout,
             timeout_hook,
+            hook_registry,
+            project_root,
         })
     }
 
@@ -400,6 +417,15 @@ impl Scheduler {
             .get_fd(slot)
             .unwrap_or(-1);
 
+        // Resolve hooks that apply to this test path
+        let hooks = self
+            .hook_registry
+            .resolve_hooks_for_path(&test.file_path, &self.project_root);
+
+        // Get session-level cached effects for replay in workers (v0.2.0 Hook Interception)
+        // These effects (from pytest_configure) are applied before each test runs
+        let cached_effects = self.hook_registry.get_session_effects();
+
         let payload = TestPayload {
             test_id,
             file_path: test.file_path.to_string_lossy().to_string(),
@@ -414,6 +440,9 @@ impl Scheduler {
             debug_socket_path: self.debug_socket_path.to_string_lossy().to_string(),
             is_toxic: test.is_toxic,
             timeout_secs: test.timeout_secs,
+            hooks,
+            cached_effects,
+            markers: test.markers.clone(),
         };
 
         // Use encode_with_length which includes protocol header
@@ -794,6 +823,7 @@ mod tests {
             fixtures: vec![],
             is_toxic,
             timeout_secs: None,
+            markers: vec![],
         }
     }
 
@@ -1051,6 +1081,7 @@ mod tests {
             ],
             is_toxic: false,
             timeout_secs: Some(30),
+            markers: vec!["slow".to_string()],
         };
 
         assert_eq!(test.test_name, "test_with_fixtures");
@@ -1479,5 +1510,64 @@ mod tests {
             !simulate_thread_leak_check(2, 2, false),
             "Same thread count should not trigger leak"
         );
+    }
+
+    // =========================================================================
+    // Hook Resolution Tests (Task 10: v0.2.0)
+    // =========================================================================
+
+    #[test]
+    fn test_hook_registry_resolve_hooks_for_test_path() {
+        use crate::hooks::{Hook, HookRegistry, HookSpec};
+
+        let mut registry = HookRegistry::new();
+
+        // Register a root-level hook
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_configure".to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: PathBuf::from("/project/conftest.py"),
+            function_name: "pytest_configure".to_string(),
+            line_number: 1,
+        });
+
+        // Register a sub-directory hook
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_runtest_setup".to_string(),
+                modifies_global_state: false,
+                cacheable: false,
+            },
+            source: PathBuf::from("/project/tests/conftest.py"),
+            function_name: "pytest_runtest_setup".to_string(),
+            line_number: 10,
+        });
+
+        // Test path in the tests directory
+        let project_root = PathBuf::from("/project");
+        let test_path = PathBuf::from("/project/tests/test_example.py");
+
+        let hooks = registry.resolve_hooks_for_path(&test_path, &project_root);
+
+        // Should get both hooks: root first, then subdirectory
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].source, PathBuf::from("/project/conftest.py"));
+        assert_eq!(hooks[1].source, PathBuf::from("/project/tests/conftest.py"));
+    }
+
+    #[test]
+    fn test_hook_registry_empty_returns_empty_hooks() {
+        use crate::hooks::HookRegistry;
+
+        let registry = HookRegistry::new();
+        let project_root = PathBuf::from("/project");
+        let test_path = PathBuf::from("/project/tests/test_example.py");
+
+        let hooks = registry.resolve_hooks_for_path(&test_path, &project_root);
+
+        assert!(hooks.is_empty(), "Empty registry should return no hooks");
     }
 }

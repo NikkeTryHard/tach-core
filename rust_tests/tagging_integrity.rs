@@ -7,6 +7,7 @@
 
 use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::graph::ToxicityGraph;
+use tach_core::hooks::HookRegistry;
 use tach_core::protocol::{FixtureInfo, TestPayload};
 use tach_core::resolver::{FixtureRegistry, Resolver};
 use tempfile::TempDir;
@@ -46,7 +47,7 @@ def test_safe_function():
 
     // Build toxicity graph directly (bypassing discovery's relative path issue)
     let paths = vec![root.join("test_bad.py"), root.join("test_good.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Verify toxicity detection
     assert!(
@@ -83,7 +84,7 @@ fn test_toxicity_discovery_to_runnable_test() {
 
     // Build toxicity graph
     let paths = vec![root.join("test_toxic.py"), root.join("test_safe.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Create mock discovery result with absolute paths
     let discovery = DiscoveryResult {
@@ -171,6 +172,9 @@ fn test_toxicity_survives_serialization_roundtrip() {
         debug_socket_path: String::new(),
         is_toxic: true, // <-- THE CRITICAL FLAG
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Create a safe TestPayload
@@ -184,6 +188,9 @@ fn test_toxicity_survives_serialization_roundtrip() {
         debug_socket_path: String::new(),
         is_toxic: false, // <-- THE CRITICAL FLAG
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Serialize using bincode (same as scheduler.rs)
@@ -240,7 +247,7 @@ def test_network_stuff():
 
     // Step 1: Build toxicity graph
     let paths = vec![root.join("test_pipeline.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Step 2: Verify source is toxic
     assert!(
@@ -297,6 +304,9 @@ def test_network_stuff():
         debug_socket_path: String::new(),
         is_toxic: runnable.is_toxic, // <-- PROPAGATED FROM RUNNABLE
         timeout_secs: runnable.timeout_secs,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)
@@ -337,7 +347,7 @@ fn test_transitive_toxicity_propagation() {
 
     // Build graph with BOTH files
     let paths = vec![root.join("toxic_utils.py"), root.join("test_uses_toxic.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Verify transitive toxicity
     assert!(

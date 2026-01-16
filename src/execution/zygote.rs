@@ -636,7 +636,7 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         eprintln!("[tach:zygote] Found venv: {}", sp.display());
     }
 
-    Python::attach(|py| -> Result<()> {
+    let session_effects = Python::attach(|py| -> Result<Vec<crate::hooks::HookEffect>> {
         let sys = py.import("sys")?;
         let path_attr = sys.getattr("path")?;
         let path: &Bound<PyList> = path_attr
@@ -708,17 +708,68 @@ except Exception as e:
         let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
         harness.getattr("init_session")?.call1((&target_path,))?;
 
+        // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
+        // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
+        // We retrieve them here and will send them to the Supervisor for HookRegistry population.
+        let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
+        let session_effects: &Bound<'_, PyList> =
+            session_effects_obj.downcast::<PyList>().map_err(|e| {
+                pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                    "Expected list: {}",
+                    e
+                ))
+            })?;
+        let effects = convert_py_effects_to_rust(session_effects);
+
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
 
-        Ok(())
+        Ok(effects)
     })?;
 
-    eprintln!("[tach:zygote] Python ready.");
+    eprintln!(
+        "[tach:zygote] Python ready. Session effects: {}",
+        session_effects.len()
+    );
 
-    // Signal ready on both sockets
+    // Signal ready on both sockets, then send session effects
     let mut cmd_socket = cmd_socket;
     let result_socket = result_socket;
     cmd_socket.write_all(&[MSG_READY])?;
+
+    // ============================================================================
+    // SESSION EFFECTS IPC BRIDGE (v0.2.0)
+    // ============================================================================
+    //
+    // This section transmits hook effects captured during pytest session initialization
+    // from the Zygote process to the Supervisor process.
+    //
+    // ## What Effects Are Sent
+    // - SetEnv: Environment variables set by pytest_configure hooks
+    // - ModifySysPath: sys.path modifications (append/prepend)
+    // - RegisterMarker: Custom markers registered via pytest.ini or hooks
+    // - ModifyItems: Test collection modifications (reordering, filtering)
+    //
+    // ## Wire Format
+    // The effects are serialized using bincode for efficient binary encoding:
+    // - Length prefix: 4 bytes, little-endian u32 (payload size in bytes)
+    // - Payload: bincode-encoded Vec<HookEffect>
+    //
+    // ## Receiver Location
+    // The Supervisor receives these effects in src/main.rs after the READY byte.
+    // It decodes them and calls hook_registry.record_effect() for each effect,
+    // storing them under "pytest_configure" for later replay in workers.
+    //
+    // ## Flow Diagram
+    // Zygote (Python init) -> bincode encode -> socket write
+    //     -> Supervisor (main.rs) -> bincode decode -> HookRegistry.record_effect()
+    //
+    // ============================================================================
+    let effects_encoded =
+        bincode::serde::encode_to_vec(&session_effects, bincode::config::standard())
+            .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
+    let effects_len = (effects_encoded.len() as u32).to_le_bytes();
+    cmd_socket.write_all(&effects_len)?;
+    cmd_socket.write_all(&effects_encoded)?;
 
     // Channel for collecting results from worker threads
     let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
@@ -1035,6 +1086,293 @@ except Exception as e:
     Ok(())
 }
 
+/// Convert HookEffect enum to Python list of dicts for effect replay in workers.
+///
+/// This converts the cached_effects from TestPayload (Rust HookEffect enum) to
+/// a Python list of dicts that can be consumed by tach_harness.apply_cached_effects().
+fn convert_cached_effects_to_py<'py>(
+    py: Python<'py>,
+    effects: &[crate::hooks::HookEffect],
+) -> Result<Bound<'py, pyo3::types::PyList>, PyErr> {
+    use pyo3::types::{PyDict, PyList};
+
+    let py_list = PyList::empty(py);
+
+    for effect in effects {
+        let py_dict = PyDict::new(py);
+
+        match effect {
+            crate::hooks::HookEffect::SetEnv { key, value } => {
+                py_dict.set_item("type", "SetEnv")?;
+                py_dict.set_item("key", key)?;
+                py_dict.set_item("value", value)?;
+            }
+            crate::hooks::HookEffect::ModifySysPath { action, path } => {
+                py_dict.set_item("type", "ModifySysPath")?;
+                // Convert SysPathAction enum to string for Python
+                py_dict.set_item("action", action.to_string())?;
+                py_dict.set_item("path", path)?;
+            }
+            crate::hooks::HookEffect::RegisterMarker { name, description } => {
+                py_dict.set_item("type", "RegisterMarker")?;
+                py_dict.set_item("name", name)?;
+                py_dict.set_item("description", description)?;
+            }
+            crate::hooks::HookEffect::ModifyItems { removed, reordered } => {
+                py_dict.set_item("type", "ModifyItems")?;
+                py_dict.set_item("removed", removed.clone())?;
+                py_dict.set_item("reordered", *reordered)?;
+            }
+            crate::hooks::HookEffect::NoEffect => {
+                // Skip NoEffect - nothing to apply
+                continue;
+            }
+        }
+
+        py_list.append(py_dict)?;
+    }
+
+    Ok(py_list)
+}
+
+/// Convert Python list of effect dicts to Rust Vec<HookEffect>.
+///
+/// This is the inverse of `convert_cached_effects_to_py`. It's used to retrieve
+/// session hook effects from Python (recorded during init_session) and transfer
+/// them to the Supervisor's HookRegistry.
+fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::HookEffect> {
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    let mut effects = Vec::new();
+    let mut skipped_count = 0usize;
+
+    for (idx, item) in py_list.iter().enumerate() {
+        // Each item should be a dict - downcast to PyDict for get_item with Option
+        let dict = match item.downcast::<PyDict>() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: not a dict ({:?})",
+                    idx, e
+                );
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        // Each item should be a dict with a 'type' key
+        let effect_type: String = match dict.get_item("type") {
+            Ok(Some(t)) => match t.extract() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "[tach:zygote] DEBUG: Skipping effect[{}]: 'type' not extractable ({:?})",
+                        idx, e
+                    );
+                    skipped_count += 1;
+                    continue;
+                }
+            },
+            Ok(None) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: missing 'type' key",
+                    idx
+                );
+                skipped_count += 1;
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: error getting 'type' ({:?})",
+                    idx, e
+                );
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        let effect = match effect_type.as_str() {
+            "SetEnv" => {
+                let key: String = match dict.get_item("key") {
+                    Ok(Some(k)) => match k.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: empty key",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: key not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: missing 'key'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: error getting 'key' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                };
+                let value: String = match dict.get_item("value") {
+                    Ok(Some(v)) => v.extract().unwrap_or_default(),
+                    _ => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: missing 'value'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                };
+                crate::hooks::HookEffect::SetEnv { key, value }
+            }
+            "ModifySysPath" => {
+                let action_str: String = match dict.get_item("action") {
+                    Ok(Some(a)) => a.extract().unwrap_or_else(|_| "append".to_string()),
+                    _ => "append".to_string(),
+                };
+                // Parse string to SysPathAction enum, defaulting to Append for unknown values
+                let action = match action_str.as_str() {
+                    "prepend" => crate::hooks::SysPathAction::Prepend,
+                    "append" => crate::hooks::SysPathAction::Append,
+                    "remove" => crate::hooks::SysPathAction::Remove,
+                    _ => crate::hooks::SysPathAction::Append, // Default to Append for unknown
+                };
+                let path: String = match dict.get_item("path") {
+                    Ok(Some(p)) => match p.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: empty path",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: path not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: missing 'path'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: error getting 'path' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                };
+                crate::hooks::HookEffect::ModifySysPath { action, path }
+            }
+            "RegisterMarker" => {
+                let name: String = match dict.get_item("name") {
+                    Ok(Some(n)) => match n.extract::<String>() {
+                        Ok(s) if !s.is_empty() => s,
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: empty name",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: name not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: missing 'name'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: error getting 'name' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                };
+                let description: String = match dict.get_item("description") {
+                    Ok(Some(d)) => d.extract().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                crate::hooks::HookEffect::RegisterMarker { name, description }
+            }
+            "ModifyItems" => {
+                let removed: Vec<String> = match dict.get_item("removed") {
+                    Ok(Some(r)) => r.extract().unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let reordered: bool = match dict.get_item("reordered") {
+                    Ok(Some(r)) => r.extract().unwrap_or(false),
+                    _ => false,
+                };
+                crate::hooks::HookEffect::ModifyItems { removed, reordered }
+            }
+            unknown => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: unknown type '{}'",
+                    idx, unknown
+                );
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        effects.push(effect);
+    }
+
+    if skipped_count > 0 {
+        eprintln!(
+            "[tach:zygote] DEBUG: Skipped {} malformed effects out of {}",
+            skipped_count,
+            py_list.len()
+        );
+    }
+
+    effects
+}
+
 fn run_worker(payload: &TestPayload) -> TestResult {
     use crate::protocol::{STATUS_HARNESS_ERROR, read_process_memory_rss};
 
@@ -1050,13 +1388,17 @@ fn run_worker(payload: &TestPayload) -> TestResult {
         payload.fixtures.iter().map(|f| &f.name).collect::<Vec<_>>()
     );
 
-    // Call Python harness
+    // Call Python harness with cached effects (v0.2.0 Hook Interception)
     let result = Python::attach(|py| -> Result<(u8, f64, String, bool), PyErr> {
         let harness = py.import("tach_harness")?;
         let run_test = harness.getattr("run_test")?;
 
-        // Pass file_path and FULL node_id to harness
-        let result = run_test.call1((&payload.file_path, &full_node_id))?;
+        // Convert cached_effects to Python list of dicts
+        // HookEffect enum -> Python dict with 'type' key
+        let cached_effects = convert_cached_effects_to_py(py, &payload.cached_effects)?;
+
+        // Pass file_path, FULL node_id, and cached_effects to harness
+        let result = run_test.call1((&payload.file_path, &full_node_id, cached_effects))?;
         let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
     });
@@ -1828,6 +2170,9 @@ mod tests {
             debug_socket_path: String::new(),
             is_toxic: false,
             timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&original).expect("Serialization should succeed");
@@ -1869,6 +2214,9 @@ mod tests {
             debug_socket_path: "/tmp/debug.sock".to_string(),
             is_toxic: true,
             timeout_secs: Some(120),
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();

@@ -4,6 +4,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
+use tach_core::hooks::HookRegistry;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
@@ -481,6 +482,10 @@ fn execute_session(
         return Ok(());
     }
 
+    // --- BUILD HOOK REGISTRY ---
+    // Build the hook registry from discovery results before forking
+    let hook_registry = discovery_result.build_hook_registry(cwd);
+
     // --- RUN TESTS ---
     let failed_count = run_tests(
         &cleanup,
@@ -489,6 +494,8 @@ fn execute_session(
         is_json,
         config.coverage_enabled,
         config.memory_enabled,
+        hook_registry,
+        cwd.clone(),
     )?;
 
     // Exit with code 1 if any tests failed
@@ -857,6 +864,8 @@ fn run_tests(
     is_json: bool,
     coverage_enabled: bool,
     memory_enabled: bool,
+    mut hook_registry: HookRegistry,
+    project_root: PathBuf,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
 
@@ -1001,6 +1010,43 @@ fn run_tests(
                 eprintln!("[tach:supervisor] Zygote is READY.\n");
             }
 
+            // HOOK EFFECT BRIDGE (v0.2.0): Receive session effects from Zygote
+            // The Zygote sends bincode-encoded Vec<HookEffect> after the ready byte
+            // Format: length (4 bytes LE) + bincode data
+            let mut effects_len_buf = [0u8; 4];
+            cmd_sock_clone.read_exact(&mut effects_len_buf)?;
+            let effects_len = u32::from_le_bytes(effects_len_buf) as usize;
+
+            if effects_len > 0 {
+                let mut effects_buf = vec![0u8; effects_len];
+                cmd_sock_clone.read_exact(&mut effects_buf)?;
+
+                let session_effects: Vec<tach_core::hooks::HookEffect> =
+                    bincode::serde::decode_from_slice(&effects_buf, bincode::config::standard())
+                        .map(|(effects, _)| effects)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "[tach:supervisor] Warning: Failed to decode session effects: {}",
+                                e
+                            );
+                            Vec::new()
+                        });
+
+                if !session_effects.is_empty() {
+                    if !is_json {
+                        eprintln!(
+                            "[tach:supervisor] Received {} session hook effects from Zygote",
+                            session_effects.len()
+                        );
+                    }
+                    // Populate HookRegistry with session effects
+                    // These are recorded under "pytest_configure" as they come from session initialization
+                    for effect in session_effects {
+                        hook_registry.record_effect("pytest_configure", effect);
+                    }
+                }
+            }
+
             // --- SCHEDULER ---
             // Use with_config to pass timeout_hook from pyproject.toml
             let global_timeout = tach_config.timeout();
@@ -1012,6 +1058,8 @@ fn run_tests(
                 debug_socket_path,
                 global_timeout,
                 timeout_hook,
+                hook_registry,
+                project_root,
             )?;
 
             let stats = scheduler.run(runnable_tests, reporter)?;

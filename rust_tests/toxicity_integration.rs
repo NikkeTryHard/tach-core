@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use tach_core::discover_with_toxicity;
 use tach_core::discovery::{DiscoveryResult, TestCase, TestModule};
 use tach_core::graph::ToxicityGraph;
+use tach_core::hooks::HookRegistry;
 use tach_core::resolver::{FixtureRegistry, Resolver};
 
 // =============================================================================
@@ -34,7 +35,7 @@ def helper():
     .unwrap();
 
     let paths = vec![root.join("safe.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert!(
         !graph.is_toxic(&root.join("safe.py")),
@@ -64,7 +65,7 @@ def worker():
     .unwrap();
 
     let paths = vec![root.join("toxic.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert!(
         graph.is_toxic(&root.join("toxic.py")),
@@ -106,7 +107,7 @@ def do_something():
     .unwrap();
 
     let paths = vec![root.join("toxic_helper.py"), root.join("uses_toxic.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert!(
         graph.is_toxic(&root.join("toxic_helper.py")),
@@ -142,7 +143,7 @@ def safe_function():
     .unwrap();
 
     let paths = vec![root.join("type_hints.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert!(
         !graph.is_toxic(&root.join("type_hints.py")),
@@ -176,7 +177,7 @@ def mixed_function():
     .unwrap();
 
     let paths = vec![root.join("mixed.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert!(
         graph.is_toxic(&root.join("mixed.py")),
@@ -221,7 +222,7 @@ def test_toxic():
 
     // Build toxicity graph
     let paths = vec![root.join("test_safe.py"), root.join("test_toxic.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     // Create mock discovery result
     let discovery = DiscoveryResult {
@@ -339,7 +340,7 @@ fn test_empty_graph() {
     let root = tmp.path();
 
     let paths: Vec<PathBuf> = vec![];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert_eq!(graph.toxic_modules().len(), 0);
     assert_eq!(graph.safe_modules().len(), 0);
@@ -356,7 +357,7 @@ fn test_all_safe_modules() {
     std::fs::write(root.join("b.py"), "import json\ndef b(): pass").unwrap();
 
     let paths = vec![root.join("a.py"), root.join("b.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert_eq!(graph.toxic_modules().len(), 0, "No modules should be toxic");
     assert_eq!(graph.safe_modules().len(), 2, "All modules should be safe");
@@ -373,7 +374,7 @@ fn test_all_toxic_modules() {
     std::fs::write(root.join("b.py"), "import multiprocessing\ndef b(): pass").unwrap();
 
     let paths = vec![root.join("a.py"), root.join("b.py")];
-    let graph = ToxicityGraph::build(&paths, root);
+    let graph = ToxicityGraph::build(&paths, root, &HookRegistry::new());
 
     assert_eq!(
         graph.toxic_modules().len(),

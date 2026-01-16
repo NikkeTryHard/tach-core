@@ -443,7 +443,7 @@ def pytest_configure(config):
     let result = discover(root, false).expect("Discovery should succeed");
 
     // Build hook registry from discovery result
-    let registry = result.build_hook_registry();
+    let registry = result.build_hook_registry(root);
 
     assert_eq!(registry.hook_count(), 1);
     assert!(registry.has_global_state_hooks());
@@ -623,5 +623,405 @@ def test_many_markers(x):
     assert!(
         !test.markers.contains(&"filterwarnings".to_string()),
         "filterwarnings should be filtered"
+    );
+}
+
+/// Test that toxic hooks in conftest.py trigger test toxicity
+#[test]
+fn test_toxic_hook_triggers_test_toxicity() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+def pytest_configure(config):
+    """This modifies global state."""
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.join("test_example.py"),
+        "def test_uses_conftest(): pass\n",
+    )
+    .unwrap();
+
+    let (discovery, graph) =
+        tach_core::discover_with_toxicity_options(root, false).expect("Discovery should succeed");
+
+    // Verify hooks were discovered
+    let registry = discovery.build_hook_registry(root);
+    assert_eq!(
+        registry.hook_count(),
+        1,
+        "Should find pytest_configure hook"
+    );
+    assert!(
+        registry.has_global_state_hooks(),
+        "pytest_configure should be marked as modifying global state"
+    );
+
+    let conftest_path = root.join("conftest.py");
+    assert!(
+        graph.is_toxic(&conftest_path),
+        "conftest.py should be toxic due to pytest_configure hook"
+    );
+
+    // Check the reason includes the hook name
+    if let Some((is_toxic, reasons)) = graph.get_report(&conftest_path) {
+        assert!(is_toxic);
+        assert!(
+            reasons.iter().any(|r| r.contains("pytest_configure")),
+            "Reasons should mention pytest_configure: {:?}",
+            reasons
+        );
+    }
+}
+
+/// Test conftest.py hook inheritance hierarchy
+#[test]
+fn test_conftest_hook_inheritance() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("tests/sub")).unwrap();
+
+    // Root conftest
+    std::fs::write(
+        root.join("conftest.py"),
+        "def pytest_configure(config): pass\n",
+    )
+    .unwrap();
+
+    // tests/ conftest
+    std::fs::write(
+        root.join("tests/conftest.py"),
+        "def pytest_runtest_setup(item): pass\n",
+    )
+    .unwrap();
+
+    // tests/sub/ conftest
+    std::fs::write(
+        root.join("tests/sub/conftest.py"),
+        "def pytest_runtest_teardown(item): pass\n",
+    )
+    .unwrap();
+
+    // Test file in tests/sub/
+    std::fs::write(
+        root.join("tests/sub/test_nested.py"),
+        "def test_example(): pass\n",
+    )
+    .unwrap();
+
+    let (discovery, _graph) = tach_core::discover_with_toxicity_options(root, false).unwrap();
+    let registry = discovery.build_hook_registry(root);
+
+    // Resolve hooks for the nested test
+    let test_path = root
+        .join("tests/sub/test_nested.py")
+        .canonicalize()
+        .unwrap();
+    let hooks = registry.resolve_hooks_for_path(&test_path, root);
+
+    // Should get all 3 hooks in order: root -> tests -> tests/sub
+    assert_eq!(
+        hooks.len(),
+        3,
+        "Should inherit hooks from all parent conftest.py files"
+    );
+    assert!(hooks[0].source.ends_with("conftest.py"));
+    assert!(hooks[1].source.ends_with("tests/conftest.py"));
+    assert!(hooks[2].source.ends_with("tests/sub/conftest.py"));
+}
+
+// =============================================================================
+// PHASE 7: End-to-End Hook Interception Tests (v0.2.0)
+// =============================================================================
+
+/// End-to-end test: Complete hook workflow from discovery to TestPayload
+/// This verifies the full hook interception pipeline works correctly.
+#[test]
+fn test_e2e_hook_discovery_to_payload() {
+    use tach_core::hooks::HookRegistry;
+
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    // Create a conftest.py with multiple hooks
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+import os
+
+def pytest_configure(config):
+    """Session-level hook that modifies environment."""
+    os.environ["TEST_CONFIGURED"] = "yes"
+
+def pytest_runtest_setup(item):
+    """Per-test setup hook."""
+    pass
+"#,
+    )
+    .unwrap();
+
+    // Create a test file
+    std::fs::write(
+        root.join("test_example.py"),
+        r#"
+import os
+
+def test_configured():
+    assert os.environ.get("TEST_CONFIGURED") == "yes"
+"#,
+    )
+    .unwrap();
+
+    // Phase 1: Discovery
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    // Verify hooks are discovered
+    let conftest = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("conftest.py"))
+        .expect("Should find conftest.py");
+
+    assert_eq!(
+        conftest.hooks.len(),
+        2,
+        "Should find 2 hooks in conftest.py"
+    );
+
+    // Phase 2: Build HookRegistry
+    let registry = result.build_hook_registry(root);
+
+    assert_eq!(registry.hook_count(), 2, "Registry should have 2 hooks");
+    assert!(
+        registry.has_global_state_hooks(),
+        "Should have global state hooks"
+    );
+
+    // Phase 3: Verify hook resolution for test
+    let test_path = root.join("test_example.py").canonicalize().unwrap();
+    let hooks = registry.resolve_hooks_for_path(&test_path, root);
+
+    assert_eq!(
+        hooks.len(),
+        2,
+        "Test should inherit 2 hooks from conftest.py"
+    );
+
+    // Verify hook order: pytest_configure before pytest_runtest_setup
+    let hook_names: Vec<&str> = hooks.iter().map(|h| h.spec.name.as_str()).collect();
+    assert!(hook_names.contains(&"pytest_configure"));
+    assert!(hook_names.contains(&"pytest_runtest_setup"));
+}
+
+/// End-to-end test: Hook toxicity propagation
+/// Verifies that tests inheriting from conftest with toxic hooks are marked toxic.
+#[test]
+fn test_e2e_hook_toxicity_propagation() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    // Create a conftest.py with a toxic hook (pytest_configure modifies global state)
+    std::fs::write(
+        root.join("conftest.py"),
+        r#"
+def pytest_configure(config):
+    """This hook modifies global state - should trigger toxicity."""
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+"#,
+    )
+    .unwrap();
+
+    // Create a test file
+    std::fs::write(
+        root.join("test_example.py"),
+        "def test_uses_conftest(): pass\n",
+    )
+    .unwrap();
+
+    // Discover with toxicity analysis
+    let (discovery, graph) =
+        tach_core::discover_with_toxicity_options(root, false).expect("Discovery should succeed");
+
+    // Verify conftest.py is marked toxic due to pytest_configure hook
+    let conftest_path = root.join("conftest.py").canonicalize().unwrap();
+    assert!(
+        graph.is_toxic(&conftest_path),
+        "conftest.py should be toxic due to pytest_configure hook"
+    );
+}
+
+/// End-to-end test: Multiple conftest inheritance with mixed toxicity
+#[test]
+fn test_e2e_nested_conftest_toxicity() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("tests/safe")).unwrap();
+    std::fs::create_dir_all(root.join("tests/toxic")).unwrap();
+
+    // Root conftest - toxic (pytest_configure)
+    std::fs::write(
+        root.join("conftest.py"),
+        "def pytest_configure(config): pass\n",
+    )
+    .unwrap();
+
+    // tests/safe/conftest.py - non-toxic hook only
+    std::fs::write(
+        root.join("tests/safe/conftest.py"),
+        "def pytest_runtest_setup(item): pass\n",
+    )
+    .unwrap();
+
+    // tests/toxic/conftest.py - another toxic hook
+    std::fs::write(
+        root.join("tests/toxic/conftest.py"),
+        r#"
+def pytest_configure(config):
+    pass
+
+def pytest_collection_modifyitems(config, items):
+    pass
+"#,
+    )
+    .unwrap();
+
+    // Test files
+    std::fs::write(
+        root.join("tests/safe/test_safe.py"),
+        "def test_safe(): pass\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.join("tests/toxic/test_toxic.py"),
+        "def test_toxic(): pass\n",
+    )
+    .unwrap();
+
+    let (discovery, graph) =
+        tach_core::discover_with_toxicity_options(root, false).expect("Discovery should succeed");
+
+    let registry = discovery.build_hook_registry(root);
+
+    // Root conftest should be toxic
+    let root_conftest = root.join("conftest.py").canonicalize().unwrap();
+    assert!(
+        graph.is_toxic(&root_conftest),
+        "Root conftest should be toxic"
+    );
+
+    // tests/toxic/conftest.py should also be toxic (has pytest_configure)
+    let toxic_conftest = root.join("tests/toxic/conftest.py").canonicalize().unwrap();
+    assert!(
+        graph.is_toxic(&toxic_conftest),
+        "tests/toxic/conftest.py should be toxic"
+    );
+
+    // Verify hook counts
+    let safe_test_path = root.join("tests/safe/test_safe.py").canonicalize().unwrap();
+    let safe_hooks = registry.resolve_hooks_for_path(&safe_test_path, root);
+    assert_eq!(
+        safe_hooks.len(),
+        2,
+        "Safe test should inherit 2 hooks (root + safe)"
+    );
+
+    let toxic_test_path = root
+        .join("tests/toxic/test_toxic.py")
+        .canonicalize()
+        .unwrap();
+    let toxic_hooks = registry.resolve_hooks_for_path(&toxic_test_path, root);
+    assert_eq!(
+        toxic_hooks.len(),
+        3,
+        "Toxic test should inherit 3 hooks (root + toxic)"
+    );
+}
+
+/// End-to-end test: Marker detection with django_db
+#[test]
+fn test_e2e_marker_detection_django_db() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+
+    std::fs::create_dir(root.join(".git")).unwrap();
+
+    std::fs::write(
+        root.join("test_markers.py"),
+        r#"
+import pytest
+
+@pytest.mark.django_db
+def test_with_db():
+    pass
+
+@pytest.mark.slow
+@pytest.mark.django_db(transaction=True)
+def test_slow_with_transaction():
+    pass
+
+@pytest.mark.parametrize("x", [1, 2, 3])
+def test_parametrized(x):
+    pass
+
+def test_no_markers():
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_markers.py"))
+        .expect("Should find test_markers.py");
+
+    // test_with_db should have django_db marker
+    let test_with_db = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_with_db")
+        .unwrap();
+    assert!(
+        test_with_db.markers.contains(&"django_db".to_string()),
+        "test_with_db should have django_db marker"
+    );
+
+    // test_slow_with_transaction should have both markers
+    let test_slow = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_slow_with_transaction")
+        .unwrap();
+    assert!(test_slow.markers.contains(&"django_db".to_string()));
+    assert!(test_slow.markers.contains(&"slow".to_string()));
+
+    // test_no_markers should have no markers
+    let test_no_markers = module
+        .tests
+        .iter()
+        .find(|t| t.name == "test_no_markers")
+        .unwrap();
+    assert!(
+        test_no_markers.markers.is_empty(),
+        "test_no_markers should have no markers"
     );
 }

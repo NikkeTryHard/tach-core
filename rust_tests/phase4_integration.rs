@@ -150,6 +150,9 @@ fn test_payload_is_toxic_propagation() {
         debug_socket_path: String::new(),
         is_toxic: false,
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     let toxic_payload = TestPayload {
@@ -162,6 +165,9 @@ fn test_payload_is_toxic_propagation() {
         debug_socket_path: String::new(),
         is_toxic: true,
         timeout_secs: None,
+        hooks: vec![],
+        cached_effects: vec![],
+        markers: vec![],
     };
 
     // Verify is_toxic is correctly set
@@ -454,5 +460,6 @@ fn create_runnable_test(name: &str, is_toxic: bool) -> RunnableTest {
         fixtures: vec![],
         is_toxic,
         timeout_secs: None,
+        markers: vec![],
     }
 }
