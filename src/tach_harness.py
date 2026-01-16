@@ -1384,6 +1384,100 @@ def get_session_hook_effects() -> list:
     return _SESSION_HOOK_EFFECTS
 
 
+def call_hook_impl(
+    conftest_path: str,
+    hook_name: str,
+    args: dict,
+) -> dict:
+    """Load a conftest.py module and call the specified hook function.
+
+    This function is the Python-side bridge for executing hook implementations.
+    It handles module loading, function invocation, effect capture, and error handling.
+
+    Args:
+        conftest_path: Absolute path to the conftest.py file containing the hook
+        hook_name: Name of the hook function to call (e.g., "pytest_configure")
+        args: Dictionary of arguments to pass to the hook function
+
+    Returns:
+        Dict with keys:
+        - return_value: JSON-serialized return value from hook, or None
+        - effects: List of effect dicts (SetEnv, ModifySysPath)
+        - error: Error message string if hook failed, or None
+    """
+    import json
+
+    result = {
+        "return_value": None,
+        "effects": [],
+        "error": None,
+    }
+
+    # Capture state before hook execution
+    env_before = dict(os.environ)
+    sys_path_before = list(sys.path)
+
+    try:
+        # Load the conftest module dynamically
+        spec = importlib.util.spec_from_file_location("conftest", conftest_path)
+        if spec is None or spec.loader is None:
+            result["error"] = f"Could not load module spec from {conftest_path}"
+            return result
+
+        module = importlib.util.module_from_spec(spec)
+
+        # Ensure conftest directory is in sys.path for imports
+        conftest_dir = os.path.dirname(os.path.abspath(conftest_path))
+        if conftest_dir not in sys.path:
+            sys.path.insert(0, conftest_dir)
+
+        try:
+            spec.loader.exec_module(module)
+        except Exception as e:
+            result["error"] = f"Failed to execute module {conftest_path}: {e}"
+            return result
+
+        # Check if the hook function exists
+        if not hasattr(module, hook_name):
+            # Not an error - the conftest simply doesn't implement this hook
+            # Return empty result with no error
+            return result
+
+        hook_func = getattr(module, hook_name)
+
+        # Filter args to only those accepted by the hook function signature
+        sig = inspect.signature(hook_func)
+        valid_args = {k: v for k, v in args.items() if k in sig.parameters}
+
+        try:
+            return_value = hook_func(**valid_args)
+            if return_value is not None:
+                try:
+                    # Serialize return value to JSON for cross-boundary transport
+                    if isinstance(return_value, str):
+                        result["return_value"] = return_value
+                    else:
+                        result["return_value"] = json.dumps(return_value)
+                except (TypeError, ValueError):
+                    # Fall back to string representation if JSON fails
+                    result["return_value"] = str(return_value)
+        except Exception as e:
+            result["error"] = f"Hook execution failed: {e}"
+
+    except Exception as e:
+        result["error"] = f"Hook loading failed: {e}"
+        return result
+
+    # Capture state after hook execution and compute deltas
+    env_after = dict(os.environ)
+    sys_path_after = list(sys.path)
+
+    result["effects"].extend(_compute_env_delta(env_before, env_after))
+    result["effects"].extend(_compute_sys_path_delta(sys_path_before, sys_path_after))
+
+    return result
+
+
 def apply_cached_effects(effects: list) -> int:
     """Apply cached effects to the worker process.
 
