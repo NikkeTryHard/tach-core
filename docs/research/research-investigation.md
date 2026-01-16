@@ -116,25 +116,11 @@ See [external-research.md](external-research.md) for analysis of related project
 
 ## Paper Locations
 
-All source papers are in `papers-very-verbose/`:
+All source papers are in the `papers-very-verbose/` directory within `docs/research/`.
 
 > **Note for LLMs:** The folder name "papers-very-verbose" indicates these are lengthy documents. Read selectively based on specific needs rather than loading entire files.
 
-```
-papers-very-verbose/
-├── forklift.txt                              # USENIX WoSC'24 - Hierarchical zygotes
-├── Cross-Platform Process Cloning Research.txt
-├── Fork Safety of Python C-Extensions.txt
-├── Project Tach Compatibility Layer Blueprint.txt
-├── Python Memory Snapshotting with Userfaultfd.txt
-├── Python Monorepo Zygote Tree Design.txt
-├── Python Testing Engine Rust Breakthroughs.txt
-├── Rust Static Analysis for Toxic Python Modules.txt
-├── Rust-CPython Execution Blueprint Research.txt
-├── Rust-Python Test Isolation Blueprint.txt
-├── Userfaultfd and CPython Allocator Interaction.txt
-└── Zero-Copy Python Module Loading.txt
-```
+Key papers include research on Forklift (USENIX WoSC'24), cross-platform process cloning, fork safety of Python C-extensions, memory snapshotting with userfaultfd, zygote tree design, and zero-copy module loading. See the directory listing for the complete set.
 
 ---
 
