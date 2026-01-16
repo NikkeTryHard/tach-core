@@ -565,10 +565,6 @@ class MarkerEffect:
         )
 
 
-# Type alias for any effect
-Effect = Union[EnvironmentEffect, MarkerEffect]
-
-
 # =============================================================================
 # File Descriptor Effect (SCM_RIGHTS Teleporter)
 # =============================================================================

@@ -1117,21 +1117,51 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
     use pyo3::types::{PyDict, PyDictMethods};
 
     let mut effects = Vec::new();
+    let mut skipped_count = 0usize;
 
-    for item in py_list.iter() {
+    for (idx, item) in py_list.iter().enumerate() {
         // Each item should be a dict - downcast to PyDict for get_item with Option
         let dict = match item.downcast::<PyDict>() {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: not a dict ({:?})",
+                    idx, e
+                );
+                skipped_count += 1;
+                continue;
+            }
         };
 
         // Each item should be a dict with a 'type' key
         let effect_type: String = match dict.get_item("type") {
             Ok(Some(t)) => match t.extract() {
                 Ok(s) => s,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "[tach:zygote] DEBUG: Skipping effect[{}]: 'type' not extractable ({:?})",
+                        idx, e
+                    );
+                    skipped_count += 1;
+                    continue;
+                }
             },
-            _ => continue,
+            Ok(None) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: missing 'type' key",
+                    idx
+                );
+                skipped_count += 1;
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: error getting 'type' ({:?})",
+                    idx, e
+                );
+                skipped_count += 1;
+                continue;
+            }
         };
 
         let effect = match effect_type.as_str() {
@@ -1139,13 +1169,50 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 let key: String = match dict.get_item("key") {
                     Ok(Some(k)) => match k.extract::<String>() {
                         Ok(s) if !s.is_empty() => s,
-                        _ => continue, // Skip invalid or empty keys
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: empty key",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: key not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
                     },
-                    _ => continue,
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: missing 'key'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: error getting 'key' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
                 };
                 let value: String = match dict.get_item("value") {
                     Ok(Some(v)) => v.extract().unwrap_or_default(),
-                    _ => continue,
+                    _ => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping SetEnv effect[{}]: missing 'value'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
                 };
                 crate::hooks::HookEffect::SetEnv { key, value }
             }
@@ -1157,9 +1224,39 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 let path: String = match dict.get_item("path") {
                     Ok(Some(p)) => match p.extract::<String>() {
                         Ok(s) if !s.is_empty() => s,
-                        _ => continue, // Skip invalid or empty paths
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: empty path",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: path not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
                     },
-                    _ => continue,
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: missing 'path'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping ModifySysPath effect[{}]: error getting 'path' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
                 };
                 crate::hooks::HookEffect::ModifySysPath { action, path }
             }
@@ -1167,9 +1264,39 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 let name: String = match dict.get_item("name") {
                     Ok(Some(n)) => match n.extract::<String>() {
                         Ok(s) if !s.is_empty() => s,
-                        _ => continue, // Skip invalid or empty marker names
+                        Ok(_) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: empty name",
+                                idx
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: name not extractable ({:?})",
+                                idx, e
+                            );
+                            skipped_count += 1;
+                            continue;
+                        }
                     },
-                    _ => continue,
+                    Ok(None) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: missing 'name'",
+                            idx
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:zygote] DEBUG: Skipping RegisterMarker effect[{}]: error getting 'name' ({:?})",
+                            idx, e
+                        );
+                        skipped_count += 1;
+                        continue;
+                    }
                 };
                 let description: String = match dict.get_item("description") {
                     Ok(Some(d)) => d.extract().unwrap_or_default(),
@@ -1188,10 +1315,25 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 };
                 crate::hooks::HookEffect::ModifyItems { removed, reordered }
             }
-            _ => continue, // Unknown effect type, skip
+            unknown => {
+                eprintln!(
+                    "[tach:zygote] DEBUG: Skipping effect[{}]: unknown type '{}'",
+                    idx, unknown
+                );
+                skipped_count += 1;
+                continue;
+            }
         };
 
         effects.push(effect);
+    }
+
+    if skipped_count > 0 {
+        eprintln!(
+            "[tach:zygote] DEBUG: Skipped {} malformed effects out of {}",
+            skipped_count,
+            py_list.len()
+        );
     }
 
     effects

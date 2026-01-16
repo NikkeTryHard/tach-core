@@ -460,5 +460,6 @@ fn create_runnable_test(name: &str, is_toxic: bool) -> RunnableTest {
         fixtures: vec![],
         is_toxic,
         timeout_secs: None,
+        markers: vec![],
     }
 }
