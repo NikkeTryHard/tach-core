@@ -636,7 +636,7 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         eprintln!("[tach:zygote] Found venv: {}", sp.display());
     }
 
-    Python::attach(|py| -> Result<()> {
+    let session_effects = Python::attach(|py| -> Result<Vec<crate::hooks::HookEffect>> {
         let sys = py.import("sys")?;
         let path_attr = sys.getattr("path")?;
         let path: &Bound<PyList> = path_attr
@@ -708,17 +708,42 @@ except Exception as e:
         let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
         harness.getattr("init_session")?.call1((&target_path,))?;
 
+        // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
+        // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
+        // We retrieve them here and will send them to the Supervisor for HookRegistry population.
+        let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
+        let session_effects: &Bound<'_, PyList> =
+            session_effects_obj.downcast::<PyList>().map_err(|e| {
+                pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                    "Expected list: {}",
+                    e
+                ))
+            })?;
+        let effects = convert_py_effects_to_rust(session_effects);
+
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
 
-        Ok(())
+        Ok(effects)
     })?;
 
-    eprintln!("[tach:zygote] Python ready.");
+    eprintln!(
+        "[tach:zygote] Python ready. Session effects: {}",
+        session_effects.len()
+    );
 
-    // Signal ready on both sockets
+    // Signal ready on both sockets, then send session effects
     let mut cmd_socket = cmd_socket;
     let result_socket = result_socket;
     cmd_socket.write_all(&[MSG_READY])?;
+
+    // Send session effects to Supervisor for HookRegistry population
+    // Format: length (4 bytes LE) + bincode-encoded Vec<HookEffect>
+    let effects_encoded =
+        bincode::serde::encode_to_vec(&session_effects, bincode::config::standard())
+            .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
+    let effects_len = (effects_encoded.len() as u32).to_le_bytes();
+    cmd_socket.write_all(&effects_len)?;
+    cmd_socket.write_all(&effects_encoded)?;
 
     // Channel for collecting results from worker threads
     let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
@@ -1081,6 +1106,86 @@ fn convert_cached_effects_to_py<'py>(
     }
 
     Ok(py_list)
+}
+
+/// Convert Python list of effect dicts to Rust Vec<HookEffect>.
+///
+/// This is the inverse of `convert_cached_effects_to_py`. It's used to retrieve
+/// session hook effects from Python (recorded during init_session) and transfer
+/// them to the Supervisor's HookRegistry.
+fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::HookEffect> {
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    let mut effects = Vec::new();
+
+    for item in py_list.iter() {
+        // Each item should be a dict - downcast to PyDict for get_item with Option
+        let dict = match item.downcast::<PyDict>() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        // Each item should be a dict with a 'type' key
+        let effect_type: String = match dict.get_item("type") {
+            Ok(Some(t)) => match t.extract() {
+                Ok(s) => s,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+
+        let effect = match effect_type.as_str() {
+            "SetEnv" => {
+                let key: String = match dict.get_item("key") {
+                    Ok(Some(k)) => k.extract().unwrap_or_default(),
+                    _ => continue,
+                };
+                let value: String = match dict.get_item("value") {
+                    Ok(Some(v)) => v.extract().unwrap_or_default(),
+                    _ => continue,
+                };
+                crate::hooks::HookEffect::SetEnv { key, value }
+            }
+            "ModifySysPath" => {
+                let action: String = match dict.get_item("action") {
+                    Ok(Some(a)) => a.extract().unwrap_or_else(|_| "append".to_string()),
+                    _ => "append".to_string(),
+                };
+                let path: String = match dict.get_item("path") {
+                    Ok(Some(p)) => p.extract().unwrap_or_default(),
+                    _ => continue,
+                };
+                crate::hooks::HookEffect::ModifySysPath { action, path }
+            }
+            "RegisterMarker" => {
+                let name: String = match dict.get_item("name") {
+                    Ok(Some(n)) => n.extract().unwrap_or_default(),
+                    _ => continue,
+                };
+                let description: String = match dict.get_item("description") {
+                    Ok(Some(d)) => d.extract().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                crate::hooks::HookEffect::RegisterMarker { name, description }
+            }
+            "ModifyItems" => {
+                let removed: Vec<String> = match dict.get_item("removed") {
+                    Ok(Some(r)) => r.extract().unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let reordered: bool = match dict.get_item("reordered") {
+                    Ok(Some(r)) => r.extract().unwrap_or(false),
+                    _ => false,
+                };
+                crate::hooks::HookEffect::ModifyItems { removed, reordered }
+            }
+            _ => continue, // Unknown effect type, skip
+        };
+
+        effects.push(effect);
+    }
+
+    effects
 }
 
 fn run_worker(payload: &TestPayload) -> TestResult {

@@ -5,6 +5,17 @@ These tests verify the Python-side effect recording infrastructure.
 
 import os
 import sys
+from pathlib import Path
+
+# Get the src directory dynamically - works both in Docker and on host
+_THIS_FILE = Path(__file__).resolve()
+_PROJECT_ROOT = _THIS_FILE.parent.parent.parent  # tests/gauntlet_hook_effects -> tests -> project root
+_SRC_DIR = str(_PROJECT_ROOT / "src")
+
+def _ensure_harness_importable():
+    """Ensure tach_harness is importable by adding src to sys.path."""
+    if _SRC_DIR not in sys.path:
+        sys.path.insert(0, _SRC_DIR)
 
 
 class TestEffectDelta:
@@ -12,8 +23,7 @@ class TestEffectDelta:
 
     def test_a_compute_env_delta_new_var(self):
         """Test that new environment variables are detected."""
-        # Import the harness functions
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import _compute_env_delta
 
         before = {"EXISTING": "value"}
@@ -28,7 +38,7 @@ class TestEffectDelta:
 
     def test_b_compute_env_delta_changed_var(self):
         """Test that changed environment variables are detected."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import _compute_env_delta
 
         before = {"EXISTING": "old_value"}
@@ -43,7 +53,7 @@ class TestEffectDelta:
 
     def test_c_compute_env_delta_no_change(self):
         """Test that unchanged environment produces no effects."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import _compute_env_delta
 
         before = {"EXISTING": "value"}
@@ -55,7 +65,7 @@ class TestEffectDelta:
 
     def test_d_compute_sys_path_delta_added(self):
         """Test that new sys.path entries are detected."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import _compute_sys_path_delta
 
         before = ["/existing/path"]
@@ -70,7 +80,7 @@ class TestEffectDelta:
 
     def test_e_compute_sys_path_delta_prepended(self):
         """Test that prepended sys.path entries are detected as prepend."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import _compute_sys_path_delta
 
         before = ["/existing/path"]
@@ -89,7 +99,7 @@ class TestApplyCachedEffects:
 
     def test_a_apply_env_effect(self):
         """Test applying an environment effect."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import apply_cached_effects
 
         # Clean up before test
@@ -109,7 +119,7 @@ class TestApplyCachedEffects:
 
     def test_b_apply_sys_path_effect_append(self):
         """Test applying a sys.path append effect."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import apply_cached_effects
 
         test_path = "/tmp/test_apply_effect_path_append"
@@ -131,7 +141,7 @@ class TestApplyCachedEffects:
 
     def test_c_apply_sys_path_effect_prepend(self):
         """Test applying a sys.path prepend effect."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import apply_cached_effects
 
         test_path = "/tmp/test_apply_effect_path_prepend"
@@ -154,7 +164,7 @@ class TestApplyCachedEffects:
 
     def test_d_apply_multiple_effects(self):
         """Test applying multiple effects at once."""
-        sys.path.insert(0, "/home/louiskaneko/dev/tach-core/.worktrees/v0.2.0-hooks/src")
+        _ensure_harness_importable()
         from tach_harness import apply_cached_effects
 
         # Clean up before test
