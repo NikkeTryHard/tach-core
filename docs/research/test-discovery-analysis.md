@@ -108,11 +108,11 @@ cargo test --test implementation_tests -- --ignored
 
 These are performance/stability tests that take significant time:
 
-| Test                                     | Purpose                           | Duration |
-| ---------------------------------------- | --------------------------------- | -------- |
-| `test_rss_stability_after_1000_restores` | RSS memory leak detection         | ~30-60s  |
-| `test_jitter_benchmark_p99_latency`      | P99 latency measurement           | ~10-30s  |
-| `test_jitter_nanosecond_precision`       | Nanosecond precision verification | ~10-30s  |
+| Test                                     | Purpose                           |
+| ---------------------------------------- | --------------------------------- |
+| `test_rss_stability_after_1000_restores` | RSS memory leak detection         |
+| `test_jitter_benchmark_p99_latency`      | P99 latency measurement           |
+| `test_jitter_nanosecond_precision`       | Nanosecond precision verification |
 
 **Run command:**
 
@@ -161,19 +161,19 @@ Based on analysis of `rust_tests/discovery_integration.rs` and `src/discovery/sc
 
 ### 4.2 PropTest Coverage (`rust_tests/proptest_discovery.rs`)
 
-Property-based tests verify invariants with randomized inputs:
+Property-based tests verify invariants with randomized inputs (case counts are configurable):
 
-| Property                    | Cases | Description                             |
-| --------------------------- | ----- | --------------------------------------- |
-| DAG fixtures acyclic        | 200   | Dependency graphs have no cycles        |
-| Topological sort succeeds   | 200   | Sorting DAGs always works               |
-| Self-dependency detected    | -     | Circular dependencies caught            |
-| Module paths unique         | 300   | No path collisions                      |
-| Path parent shorter         | 300   | Parent path length invariant            |
-| Import statements parseable | 300   | Generated imports are valid             |
-| Scope priorities distinct   | 100   | All fixture scopes have unique priority |
-| Test prefix recognized      | 200   | `test_*` pattern matching               |
-| Class::method split         | -     | Nested name parsing                     |
+| Property                    | Description                             |
+| --------------------------- | --------------------------------------- |
+| DAG fixtures acyclic        | Dependency graphs have no cycles        |
+| Topological sort succeeds   | Sorting DAGs always works               |
+| Self-dependency detected    | Circular dependencies caught            |
+| Module paths unique         | No path collisions                      |
+| Path parent shorter         | Parent path length invariant            |
+| Import statements parseable | Generated imports are valid             |
+| Scope priorities distinct   | All fixture scopes have unique priority |
+| Test prefix recognized      | `test_*` pattern matching               |
+| Class::method split         | Nested name parsing                     |
 
 ---
 
