@@ -83,15 +83,15 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 
 ## Paper-to-Component Mapping
 
-| Research Topic / Paper             | Primary Component   | Key Files (Proposed)              | Implementation Status |
-| :--------------------------------- | :------------------ | :-------------------------------- | :-------------------- |
-| **Forklift: Fitting Zygote Trees** | Zygote Manager      | `tach-core/src/zygote/tree.rs`    | In Progress           |
-| **Cross-Platform Cloning**         | Platform Shim       | `tach-core/src/sys/unix/clone.rs` | Research              |
-| **Userfaultfd Snapshotting**       | Snapshot Engine     | `tach-core/src/mem/snapshot.rs`   | Prototype             |
-| **Matrix Layer (Virtualization)**  | Syscall Interceptor | `libtach_preload.so`, `tach-vfs/` | Planning              |
-| **Toxic Module Analysis**          | Static Analyzer     | `tach-analyzer/src/toxic.rs`      | Research              |
-| **Zero-Copy Loader**               | Module Loader       | `tach-core/src/python/loader.rs`  | Planning              |
-| **Kineton (Rust Orchestrator)**    | Test Runner         | `tach-cli/src/runner/`            | In Progress           |
+| Research Topic / Paper             | Primary Component   | Key Files (Proposed)                        | Implementation Status |
+| :--------------------------------- | :------------------ | :------------------------------------------ | :-------------------- |
+| **Forklift: Fitting Zygote Trees** | Zygote Manager      | `src/execution/zygote.rs`                   | In Progress           |
+| **Cross-Platform Cloning**         | Platform Shim       | `src/execution/`                            | Research              |
+| **Userfaultfd Snapshotting**       | Snapshot Engine     | `src/isolation/snapshot.rs`                 | Prototype             |
+| **Matrix Layer (Virtualization)**  | Syscall Interceptor | `libtach_preload.so`, `tach-vfs/` (Planned) | Planning              |
+| **Toxic Module Analysis**          | Static Analyzer     | `src/discovery/scanner.rs`                  | Research              |
+| **Zero-Copy Loader**               | Module Loader       | `src/discovery/loader.rs`                   | Planning              |
+| **Kineton (Rust Orchestrator)**    | Test Runner         | `src/execution/`                            | In Progress           |
 
 ---
 
