@@ -11,7 +11,7 @@
 
 Tach-core's sandbox tests (`test_fs_destruction.py`) behave differently depending on how they are executed. When running **directly via pytest** in a privileged container, the tests **fail** because there's no sandbox. When running **through tach-core**, the Iron Dome sandbox provides filesystem protection.
 
-**Critical Finding:** Even with tach-core, only 3 of 5 tests pass in containers. Two tests fail due to:
+**Critical Finding:** Even with tach-core, some tests fail in containers due to:
 
 1. **Landlock configuration**: Project root is set to read-only, preventing CWD writes
 2. **Root user context**: Container root can read /etc/shadow via symlink
@@ -35,22 +35,22 @@ Tach-core's sandbox tests (`test_fs_destruction.py`) behave differently dependin
 
 ### Actual Test Results
 
-| Execution Method                  | Passed | Failed | Notes                 |
-| --------------------------------- | ------ | ------ | --------------------- |
-| `pytest` (direct)                 | 0      | 5      | No sandbox - expected |
-| `tach-core` (no iproute2)         | 0      | 5      | Isolation crashes     |
-| `tach-core` (with iproute2)       | 3      | 2      | Partial sandbox       |
-| `tach-core` (TACH_NO_ISOLATION=1) | 3      | 2      | Same as above         |
+| Execution Method                  | Result      | Notes                 |
+| --------------------------------- | ----------- | --------------------- |
+| `pytest` (direct)                 | ❌ All fail | No sandbox - expected |
+| `tach-core` (no iproute2)         | ❌ All fail | Isolation crashes     |
+| `tach-core` (with iproute2)       | ⚠️ Partial  | Some tests pass       |
+| `tach-core` (TACH_NO_ISOLATION=1) | ⚠️ Partial  | Same as above         |
 
 ### Individual Test Results with tach-core
 
 | Test                             | Result | Reason                                |
 | -------------------------------- | ------ | ------------------------------------- |
-| `test_proc_self_protection`      | PASS   | Sandbox protects /proc                |
-| `test_etc_readonly`              | PASS   | Sandbox protects /etc                 |
-| `test_usr_readonly`              | PASS   | Sandbox protects /usr                 |
-| `test_fs_destruction`            | FAIL   | CWD not writable (Landlock restricts) |
-| `test_symlink_escape_prevention` | FAIL   | Root can read /etc/shadow             |
+| `test_proc_self_protection`      | ✅     | Sandbox protects /proc                |
+| `test_etc_readonly`              | ✅     | Sandbox protects /etc                 |
+| `test_usr_readonly`              | ✅     | Sandbox protects /usr                 |
+| `test_fs_destruction`            | ❌     | CWD not writable (Landlock restricts) |
+| `test_symlink_escape_prevention` | ❌     | Root can read /etc/shadow             |
 
 ### Missing Dependency: iproute2
 
@@ -71,7 +71,7 @@ RUN apt-get update && apt-get install -y iproute2
 
 ## Understanding the Test Failures
 
-### The 5 Failing Tests in `test_fs_destruction.py`
+### Failing Tests in `test_fs_destruction.py`
 
 | Test                             | Purpose                              | Why It Fails in Privileged Container |
 | -------------------------------- | ------------------------------------ | ------------------------------------ |
@@ -260,12 +260,12 @@ pytest tests/gauntlet/ -v
 
 ### Expected Results Summary
 
-| Test Suite               | Via pytest | Via tach-core                          |
-| ------------------------ | ---------- | -------------------------------------- |
-| `test_fs_destruction.py` | 5 FAIL     | 3 PASS, 2 FAIL (see Empirical Results) |
-| Other gauntlet tests     | Varies     | Varies                                 |
-| Rust unit tests          | N/A        | See `cargo test --lib`                 |
-| Rust integration tests   | N/A        | See `cargo test --test '*'`            |
+| Test Suite               | Via pytest  | Via tach-core                      |
+| ------------------------ | ----------- | ---------------------------------- |
+| `test_fs_destruction.py` | ❌ All fail | ⚠️ Partial (see Empirical Results) |
+| Other gauntlet tests     | Varies      | Varies                             |
+| Rust unit tests          | N/A         | See `cargo test --lib`             |
+| Rust integration tests   | N/A         | See `cargo test --test '*'`        |
 
 ---
 
@@ -384,7 +384,7 @@ Running via pytest would be testing "does Python run?" not "does Iron Dome work?
 2. They require tach-core to be built and working
 3. They verify security and isolation properties
 
-### Why 5 Failures is Expected Without Sandbox?
+### Why Failures Are Expected Without Sandbox?
 
 The tests are designed to fail if the sandbox isn't protecting them. This is correct behavior - if they passed, it would mean the sandbox tests are broken or meaningless.
 
