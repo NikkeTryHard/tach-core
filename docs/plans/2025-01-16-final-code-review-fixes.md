@@ -128,11 +128,11 @@ The comprehensive code review of v0.2.0 Hook Interception Framework identified 1
 
 ## Success Criteria
 
-- [ ] Roadmap completed items list is comprehensive
-- [ ] Roadmap remaining items are accurate (just 2 items)
-- [ ] CI workflow includes gauntlet_hook_effects (if directory exists)
-- [ ] Integration test for effect IPC exists and passes
-- [ ] All tests pass
+- [x] Roadmap completed items list is comprehensive
+- [x] Roadmap remaining items are accurate (just 2 items)
+- [x] CI workflow includes gauntlet_hook_effects (if directory exists)
+- [x] Integration test for effect IPC exists and passes
+- [x] All tests pass
 
 ---
 
@@ -143,3 +143,34 @@ The comprehensive code review of v0.2.0 Hook Interception Framework identified 1
 3. Task 3: Add integration test (Suggestion 2)
 
 ---
+
+## Execution Results
+
+### Task 1: Update Roadmap - COMPLETED
+
+Updated `docs/research/roadmap.md` line 409:
+
+- Added 5 new completed items: conftest inheritance resolution, effect recording, effect replay, IPC protocol extension, plugin detection
+- Reduced remaining items to just 2: hook execution, hook dependency graph
+
+### Task 2: CI Workflow Entry - COMPLETED
+
+- Directory `tests/gauntlet_hook_effects/` exists
+- Added to `.github/workflows/ci.yml` line 220: `pytest tests/gauntlet_hook_effects/ -v --tb=short`
+
+### Task 3: Effect IPC Integration Test - COMPLETED
+
+Created `rust_tests/effect_ipc_integration.rs` with 6 tests:
+
+1. `test_effect_bincode_roundtrip` - Verifies HookEffect serialization/deserialization
+2. `test_effect_registry_storage` - Verifies effects can be stored and retrieved
+3. `test_full_effect_ipc_path` - End-to-end: serialize → transmit → deserialize → store → retrieve
+4. `test_syspathaction_serialization` - Verifies SysPathAction enum serialization
+5. `test_empty_effects_ipc` - Edge case: empty effects list
+6. `test_modify_items_effect_ipc` - Verifies ModifyItems effect
+
+Added test entry to `Cargo.toml` at line 146.
+
+### Commit
+
+Commit `b75a22a`: fix: address final code review issues
