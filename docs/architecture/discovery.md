@@ -53,6 +53,19 @@ pub enum FixtureScope {
 }
 ```
 
+### HookDefinition
+
+Represents a pytest hook discovered in conftest.py files.
+
+```rust
+pub struct HookDefinition {
+    pub name: String,
+    pub line_number: usize,
+}
+```
+
+Hook detection is limited to conftest.py files only (not test files).
+
 ### FixtureDefinition
 
 Represents a `@pytest.fixture` decorated function.
@@ -64,6 +77,7 @@ pub struct FixtureDefinition {
     pub dependencies: Vec<String>,
     pub params: Option<Vec<String>>,
     pub class_scope: Option<String>,
+    pub autouse: bool,
 }
 ```
 
@@ -74,6 +88,7 @@ pub struct FixtureDefinition {
 | `dependencies` | Other fixtures this fixture requires                           |
 | `params`       | Static literal parameters from `@pytest.fixture(params=[...])` |
 | `class_scope`  | If defined inside a class, the class name                      |
+| `autouse`      | Whether the fixture is automatically applied to all tests      |
 
 ### TestCase
 
@@ -87,6 +102,7 @@ pub struct TestCase {
     pub line_number: usize,
     pub parametrized_args: Vec<String>,
     pub timeout_secs: Option<u64>,
+    pub markers: Vec<String>,
 }
 ```
 
@@ -98,6 +114,7 @@ pub struct TestCase {
 | `line_number`       | 1-indexed line number for reporting                                          |
 | `parametrized_args` | Arguments from `@pytest.mark.parametrize` (excluded from fixture resolution) |
 | `timeout_secs`      | Per-test timeout from `@pytest.mark.timeout(N)`                              |
+| `markers`           | Pytest markers applied to the test (e.g., `slow`, `skip`, `xfail`)           |
 
 ### TestModule
 
@@ -108,6 +125,7 @@ pub struct TestModule {
     pub path: PathBuf,
     pub tests: Vec<TestCase>,
     pub fixtures: Vec<FixtureDefinition>,
+    pub hooks: Vec<HookDefinition>,
     pub is_toxic: bool,
 }
 ```
