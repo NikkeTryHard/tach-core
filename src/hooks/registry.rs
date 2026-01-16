@@ -5,6 +5,34 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Action type for sys.path modifications
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SysPathAction {
+    /// Add path to the beginning of sys.path
+    Prepend,
+    /// Add path to the end of sys.path
+    Append,
+    /// Remove path from sys.path
+    Remove,
+}
+
+impl Default for SysPathAction {
+    fn default() -> Self {
+        SysPathAction::Append
+    }
+}
+
+impl std::fmt::Display for SysPathAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SysPathAction::Prepend => write!(f, "prepend"),
+            SysPathAction::Append => write!(f, "append"),
+            SysPathAction::Remove => write!(f, "remove"),
+        }
+    }
+}
+
 /// Specification for a pytest hook
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookSpec {
@@ -35,7 +63,7 @@ pub enum HookEffect {
     /// Hook set an environment variable
     SetEnv { key: String, value: String },
     /// Hook modified sys.path
-    ModifySysPath { action: String, path: String },
+    ModifySysPath { action: SysPathAction, path: String },
     /// Hook registered a marker
     RegisterMarker { name: String, description: String },
     /// Hook modified test collection
@@ -104,7 +132,7 @@ impl HookRegistry {
     /// These effects should be applied to each worker before running tests.
     pub fn get_session_effects(&self) -> Vec<HookEffect> {
         // Session-level hooks that should be replayed in workers
-        const SESSION_HOOKS: &[&str] = &["pytest_configure"];
+        const SESSION_HOOKS: &[&str] = &["pytest_configure", "pytest_sessionstart"];
 
         let mut effects = Vec::new();
         for hook_name in SESSION_HOOKS {
@@ -593,7 +621,7 @@ mod tests {
     #[test]
     fn test_hook_effect_serialization() {
         let effect = HookEffect::ModifySysPath {
-            action: "prepend".to_string(),
+            action: SysPathAction::Prepend,
             path: "/custom/path".to_string(),
         };
 
@@ -604,7 +632,7 @@ mod tests {
         // Deserialize back
         let parsed: HookEffect = serde_json::from_str(&json).expect("Should deserialize");
         if let HookEffect::ModifySysPath { action, path } = parsed {
-            assert_eq!(action, "prepend");
+            assert_eq!(action, SysPathAction::Prepend);
             assert_eq!(path, "/custom/path");
         } else {
             panic!("Wrong variant");
@@ -626,7 +654,7 @@ mod tests {
         registry.record_effect(
             "pytest_configure",
             HookEffect::ModifySysPath {
-                action: "append".to_string(),
+                action: SysPathAction::Append,
                 path: "/test/path".to_string(),
             },
         );
@@ -662,7 +690,7 @@ mod tests {
             matches!(
                 e,
                 HookEffect::ModifySysPath { action, path }
-                    if action == "append" && path == "/test/path"
+                    if *action == SysPathAction::Append && path == "/test/path"
             )
         });
         assert!(

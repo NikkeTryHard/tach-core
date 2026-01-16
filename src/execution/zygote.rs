@@ -1109,7 +1109,8 @@ fn convert_cached_effects_to_py<'py>(
             }
             crate::hooks::HookEffect::ModifySysPath { action, path } => {
                 py_dict.set_item("type", "ModifySysPath")?;
-                py_dict.set_item("action", action)?;
+                // Convert SysPathAction enum to string for Python
+                py_dict.set_item("action", action.to_string())?;
                 py_dict.set_item("path", path)?;
             }
             crate::hooks::HookEffect::RegisterMarker { name, description } => {
@@ -1243,9 +1244,16 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 crate::hooks::HookEffect::SetEnv { key, value }
             }
             "ModifySysPath" => {
-                let action: String = match dict.get_item("action") {
+                let action_str: String = match dict.get_item("action") {
                     Ok(Some(a)) => a.extract().unwrap_or_else(|_| "append".to_string()),
                     _ => "append".to_string(),
+                };
+                // Parse string to SysPathAction enum, defaulting to Append for unknown values
+                let action = match action_str.as_str() {
+                    "prepend" => crate::hooks::SysPathAction::Prepend,
+                    "append" => crate::hooks::SysPathAction::Append,
+                    "remove" => crate::hooks::SysPathAction::Remove,
+                    _ => crate::hooks::SysPathAction::Append, // Default to Append for unknown
                 };
                 let path: String = match dict.get_item("path") {
                     Ok(Some(p)) => match p.extract::<String>() {

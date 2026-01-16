@@ -1393,6 +1393,7 @@ def apply_cached_effects(effects: list) -> int:
     Returns:
         Number of effects applied
     """
+    provided = len(effects)
     applied = 0
 
     for effect in effects:
@@ -1422,8 +1423,13 @@ def apply_cached_effects(effects: list) -> int:
                         sys.path.remove(path)
                         applied += 1
 
-    if applied > 0:
-        print(f"[harness] Applied {applied} cached hook effects", file=sys.stderr)
+    # Debug logging: show count of effects provided vs applied
+    if provided > 0:
+        if applied > 0:
+            print(f"[tach:harness] Applied {applied}/{provided} cached hook effects", file=sys.stderr)
+        else:
+            # Warning: effects were provided but none were applied
+            print(f"[tach:harness] WARNING: {provided} effects provided but 0 applied (possible mismatch)", file=sys.stderr)
 
     return applied
 
