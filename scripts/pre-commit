@@ -1,0 +1,83 @@
+#!/bin/bash
+# Pre-commit hook for tach-core
+# Automatically formats code and runs checks before commit
+# This prevents CI failures due to formatting differences
+#
+# Install: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+# Or run: ./scripts/setup-hooks.sh
+
+set -e
+
+echo "[pre-commit] Running checks..."
+
+# Setup Python environment for PyO3
+REPO_ROOT=$(git rev-parse --show-toplevel)
+if [ -f "$REPO_ROOT/.venv/bin/python" ]; then
+    export PYO3_PYTHON="$REPO_ROOT/.venv/bin/python"
+fi
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Track if any check fails
+FAILED=0
+
+# 1. AUTO-FIX: Run cargo fmt to format all Rust files
+echo -e "[pre-commit] ${BLUE}Formatting Rust code...${NC}"
+if cargo fmt --all 2>/dev/null; then
+    # Check if any files were modified by formatting
+    FORMATTED_FILES=$(git diff --name-only -- '*.rs' 2>/dev/null || true)
+    if [ -n "$FORMATTED_FILES" ]; then
+        echo -e "${YELLOW}Formatted files:${NC}"
+        echo "$FORMATTED_FILES" | sed 's/^/  /'
+        # Stage the formatted files
+        git add $FORMATTED_FILES
+        echo -e "${GREEN}Formatted files have been staged${NC}"
+    else
+        echo -e "${GREEN}All files already formatted${NC}"
+    fi
+else
+    echo -e "${YELLOW}cargo fmt not available, skipping auto-format${NC}"
+fi
+
+# 2. Verify formatting is correct (should pass after auto-format)
+echo -n "[pre-commit] Verifying formatting... "
+if cargo fmt --all -- --check > /dev/null 2>&1; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Formatting check failed even after auto-format. This shouldn't happen.${NC}"
+    FAILED=1
+fi
+
+# 3. Run clippy (warnings as errors, matching CI)
+echo -n "[pre-commit] Running clippy... "
+if cargo clippy --all-targets --all-features -- -D warnings > /dev/null 2>&1; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Run 'cargo clippy --all-targets --all-features' to see warnings${NC}"
+    FAILED=1
+fi
+
+# 4. Run unit tests (fast feedback)
+echo -n "[pre-commit] Running unit tests... "
+if cargo test --lib > /dev/null 2>&1; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Run 'cargo test --lib' to see failures${NC}"
+    FAILED=1
+fi
+
+if [ $FAILED -eq 1 ]; then
+    echo -e "\n${RED}[pre-commit] Commit blocked - fix issues above${NC}"
+    exit 1
+fi
+
+echo -e "\n${GREEN}[pre-commit] All checks passed${NC}"
+exit 0
