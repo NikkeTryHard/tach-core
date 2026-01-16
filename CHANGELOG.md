@@ -13,14 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Hook Registry**: Foundation for pytest plugin compatibility (0.2.0)
+- **Hook Interception Framework (v0.2.0)**: Complete pytest plugin compatibility system
+  - Hook discovery in conftest.py files with toxicity integration
+  - Conftest inheritance resolution (root-to-leaf hook ordering)
+  - Effect recording for pytest_configure (env vars, sys.path modifications)
+  - Effect replay in workers before test execution
+  - IPC protocol extension with hooks, cached_effects, markers fields in TestPayload
+  - Plugin detection and warning system using importlib.metadata
+- **Hook Registry**: Foundation for pytest plugin compatibility
   - HookSpec, Hook, HookEffect types with Serde derives for IPC serialization
   - HookRegistry for tracking discovered hooks
   - builtin_hook_specs() for 10 known pytest hooks
+  - file_has_toxic_hooks() for toxicity graph integration
+  - resolve_hooks_for_path() for conftest inheritance
+  - get_session_effects() for session-level hook effects
 - **Hook Detection**: Discover pytest hooks in conftest.py files (only conftest.py, not test files)
 - **Marker Detection**: Extract pytest markers from test decorators
   - Markers included in `tach list --json` output
+  - Markers propagated to workers via TestPayload
   - Excludes decorator-only markers (parametrize, usefixtures, filterwarnings)
+- **Plugin Detection**: Detect installed pytest plugins at startup
+  - Warn about unsupported plugins (pytest-parallel, pytest-forked, etc.)
+  - Log info about unknown plugins that may or may not work
+  - Supported plugins list includes pytest-mock, pytest-env, pytest-randomly, etc.
+- **Effect Recording**: Capture side effects from session-level hooks
+  - Environment variable changes (SetEnv effect)
+  - sys.path modifications (ModifySysPath effect with prepend/append/remove)
+  - Effects transmitted from Zygote to Supervisor to Workers
 - **Autouse Fixture Detection**: Parse autouse=True from @pytest.fixture
 
 ### Changed
@@ -28,7 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TestModule now includes hooks field
 - TestCase now includes markers field
 - FixtureDefinition now includes autouse field
+- RunnableTest now includes markers field for worker propagation
+- TestPayload now includes hooks, cached_effects, and markers fields
 - JsonTestInfo now includes markers field for JSON discovery output
+- ToxicityGraph::build() now accepts HookRegistry parameter for hook-based toxicity
 
 See [docs/research/roadmap.md](docs/research/roadmap.md) for the complete development roadmap including:
 
