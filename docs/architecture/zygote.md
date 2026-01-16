@@ -451,7 +451,7 @@ def run_django_test(test_func):
 
 - [Physics Engine](snapshot.md) - Memory snapshot details
 - [Iron Dome](sandbox.md) - Sandbox application
-- [IPC Protocol](protocol.md) - Message format
+- [Architecture Overview](overview.md) - System architecture and IPC protocol
 
 ---
 

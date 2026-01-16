@@ -352,4 +352,4 @@ def run_test(file_path, test_name, fixtures):
 
 - [Discovery Engine](discovery.md) - How fixtures are discovered
 - [Zygote Lifecycle](zygote.md) - Fixture execution
-- [IPC Protocol](protocol.md) - FixtureInfo in TestPayload
+- [Architecture Overview](overview.md) - System architecture and IPC protocol

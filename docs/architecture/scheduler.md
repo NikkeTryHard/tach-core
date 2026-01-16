@@ -288,7 +288,7 @@ sequenceDiagram
 
 ## Related Documentation
 
-- [IPC Protocol](protocol.md)
+- [Architecture Overview](overview.md) - System architecture and IPC protocol
 - [Zygote Lifecycle](zygote.md)
 - [Reporter](reporter.md)
 - [Sandbox](sandbox.md)

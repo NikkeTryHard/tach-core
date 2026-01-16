@@ -628,7 +628,7 @@ end_of_record
 ## Related Documentation
 
 - [README](../README.md) - Project overview and quick start
-- [Protocol](architecture/protocol.md) - IPC protocol details
+- [Architecture Overview](architecture/overview.md) - System architecture and IPC protocol
 - [Coverage](architecture/coverage.md) - Coverage implementation
 - [Toxicity](architecture/toxicity.md) - Toxicity classification
 - [Configuration](configuration.md) - Configuration options
