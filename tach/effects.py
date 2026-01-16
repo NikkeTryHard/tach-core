@@ -272,6 +272,7 @@ class EffectType(str, Enum):
     FIXTURE = "fixture"
     CONFIG = "config"
     FILE_DESCRIPTOR = "fd"  # New: For SCM_RIGHTS handover
+    SYS_PATH = "sys_path"  # For sys.path modifications
 
 
 @dataclass
@@ -705,8 +706,54 @@ class FileDescriptorEffect:
         return self.fd
 
 
-# Update the Effect type alias to include FileDescriptorEffect
-Effect = Union[EnvironmentEffect, MarkerEffect, FileDescriptorEffect]
+@dataclass
+class SysPathEffect:
+    """
+    sys.path modification effect.
+
+    Captures changes to sys.path made by plugins (e.g., adding source directories).
+
+    Attributes:
+        path: The path to add/remove
+        action: 'prepend' (insert at 0), 'append', or 'remove'
+    """
+
+    path: str
+    action: str = "append"  # 'prepend', 'append', or 'remove'
+
+    @property
+    def effect_type(self) -> EffectType:
+        return EffectType.SYS_PATH
+
+    def apply(self) -> None:
+        """Apply this effect to sys.path."""
+        if self.action == "prepend":
+            if self.path not in sys.path:
+                sys.path.insert(0, self.path)
+        elif self.action == "append":
+            if self.path not in sys.path:
+                sys.path.append(self.path)
+        elif self.action == "remove":
+            if self.path in sys.path:
+                sys.path.remove(self.path)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.effect_type.value,
+            "path": self.path,
+            "action": self.action,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SysPathEffect":
+        return cls(
+            path=data["path"],
+            action=data.get("action", "append"),
+        )
+
+
+# Update the Effect type alias to include all effect types
+Effect = Union[EnvironmentEffect, MarkerEffect, FileDescriptorEffect, SysPathEffect]
 
 
 @dataclass
@@ -751,6 +798,12 @@ class EffectPack:
             elif isinstance(effect, MarkerEffect) and item is not None:
                 effect.apply(item)
                 applied += 1
+            elif isinstance(effect, SysPathEffect):
+                effect.apply()
+                applied += 1
+            elif isinstance(effect, FileDescriptorEffect):
+                # FD effects are applied separately via SCM_RIGHTS
+                pass
         return applied
 
     def to_json(self) -> str:
@@ -778,6 +831,8 @@ class EffectPack:
                 effects.append(MarkerEffect.from_dict(effect_data))
             elif effect_type == EffectType.FILE_DESCRIPTOR.value:
                 effects.append(FileDescriptorEffect.from_dict(effect_data))
+            elif effect_type == EffectType.SYS_PATH.value:
+                effects.append(SysPathEffect.from_dict(effect_data))
             # Future: MonkeypatchEffect, FixtureEffect
 
         return cls(
