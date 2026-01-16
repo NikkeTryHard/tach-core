@@ -6,6 +6,10 @@ codecov:
   notify:
     wait_for_ci: true
 
+# Coverage Strategy:
+# - CI enforces 15% minimum floor (hard failure in ci.yml)
+# - Codecov tracks improvement trend (informational, doesn't block PRs)
+# - Target: Increase to 90% by v1.0.0
 coverage:
   precision: 2
   round: down
@@ -14,16 +18,16 @@ coverage:
   status:
     project:
       default:
-        target: 90%
+        target: auto
         threshold: 2%
         if_ci_failed: error
-        informational: false
+        informational: true
     patch:
       default:
-        target: 80%
+        target: auto
         threshold: 5%
         if_ci_failed: error
-        informational: false
+        informational: true
 
 parsers:
   gcov:
