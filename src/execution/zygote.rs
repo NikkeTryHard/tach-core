@@ -712,7 +712,9 @@ except Exception as e:
         // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
         // We retrieve them here and will send them to the Supervisor for HookRegistry population.
         let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
-        let session_effects: &Bound<'_, PyList> = session_effects_obj.cast::<PyList>()?;
+        let session_effects: &Bound<'_, PyList> = session_effects_obj
+            .cast::<PyList>()
+            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
         let effects = convert_py_effects_to_rust(session_effects);
 
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
