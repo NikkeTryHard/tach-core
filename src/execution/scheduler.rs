@@ -414,6 +414,11 @@ impl Scheduler {
             debug_socket_path: self.debug_socket_path.to_string_lossy().to_string(),
             is_toxic: test.is_toxic,
             timeout_secs: test.timeout_secs,
+            // TODO: Populate with resolved hooks in Phase 4
+            hooks: vec![],
+            cached_effects: vec![],
+            // TODO: Add markers to RunnableTest and populate here
+            markers: vec![],
         };
 
         // Use encode_with_length which includes protocol header

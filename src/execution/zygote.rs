@@ -1828,6 +1828,9 @@ mod tests {
             debug_socket_path: String::new(),
             is_toxic: false,
             timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&original).expect("Serialization should succeed");
@@ -1869,6 +1872,9 @@ mod tests {
             debug_socket_path: "/tmp/debug.sock".to_string(),
             is_toxic: true,
             timeout_secs: Some(120),
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
