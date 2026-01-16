@@ -395,4 +395,25 @@ mod tests {
         assert_eq!(hooks[0].source, PathBuf::from("/project/conftest.py"));
         assert_eq!(hooks[1].source, PathBuf::from("/project/tests/conftest.py"));
     }
+
+    #[test]
+    fn test_hook_effect_serialization() {
+        let effect = HookEffect::ModifySysPath {
+            action: "prepend".to_string(),
+            path: "/custom/path".to_string(),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&effect).expect("Should serialize");
+        assert!(json.contains("ModifySysPath"));
+
+        // Deserialize back
+        let parsed: HookEffect = serde_json::from_str(&json).expect("Should deserialize");
+        if let HookEffect::ModifySysPath { action, path } = parsed {
+            assert_eq!(action, "prepend");
+            assert_eq!(path, "/custom/path");
+        } else {
+            panic!("Wrong variant");
+        }
+    }
 }
