@@ -118,20 +118,85 @@ impl HookRegistry {
         self.hooks.values().map(|v| v.len()).sum()
     }
 
-    /// Check if a specific file contains any hooks that modify global state
+    /// Check if a specific file contains any hooks that modify global state.
+    ///
+    /// This method handles path normalization to support both relative and absolute paths.
+    /// Hooks may be registered with paths as-provided during discovery, while callers
+    /// (like the toxicity graph) may use canonicalized paths. We attempt canonicalization
+    /// and fall back to direct comparison if it fails.
     pub fn file_has_toxic_hooks(&self, path: &std::path::Path) -> bool {
-        self.hooks
-            .values()
-            .flatten()
-            .any(|h| h.source == path && h.spec.modifies_global_state)
+        // Try to canonicalize the input path for consistent comparison
+        let canonical_path = path.canonicalize().ok();
+
+        self.hooks.values().flatten().any(|h| {
+            // Check direct match first (handles case where both are same form)
+            if h.source == path {
+                return h.spec.modifies_global_state;
+            }
+
+            // Try canonical comparison if we have a canonical input path
+            if let Some(ref canon) = canonical_path {
+                if &h.source == canon {
+                    return h.spec.modifies_global_state;
+                }
+                // Also try canonicalizing the stored hook source
+                if let Ok(hook_canon) = h.source.canonicalize() {
+                    if &hook_canon == canon {
+                        return h.spec.modifies_global_state;
+                    }
+                }
+            }
+
+            // Try canonicalizing just the hook source against original input
+            if let Ok(hook_canon) = h.source.canonicalize() {
+                if hook_canon == path {
+                    return h.spec.modifies_global_state;
+                }
+            }
+
+            false
+        })
     }
 
-    /// Get all hooks defined in a specific file
+    /// Get all hooks defined in a specific file.
+    ///
+    /// This method handles path normalization to support both relative and absolute paths.
+    /// See `file_has_toxic_hooks` for details on path matching strategy.
     pub fn get_hooks_for_file(&self, path: &std::path::Path) -> Vec<&Hook> {
+        // Try to canonicalize the input path for consistent comparison
+        let canonical_path = path.canonicalize().ok();
+
         self.hooks
             .values()
             .flatten()
-            .filter(|h| h.source == path)
+            .filter(|h| {
+                // Check direct match first
+                if h.source == path {
+                    return true;
+                }
+
+                // Try canonical comparison if we have a canonical input path
+                if let Some(ref canon) = canonical_path {
+                    if &h.source == canon {
+                        return true;
+                    }
+                    // Also try canonicalizing the stored hook source
+                    if let Ok(hook_canon) = h.source.canonicalize() {
+                        if &hook_canon == canon {
+                            return true;
+                        }
+                    }
+                }
+
+                // Try canonicalizing just the hook source against original input
+                if let Ok(hook_canon) = h.source.canonicalize() {
+                    if hook_canon == path {
+                        return true;
+                    }
+                }
+
+                false
+            })
             .collect()
     }
 
@@ -357,6 +422,99 @@ mod tests {
         assert!(registry.file_has_toxic_hooks(&PathBuf::from("tests/conftest.py")));
         assert!(!registry.file_has_toxic_hooks(&PathBuf::from("tests/sub/conftest.py")));
         assert!(!registry.file_has_toxic_hooks(&PathBuf::from("nonexistent.py")));
+    }
+
+    #[test]
+    fn test_file_has_toxic_hooks_with_path_normalization() {
+        // Test that path canonicalization works correctly when hooks are registered
+        // with relative paths but queried with absolute paths (or vice versa).
+        // This is important because discovery may provide relative paths while
+        // the toxicity graph uses canonicalized paths.
+
+        let mut registry = HookRegistry::new();
+
+        // Create a temporary file to enable canonicalization
+        let temp_dir = std::env::temp_dir();
+        let conftest_path = temp_dir.join("test_hooks_conftest.py");
+
+        // Create the file so canonicalization works
+        std::fs::write(&conftest_path, "# test conftest").expect("Failed to create temp file");
+
+        // Register hook with absolute path
+        let toxic_hook = Hook {
+            spec: HookSpec {
+                name: "pytest_configure".to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: conftest_path.clone(),
+            function_name: "pytest_configure".to_string(),
+            line_number: 5,
+        };
+        registry.register(toxic_hook);
+
+        // Query with the same absolute path - should match
+        assert!(
+            registry.file_has_toxic_hooks(&conftest_path),
+            "Should find toxic hook with same absolute path"
+        );
+
+        // Query with canonicalized path - should still match
+        let canonical = conftest_path.canonicalize().expect("Should canonicalize");
+        assert!(
+            registry.file_has_toxic_hooks(&canonical),
+            "Should find toxic hook with canonicalized path"
+        );
+
+        // Clean up
+        std::fs::remove_file(&conftest_path).ok();
+    }
+
+    #[test]
+    fn test_get_hooks_for_file_with_path_normalization() {
+        // Similar test for get_hooks_for_file
+
+        let mut registry = HookRegistry::new();
+
+        let temp_dir = std::env::temp_dir();
+        let conftest_path = temp_dir.join("test_hooks_conftest2.py");
+
+        // Create the file so canonicalization works
+        std::fs::write(&conftest_path, "# test conftest").expect("Failed to create temp file");
+
+        // Register hooks with absolute path
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_configure".to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: conftest_path.clone(),
+            function_name: "pytest_configure".to_string(),
+            line_number: 5,
+        });
+        registry.register(Hook {
+            spec: HookSpec {
+                name: "pytest_collection_modifyitems".to_string(),
+                modifies_global_state: false,
+                cacheable: true,
+            },
+            source: conftest_path.clone(),
+            function_name: "pytest_collection_modifyitems".to_string(),
+            line_number: 15,
+        });
+
+        // Query with canonicalized path
+        let canonical = conftest_path.canonicalize().expect("Should canonicalize");
+        let hooks = registry.get_hooks_for_file(&canonical);
+        assert_eq!(
+            hooks.len(),
+            2,
+            "Should find both hooks with canonicalized path"
+        );
+
+        // Clean up
+        std::fs::remove_file(&conftest_path).ok();
     }
 
     #[test]

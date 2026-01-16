@@ -736,8 +736,34 @@ except Exception as e:
     let result_socket = result_socket;
     cmd_socket.write_all(&[MSG_READY])?;
 
-    // Send session effects to Supervisor for HookRegistry population
-    // Format: length (4 bytes LE) + bincode-encoded Vec<HookEffect>
+    // ============================================================================
+    // SESSION EFFECTS IPC BRIDGE (v0.2.0)
+    // ============================================================================
+    //
+    // This section transmits hook effects captured during pytest session initialization
+    // from the Zygote process to the Supervisor process.
+    //
+    // ## What Effects Are Sent
+    // - SetEnv: Environment variables set by pytest_configure hooks
+    // - ModifySysPath: sys.path modifications (append/prepend)
+    // - RegisterMarker: Custom markers registered via pytest.ini or hooks
+    // - ModifyItems: Test collection modifications (reordering, filtering)
+    //
+    // ## Wire Format
+    // The effects are serialized using bincode for efficient binary encoding:
+    // - Length prefix: 4 bytes, little-endian u32 (payload size in bytes)
+    // - Payload: bincode-encoded Vec<HookEffect>
+    //
+    // ## Receiver Location
+    // The Supervisor receives these effects in src/main.rs after the READY byte.
+    // It decodes them and calls hook_registry.record_effect() for each effect,
+    // storing them under "pytest_configure" for later replay in workers.
+    //
+    // ## Flow Diagram
+    // Zygote (Python init) -> bincode encode -> socket write
+    //     -> Supervisor (main.rs) -> bincode decode -> HookRegistry.record_effect()
+    //
+    // ============================================================================
     let effects_encoded =
         bincode::serde::encode_to_vec(&session_effects, bincode::config::standard())
             .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
