@@ -154,13 +154,14 @@ Seccomp-BPF filters system calls at the kernel level. Tach uses a **blacklist ap
 
 **Supported architectures:** x86_64, aarch64 (others gracefully degrade)
 
-### Blocked Syscalls (15 Total)
+### Blocked Syscalls (22 Total)
 
-| Category          | Syscalls                                                   | Purpose                  |
-| :---------------- | :--------------------------------------------------------- | :----------------------- |
-| **Network (6)**   | `socket`, `bind`, `connect`, `listen`, `accept`, `accept4` | Prevent network I/O      |
-| **Process (4)**   | `fork`, `vfork`, `execve`, `execveat`                      | Prevent process spawning |
-| **Privilege (5)** | `ptrace`, `mount`, `umount2`, `unshare`, `setns`           | Prevent sandbox escape   |
+| Category          | Syscalls                                                                                                | Purpose                             |
+| :---------------- | :------------------------------------------------------------------------------------------------------ | :---------------------------------- |
+| **Network (6)**   | `socket`, `bind`, `connect`, `listen`, `accept`, `accept4`                                              | Prevent network I/O                 |
+| **Process (4)**   | `fork`, `vfork`, `execve`, `execveat`                                                                   | Prevent process spawning            |
+| **Memory (3)**    | `userfaultfd`, `process_vm_readv`, `process_vm_writev`                                                  | Prevent cross-process memory access |
+| **Privilege (9)** | `ptrace`, `mount`, `umount2`, `unshare`, `setns`, `keyctl`, `kexec_load`, `init_module`, `finit_module` | Prevent sandbox escape              |
 
 ### Critical: clone NOT Blocked
 
@@ -181,9 +182,9 @@ pub fn apply_seccomp() -> Result<()> {
     };
 
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
-    // Network, process, and privilege escalation syscalls...
+    // Network, process, memory, and privilege escalation syscalls...
     rules.insert(libc::SYS_socket, vec![]);
-    // ... (15 total syscalls)
+    // ... (22 total syscalls)
 
     let filter = SeccompFilter::new(
         rules,
