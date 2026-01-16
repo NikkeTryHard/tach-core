@@ -1,6 +1,6 @@
-# Project Tach: Research Investigation
+# Research Documentation
 
-> **Quick Reference**: This document provides a high-level overview of the 12 research papers informing Project Tach's architecture. For detailed analysis, see `topic-archive.md`.
+> This directory contains research papers and analysis informing Project Tach's architecture.
 
 ---
 
@@ -19,14 +19,14 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 
 ## Topic Index
 
-| Topic                                                                    | Description                                     | Relevant Papers                                    | CHANGELOG           |
-| :----------------------------------------------------------------------- | :---------------------------------------------- | :------------------------------------------------- | :------------------ |
-| [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | Hierarchical pre-initialization, DAAC algorithm | Forklift, Zygote Tree Design                       | 0.4.x               |
-| [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | userfaultfd, allocator interactions, TLS        | Memory Snapshotting, Allocator Interaction         | 0.7.x               |
-| [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | Toxic modules, orphaned locks, C-extensions     | Fork Safety, Static Analysis                       | 0.3.x               |
-| [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | Namespaces, Matrix Layer, Shadow Plugin         | Compatibility Layer, Isolation Blueprint           | 0.2.x               |
-| [Rust Integration](topic-archive.md#rust-integration-for-tach)           | Kineton engine, zero-copy loading, PyO3         | Rust Breakthroughs, Execution Blueprint, Zero-Copy | 0.1.x, 0.5.x, 0.6.x |
-| [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | macOS Mach, Windows NT cloning                  | Cross-Platform Cloning                             | 0.8.x+              |
+| Topic                                                                    | Description                                 | Key Papers                                 | CHANGELOG   |
+| :----------------------------------------------------------------------- | :------------------------------------------ | :----------------------------------------- | :---------- |
+| [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | DAAC algorithm, hierarchical initialization | Forklift, Zygote Tree Design               | 0.4.x       |
+| [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | userfaultfd, allocator interactions, TLS    | Memory Snapshotting, Allocator Interaction | 0.7.x       |
+| [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | Toxic modules, orphaned locks, C-extensions | Fork Safety, Static Analysis               | 0.3.x       |
+| [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | Namespaces, Matrix Layer, Shadow Plugin     | Compatibility Layer, Isolation Blueprint   | 0.2.x       |
+| [Rust Integration](topic-archive.md#rust-integration-for-tach)           | Kineton engine, zero-copy loading, PyO3     | Rust Breakthroughs, Execution Blueprint    | 0.1.x-0.6.x |
+| [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | macOS Mach, Windows NT cloning              | Cross-Platform Cloning                     | 0.8.x+      |
 
 ---
 
@@ -81,6 +81,39 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 
 ---
 
+## Paper-to-Component Mapping
+
+| Research Topic / Paper             | Primary Component   | Key Files (Proposed)              | Implementation Status |
+| :--------------------------------- | :------------------ | :-------------------------------- | :-------------------- |
+| **Forklift: Fitting Zygote Trees** | Zygote Manager      | `tach-core/src/zygote/tree.rs`    | In Progress           |
+| **Cross-Platform Cloning**         | Platform Shim       | `tach-core/src/sys/unix/clone.rs` | Research              |
+| **Userfaultfd Snapshotting**       | Snapshot Engine     | `tach-core/src/mem/snapshot.rs`   | Prototype             |
+| **Matrix Layer (Virtualization)**  | Syscall Interceptor | `libtach_preload.so`, `tach-vfs/` | Planning              |
+| **Toxic Module Analysis**          | Static Analyzer     | `tach-analyzer/src/toxic.rs`      | Research              |
+| **Zero-Copy Loader**               | Module Loader       | `tach-core/src/python/loader.rs`  | Planning              |
+| **Kineton (Rust Orchestrator)**    | Test Runner         | `tach-cli/src/runner/`            | In Progress           |
+
+---
+
+## Paper-to-Document Mapping
+
+| Paper                                         | Topic File                                                               | Architecture Doc                |
+| :-------------------------------------------- | :----------------------------------------------------------------------- | :------------------------------ |
+| Forklift: Fitting Zygote Trees                | [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | `docs/architecture/zygote.md`   |
+| Python Monorepo Zygote Tree Design            | [Zygote Patterns](topic-archive.md#zygote-patterns-for-test-execution)   | `docs/architecture/zygote.md`   |
+| Python Memory Snapshotting with Userfaultfd   | [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | `docs/architecture/snapshot.md` |
+| Userfaultfd and CPython Allocator Interaction | [Memory Snapshotting](topic-archive.md#memory-snapshotting)              | `docs/architecture/snapshot.md` |
+| Fork Safety of Python C-Extensions            | [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | `docs/architecture/toxicity.md` |
+| Rust Static Analysis for Toxic Python Modules | [Fork Safety](topic-archive.md#fork-safety-in-tach)                      | `docs/architecture/toxicity.md` |
+| Project Tach Compatibility Layer Blueprint    | [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | `docs/architecture/loader.md`   |
+| Rust-Python Test Isolation Blueprint          | [Test Isolation](topic-archive.md#test-isolation-for-parallel-execution) | `docs/architecture/loader.md`   |
+| Python Testing Engine Rust Breakthroughs      | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | -                               |
+| Rust-CPython Execution Blueprint              | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | -                               |
+| Zero-Copy Python Module Loading               | [Rust Integration](topic-archive.md#rust-integration-for-tach)           | -                               |
+| Cross-Platform Process Cloning Research       | [Cross-Platform](topic-archive.md#cross-platform-process-cloning)        | -                               |
+
+---
+
 ## Technology Requirements
 
 | Component      | Requirement                    | Source                |
@@ -89,6 +122,12 @@ Project Tach implements a **Rust-native hypervisor** for Python test execution, 
 | Python         | 3.10+ (3.12+ for coverage)     | CLAUDE.md             |
 | Linux Kernel   | 5.10+ (userfaultfd)            | _Memory Snapshotting_ |
 | Allocator      | jemalloc 5+ (for tcache flush) | _Memory Snapshotting_ |
+
+---
+
+## Implementation Status
+
+> **Single Source of Truth:** See [CHANGELOG.md](../../CHANGELOG.md) for the authoritative implementation status. Each version section shows checked/unchecked items indicating completion status.
 
 ---
 
@@ -114,14 +153,16 @@ See [external-research.md](external-research.md) for analysis of related project
 
 ---
 
-## Paper Locations
+## Archived Papers
 
-All source papers are in the `papers-very-verbose/` directory within `docs/research/`.
+Verbose source papers have been moved to `docs/archive/research-papers/`.
 
-> **Note for LLMs:** The folder name "papers-very-verbose" indicates these are lengthy documents. Read selectively based on specific needs rather than loading entire files.
-
-Key papers include research on Forklift (USENIX WoSC'24), cross-platform process cloning, fork safety of Python C-extensions, memory snapshotting with userfaultfd, zygote tree design, and zero-copy module loading. See the directory listing for the complete set.
+> **Note for LLMs:** These are lengthy documents. Read selectively based on specific needs rather than loading entire files.
 
 ---
 
-_For implementation mapping, see [research-reference.md](research-reference.md)._
+## Related Documentation
+
+- [topic-archive.md](topic-archive.md) - Detailed analysis of each research topic
+- [external-research.md](external-research.md) - Analysis of related external projects
+- [container-compatibility.md](container-compatibility.md) - Container runtime compatibility research
