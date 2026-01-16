@@ -144,6 +144,10 @@ name = "toxicity_integration"
 path = "rust_tests/toxicity_integration.rs"
 
 [[test]]
+name = "effect_ipc_integration"
+path = "rust_tests/effect_ipc_integration.rs"
+
+[[test]]
 name = "tagging_integrity"
 path = "rust_tests/tagging_integrity.rs"
 
