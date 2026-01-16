@@ -148,6 +148,7 @@ pub struct FixtureInfo {
 | `STATUS_CRASH`         | 3     | Worker crashed          |
 | `STATUS_ERROR`         | 4     | Test error (exception)  |
 | `STATUS_HARNESS_ERROR` | 5     | Harness error           |
+| `STATUS_TIMEOUT`       | 6     | Test exceeded timeout   |
 
 ---
 
