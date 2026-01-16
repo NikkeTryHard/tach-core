@@ -713,12 +713,7 @@ except Exception as e:
         // We retrieve them here and will send them to the Supervisor for HookRegistry population.
         let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
         let session_effects: &Bound<'_, PyList> =
-            session_effects_obj.downcast::<PyList>().map_err(|e| {
-                pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                    "Expected list: {}",
-                    e
-                ))
-            })?;
+            session_effects_obj.cast::<PyList>();
         let effects = convert_py_effects_to_rust(session_effects);
 
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
@@ -1147,8 +1142,8 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
     let mut skipped_count = 0usize;
 
     for (idx, item) in py_list.iter().enumerate() {
-        // Each item should be a dict - downcast to PyDict for get_item with Option
-        let dict = match item.downcast::<PyDict>() {
+        // Each item should be a dict - use cast (downcast is deprecated in PyO3 0.27+)
+        let dict: &Bound<'_, PyDict> = match item.downcast::<PyDict>() {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(

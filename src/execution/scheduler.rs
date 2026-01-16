@@ -109,6 +109,7 @@ impl Scheduler {
     }
 
     /// Create a scheduler with full configuration including timeout hook
+    #[allow(clippy::too_many_arguments)]
     pub fn with_config(
         cmd_socket: UnixStream,
         result_socket: UnixStream,

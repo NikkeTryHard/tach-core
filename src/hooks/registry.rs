@@ -6,21 +6,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Action type for sys.path modifications
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SysPathAction {
     /// Add path to the beginning of sys.path
     Prepend,
     /// Add path to the end of sys.path
+    #[default]
     Append,
     /// Remove path from sys.path
     Remove,
-}
-
-impl Default for SysPathAction {
-    fn default() -> Self {
-        SysPathAction::Append
-    }
 }
 
 impl std::fmt::Display for SysPathAction {
