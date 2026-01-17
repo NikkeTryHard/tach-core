@@ -15,7 +15,7 @@ gantt
     section Foundation
     0.1.x Core Infrastructure    :done, 2026-01, 2026-02
     section Compatibility
-    0.2.x Plugin Ecosystem       :2026-02, 2026-04
+    0.2.x Plugin Ecosystem       :active, 2026-02, 2026-04
     0.3.x Database Integration   :2026-04, 2026-06
     section Fixtures
     0.4.x Hierarchical Zygotes   :2026-06, 2026-08
@@ -31,6 +31,171 @@ gantt
     0.11.x Beta 2 + RC           :2027-09, 2027-10
     1.0.0 Production             :milestone, 2027-10, 0d
 ```
+
+---
+
+## Complete Development Flow
+
+```mermaid
+flowchart TB
+    subgraph Phase1 ["Phase 1: Foundation (Complete)"]
+        direction TB
+        v011[0.1.1 Docs & Polish]
+        v012[0.1.2 Test Compat]
+        v013[0.1.3 Error Handling]
+        v014[0.1.4 Dep Updates]
+        v015[0.1.5 Tooling Research]
+        v011 --> v012 --> v013 --> v014 --> v015
+    end
+
+    subgraph Phase2 ["Phase 2: Compatibility (Current)"]
+        direction TB
+        v020[0.2.0 Hook Framework]
+
+        subgraph Parallel2 ["Parallel Development"]
+            v021[0.2.1 pytest-django]
+            v022[0.2.2 pytest-asyncio]
+            v023[0.2.3 Additional Plugins]
+            v0231[0.2.3.1 Landlock V4]
+        end
+
+        v024[0.2.4 Plugin Stabilization]
+
+        v020 --> v021 & v022 & v023 & v0231
+        v021 & v022 & v023 --> v024
+        v0231 -.->|optional| v024
+    end
+
+    subgraph Phase3 ["Phase 3: Database"]
+        direction TB
+        v030[0.3.0 Django DB]
+        v031[0.3.1 SQLAlchemy]
+        v032[0.3.2 Connection Mgmt]
+        v033[0.3.3 Additional DBs]
+        v030 --> v031 --> v032 --> v033
+    end
+
+    subgraph Phase4 ["Phase 4: Fixtures"]
+        direction TB
+        v040[0.4.0 Session Fixtures]
+        v041[0.4.1 Module Fixtures]
+        v042[0.4.2 Class Fixtures]
+        v043[0.4.3 Advanced Features]
+        v040 --> v041 --> v042 --> v043
+    end
+
+    subgraph Phase5 ["Phase 5: DX & Config"]
+        direction TB
+        v050[0.5.x Developer Experience]
+        v060[0.6.x Configuration]
+        v050 --> v060
+    end
+
+    subgraph Phase6 ["Phase 6: Performance"]
+        direction TB
+        v070[0.7.0 Memory Optimization]
+        v071[0.7.1 Adaptive Scheduling]
+        v072[0.7.2 Lazy Loading]
+        v073[0.7.3 Parallel Discovery]
+        v074[0.7.4 Advanced Snapshots]
+        v070 --> v071 --> v072 --> v073 --> v074
+    end
+
+    subgraph Phase7 ["Phase 7: Platform"]
+        direction TB
+        v080[0.8.x CI/CD Integration]
+        v090[0.9.x Stability]
+        v080 --> v090
+    end
+
+    subgraph Phase8 ["Phase 8: Release"]
+        direction TB
+        v100[0.10.x Beta 1]
+        v110[0.11.x Beta 2 + RC]
+        v1000[1.0.0 Production]
+        v100 --> v110 --> v1000
+    end
+
+    subgraph Future ["Future (Post-1.0)"]
+        direction LR
+        v11x[1.1.x Maintenance]
+        v12x[1.2.x Features]
+        v012x[0.12.x Remote]
+        v013x[0.13.x Sharding]
+        v014x[0.14.x Visual]
+        v015x[0.15.x AI]
+        v016x[0.16.x Mutation]
+        v017x[0.17.x Property]
+        v018x[0.18.x Contract]
+        v019x[0.19.x Perf]
+        v020x[0.20.x Observability]
+    end
+
+    Phase1 --> Phase2
+    Phase2 --> Phase3
+    Phase3 --> Phase4
+    Phase4 --> Phase5
+    Phase5 --> Phase6
+    Phase6 --> Phase7
+    Phase7 --> Phase8
+    Phase8 --> Future
+
+    %% Status styling
+    style v011 fill:#90EE90,stroke:#228B22
+    style v012 fill:#90EE90,stroke:#228B22
+    style v013 fill:#90EE90,stroke:#228B22
+    style v014 fill:#90EE90,stroke:#228B22
+    style v015 fill:#90EE90,stroke:#228B22
+    style v020 fill:#90EE90,stroke:#228B22
+    style v021 fill:#87CEEB,stroke:#4682B4
+    style v022 fill:#87CEEB,stroke:#4682B4
+    style v023 fill:#87CEEB,stroke:#4682B4
+    style v0231 fill:#DDA0DD,stroke:#8B008B
+    style v024 fill:#FFB347,stroke:#FF8C00
+    style v030 fill:#E0E0E0,stroke:#808080
+    style v031 fill:#E0E0E0,stroke:#808080
+    style v032 fill:#E0E0E0,stroke:#808080
+    style v033 fill:#E0E0E0,stroke:#808080
+    style v040 fill:#E0E0E0,stroke:#808080
+    style v041 fill:#E0E0E0,stroke:#808080
+    style v042 fill:#E0E0E0,stroke:#808080
+    style v043 fill:#E0E0E0,stroke:#808080
+    style v050 fill:#E0E0E0,stroke:#808080
+    style v060 fill:#E0E0E0,stroke:#808080
+    style v070 fill:#E0E0E0,stroke:#808080
+    style v071 fill:#E0E0E0,stroke:#808080
+    style v072 fill:#E0E0E0,stroke:#808080
+    style v073 fill:#E0E0E0,stroke:#808080
+    style v074 fill:#E0E0E0,stroke:#808080
+    style v080 fill:#E0E0E0,stroke:#808080
+    style v090 fill:#E0E0E0,stroke:#808080
+    style v100 fill:#E0E0E0,stroke:#808080
+    style v110 fill:#E0E0E0,stroke:#808080
+    style v1000 fill:#FFD700,stroke:#DAA520,stroke-width:3px
+    style Phase1 fill:#E8F5E9,stroke:#4CAF50
+    style Phase2 fill:#E3F2FD,stroke:#2196F3
+    style Phase3 fill:#FFF3E0,stroke:#FF9800
+    style Phase4 fill:#F3E5F5,stroke:#9C27B0
+    style Phase5 fill:#ECEFF1,stroke:#607D8B
+    style Phase6 fill:#FFEBEE,stroke:#F44336
+    style Phase7 fill:#E0F7FA,stroke:#00BCD4
+    style Phase8 fill:#FFFDE7,stroke:#FFEB3B
+    style Future fill:#FAFAFA,stroke:#9E9E9E,stroke-dasharray: 5 5
+```
+
+**Legend:**
+
+| Color  | Status                            |
+| ------ | --------------------------------- |
+| Green  | Complete                          |
+| Blue   | In Progress (can be parallelized) |
+| Purple | Independent kernel feature        |
+| Orange | Waiting for dependencies          |
+| Gray   | Not started                       |
+| Gold   | Major milestone (1.0.0)           |
+| Dashed | Future/Post-1.0                   |
+
+**Current Progress:** Phase 1 complete, Phase 2 in progress (0.2.0 complete, 0.2.1-0.2.4 pending)
 
 ---
 
