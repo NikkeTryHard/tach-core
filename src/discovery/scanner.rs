@@ -6,7 +6,8 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use rustpython_ast as ast;
 use rustpython_parser::Parse;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -69,6 +70,20 @@ pub struct FixtureDefinition {
     pub autouse: bool,
 }
 
+/// Marker information including name and keyword arguments
+///
+/// Captures the full marker definition from @pytest.mark.<name>(...) decorators,
+/// including keyword arguments like `transaction=True` or `databases=["default"]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MarkerInfo {
+    /// Marker name (e.g., "django_db", "slow", "skip")
+    pub name: String,
+    /// Keyword arguments as JSON values
+    /// Examples: {"transaction": true}, {"databases": ["default", "secondary"]}
+    #[serde(default)]
+    pub args: HashMap<String, serde_json::Value>,
+}
+
 /// A test case (function)
 #[derive(Debug, Clone)]
 pub struct TestCase {
@@ -85,6 +100,9 @@ pub struct TestCase {
     /// Pytest markers applied to this test (e.g., "django_db", "slow", "skip")
     /// Extracted from @pytest.mark.<name> decorators
     pub markers: Vec<String>,
+    /// Full marker information including keyword arguments
+    /// Used for pytest-django support (transaction=True, databases=[...])
+    pub marker_info: Vec<MarkerInfo>,
 }
 
 /// A Python test module (.py file)
@@ -562,16 +580,98 @@ fn extract_timeout_from_decorators(decorators: &[ast::Expr]) -> Option<u64> {
 /// These should not appear in the markers list for `-m` filtering.
 const DECORATOR_ONLY_MARKERS: &[&str] = &["parametrize", "usefixtures", "filterwarnings"];
 
-/// Extract marker names from @pytest.mark.* decorators
+/// Convert an AST expression to a serde_json::Value
+///
+/// Handles:
+/// - Constant values (bool, int, str, None)
+/// - Name expressions (True, False as Python identifiers)
+/// - List expressions
+fn expr_to_json_value(expr: &ast::Expr) -> Option<serde_json::Value> {
+    match expr {
+        ast::Expr::Constant(c) => match &c.value {
+            ast::Constant::Bool(b) => Some(serde_json::Value::Bool(*b)),
+            ast::Constant::Int(i) => {
+                // Try to parse as i64, fall back to string for large integers
+                if let Ok(val) = i.to_string().parse::<i64>() {
+                    Some(serde_json::Value::Number(val.into()))
+                } else {
+                    Some(serde_json::Value::String(i.to_string()))
+                }
+            }
+            ast::Constant::Str(s) => Some(serde_json::Value::String(s.to_string())),
+            ast::Constant::Float(f) => {
+                serde_json::Number::from_f64(*f).map(serde_json::Value::Number)
+            }
+            ast::Constant::None => Some(serde_json::Value::Null),
+            _ => None,
+        },
+        // Handle Name expressions (True/False as Python identifiers)
+        ast::Expr::Name(n) => match n.id.as_str() {
+            "True" => Some(serde_json::Value::Bool(true)),
+            "False" => Some(serde_json::Value::Bool(false)),
+            "None" => Some(serde_json::Value::Null),
+            _ => None, // Other names are not supported
+        },
+        // Handle List expressions
+        ast::Expr::List(list) => {
+            let mut values = Vec::new();
+            for elt in &list.elts {
+                if let Some(val) = expr_to_json_value(elt) {
+                    values.push(val);
+                } else {
+                    // Non-convertible element - skip the whole list
+                    return None;
+                }
+            }
+            Some(serde_json::Value::Array(values))
+        }
+        // Handle Tuple expressions (treat like lists)
+        ast::Expr::Tuple(tuple) => {
+            let mut values = Vec::new();
+            for elt in &tuple.elts {
+                if let Some(val) = expr_to_json_value(elt) {
+                    values.push(val);
+                } else {
+                    return None;
+                }
+            }
+            Some(serde_json::Value::Array(values))
+        }
+        _ => None,
+    }
+}
+
+/// Extract keyword arguments from a Call expression
+///
+/// Returns a HashMap of argument name -> JSON value
+fn extract_marker_arguments(call: &ast::ExprCall) -> HashMap<String, serde_json::Value> {
+    let mut args = HashMap::new();
+
+    for keyword in &call.keywords {
+        if let Some(ref arg_name) = keyword.arg {
+            if let Some(value) = expr_to_json_value(&keyword.value) {
+                args.insert(arg_name.to_string(), value);
+            }
+        }
+    }
+
+    args
+}
+
+/// Extract marker names and full marker info from @pytest.mark.* decorators
 ///
 /// Handles:
 /// - @pytest.mark.name - bare marker
 /// - @pytest.mark.name(args) - marker with arguments
 ///
-/// Returns a list of marker names (e.g., ["django_db", "slow", "skip"])
+/// Returns a tuple of:
+/// - Vec<String>: marker names for backward compatibility
+/// - Vec<MarkerInfo>: full marker info with arguments
+///
 /// Excludes decorator-only markers like parametrize, usefixtures, filterwarnings.
-fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
+fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> (Vec<String>, Vec<MarkerInfo>) {
     let mut markers = vec![];
+    let mut marker_info = vec![];
 
     for decorator in decorators {
         // Handle @pytest.mark.name (bare marker)
@@ -583,7 +683,11 @@ fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
         {
             let marker_name = attr.attr.to_string();
             if !DECORATOR_ONLY_MARKERS.contains(&marker_name.as_str()) {
-                markers.push(marker_name);
+                markers.push(marker_name.clone());
+                marker_info.push(MarkerInfo {
+                    name: marker_name,
+                    args: HashMap::new(),
+                });
             }
         }
         // Handle @pytest.mark.name(args)
@@ -596,12 +700,16 @@ fn extract_markers_from_decorators(decorators: &[ast::Expr]) -> Vec<String> {
         {
             let marker_name = attr.attr.to_string();
             if !DECORATOR_ONLY_MARKERS.contains(&marker_name.as_str()) {
-                markers.push(marker_name);
+                markers.push(marker_name.clone());
+                marker_info.push(MarkerInfo {
+                    name: marker_name,
+                    args: extract_marker_arguments(call),
+                });
             }
         }
     }
 
-    markers
+    (markers, marker_info)
 }
 
 // =============================================================================
@@ -620,6 +728,7 @@ fn analyze_function(
 
     if name.starts_with("test_") {
         let line_number = get_line_number(source, func.range.start().to_usize());
+        let (markers, marker_info) = extract_markers_from_decorators(&func.decorator_list);
         tests.push(TestCase {
             name: name.to_string(),
             dependencies: extract_args_from_arguments(&func.args),
@@ -630,7 +739,8 @@ fn analyze_function(
                 &extract_args_from_arguments(&func.args),
             ),
             timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
-            markers: extract_markers_from_decorators(&func.decorator_list),
+            markers,
+            marker_info,
         });
     }
 
@@ -701,6 +811,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                 }
                 if name.starts_with("test_") {
                     let line_number = get_line_number(&source, func.range.start().to_usize());
+                    let (markers, marker_info) =
+                        extract_markers_from_decorators(&func.decorator_list);
                     tests.push(TestCase {
                         name: name.to_string(),
                         dependencies: extract_args_from_arguments(&func.args),
@@ -711,7 +823,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             &extract_args_from_arguments(&func.args),
                         ),
                         timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
-                        markers: extract_markers_from_decorators(&func.decorator_list),
+                        markers,
+                        marker_info,
                     });
                 }
                 if has_fixture_decorator(&func.decorator_list) {
@@ -748,6 +861,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
+                                let (markers, marker_info) =
+                                    extract_markers_from_decorators(&func.decorator_list);
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
@@ -760,7 +875,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     timeout_secs: extract_timeout_from_decorators(
                                         &func.decorator_list,
                                     ),
-                                    markers: extract_markers_from_decorators(&func.decorator_list),
+                                    markers,
+                                    marker_info,
                                 });
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
@@ -782,6 +898,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
+                                let (markers, marker_info) =
+                                    extract_markers_from_decorators(&func.decorator_list);
                                 tests.push(TestCase {
                                     name: format!("{}::{}", class_name, method_name),
                                     dependencies: extract_args_from_arguments(&func.args),
@@ -794,7 +912,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     timeout_secs: extract_timeout_from_decorators(
                                         &func.decorator_list,
                                     ),
-                                    markers: extract_markers_from_decorators(&func.decorator_list),
+                                    markers,
+                                    marker_info,
                                 });
                             }
                         }
@@ -940,6 +1059,187 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    // =========================================================================
+    // MarkerInfo Parsing Tests (0.2.1 - pytest-django support)
+    // =========================================================================
+
+    #[test]
+    fn test_marker_info_bare_marker() {
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db
+def test_bare_marker():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "django_db");
+        assert!(module.tests[0].marker_info[0].args.is_empty());
+    }
+
+    #[test]
+    fn test_marker_info_with_boolean_arg() {
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db(transaction=True)
+def test_with_transaction():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "django_db");
+        assert_eq!(
+            module.tests[0].marker_info[0].args.get("transaction"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_marker_info_with_list_arg() {
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db(databases=["default", "secondary"])
+def test_with_databases():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "django_db");
+        let databases = module.tests[0].marker_info[0].args.get("databases");
+        assert!(databases.is_some());
+        let arr = databases.unwrap().as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], serde_json::Value::String("default".to_string()));
+        assert_eq!(arr[1], serde_json::Value::String("secondary".to_string()));
+    }
+
+    #[test]
+    fn test_marker_info_with_multiple_args() {
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db(transaction=True, reset_sequences=False)
+def test_with_multiple_args():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        let marker = &module.tests[0].marker_info[0];
+        assert_eq!(marker.name, "django_db");
+        assert_eq!(
+            marker.args.get("transaction"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            marker.args.get("reset_sequences"),
+            Some(&serde_json::Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn test_marker_info_multiple_markers() {
+        let source = r#"
+import pytest
+
+@pytest.mark.slow
+@pytest.mark.django_db(transaction=True)
+def test_multiple_markers():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 2);
+
+        // Check that both markers are present
+        let marker_names: Vec<&str> = module.tests[0]
+            .marker_info
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect();
+        assert!(marker_names.contains(&"slow"));
+        assert!(marker_names.contains(&"django_db"));
+    }
+
+    #[test]
+    fn test_marker_info_with_string_arg() {
+        let source = r#"
+import pytest
+
+@pytest.mark.skip(reason="not implemented")
+def test_with_string_arg():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "skip");
+        assert_eq!(
+            module.tests[0].marker_info[0].args.get("reason"),
+            Some(&serde_json::Value::String("not implemented".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_marker_info_backward_compat_markers_field() {
+        // Ensure the old `markers: Vec<String>` field still works
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.slow
+def test_backward_compat():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        // Old markers field should still contain marker names
+        assert!(module.tests[0].markers.contains(&"django_db".to_string()));
+        assert!(module.tests[0].markers.contains(&"slow".to_string()));
+    }
+
+    #[test]
+    fn test_marker_info_in_class() {
+        let source = r#"
+import pytest
+
+class TestDjango:
+    @pytest.mark.django_db(transaction=True)
+    def test_in_class(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "django_db");
+        assert_eq!(
+            module.tests[0].marker_info[0].args.get("transaction"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_marker_info_async_function() {
+        let source = r#"
+import pytest
+
+@pytest.mark.django_db(transaction=True)
+async def test_async_with_marker():
+    await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert!(module.tests[0].is_async);
+        assert_eq!(module.tests[0].marker_info.len(), 1);
+        assert_eq!(module.tests[0].marker_info[0].name, "django_db");
+    }
+
     // Helper to parse a Python source string and return TestModule
     fn parse_source(source: &str) -> TestModule {
         let mut file = NamedTempFile::new().unwrap();
@@ -969,6 +1269,7 @@ mod tests {
                             parametrized_args: vec![],
                             timeout_secs: None,
                             markers: vec![],
+                            marker_info: vec![],
                         },
                         TestCase {
                             name: "test_2".into(),
@@ -978,6 +1279,7 @@ mod tests {
                             parametrized_args: vec![],
                             timeout_secs: None,
                             markers: vec![],
+                            marker_info: vec![],
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -1001,6 +1303,7 @@ mod tests {
                         parametrized_args: vec![],
                         timeout_secs: None,
                         markers: vec![],
+                        marker_info: vec![],
                     }],
                     fixtures: vec![],
                     hooks: vec![],

@@ -1,9 +1,7 @@
 //! Integration tests for the resolver module
 
 use std::path::PathBuf;
-use tach_core::discovery::{
-    DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule,
-};
+use tach_core::discovery::{DiscoveryResult, FixtureDefinition, FixtureScope, TestCase, TestModule};
 use tach_core::resolver::{FixtureRegistry, ResolutionError, Resolver};
 
 fn create_test_discovery() -> DiscoveryResult {
@@ -54,6 +52,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         parametrized_args: vec![],
                         timeout_secs: None,
                         markers: vec![],
+                        marker_info: vec![],
                     },
                     TestCase {
                         name: "test_with_db".to_string(),
@@ -63,6 +62,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         parametrized_args: vec![],
                         timeout_secs: None,
                         markers: vec![],
+                        marker_info: vec![],
                     },
                     TestCase {
                         name: "test_with_client".to_string(),
@@ -72,6 +72,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         parametrized_args: vec![],
                         timeout_secs: None,
                         markers: vec![],
+                        marker_info: vec![],
                     },
                 ],
                 fixtures: vec![],
@@ -109,10 +110,7 @@ fn test_resolve_test_with_dependencies() {
 
     let resolved = test_with_client.unwrap();
     // Should have resolved fixtures in order (db -> cache -> client)
-    assert!(
-        !resolved.fixtures.is_empty(),
-        "Should have resolved fixtures"
-    );
+    assert!(!resolved.fixtures.is_empty(), "Should have resolved fixtures");
 }
 
 #[test]
@@ -127,10 +125,7 @@ fn test_resolve_test_without_dependencies() {
     assert!(simple_test.is_some(), "Should find test_simple");
 
     let resolved = simple_test.unwrap();
-    assert!(
-        resolved.fixtures.is_empty(),
-        "Simple test should have no fixtures"
-    );
+    assert!(resolved.fixtures.is_empty(), "Simple test should have no fixtures");
 }
 
 #[test]
@@ -146,6 +141,7 @@ fn test_missing_fixture_error() {
                 parametrized_args: vec![],
                 timeout_secs: None,
                 markers: vec![],
+                marker_info: vec![],
             }],
             fixtures: vec![],
             hooks: vec![],
@@ -159,16 +155,10 @@ fn test_missing_fixture_error() {
 
     // Should have one error for missing fixture
     assert_eq!(errors.len(), 1, "Should have one error");
-    assert!(
-        matches!(&errors[0], ResolutionError::MissingFixture { .. }),
-        "Should be MissingFixture error"
-    );
+    assert!(matches!(&errors[0], ResolutionError::MissingFixture { .. }), "Should be MissingFixture error");
 
     // Test should not be in resolved list
-    assert!(
-        tests.is_empty(),
-        "Test with missing fixture should not be resolved"
-    );
+    assert!(tests.is_empty(), "Test with missing fixture should not be resolved");
 }
 
 #[test]
@@ -184,6 +174,7 @@ fn test_cyclic_dependency_error() {
                 parametrized_args: vec![],
                 timeout_secs: None,
                 markers: vec![],
+                marker_info: vec![],
             }],
             fixtures: vec![
                 FixtureDefinition {
@@ -214,10 +205,7 @@ fn test_cyclic_dependency_error() {
 
     // Should detect cycle
     assert_eq!(errors.len(), 1, "Should have one error");
-    assert!(
-        matches!(&errors[0], ResolutionError::CyclicDependency { .. }),
-        "Should be CyclicDependency error"
-    );
+    assert!(matches!(&errors[0], ResolutionError::CyclicDependency { .. }), "Should be CyclicDependency error");
     assert!(tests.is_empty(), "Test with cycle should not be resolved");
 }
 
@@ -273,12 +261,6 @@ fn test_fixture_order_is_topological() {
     assert!(cache_pos.is_some(), "Should have redis_cache fixture");
     assert!(client_pos.is_some(), "Should have client fixture");
 
-    assert!(
-        db_pos.unwrap() < cache_pos.unwrap(),
-        "db should come before redis_cache"
-    );
-    assert!(
-        cache_pos.unwrap() < client_pos.unwrap(),
-        "redis_cache should come before client"
-    );
+    assert!(db_pos.unwrap() < cache_pos.unwrap(), "db should come before redis_cache");
+    assert!(cache_pos.unwrap() < client_pos.unwrap(), "redis_cache should come before client");
 }

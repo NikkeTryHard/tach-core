@@ -454,6 +454,7 @@ mod tests {
             parametrized_args: vec![],
             timeout_secs: None,
             markers: vec![],
+            marker_info: vec![],
         }
     }
 
