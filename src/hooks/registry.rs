@@ -5,6 +5,23 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Standard pytest hook names as constants to avoid magic strings
+pub mod hook_names {
+    // Session hooks
+    pub const PYTEST_CONFIGURE: &str = "pytest_configure";
+    pub const PYTEST_SESSIONSTART: &str = "pytest_sessionstart";
+    pub const PYTEST_SESSIONFINISH: &str = "pytest_sessionfinish";
+
+    // Collection hooks
+    pub const PYTEST_COLLECTION_MODIFYITEMS: &str = "pytest_collection_modifyitems";
+
+    // Runtest hooks
+    pub const PYTEST_RUNTEST_SETUP: &str = "pytest_runtest_setup";
+    pub const PYTEST_RUNTEST_CALL: &str = "pytest_runtest_call";
+    pub const PYTEST_RUNTEST_TEARDOWN: &str = "pytest_runtest_teardown";
+    pub const PYTEST_RUNTEST_MAKEREPORT: &str = "pytest_runtest_makereport";
+}
+
 /// Action type for sys.path modifications
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -242,7 +259,10 @@ impl HookRegistry {
     /// These effects should be applied to each worker before running tests.
     pub fn get_session_effects(&self) -> Vec<HookEffect> {
         // Session-level hooks that should be replayed in workers
-        const SESSION_HOOKS: &[&str] = &["pytest_configure", "pytest_sessionstart"];
+        const SESSION_HOOKS: &[&str] = &[
+            hook_names::PYTEST_CONFIGURE,
+            hook_names::PYTEST_SESSIONSTART,
+        ];
 
         let mut effects = Vec::new();
         for hook_name in SESSION_HOOKS {
