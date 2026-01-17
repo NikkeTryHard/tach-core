@@ -1478,6 +1478,93 @@ def call_hook_impl(
     return result
 
 
+def call_collection_modifyitems(
+    conftest_path: str,
+    items: list[str],
+) -> dict:
+    """Call pytest_collection_modifyitems hook and track item changes.
+
+    This function invokes the pytest_collection_modifyitems hook with a mutable
+    list of test item IDs. The hook can reorder, add, or remove items.
+
+    Args:
+        conftest_path: Path to conftest.py containing the hook
+        items: List of test node IDs to pass to the hook
+
+    Returns:
+        dict with keys:
+        - reordered: True if item order changed
+        - removed: List of removed item IDs
+        - new_order: List of items after modification
+        - error: Error message if failed
+    """
+    result = {
+        "reordered": False,
+        "removed": [],
+        "new_order": list(items),
+        "error": None,
+    }
+
+    original_items = list(items)
+    mutable_items = list(items)
+
+    try:
+        # Load conftest module
+        spec = importlib.util.spec_from_file_location("conftest", conftest_path)
+        if spec is None or spec.loader is None:
+            result["error"] = f"Could not load {conftest_path}"
+            return result
+
+        module = importlib.util.module_from_spec(spec)
+
+        # Add conftest directory to sys.path for imports
+        conftest_dir = os.path.dirname(os.path.abspath(conftest_path))
+        if conftest_dir not in sys.path:
+            sys.path.insert(0, conftest_dir)
+
+        spec.loader.exec_module(module)
+
+        if not hasattr(module, "pytest_collection_modifyitems"):
+            # Not an error - conftest simply doesn't implement this hook
+            return result
+
+        hook_func = getattr(module, "pytest_collection_modifyitems")
+
+        # Call hook - it modifies items in place
+        # Filter args to match function signature
+        sig = inspect.signature(hook_func)
+        valid_params = set(sig.parameters.keys())
+
+        kwargs = {}
+        if "items" in valid_params:
+            kwargs["items"] = mutable_items
+        if "session" in valid_params:
+            kwargs["session"] = None
+        if "config" in valid_params:
+            kwargs["config"] = None
+
+        hook_func(**kwargs)
+
+        result["new_order"] = mutable_items
+
+        # Detect removals
+        removed = [item for item in original_items if item not in mutable_items]
+        result["removed"] = removed
+
+        # Detect reordering (items that are in both but different positions)
+        common_items = [item for item in original_items if item in mutable_items]
+        if common_items:
+            new_positions = [
+                mutable_items.index(item) for item in common_items if item in mutable_items
+            ]
+            result["reordered"] = new_positions != sorted(new_positions)
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 def apply_cached_effects(effects: list) -> int:
     """Apply cached effects to the worker process.
 
