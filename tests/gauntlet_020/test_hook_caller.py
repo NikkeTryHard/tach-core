@@ -94,13 +94,13 @@ def test_call_hook_impl_with_sys_path_effect():
 
     conftest_path = os.path.join(os.path.dirname(__file__), "conftest.py")
 
-    # Clean up any existing path
-    test_path = "/gauntlet_020/custom/path"
+    # Use a unique path that won't conflict with real filesystem
+    test_path = "/tach_test_hook_caller_unique_path_12345"
     if test_path in sys.path:
         sys.path.remove(test_path)
 
     result = harness.call_hook_impl(
-        conftest_path, "custom_hook_with_sys_path_effect", {}
+        conftest_path, "custom_hook_with_sys_path_effect", {"test_path": test_path}
     )
 
     assert result["error"] is None

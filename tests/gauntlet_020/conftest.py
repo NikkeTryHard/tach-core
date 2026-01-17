@@ -36,9 +36,8 @@ def custom_hook_with_env_effect():
     return "effect_applied"
 
 
-def custom_hook_with_sys_path_effect():
-    """Custom hook that modifies sys.path."""
-    test_path = "/gauntlet_020/custom/path"
+def custom_hook_with_sys_path_effect(test_path: str = "/tach_test_hook_caller_unique_path_12345"):
+    """Hook that modifies sys.path for testing effect capture."""
     if test_path not in sys.path:
         sys.path.insert(0, test_path)
     return "path_added"
