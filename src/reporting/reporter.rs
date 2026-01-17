@@ -438,6 +438,7 @@ impl HumanReporter {
     }
 
     /// Create a new human reporter with a specific traceback style
+    #[must_use]
     pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         // Get terminal width, default to 80 if not available
         let term_width = terminal_size::terminal_size()
@@ -609,6 +610,7 @@ impl ProgressReporter {
     }
 
     /// Create a new progress reporter with a specific traceback style
+    #[must_use]
     pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         let term_width = get_terminal_width();
 
@@ -832,6 +834,7 @@ impl DotsReporter {
     }
 
     /// Create a new dots reporter with a specific traceback style
+    #[must_use]
     pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         Self {
             passed: 0,

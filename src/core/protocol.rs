@@ -79,6 +79,7 @@ impl FixtureInfo {
 
 /// Binary result sent back from worker (fixed-size header + variable message)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[must_use = "TestResult contains test outcome - ignoring it means losing test results"]
 pub struct TestResult {
     pub test_id: u32,
     pub status: u8,
