@@ -749,7 +749,7 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
     - Detect dangerous patterns and warn on zero tests
     - Document in troubleshooting.md
 - [x] Added troubleshooting section for `.ignore` file blocking test discovery
-  > See [docs/troubleshooting.md](../../troubleshooting.md) → "### .ignore File Blocking Python Files"
+  > See [../troubleshooting.md](../troubleshooting.md) → "### .ignore File Blocking Python Files"
 
 #### Container Compatibility Matrix
 
