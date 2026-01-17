@@ -163,25 +163,33 @@ flowchart TB
 
     subgraph Phase10["Phase 10: Release 🔵 MILESTONE"]
         direction TB
-        P10_0["0.10.x Beta 1\n(Feature Freeze)"]
-        P10_1["0.11.x Beta 2 + RC"]
-        P10_2["1.0.0 Production\n(API Stability)"]
+        P10_0["0.10.0 Beta 1\n(Feature Freeze)"]
+        P10_1["0.10.1 Beta 1 Fixes"]
+        P10_2["0.11.0 Beta 2"]
+        P10_3["0.11.1 RC1"]
+        P10_4["0.11.2 RC2"]
+        P10_5["1.0.0 Production\n(API Stability)"]
 
         P10_0 --> P10_1
         P10_1 --> P10_2
+        P10_2 --> P10_3
+        P10_3 --> P10_4
+        P10_4 --> P10_5
     end
 
     subgraph Future["Future (Post-1.0)"]
         direction LR
-        F1["0.12.x Remote Execution"]
-        F2["0.13.x Test Sharding"]
-        F3["0.14.x Visual Testing"]
-        F4["0.15.x AI-Powered"]
-        F5["0.16.x Mutation Testing"]
-        F6["0.17.x Property-Based"]
-        F7["0.18.x Contract Testing"]
-        F8["0.19.x Benchmarking"]
-        F9["0.20.x Observability"]
+        F0["1.1.x Maintenance"]
+        F1["1.2.x Features"]
+        F2["0.12.x Remote Execution"]
+        F3["0.13.x Test Sharding"]
+        F4["0.14.x Visual Testing"]
+        F5["0.15.x AI-Powered"]
+        F6["0.16.x Mutation Testing"]
+        F7["0.17.x Property-Based"]
+        F8["0.18.x Contract Testing"]
+        F9["0.19.x Benchmarking"]
+        F10["0.20.x Observability"]
     end
 
     %% Phase Dependencies
@@ -212,7 +220,7 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0 done
-    class P2_1,P2_2,P2_3,P2_31,P2_4 inProgress
+    class P2_1,P2_2,P2_3,P2_31,P2_4 pending
     class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3 pending
     class P5_0,P5_1,P5_2,P5_3,P5_4 pending
@@ -220,9 +228,9 @@ flowchart TB
     class P7_0,P7_1,P7_2,P7_3,P7_4 pending
     class P8_0,P8_1,P8_2,P8_3,P8_4 pending
     class P9_0,P9_1,P9_2,P9_3 pending
-    class P10_0,P10_1 pending
-    class P10_2 milestone
-    class F1,F2,F3,F4,F5,F6,F7,F8,F9 pending
+    class P10_0,P10_1,P10_2,P10_3,P10_4 pending
+    class P10_5 milestone
+    class F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 pending
 ```
 
 **Legend:** 🟢 Done | 🟠 In Progress | ⚪ Pending | 🔵 Milestone
