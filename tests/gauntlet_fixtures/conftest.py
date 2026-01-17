@@ -1,6 +1,5 @@
 """Shared fixtures for fixture edge case testing."""
 import pytest
-import tempfile
 import os
 
 _module_fixture_state = {"initialized": False, "cleanup_count": 0}

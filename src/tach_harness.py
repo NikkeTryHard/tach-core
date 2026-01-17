@@ -1388,7 +1388,7 @@ def _load_hook_function(
     hook_module_path: str,
     hook_function_name: str,
     module_name: str,
-) -> tuple:
+) -> tuple[object | None, str | None]:
     """Load a hook function from a conftest.py file.
 
     This helper function handles the common module loading logic used by
