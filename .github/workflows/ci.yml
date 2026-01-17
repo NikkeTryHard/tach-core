@@ -109,7 +109,7 @@ jobs:
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
       - name: Install Python dependencies
-        run: pip install pytest pytest-asyncio
+        run: pip install pytest pytest-asyncio numpy django
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -195,7 +195,7 @@ jobs:
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
       - name: Install Python dependencies
-        run: pip install pytest pytest-asyncio
+        run: pip install pytest pytest-asyncio numpy django
 
       - name: Build Rust library
         run: cargo build --release
@@ -229,6 +229,11 @@ jobs:
           pytest tests/parallel_test/ -v --tb=short || echo "Parallel tests skipped"
           pytest tests/env_test/ -v --tb=short || echo "Env tests skipped"
         timeout-minutes: 15
+
+      - name: Run Django isolation tests
+        run: |
+          cd ${{ github.workspace }}
+          pytest tests/django_project/ -v --tb=short || echo "Django tests skipped"
 
   # Only runs when code changes
   proptest:
@@ -277,7 +282,6 @@ jobs:
     needs: [changes, check, gauntlet] # Run after main tests pass
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 30
-    continue-on-error: true # Don't fail CI if these tests fail
 
     steps:
       - uses: actions/checkout@v6
@@ -299,7 +303,7 @@ jobs:
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
       - name: Install Python dependencies
-        run: pip install pytest pytest-asyncio
+        run: pip install pytest pytest-asyncio numpy django
 
       - name: Build release binary
         run: cargo build --release
