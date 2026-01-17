@@ -38,99 +38,153 @@ gantt
 
 ```mermaid
 flowchart TB
-    subgraph Phase1 ["Phase 1: Foundation (Complete)"]
+    subgraph Phase1["Phase 1: Foundation ✅ COMPLETE"]
         direction TB
-        v011[0.1.1 Docs & Polish]
-        v012[0.1.2 Test Compat]
-        v013[0.1.3 Error Handling]
-        v014[0.1.4 Dep Updates]
-        v015[0.1.5 Tooling Research]
-        v011 --> v012 --> v013 --> v014 --> v015
+        P1_1["0.1.1 Docs & Polish"]
+        P1_2["0.1.2 Test Compatibility"]
+        P1_3["0.1.3 Error Handling"]
+        P1_4["0.1.4 Dependency Updates"]
+        P1_5["0.1.5 Tooling Research"]
+
+        P1_1 --> P1_2
+        P1_2 --> P1_3
+        P1_3 --> P1_4
+        P1_4 --> P1_5
     end
 
-    subgraph Phase2 ["Phase 2: Compatibility (Current)"]
+    subgraph Phase2["Phase 2: Plugin Compatibility 🔨 IN PROGRESS"]
         direction TB
-        v020[0.2.0 Hook Framework]
+        P2_0["0.2.0 Hook Framework ✅"]
+        P2_1["0.2.1 pytest-django"]
+        P2_2["0.2.2 pytest-asyncio"]
+        P2_3["0.2.3 Additional Plugins"]
+        P2_31["0.2.3.1 Landlock V4 Network"]
+        P2_4["0.2.4 Plugin Stabilization"]
 
-        subgraph Parallel2 ["Parallel Development"]
-            v021[0.2.1 pytest-django]
-            v022[0.2.2 pytest-asyncio]
-            v023[0.2.3 Additional Plugins]
-            v0231[0.2.3.1 Landlock V4]
-        end
-
-        v024[0.2.4 Plugin Stabilization]
-
-        v020 --> v021 & v022 & v023 & v0231
-        v021 & v022 & v023 --> v024
-        v0231 -.->|optional| v024
+        P2_0 --> P2_1
+        P2_0 --> P2_2
+        P2_0 --> P2_3
+        P2_0 --> P2_31
+        P2_1 --> P2_4
+        P2_2 --> P2_4
+        P2_3 --> P2_4
+        P2_31 -.->|optional| P2_4
     end
 
-    subgraph Phase3 ["Phase 3: Database"]
+    subgraph Phase3["Phase 3: Database Integration"]
         direction TB
-        v030[0.3.0 Django DB]
-        v031[0.3.1 SQLAlchemy]
-        v032[0.3.2 Connection Mgmt]
-        v033[0.3.3 Additional DBs]
-        v030 --> v031 --> v032 --> v033
+        P3_0["0.3.0 Django DB\n(Transaction Rollback)"]
+        P3_1["0.3.1 SQLAlchemy\n(Session Mgmt)"]
+        P3_2["0.3.2 Connection Mgmt\n(FD Handover)"]
+        P3_3["0.3.3 Additional DBs\n(Postgres/MySQL/SQLite)"]
+
+        P3_0 --> P3_1
+        P3_1 --> P3_2
+        P3_2 --> P3_3
     end
 
-    subgraph Phase4 ["Phase 4: Fixtures"]
+    subgraph Phase4["Phase 4: Fixture Lifecycle"]
         direction TB
-        v040[0.4.0 Session Fixtures]
-        v041[0.4.1 Module Fixtures]
-        v042[0.4.2 Class Fixtures]
-        v043[0.4.3 Advanced Features]
-        v040 --> v041 --> v042 --> v043
+        P4_0["0.4.0 Session Fixtures\n(Shared Memory Cache)"]
+        P4_1["0.4.1 Module Fixtures\n(Boundary Detection)"]
+        P4_2["0.4.2 Class Fixtures"]
+        P4_3["0.4.3 Advanced Features\n(Autouse/Parametrized)"]
+
+        P4_0 --> P4_1
+        P4_1 --> P4_2
+        P4_2 --> P4_3
     end
 
-    subgraph Phase5 ["Phase 5: DX & Config"]
+    subgraph Phase5["Phase 5: Developer Experience"]
         direction TB
-        v050[0.5.x Developer Experience]
-        v060[0.6.x Configuration]
-        v050 --> v060
+        P5_0["0.5.0 Enhanced Tracebacks"]
+        P5_1["0.5.1 Debug Mode"]
+        P5_2["0.5.2 Interactive Debugging\n(pdb/breakpoint)"]
+        P5_3["0.5.3 Output Customization"]
+        P5_4["0.5.4 Coverage Optimization\n(SlipCover-style)"]
+
+        P5_0 --> P5_1
+        P5_1 --> P5_2
+        P5_2 --> P5_3
+        P5_3 --> P5_4
     end
 
-    subgraph Phase6 ["Phase 6: Performance"]
+    subgraph Phase6["Phase 6: Configuration"]
         direction TB
-        v070[0.7.0 Memory Optimization]
-        v071[0.7.1 Adaptive Scheduling]
-        v072[0.7.2 Lazy Loading]
-        v073[0.7.3 Parallel Discovery]
-        v074[0.7.4 Advanced Snapshots]
-        v070 --> v071 --> v072 --> v073 --> v074
+        P6_0["0.6.0 pyproject.toml Schema"]
+        P6_1["0.6.1 Test Configuration"]
+        P6_2["0.6.2 Execution Config"]
+        P6_3["0.6.3 Config Profiles"]
+
+        P6_0 --> P6_1
+        P6_1 --> P6_2
+        P6_2 --> P6_3
     end
 
-    subgraph Phase7 ["Phase 7: Platform"]
+    subgraph Phase7["Phase 7: Performance"]
         direction TB
-        v080[0.8.x CI/CD Integration]
-        v090[0.9.x Stability]
-        v080 --> v090
+        P7_0["0.7.0 Memory Optimization\n(Snapshot Compression)"]
+        P7_1["0.7.1 Adaptive Scheduling\n(Duration Prediction)"]
+        P7_2["0.7.2 Lazy Loading\n(On-demand Import)"]
+        P7_3["0.7.3 Parallel Discovery\n(Rayon Integration)"]
+        P7_4["0.7.4 Advanced Snapshots\n(userfaultfd Research)"]
+
+        P7_0 --> P7_1
+        P7_1 --> P7_2
+        P7_2 --> P7_3
+        P7_3 --> P7_4
     end
 
-    subgraph Phase8 ["Phase 8: Release"]
+    subgraph Phase8["Phase 8: Platform Integration"]
         direction TB
-        v100[0.10.x Beta 1]
-        v110[0.11.x Beta 2 + RC]
-        v1000[1.0.0 Production]
-        v100 --> v110 --> v1000
+        P8_0["0.8.0 GitHub Actions"]
+        P8_1["0.8.1 Other CI Platforms"]
+        P8_2["0.8.2 Reporting\n(HTML/Flaky Detection)"]
+        P8_3["0.8.3 Coverage Formats"]
+        P8_4["0.8.4 Sub-Interpreters\n(PEP 684 Experimental)"]
+
+        P8_0 --> P8_1
+        P8_1 --> P8_2
+        P8_2 --> P8_3
+        P8_3 --> P8_4
     end
 
-    subgraph Future ["Future (Post-1.0)"]
+    subgraph Phase9["Phase 9: Stability"]
+        direction TB
+        P9_0["0.9.0 Crash Recovery"]
+        P9_1["0.9.1 Signal Handling"]
+        P9_2["0.9.2 Resource Management\n(FD/Memory Limits)"]
+        P9_3["0.9.3 Stress Testing\n(10k+ Tests)"]
+
+        P9_0 --> P9_1
+        P9_1 --> P9_2
+        P9_2 --> P9_3
+    end
+
+    subgraph Phase10["Phase 10: Release 🎯 MILESTONE"]
+        direction TB
+        P10_0["0.10.x Beta 1\n(Feature Freeze)"]
+        P10_1["0.11.x Beta 2 + RC"]
+        P10_2["1.0.0 Production\n(API Stability)"]
+
+        P10_0 --> P10_1
+        P10_1 --> P10_2
+    end
+
+    subgraph Future["Future (Post-1.0)"]
         direction LR
-        v11x[1.1.x Maintenance]
-        v12x[1.2.x Features]
-        v012x[0.12.x Remote]
-        v013x[0.13.x Sharding]
-        v014x[0.14.x Visual]
-        v015x[0.15.x AI]
-        v016x[0.16.x Mutation]
-        v017x[0.17.x Property]
-        v018x[0.18.x Contract]
-        v019x[0.19.x Perf]
-        v020x[0.20.x Observability]
+        F1["0.12.x Remote Execution"]
+        F2["0.13.x Test Sharding"]
+        F3["0.14.x Visual Testing"]
+        F4["0.15.x AI-Powered"]
+        F5["0.16.x Mutation Testing"]
+        F6["0.17.x Property-Based"]
+        F7["0.18.x Contract Testing"]
+        F8["0.19.x Benchmarking"]
+        F9["0.20.x Observability"]
     end
 
+    %% Phase Dependencies
     Phase1 --> Phase2
     Phase2 --> Phase3
     Phase3 --> Phase4
@@ -138,64 +192,46 @@ flowchart TB
     Phase5 --> Phase6
     Phase6 --> Phase7
     Phase7 --> Phase8
-    Phase8 --> Future
+    Phase8 --> Phase9
+    Phase9 --> Phase10
+    Phase10 --> Future
 
-    %% Status styling
-    style v011 fill:#90EE90,stroke:#228B22
-    style v012 fill:#90EE90,stroke:#228B22
-    style v013 fill:#90EE90,stroke:#228B22
-    style v014 fill:#90EE90,stroke:#228B22
-    style v015 fill:#90EE90,stroke:#228B22
-    style v020 fill:#90EE90,stroke:#228B22
-    style v021 fill:#87CEEB,stroke:#4682B4
-    style v022 fill:#87CEEB,stroke:#4682B4
-    style v023 fill:#87CEEB,stroke:#4682B4
-    style v0231 fill:#DDA0DD,stroke:#8B008B
-    style v024 fill:#FFB347,stroke:#FF8C00
-    style v030 fill:#E0E0E0,stroke:#808080
-    style v031 fill:#E0E0E0,stroke:#808080
-    style v032 fill:#E0E0E0,stroke:#808080
-    style v033 fill:#E0E0E0,stroke:#808080
-    style v040 fill:#E0E0E0,stroke:#808080
-    style v041 fill:#E0E0E0,stroke:#808080
-    style v042 fill:#E0E0E0,stroke:#808080
-    style v043 fill:#E0E0E0,stroke:#808080
-    style v050 fill:#E0E0E0,stroke:#808080
-    style v060 fill:#E0E0E0,stroke:#808080
-    style v070 fill:#E0E0E0,stroke:#808080
-    style v071 fill:#E0E0E0,stroke:#808080
-    style v072 fill:#E0E0E0,stroke:#808080
-    style v073 fill:#E0E0E0,stroke:#808080
-    style v074 fill:#E0E0E0,stroke:#808080
-    style v080 fill:#E0E0E0,stroke:#808080
-    style v090 fill:#E0E0E0,stroke:#808080
-    style v100 fill:#E0E0E0,stroke:#808080
-    style v110 fill:#E0E0E0,stroke:#808080
-    style v1000 fill:#FFD700,stroke:#DAA520,stroke-width:3px
-    style Phase1 fill:#E8F5E9,stroke:#4CAF50
-    style Phase2 fill:#E3F2FD,stroke:#2196F3
-    style Phase3 fill:#FFF3E0,stroke:#FF9800
-    style Phase4 fill:#F3E5F5,stroke:#9C27B0
-    style Phase5 fill:#ECEFF1,stroke:#607D8B
-    style Phase6 fill:#FFEBEE,stroke:#F44336
-    style Phase7 fill:#E0F7FA,stroke:#00BCD4
-    style Phase8 fill:#FFFDE7,stroke:#FFEB3B
-    style Future fill:#FAFAFA,stroke:#9E9E9E,stroke-dasharray: 5 5
+    %% Cross-phase dependencies
+    P2_1 -.->|"Django fixtures"| P3_0
+    P3_0 -.->|"DB transactions"| P4_0
+    P4_3 -.->|"fixture viz"| P5_1
+    P5_4 -.->|"PEP 669 coverage"| P8_3
+    P7_4 -.->|"userfaultfd perf"| P9_3
+    P8_4 -.->|"sub-interp isolation"| P9_2
+
+    %% Styling
+    classDef done fill:#22c55e,stroke:#16a34a,color:#fff
+    classDef inProgress fill:#f59e0b,stroke:#d97706,color:#fff
+    classDef pending fill:#94a3b8,stroke:#64748b,color:#fff
+    classDef milestone fill:#eab308,stroke:#ca8a04,color:#000,stroke-width:2px
+
+    class P1_1,P1_2,P1_3,P1_4,P1_5 done
+    class P2_0 done
+    class P2_1,P2_2,P2_3,P2_31,P2_4 inProgress
+    class P3_0,P3_1,P3_2,P3_3 pending
+    class P4_0,P4_1,P4_2,P4_3 pending
+    class P5_0,P5_1,P5_2,P5_3,P5_4 pending
+    class P6_0,P6_1,P6_2,P6_3 pending
+    class P7_0,P7_1,P7_2,P7_3,P7_4 pending
+    class P8_0,P8_1,P8_2,P8_3,P8_4 pending
+    class P9_0,P9_1,P9_2,P9_3 pending
+    class P10_0,P10_1 pending
+    class P10_2 milestone
+    class F1,F2,F3,F4,F5,F6,F7,F8,F9 pending
 ```
 
-**Legend:**
+**Legend:** 🟢 Done | 🟠 In Progress | ⚪ Pending | 🎯 Milestone
 
-| Color  | Status                            |
-| ------ | --------------------------------- |
-| Green  | Complete                          |
-| Blue   | In Progress (can be parallelized) |
-| Purple | Independent kernel feature        |
-| Orange | Waiting for dependencies          |
-| Gray   | Not started                       |
-| Gold   | Major milestone (1.0.0)           |
-| Dashed | Future/Post-1.0                   |
+**Current Status:**
 
-**Current Progress:** Phase 1 complete, Phase 2 in progress (0.2.0 complete, 0.2.1-0.2.4 pending)
+- Phase 1 (0.1.x): Complete
+- Phase 2 (0.2.x): In Progress - Hook framework done, plugin shims pending
+- Phases 3-10: Not started
 
 ---
 
