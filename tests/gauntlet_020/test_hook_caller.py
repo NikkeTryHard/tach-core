@@ -7,6 +7,7 @@
 # - Tracks environment and sys.path side effects
 # - Handles errors gracefully
 
+import importlib.util
 import os
 import sys
 import tempfile
@@ -279,8 +280,6 @@ def test_call_hook_impl_pytest_configure():
 
 def test_call_hook_impl_returns_hook_found_true():
     """Test that existing hooks set hook_found=True."""
-    import importlib.util
-
     harness_path = os.path.join(
         os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
     )
@@ -299,8 +298,6 @@ def test_call_hook_impl_returns_hook_found_true():
 
 def test_call_hook_impl_returns_hook_found_false():
     """Test that missing hooks set hook_found=False."""
-    import importlib.util
-
     harness_path = os.path.join(
         os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
     )
