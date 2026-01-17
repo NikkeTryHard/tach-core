@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Effect replay in workers before test execution
   - IPC protocol extension with hooks, cached_effects, markers fields in TestPayload
   - Plugin detection and warning system using importlib.metadata
+  - **HookResult type and aggregation strategies** (FirstResult, AllResults, NoReturn)
+  - **HookCaller with PyO3 bridge** for Rust-side hook orchestration
+  - **HookDependencyGraph** for conftest hierarchy ordering (root→leaf)
+  - **PluginRegistry** with plugin status tracking (Supported, Partial, Superseded, Incompatible)
+  - **Plugin configuration** via pyproject.toml (disabled plugins, priority ordering)
+  - **call_hook_impl()** Python function for loading conftest and calling hooks
+  - **pytest_collection_modifyitems** hook support (reordering, deselection)
+  - **pytest_runtest_setup/teardown** hook support with effect capture
+  - **pytest_runtest_makereport** hook support for result reporting
+  - **pytest_sessionfinish** hook support for session cleanup
 - **Hook Registry**: Foundation for pytest plugin compatibility
   - HookSpec, Hook, HookEffect types with Serde derives for IPC serialization
   - HookRegistry for tracking discovered hooks

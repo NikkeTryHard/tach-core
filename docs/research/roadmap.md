@@ -404,11 +404,9 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Core infrastructure for intercepting pytest hooks.
 
-**Status**: In Progress (~75% complete)
+**Status**: Complete
 
-> **Completed**: Hook registry types with Serde, 10 builtin hook specs, hook detection in conftest.py, marker extraction from decorators (with JSON output), autouse fixture detection, path canonicalization for hook matching, SysPathAction enum (type-safe), session effects IPC bridge (Zygote → Supervisor → Workers), debug logging for effect application, pytest_sessionstart in SESSION_HOOKS, HookEffect enum with all variants, toxicity integration for global-state-modifying hooks, conftest inheritance resolution, effect recording for pytest_configure/sessionstart, effect replay in workers, IPC protocol extension, plugin detection and warning system.
->
-> **Remaining**: Hook execution (caller, aggregation, wrappers), hook dependency graph.
+> **Completed**: Hook registry types with Serde, 10 builtin hook specs, hook detection in conftest.py, marker extraction from decorators (with JSON output), autouse fixture detection, path canonicalization for hook matching, SysPathAction enum (type-safe), session effects IPC bridge (Zygote → Supervisor → Workers), debug logging for effect application, pytest_sessionstart in SESSION_HOOKS, HookEffect enum with all variants, toxicity integration for global-state-modifying hooks, conftest inheritance resolution, effect recording for pytest_configure/sessionstart, effect replay in workers, IPC protocol extension, plugin detection and warning system, HookResult type and aggregation strategies, HookCaller with PyO3 bridge, hook dependency graph, plugin shim registry.
 
 #### Hook System Architecture
 
@@ -417,36 +415,36 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
   - [x] Hook registry for tracking available hooks
   - [x] Hook types with Serde derives for IPC serialization
   - [x] 10 builtin hook specs (pytest*configure, pytest_runtest*\*, etc.)
-  - [ ] Hook caller that invokes registered handlers
-  - [ ] Hook result aggregation (first-result, all-results)
-  - [ ] Hook wrapper specifications
+  - [x] Hook caller that invokes registered handlers
+  - [x] Hook result aggregation (first-result, all-results)
+  - [x] Hook wrapper specifications
 - [x] Implement `conftest.py` discovery and loading
   - [x] Scan for `conftest.py` in test directories (existing)
   - [x] Parse hook function definitions
   - [x] Extract pytest markers from @pytest.mark.\* decorators
   - [x] Detect autouse fixtures
-  - [ ] Build hook dependency graph
+  - [x] Build hook dependency graph
   - [x] Handle conftest inheritance
 
 #### Core Hook Support
 
 - [x] `pytest_configure(config)` - Plugin configuration
-- [ ] `pytest_collection_modifyitems(items)` - Test collection modification
+- [x] `pytest_collection_modifyitems(items)` - Test collection modification
   > **Ref**: "By recording effects in the parent and replaying them in the child, Tach avoids the need to re-run complex plugin logic in every worker" — _Project Tach Compatibility Layer Blueprint_
-- [ ] `pytest_runtest_setup(item)` - Pre-test setup
-- [ ] `pytest_runtest_teardown(item)` - Post-test teardown
-- [ ] `pytest_runtest_makereport(item, call)` - Result reporting
+- [x] `pytest_runtest_setup(item)` - Pre-test setup
+- [x] `pytest_runtest_teardown(item)` - Post-test teardown
+- [x] `pytest_runtest_makereport(item, call)` - Result reporting
 - [x] `pytest_sessionstart(session)` - Session initialization
-- [ ] `pytest_sessionfinish(session)` - Session cleanup
+- [x] `pytest_sessionfinish(session)` - Session cleanup
 
 #### Plugin Registration
 
 - [x] Detect installed pytest plugins via `pkg_resources`
-- [ ] Create plugin shim registry
+- [x] Create plugin shim registry
   > **Ref**: "The Tach supervisor creates a per-worker isolated namespace at clone time" — _Project Tach Compatibility Layer Blueprint_
 - [x] Log warnings for unsupported plugins
-- [ ] Allow disabling specific plugins via config
-- [ ] Support plugin ordering/priority
+- [x] Allow disabling specific plugins via config
+- [x] Support plugin ordering/priority
 
 ### 0.2.1 - pytest-django Support
 
