@@ -1,0 +1,16 @@
+#!/bin/bash
+# Cargo wrapper that enforces Docker environment
+# Add to PATH before system cargo: export PATH="$(pwd)/scripts:$PATH"
+
+set -e
+
+# Source the docker check
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check Docker environment
+if ! "$SCRIPT_DIR/require-docker.sh" 2>/dev/null; then
+    exit 1
+fi
+
+# Forward to real cargo
+exec /root/.cargo/bin/cargo "$@"
