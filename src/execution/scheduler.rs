@@ -1533,6 +1533,7 @@ mod tests {
             source: PathBuf::from("/project/conftest.py"),
             function_name: "pytest_configure".to_string(),
             line_number: 1,
+            is_wrapper: false,
         });
 
         // Register a sub-directory hook
@@ -1545,6 +1546,7 @@ mod tests {
             source: PathBuf::from("/project/tests/conftest.py"),
             function_name: "pytest_runtest_setup".to_string(),
             line_number: 10,
+            is_wrapper: false,
         });
 
         // Test path in the tests directory

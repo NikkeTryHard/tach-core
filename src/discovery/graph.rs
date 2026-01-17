@@ -725,6 +725,7 @@ mod tests {
             source: conftest_path.clone(),
             function_name: "pytest_configure".to_string(),
             line_number: 1,
+            is_wrapper: false,
         });
 
         let paths = vec![conftest_path.clone(), test_path.clone()];
@@ -771,6 +772,7 @@ mod tests {
             source: conftest_path.clone(),
             function_name: "pytest_configure".to_string(),
             line_number: 1,
+            is_wrapper: false,
         });
 
         let paths = vec![conftest_path.clone(), helper_path.clone()];

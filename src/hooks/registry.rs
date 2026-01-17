@@ -50,6 +50,9 @@ pub struct Hook {
     pub function_name: String,
     /// Line number in source file
     pub line_number: usize,
+    /// Whether this hook uses @pytest.hookimpl(hookwrapper=True)
+    #[serde(default)]
+    pub is_wrapper: bool,
 }
 
 /// Result from executing a single hook function
@@ -481,6 +484,7 @@ mod tests {
             source: PathBuf::from("conftest.py"),
             function_name: "pytest_configure".to_string(),
             line_number: 10,
+            is_wrapper: false,
         };
 
         registry.register(hook);
@@ -518,6 +522,7 @@ mod tests {
             source: PathBuf::from("tests/conftest.py"),
             function_name: "pytest_configure".to_string(),
             line_number: 5,
+            is_wrapper: false,
         };
         registry.register(toxic_hook);
 
@@ -531,6 +536,7 @@ mod tests {
             source: PathBuf::from("tests/sub/conftest.py"),
             function_name: "pytest_runtest_setup".to_string(),
             line_number: 10,
+            is_wrapper: false,
         };
         registry.register(safe_hook);
 
@@ -566,6 +572,7 @@ mod tests {
             source: conftest_path.clone(),
             function_name: "pytest_configure".to_string(),
             line_number: 5,
+            is_wrapper: false,
         };
         registry.register(toxic_hook);
 
@@ -608,6 +615,7 @@ mod tests {
             source: conftest_path.clone(),
             function_name: "pytest_configure".to_string(),
             line_number: 5,
+            is_wrapper: false,
         });
         registry.register(Hook {
             spec: HookSpec {
@@ -618,6 +626,7 @@ mod tests {
             source: conftest_path.clone(),
             function_name: "pytest_collection_modifyitems".to_string(),
             line_number: 15,
+            is_wrapper: false,
         });
 
         // Query with canonicalized path
@@ -646,6 +655,7 @@ mod tests {
             source: PathBuf::from("conftest.py"),
             function_name: "pytest_configure".to_string(),
             line_number: 5,
+            is_wrapper: false,
         };
         let hook2 = Hook {
             spec: HookSpec {
@@ -656,6 +666,7 @@ mod tests {
             source: PathBuf::from("conftest.py"),
             function_name: "pytest_collection_modifyitems".to_string(),
             line_number: 15,
+            is_wrapper: false,
         };
         registry.register(hook1);
         registry.register(hook2);
@@ -681,6 +692,7 @@ mod tests {
             source: PathBuf::from("/project/conftest.py"),
             function_name: "pytest_configure".to_string(),
             line_number: 1,
+            is_wrapper: false,
         });
 
         // Sub-directory conftest hook
@@ -693,6 +705,7 @@ mod tests {
             source: PathBuf::from("/project/tests/conftest.py"),
             function_name: "pytest_runtest_setup".to_string(),
             line_number: 1,
+            is_wrapper: false,
         });
 
         // Resolve hooks for a test in tests/

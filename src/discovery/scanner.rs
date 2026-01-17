@@ -136,6 +136,7 @@ impl DiscoveryResult {
                         source,
                         function_name: hook_def.name.clone(),
                         line_number: hook_def.line_number,
+                        is_wrapper: false,
                     });
                 }
             }
