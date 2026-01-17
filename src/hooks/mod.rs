@@ -19,8 +19,10 @@
 //! - `pytest_runtest_setup` - Per-test setup
 //! - `pytest_runtest_teardown` - Per-test teardown
 
+mod caller;
 mod registry;
 
+pub use caller::HookCaller;
 pub use registry::{
     AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, HookSpec, SysPathAction,
     aggregate_results, builtin_hook_specs,
