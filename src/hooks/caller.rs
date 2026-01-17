@@ -10,7 +10,10 @@ use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use super::{AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, aggregate_results};
+use super::{
+    AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, aggregate_results,
+    sort_hooks_by_depth,
+};
 
 /// Orchestrates hook execution across multiple conftest.py files
 ///
@@ -111,7 +114,7 @@ impl<'a> HookCaller<'a> {
 
         // Sort hooks by source path depth (root first)
         let mut sorted_hooks: Vec<&Hook> = hooks.iter().collect();
-        sorted_hooks.sort_by_key(|h| h.source.components().count());
+        sort_hooks_by_depth(&mut sorted_hooks);
 
         let mut results = Vec::with_capacity(sorted_hooks.len());
 

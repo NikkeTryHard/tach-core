@@ -3,7 +3,7 @@
 //! Manages hook execution order based on conftest.py hierarchy
 //! and wrapper specifications.
 
-use crate::hooks::Hook;
+use crate::hooks::{Hook, sort_hooks_by_depth};
 use std::collections::HashMap;
 
 /// Manages hook dependencies and execution order
@@ -40,11 +40,7 @@ impl HookDependencyGraph {
             .unwrap_or_default();
 
         // Sort by path depth (fewer components = closer to root)
-        hooks.sort_by(|a, b| {
-            let depth_a = a.source.components().count();
-            let depth_b = b.source.components().count();
-            depth_a.cmp(&depth_b)
-        });
+        sort_hooks_by_depth(&mut hooks);
 
         hooks
     }

@@ -155,9 +155,14 @@ pub enum HookEffect {
     SetEnv { key: String, value: String },
     /// Hook modified sys.path
     ModifySysPath { action: SysPathAction, path: String },
-    /// Hook registered a marker
+    /// Hook registered a custom pytest marker
+    ///
+    /// Custom markers can be registered via pytest_configure hooks or pytest.ini.
+    /// While the Python-side doesn't currently emit this effect (markers are
+    /// typically registered via config.addinivalue_line), the type exists for
+    /// future use and IPC completeness.
     RegisterMarker { name: String, description: String },
-    /// Hook modified test collection
+    /// Hook modified test collection (reordering, deselection)
     ModifyItems {
         removed: Vec<String>,
         reordered: bool,
