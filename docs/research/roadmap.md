@@ -600,7 +600,7 @@ flowchart TD
 
 ### 0.2.1 - pytest-django Support
 
-**Status**: 🔨 IN PROGRESS
+**Status**: ✅ COMPLETE
 
 **Target**: First-class Django test support.
 
@@ -610,11 +610,11 @@ flowchart TD
 
 #### Marker Support
 
-- [ ] `@pytest.mark.django_db` - Enable database access
+- [x] `@pytest.mark.django_db` - Enable database access
   > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
-  - [ ] `transaction=True` - Use real transactions
-  - [ ] `reset_sequences=True` - Reset auto-increment
-  - [ ] `databases=['default', 'secondary']` - Multi-db
+  - [x] `transaction=True` - Use real transactions (parsing implemented, execution deferred to 0.3.0)
+  - [x] `reset_sequences=True` - Reset auto-increment (parsing implemented)
+  - [x] `databases=['default', 'secondary']` - Multi-db (parsing implemented)
 - [ ] `@pytest.mark.urls('myapp.test_urls')` - URL override
 - [ ] `@pytest.mark.ignore_template_errors` - Template error handling
 

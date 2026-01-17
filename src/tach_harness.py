@@ -20,7 +20,7 @@ import warnings as warnings_module
 import _pytest.runner
 import _pytest.main
 import _pytest.config
-from typing import Optional, Set, Type, Tuple, Union
+from typing import Any, Optional, Set, Type, Tuple, Union
 
 # Status codes (must match protocol.rs)
 STATUS_PASS = 0
@@ -28,6 +28,15 @@ STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
 STATUS_HARNESS_ERROR = 4
+
+# Effect type constants (must match HookEffect variants in hooks.rs)
+EFFECT_TYPE_SET_ENV = "SetEnv"
+EFFECT_TYPE_DELETE_ENV = "DeleteEnv"
+EFFECT_TYPE_ADD_SYS_PATH = "AddSysPath"
+EFFECT_TYPE_REMOVE_SYS_PATH = "RemoveSysPath"
+EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
+EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
+EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
 
 # =============================================================================
 # THREAD LEAK DETECTION (Task 3: 0.1.2)
@@ -94,7 +103,7 @@ def _detect_thread_leak(initial_count: int, allow_threads: bool) -> bool:
     if allow_threads:
         # User explicitly allowed thread leaks for this test
         print(
-            f"[harness] INFO: Test spawned {current_count - initial_count} additional threads (allowed by @pytest.mark.allow_threads)",
+            f"[tach:harness] INFO: Test spawned {current_count - initial_count} additional threads (allowed by @pytest.mark.allow_threads)",
             file=sys.stderr,
         )
         return False
@@ -102,7 +111,7 @@ def _detect_thread_leak(initial_count: int, allow_threads: bool) -> bool:
     # Threads increased - wait for grace period
     leaked_threads = current_count - initial_count
     print(
-        f"[harness] WARN: Test spawned {leaked_threads} additional thread(s), waiting {_THREAD_GRACE_PERIOD_MS}ms for them to terminate...",
+        f"[tach:harness] WARN: Test spawned {leaked_threads} additional thread(s), waiting {_THREAD_GRACE_PERIOD_MS}ms for them to terminate...",
         file=sys.stderr,
     )
 
@@ -112,13 +121,13 @@ def _detect_thread_leak(initial_count: int, allow_threads: bool) -> bool:
         time.sleep(0.050)  # 50ms intervals
         current_count = threading.active_count()
         if current_count <= initial_count:
-            print("[harness] INFO: Threads terminated within grace period", file=sys.stderr)
+            print("[tach:harness] INFO: Threads terminated within grace period", file=sys.stderr)
             return False
 
     # Grace period expired, threads still running
     leaked_threads = threading.active_count() - initial_count
     print(
-        f"[harness] WARN: {leaked_threads} thread(s) still running after grace period. Worker marked toxic (cannot be reused).",
+        f"[tach:harness] WARN: {leaked_threads} thread(s) still running after grace period. Worker marked toxic (cannot be reused).",
         file=sys.stderr,
     )
     return True
@@ -928,7 +937,7 @@ def post_fork_init() -> bool:
     # 3. Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
-    print(f"[harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
+    print(f"[tach:harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
 
     # 4. Check if snapshot mode is enabled
     import os
@@ -945,10 +954,10 @@ def post_fork_init() -> bool:
         _CAN_RECYCLE = tach_rust.init_snapshot_mode(supervisor_sock)
         return _CAN_RECYCLE
     except ImportError:
-        print("[harness] WARN: tach_rust module not available", file=sys.stderr)
+        print("[tach:harness] WARN: tach_rust module not available", file=sys.stderr)
         return False
     except Exception as e:
-        print(f"[harness] WARN: Snapshot init failed: {e}", file=sys.stderr)
+        print(f"[tach:harness] WARN: Snapshot init failed: {e}", file=sys.stderr)
         return False
 
 
@@ -1313,7 +1322,7 @@ def _compute_sys_path_delta(before: list, after: list) -> list:
             else:
                 action = "append"
             effects.append({
-                "type": "ModifySysPath",
+                "type": EFFECT_TYPE_MODIFY_SYS_PATH,
                 "action": action,
                 "path": path,
             })
@@ -1322,7 +1331,7 @@ def _compute_sys_path_delta(before: list, after: list) -> list:
     for path in before:
         if path not in after:
             effects.append({
-                "type": "ModifySysPath",
+                "type": EFFECT_TYPE_MODIFY_SYS_PATH,
                 "action": "remove",
                 "path": path,
             })
@@ -1341,13 +1350,13 @@ def _compute_env_delta(before: dict, after: dict) -> list:
     for key, value in after.items():
         if key not in before:
             effects.append({
-                "type": "SetEnv",
+                "type": EFFECT_TYPE_SET_ENV,
                 "key": key,
                 "value": value,
             })
         elif before[key] != value:
             effects.append({
-                "type": "SetEnv",
+                "type": EFFECT_TYPE_SET_ENV,
                 "key": key,
                 "value": value,
             })
@@ -1608,14 +1617,14 @@ def apply_cached_effects(effects: list) -> int:
     for effect in effects:
         effect_type = effect.get("type")
 
-        if effect_type == "SetEnv":
+        if effect_type == EFFECT_TYPE_SET_ENV:
             key = effect.get("key")
             value = effect.get("value")
             if key and value is not None:
                 os.environ[key] = value
                 applied += 1
 
-        elif effect_type == "ModifySysPath":
+        elif effect_type == EFFECT_TYPE_MODIFY_SYS_PATH:
             action = effect.get("action", "append")
             path = effect.get("path")
             if path:
@@ -1668,7 +1677,7 @@ def init_session(root_dir: str):
     """
     global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
 
-    os.write(2, f"[harness] init_session: {root_dir}\n".encode())
+    os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
 
     # PLUGIN DETECTION (v0.2.0): Warn about unsupported plugins
     log_plugin_warnings()
@@ -1716,7 +1725,7 @@ def init_session(root_dir: str):
     if _SESSION_HOOK_EFFECTS:
         os.write(
             2,
-            f"[harness] Recorded {len(_SESSION_HOOK_EFFECTS)} session hook effects "
+            f"[tach:harness] Recorded {len(_SESSION_HOOK_EFFECTS)} session hook effects "
             f"({len(env_effects)} env, {len(sys_path_effects)} sys.path)\n".encode(),
         )
 
@@ -1728,22 +1737,22 @@ def init_session(root_dir: str):
     for item in _SESSION.items:
         _ITEMS_MAP[item.nodeid] = item
 
-    os.write(2, f"[harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
+    os.write(2, f"[tach:harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
 
 
-def _parse_django_db_marker(marker_info: list) -> dict | None:
-    """
-    Parse @pytest.mark.django_db marker arguments.
+def _parse_django_db_marker(marker_info: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Parse @pytest.mark.django_db marker arguments.
 
     Looks for a marker named 'django_db' in the marker_info list and
     extracts its arguments for database isolation configuration.
 
     Args:
-        marker_info: List of marker dicts with 'name' and 'args' keys
+        marker_info: List of marker dicts with 'name' and 'args' keys.
+            Each dict should have 'name' (str) and optional 'args' (dict).
 
     Returns:
-        dict with keys: transaction, reset_sequences, databases
-        Returns None if no django_db marker present.
+        Dict with keys 'transaction', 'reset_sequences', 'databases' if
+        django_db marker is present. Returns None if no django_db marker found.
     """
     if not marker_info:
         return None
@@ -1760,52 +1769,87 @@ def _parse_django_db_marker(marker_info: list) -> dict | None:
     return None
 
 
-def _close_django_connections():
+def _is_django_available() -> bool:
+    """Check if Django is available and configured in the current process.
+
+    This function checks both that Django is imported into sys.modules and
+    that Django settings have been configured. Both conditions must be true
+    for Django database operations to work.
+
+    Returns:
+        True if Django is imported and settings are configured, False otherwise.
+    """
+    if "django" not in sys.modules:
+        return False
+    try:
+        from django.conf import settings
+        return settings.configured
+    except ImportError:
+        return False
+
+
+def _close_django_connections() -> None:
     """Close all Django database connections before fork.
 
     This should be called in the Zygote before forking workers to ensure
-    each worker gets fresh database connections.
+    each worker gets fresh database connections. Closing connections in
+    the parent prevents file descriptor sharing issues and ensures each
+    worker establishes its own database connections.
+
+    Note:
+        This function fails silently if Django is not available or if
+        closing connections fails, as it's called during fork preparation.
     """
-    if "django" not in sys.modules:
+    if not _is_django_available():
         return
     try:
         from django.db import connections
+        from django.db import DatabaseError
 
         connections.close_all()
+    except DatabaseError as e:
+        print(f"[tach:harness] WARN: Database error closing connections: {e}", file=sys.stderr)
     except Exception:
         pass
 
 
-def _apply_django_db_isolation(marker_args: dict | None) -> list:
+def _apply_django_db_isolation(marker_args: dict[str, Any] | None) -> list[tuple[str, str]]:
     """Apply database isolation based on marker args.
 
     Uses SAVEPOINT for transaction isolation when transaction=False (default).
     When transaction=True, no isolation is applied (test manages its own transactions).
 
+    This function creates savepoints on all requested databases, allowing
+    test changes to be rolled back after test completion.
+
     Args:
-        marker_args: Parsed django_db marker arguments, or None for default behavior
+        marker_args: Parsed django_db marker arguments from _parse_django_db_marker,
+            or None for default behavior (isolate all databases with savepoints).
 
     Returns:
-        List of (alias, savepoint_id) tuples for cleanup
+        List of (alias, savepoint_id) tuples for cleanup via _cleanup_django_db_isolation.
+        Returns empty list if Django is not available or transaction=True.
     """
-    if "django" not in sys.modules:
+    if not _is_django_available():
         return []
 
     try:
         from django.conf import settings
-
         if not settings.configured:
+            print("[tach:harness] WARN: Django settings not configured, skipping DB isolation", file=sys.stderr)
             return []
     except ImportError:
         return []
 
-    from django.db import connections, transaction
+    from django.db import connections, transaction, DatabaseError
 
     # Close stale connections first
     try:
         connections.close_all()
+    except DatabaseError as e:
+        print(f"[tach:harness] WARN: Database error closing connections: {e}", file=sys.stderr)
     except Exception as e:
-        print(f"[harness] WARN: Failed to close Django connections: {e}", file=sys.stderr)
+        print(f"[tach:harness] WARN: Failed to close Django connections: {e}", file=sys.stderr)
 
     # If no marker_args, apply default isolation to all databases
     if marker_args is None:
@@ -1820,9 +1864,17 @@ def _apply_django_db_isolation(marker_args: dict | None) -> list:
     if databases is None:
         databases = list(connections)
 
+    # Validate database aliases exist
+    valid_databases = []
+    for alias in databases:
+        if alias in connections:
+            valid_databases.append(alias)
+        else:
+            print(f"[tach:harness] WARN: Unknown database alias '{alias}', skipping", file=sys.stderr)
+
     # Create savepoints for each database
     savepoints = []
-    for alias in databases:
+    for alias in valid_databases:
         try:
             # Ensure connection is usable
             conn = connections[alias]
@@ -1831,31 +1883,63 @@ def _apply_django_db_isolation(marker_args: dict | None) -> list:
             # Create savepoint for isolation
             sid = transaction.savepoint(using=alias)
             savepoints.append((alias, sid))
+        except DatabaseError as e:
+            # Database-specific error during savepoint creation
+            print(f"[tach:harness] WARN: Database error creating savepoint for '{alias}': {e}", file=sys.stderr)
+            print(f"[tach:harness] INFO: Rolling back {len(savepoints)} previously created savepoints", file=sys.stderr)
+            for prev_alias, prev_sid in reversed(savepoints):
+                try:
+                    transaction.savepoint_rollback(prev_sid, using=prev_alias)
+                except DatabaseError as rollback_error:
+                    print(f"[tach:harness] WARN: Database error rolling back savepoint for '{prev_alias}': {rollback_error}", file=sys.stderr)
+                except Exception as rollback_error:
+                    print(f"[tach:harness] WARN: Failed to rollback savepoint for '{prev_alias}': {rollback_error}", file=sys.stderr)
+            return []  # Return empty - no isolation applied
         except Exception as e:
-            print(f"[harness] WARN: Failed to create savepoint for '{alias}': {e}", file=sys.stderr)
+            # Unexpected error - still roll back and fail gracefully
+            print(f"[tach:harness] WARN: Failed to create savepoint for '{alias}': {e}", file=sys.stderr)
+            print(f"[tach:harness] INFO: Rolling back {len(savepoints)} previously created savepoints", file=sys.stderr)
+            for prev_alias, prev_sid in reversed(savepoints):
+                try:
+                    transaction.savepoint_rollback(prev_sid, using=prev_alias)
+                except Exception as rollback_error:
+                    print(f"[tach:harness] WARN: Failed to rollback savepoint for '{prev_alias}': {rollback_error}", file=sys.stderr)
+            return []  # Return empty - no isolation applied
 
     return savepoints
 
 
-def _cleanup_django_db_isolation(savepoints: list):
+def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
     """Rollback savepoints after test to restore database state.
 
+    This function rolls back all savepoints created by _apply_django_db_isolation,
+    restoring the database to its pre-test state. Savepoints are rolled back in
+    reverse order to handle any dependencies between databases.
+
     Args:
-        savepoints: List of (alias, savepoint_id) tuples from _apply_django_db_isolation
+        savepoints: List of (alias, savepoint_id) tuples from _apply_django_db_isolation.
+            Each tuple contains the database alias and the savepoint identifier.
     """
     if not savepoints:
         return
 
-    from django.db import transaction
+    from django.db import transaction, DatabaseError
 
     for alias, sid in reversed(savepoints):
         try:
             transaction.savepoint_rollback(sid, using=alias)
+        except DatabaseError as e:
+            print(f"[tach:harness] WARN: Database error rolling back savepoint for '{alias}': {e}", file=sys.stderr)
         except Exception as e:
-            print(f"[harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
+            print(f"[tach:harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
 
 
-def run_test(file_path: str, node_id: str, cached_effects: list = None, marker_info: list = None) -> tuple:
+def run_test(
+    file_path: str,
+    node_id: str,
+    cached_effects: list[dict[str, Any]] | None = None,
+    marker_info: list[dict[str, Any]] | None = None,
+) -> tuple[int, float, str, bool]:
     """
     Execute a single pytest test item using pre-collected session.
 
@@ -1994,7 +2078,7 @@ def run_test(file_path: str, node_id: str, cached_effects: list = None, marker_i
             except Exception as enhance_err:
                 # If enhancement fails, use the original message
                 # Debug logging for troubleshooting enhancement failures
-                print(f"[harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
+                print(f"[tach:harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
             return (STATUS_FAIL, duration, msg, _thread_leak_detected)
 
@@ -2038,10 +2122,10 @@ def reset_worker_state() -> bool:
         tach_rust.reset_memory()
         return True
     except ImportError:
-        print("[harness] WARN: tach_rust not available for reset", file=sys.stderr)
+        print("[tach:harness] WARN: tach_rust not available for reset", file=sys.stderr)
         return False
     except Exception as e:
-        print(f"[harness] WARN: reset_memory failed: {e}", file=sys.stderr)
+        print(f"[tach:harness] WARN: reset_memory failed: {e}", file=sys.stderr)
         return False
 
 
@@ -2095,10 +2179,10 @@ def cleanup_test_modules() -> int:
             pass  # Already removed
         except Exception as e:
             # Log but don't crash - dirty worker is better than dead worker
-            print(f"[harness] WARN: Failed to remove {mod_name}: {e}", file=sys.stderr)
+            print(f"[tach:harness] WARN: Failed to remove {mod_name}: {e}", file=sys.stderr)
 
     if removed_count > 0:
-        print(f"[harness] Cleaned up {removed_count} test modules", file=sys.stderr)
+        print(f"[tach:harness] Cleaned up {removed_count} test modules", file=sys.stderr)
 
     return removed_count
 
@@ -2169,7 +2253,7 @@ def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool, cached_e
         if not reset_worker_state():
             # Reset failed - must exit to be safe
             exit_after = True
-            print("[harness] Reset failed, forcing exit", file=sys.stderr)
+            print("[tach:harness] Reset failed, forcing exit", file=sys.stderr)
 
     return (status, duration, message, exit_after)
 

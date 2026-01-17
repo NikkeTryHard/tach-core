@@ -47,9 +47,7 @@ WARNING: Bypassing may cause kernel crashes, permission errors, and flaky tests.
     }
 
     // Native Linux - warn but allow (CI systems, etc.)
-    println!(
-        "cargo:warning=Building outside Docker container. Use 'docker compose exec dev bash' for full feature support."
-    );
+    println!("cargo:warning=Building outside Docker container. Use 'docker compose exec dev bash' for full feature support.");
 }
 
 fn is_docker_environment() -> bool {
@@ -59,10 +57,10 @@ fn is_docker_environment() -> bool {
     }
 
     // Method 2: Check cgroup for docker/container references
-    if let Ok(cgroup) = fs::read_to_string("/proc/1/cgroup") {
-        if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("lxc") {
-            return true;
-        }
+    if let Ok(cgroup) = fs::read_to_string("/proc/1/cgroup")
+        && (cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("lxc"))
+    {
+        return true;
     }
 
     // Method 3: Check for container environment variable

@@ -1181,7 +1181,10 @@ fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObj
             } else if let Some(f) = n.as_f64() {
                 Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
-                Ok(py.None())
+                // Handle numbers that don't fit in i64 or f64 (e.g., u64 > i64::MAX)
+                // Convert via string representation to preserve the value
+                let s = n.to_string();
+                Ok(pyo3::types::PyString::new(py, &s).into_any().unbind())
             }
         }
         serde_json::Value::String(s) => Ok(PyString::new(py, s).into_any().unbind()),

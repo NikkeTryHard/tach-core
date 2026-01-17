@@ -198,7 +198,11 @@ pub enum HookEffect {
         reordered: bool,
     },
     /// Django database marker configuration
-    /// Parsed from @pytest.mark.django_db(transaction=True, reset_sequences=False, databases=["default"])
+    ///
+    /// Parsed from @pytest.mark.django_db(transaction=True, reset_sequences=False, databases=["default"]).
+    /// This variant exists for protocol completeness but is handled entirely on the Python side
+    /// by tach_harness.py via marker_info. The Rust side only passes it through for IPC.
+    #[allow(dead_code)]
     DjangoDbSetup {
         /// If true, use real transactions (no rollback isolation)
         transaction: bool,
