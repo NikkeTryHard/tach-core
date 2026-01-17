@@ -12,6 +12,14 @@ def pytest_configure(config):
     os.environ["TACH_020_ROOT_HOOK"] = "executed"
     sys.path.insert(0, "/tmp/tach_020_test_path")
 
+    # Register custom markers to avoid pytest warnings
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+    )
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests"
+    )
+
 
 @pytest.fixture(autouse=True)
 def track_autouse_execution():
