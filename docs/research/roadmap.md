@@ -55,7 +55,7 @@ flowchart TB
     subgraph Phase2["Phase 2: Plugin Compatibility 🔨 IN PROGRESS"]
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
-        P2_1["0.2.1 pytest-django"]
+        P2_1["0.2.1 pytest-django ✅"]
         P2_2["0.2.2 pytest-asyncio"]
         P2_3["0.2.3 pytest-mock/env/timeout"]
         P2_4["0.2.4 Landlock V4-V6"]
@@ -274,7 +274,7 @@ flowchart TB
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 in progress, 0.2.2-0.2.4 can start in parallel
+- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2-0.2.4 can start in parallel
 - Phases 3-4: Blocked by Phase 2 plugin work
 - Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
 - Phase 10: Not started
@@ -537,7 +537,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 ### 0.2.1 - pytest-django Support
 
-**Status**: 🔨 IN PROGRESS
+**Status**: ✅ COMPLETE
 
 **Target**: First-class Django test support.
 
