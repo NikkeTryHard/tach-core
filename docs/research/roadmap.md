@@ -332,58 +332,15 @@ flowchart TB
 
 ### Container Compatibility
 
-Tach uses kernel features that require specific container configurations:
-
-| Container Mode       | Landlock | Seccomp | userfaultfd | Recommendation           |
-| -------------------- | -------- | ------- | ----------- | ------------------------ |
-| Docker default       | No       | Yes     | No          | Not supported            |
-| Docker privileged    | Yes      | Yes     | Yes         | **Recommended for dev**  |
-| Docker + SYS_PTRACE  | Yes      | Yes     | Yes         | Production alternative   |
-| Podman rootless      | No       | No      | No          | Not supported            |
-| Kubernetes (default) | Varies   | Varies  | No          | Requires SecurityContext |
-| Native Linux         | Yes      | Yes     | Yes         | Full support             |
-
-**Required Container Dependencies:**
-
-- `iproute2` package for network namespace configuration
-- Kernel 5.13+ for Landlock support
-
-> **External Ref**: [container-compatibility.md](container-compatibility.md)
+> **Full Matrix:** See [container-compatibility.md](container-compatibility.md) for Docker, Podman, and Kubernetes configurations with capability requirements.
 
 ### Python Version Compatibility
 
-| Python Version | Default Allocator | Fork Safety | multiprocessing Default | Tach Support        |
-| -------------- | ----------------- | ----------- | ----------------------- | ------------------- |
-| 3.10-3.11      | pymalloc          | Full        | `fork`                  | Full                |
-| 3.12           | pymalloc          | Full        | `fork`                  | Full                |
-| 3.13           | mimalloc (TLS)    | Deprecated  | `fork`                  | Full (TLS tracking) |
-| 3.14+          | mimalloc (TLS)    | Removed     | `forkserver`            | Full                |
-
-> **Critical Note (Python 3.14+):** Starting with Python 3.14, `fork` is deprecated for multiprocessing. Linux/Unix defaults to `forkserver`. Tach's zygote model is unaffected as it uses `clone()` directly, but tests using `multiprocessing.Pool` may behave differently.
->
-> **External Refs:**
->
-> - [Python 3.14 What's New](https://docs.python.org/3.14/whatsnew/3.14.html)
-> - [PEP 703 - Free Threading](https://peps.python.org/pep-0703/)
+> **Full Matrix:** See [../python-compatibility.md](../python-compatibility.md) for Python 3.10-3.14 support, PyPy status, and free-threading implications.
 
 ### Kernel Version Requirements
 
-| Feature            | Minimum Kernel | Recommended | Notes                                         |
-| ------------------ | -------------- | ----------- | --------------------------------------------- |
-| Landlock V1        | 5.13           | 6.7+        | Basic filesystem access control               |
-| Landlock V2        | 5.19           | 6.7+        | `LANDLOCK_ACCESS_FS_REFER` (cross-dir rename) |
-| Landlock V3        | 6.2            | 6.7+        | `LANDLOCK_ACCESS_FS_TRUNCATE`                 |
-| Landlock V4        | 6.7            | 6.10+       | **Network restrictions** (TCP bind/connect)   |
-| Landlock V5        | 6.10           | 6.10+       | `LANDLOCK_ACCESS_FS_IOCTL_DEV`                |
-| Landlock V6        | 6.12           | 6.12+       | Scope controls (IPC restrictions, signal)     |
-| userfaultfd        | 4.3            | 5.10+       | Basic page fault handling                     |
-| userfaultfd WP     | 5.7            | 5.10+       | Write-protect mode for dirty tracking         |
-| OverlayFS metacopy | 5.11           | 5.15+       | Optimized copy-up for metadata                |
-| CLONE_NEWUSER      | 3.8            | 5.0+        | Unprivileged namespace creation               |
-
-> **Graceful Degradation:** Tach detects kernel capabilities at runtime and degrades gracefully. Missing features log warnings but never crash.
->
-> **External Ref:** [Landlock Kernel Docs](https://docs.kernel.org/userspace-api/landlock.html)
+> **Full Matrix:** See [isolation-landlock.md](isolation-landlock.md) for Landlock ABI V1-V6 requirements and [isolation-userfaultfd.md](isolation-userfaultfd.md) for userfaultfd kernel requirements.
 
 ### What Tach Must Implement for pytest Parity
 
@@ -553,233 +510,21 @@ Before 1.0.0, verify all critical research requirements are met.
 
 ## 0.1.x - Foundation (Complete)
 
-> **Focus**: Alpha stabilization, documentation, error handling improvements, and minor bug fixes.
+> **Status:** All 5 milestones delivered. See [CHANGELOG.md](../../CHANGELOG.md) for release details.
 >
-> **Status**: Complete - v0.1.5 released 2026-01-14
->
-> **Research Foundation**: Implements the "Kineton" engine concept from _Python Testing Engine Rust Breakthroughs_.
->
-> - "shifts the heavy lifting of static analysis, dependency graph resolution, and execution supervision out of the slow, interpreted Python runtime and into a high-performance, compiled substrate: Rust" — _Python Testing Engine Rust Breakthroughs_
+> **Research Foundation:** Implements the "Kineton" engine from _Python Testing Engine Rust Breakthroughs_.
 
-The 0.1.x series focuses on solidifying the alpha release, improving documentation, and fixing edge cases discovered during initial usage. No major new features are planned - the goal is stability and usability.
+### Delivered Features
 
-### 0.1.1 - Documentation and Polish
+| Version | Focus              | Key Deliverables                                                             |
+| ------- | ------------------ | ---------------------------------------------------------------------------- |
+| 0.1.1   | Docs & Polish      | Examples directory, quickstart guide, shell completions, `--dry-run`         |
+| 0.1.2   | Test Compatibility | `pytest.raises/warns/approx`, traceback formatting, timeout handling         |
+| 0.1.3   | Error Handling     | Error categorization (E001-E020), `--diagnose` flag, remediation suggestions |
+| 0.1.4   | Dependencies       | PyO3 0.27.2, Rust 2024 Edition, Python 3.14 support                          |
+| 0.1.5   | Tooling Research   | `.ignore` conflicts, container compatibility, test discovery analysis        |
 
-**Target**: Better onboarding experience for new users.
-
-**Status**: Complete
-
-#### Documentation
-
-- [x] Create `examples/` directory with sample projects
-  - [x] `examples/simple/` - Basic test suite with fixtures
-  - [x] `examples/django/` - Django project with database tests
-  - [x] `examples/async/` - Async test patterns
-  - [x] `examples/parametrized/` - Complex parametrization examples
-  - [x] `examples/markers/` - Custom markers and filtering
-  - [x] `examples/conftest/` - Nested conftest patterns
-- [x] Write quick-start tutorial in `docs/quickstart.md`
-  - [x] Installation instructions for common distros
-  - [x] First test run walkthrough
-  - [x] Comparison with pytest workflow
-  - [x] Migration guide from pytest
-- [x] Add inline code comments for complex algorithms
-  - [x] Toxicity propagation in `discovery/analysis.rs`
-    > **Ref**: "Toxicity is contagious. If Module A imports Module B, and Module B opens a database connection, then importing Module A effectively opens a database connection" — _Python Monorepo Zygote Tree Design_
-  - [x] Fixture resolution in `discovery/resolver.rs`
-  - [x] Snapshot mechanics in `snapshot.rs`
-    > **Ref**: "The kernel iterates over the Page Table Entries corresponding to the address range. It clears the 'Present' bit, effectively unmapping the physical pages" — _Python Memory Snapshotting with Userfaultfd_
-  - [x] Seccomp filter generation in `sandbox.rs`
-
-#### CLI Improvements
-
-- [x] Improve `--help` text with examples for each flag
-- [x] Add `tach --version --verbose` for detailed system info
-- [x] Better error messages when Python environment is misconfigured
-- [x] Add shell completion scripts (bash, zsh, fish)
-- [x] Add `--dry-run` flag to show what would be executed
-  > **Ref**: "Kineton uses a Rust-based Abstract Syntax Tree (AST) parser to statically identify test entry points... discovery phase is decoupled from the runtime cost" — _Python Testing Engine Rust Breakthroughs_
-- [x] Add `--collect-only` as alias for `list` command
-
-#### Bug Fixes
-
-- [x] Fix edge cases in AST discovery for decorated test functions
-  > **Ref**: "The Rust resolver calculates the module's fully qualified name based on its file path relative to the nearest **init**.py or namespace root" — _Python Monorepo Zygote Tree Design_
-- [x] Handle `conftest.py` files in nested directories correctly
-- [x] Fix path resolution for symlinked test directories
-- [x] Handle tests with very long names gracefully
-- [x] Fix progress bar rendering on narrow terminals
-
-### 0.1.2 - Test Compatibility
-
-**Target**: Better compatibility with existing pytest test patterns.
-
-**Status**: Complete
-
-#### Assertion Handling
-
-- [x] Support `pytest.raises()` context manager pattern
-- [x] Handle `pytest.warns()` for warning assertions
-- [x] Improve `assert` statement introspection for better failure messages
-- [x] Support `pytest.approx()` for floating point comparisons
-- [x] Support `pytest.fail()` and `pytest.skip()` functions
-- [x] Handle `pytest.xfail()` expected failures
-- [x] Support `pytest.importorskip()` for optional dependencies
-
-#### Stack Trace Improvements
-
-- [x] Format tracebacks in pytest-compatible style
-- [x] Show relevant local variables in failure output
-- [x] Truncate long values intelligently (dicts, lists)
-- [x] Highlight the failing assertion line
-- [x] Support `--tb=short`, `--tb=long`, `--tb=line`, `--tb=native`
-- [x] Color-code different parts of tracebacks
-- [x] Show source context around failures
-
-#### Timeout Handling
-
-- [x] Fix race condition in worker timeout detection
-- [x] Add per-test timeout override via marker `@pytest.mark.timeout(30)`
-- [x] Improve cleanup when test times out mid-execution
-- [x] Handle tests that spawn threads which outlive the test
-  > **Ref**: "If a background thread holds a mutex or lock at the precise nanosecond fork() is invoked, that lock is copied into the child process's memory in a 'locked' state" — _Fork Safety of Python C-Extensions_
-- [x] Add global timeout configuration in pyproject.toml
-- [x] Support timeout callback hooks
-
-#### Worker Lifecycle
-
-- [x] Improve worker cleanup on SIGTERM/SIGKILL
-- [x] Fix orphan process detection on abnormal exit
-  > **Ref**: "All other threads in the process are instantly terminated in the child process, without executing any cleanup handlers or stack unwinding" — _Fork Safety of Python C-Extensions_
-- [x] Add worker health checks between test batches
-- [x] Handle worker crash during fixture setup
-- [x] Implement worker recycling for long test sessions
-  > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
-- [x] Add worker memory usage monitoring
-
-### 0.1.3 - Error Handling and Diagnostics
-
-**Target**: Make failures easier to understand and fix.
-
-**Status**: Complete
-
-#### Error Categorization
-
-- [x] Categorize errors into user errors vs system errors
-  - [x] User errors: test failures, import errors, fixture errors
-  - [x] System errors: kernel issues, permission errors, OOM
-- [x] Add error codes for machine-parseable output (E001-E020)
-- [x] Create error reference documentation (merged into `docs/troubleshooting.md`)
-- [x] Suggest fixes for common errors inline (via `Remediation` struct)
-
-#### Diagnostic Mode
-
-- [x] Add `--diagnose` flag for troubleshooting
-  - [x] Check kernel capabilities (userfaultfd, landlock, seccomp)
-    > **Ref**: "The userfaultfd subsystem fundamentally alters the contract between the memory management unit (MMU) and the user-space application" — _Python Memory Snapshotting with Userfaultfd_
-  - [x] Verify Python environment (libpython, pytest installed)
-  - [x] Test snapshot/restore cycle
-    > **Ref**: "By 'snapshotting' the virtual memory state of a process and lazily restoring it upon access, engineers can achieve reset times measured in microseconds" — _Python Memory Snapshotting with Userfaultfd_
-  - [x] Measure baseline performance
-  - [x] Check file descriptor limits
-  - [x] Verify shared memory availability
-- [x] Improve `tach self-test` output with remediation suggestions
-- [x] Add `--debug` flag for verbose logging (sets TACH_LOG_LEVEL=debug)
-- [x] Add `--trace` flag for maximum verbosity (sets TACH_LOG_LEVEL=trace)
-
-#### Common Failure Suggestions
-
-- [x] Detect and suggest fixes for common issues:
-  - [x] Missing `pytest` in environment
-  - [x] Incorrect `PYO3_PYTHON` path
-  - [x] Insufficient kernel version
-    > **Ref**: "The Linux userfaultfd (UFFD) mechanism offers a compelling alternative: user-space demand paging" — _Userfaultfd and CPython Allocator Interaction_
-  - [x] Permission denied on userfaultfd
-  - [x] Too many open files
-  - [x] Shared memory exhaustion
-  - [x] Docker/container restrictions
-    > **Ref**: "The User namespace allows a non-root process to map its user ID to root (0) inside the namespace. This grants the process the capability to perform mount operations" — _Rust-Python Test Isolation Blueprint_
-
-### 0.1.4 - Dependency Updates
-
-**Target**: Update dependencies and prepare for 0.2.x.
-
-**Status**: Complete
-
-#### Rust Dependencies
-
-- [x] Evaluate and merge notify 8.x update (watch mode)
-- [x] Update to Rust 2024 Edition
-- [x] Audit and update minor dependency versions
-- [x] Run `cargo audit` and fix any advisories (8 warnings for unmaintained transitive deps, no vulnerabilities)
-- [x] Update PyO3 to latest stable (0.27.2)
-- [x] Evaluate tokio updates (updated to 1.49)
-- [x] Update clap to latest (4.5)
-- [x] Evaluate `seccompiler` crate as alternative to raw BPF (already using seccompiler 0.5)
-  > **Ref**: [rust-vmm/seccompiler](https://github.com/rust-vmm/seccompiler) provides high-level seccomp-bpf used by Firecracker
-
-#### Python Compatibility
-
-- [x] Test against Python 3.14 (released October 2025)
-- [x] Verify Python 3.10+ compatibility (MSRV updated)
-- [x] Test with PyPy (experimental) - documented in python-compatibility.md
-- [x] Document Python version compatibility matrix
-  > See [docs/python-compatibility.md](docs/python-compatibility.md) for the complete compatibility matrix.
-- [x] Research PEP 703 (Free-Threading) implications for worker model
-  > **Ref**: [peps.python.org/pep-0703](https://peps.python.org/pep-0703/) — No-GIL Python changes isolation assumptions
-  > See [docs/python-compatibility.md](docs/python-compatibility.md) for detailed analysis.
-
-### 0.1.5 - Tooling Integration Research (Q1 2026)
-
-**Target**: Document tooling interactions, container compatibility, and test discovery edge cases.
-
-**Status**: Complete
-
-> **Research conducted**: Investigation of `.ignore` file conflicts, Docker sandbox behavior, and ignored test analysis.
-
-#### Tooling Ecosystem Documentation
-
-- [x] Document `.ignore` crate interaction with developer tools
-  > See [tooling-conflicts.md](tooling-conflicts.md) for comprehensive analysis of `.ignore`, `.gitignore`, and tool conflicts.
-  - [x] Identified tools that READ `.ignore` (ripgrep, fd, tach-core, tokei, watchexec)
-  - [x] Identified tools that WRITE to `.ignore` (Claude Code adds `*.py`)
-  - [x] Documented dangerous patterns that break discovery (`*.py`, `test*.py`, `tests/`)
-  - [x] Recommended safeguards:
-    - Add `--no-ignore` CLI flag
-    - Detect dangerous patterns and warn on zero tests
-    - Document in troubleshooting.md
-- [x] Added troubleshooting section for `.ignore` file blocking test discovery
-  > See [../troubleshooting.md](../troubleshooting.md) → "### .ignore File Blocking Python Files"
-
-#### Container Compatibility Matrix
-
-- [x] Document Docker/container sandbox behavior
-  > See [container-compatibility.md](container-compatibility.md) for full analysis.
-  - [x] Explained why sandbox tests fail via `pytest` but pass via `tach-core`
-  - [x] Created container compatibility matrix (Docker default, privileged, with caps, Podman, K8s)
-  - [x] Documented capability requirements (`SYS_PTRACE`, `SYS_ADMIN`, `privileged: true`)
-  - [x] Provided troubleshooting for container-specific issues
-
-#### Test Suite Analysis
-
-- [x] Catalogue all ignored tests (24 total)
-  > See [test-discovery-analysis.md](test-discovery-analysis.md) for complete analysis.
-  - [x] 17 environment-dependent tests (binary, sudo, Python requirements)
-  - [x] 3 slow/benchmark tests (memory invariant, latency)
-  - [x] 3 WIP/experimental tests (TLS exploration)
-  - [x] 0 flaky tests (all ignored tests have legitimate reasons)
-- [x] Document discovery edge case coverage
-  - [x] 14 edge cases currently tested in integration tests
-  - [x] 9 property-based tests for invariant verification
-  - [x] 11 potential gaps identified (unicode names, autouse fixtures, etc.)
-- [x] Provide commands for running ignored tests by category
-
-#### Future Improvements Identified
-
-- [x] Add `--no-ignore` CLI flag to bypass `.ignore` files
-- [x] Detect dangerous patterns in `.ignore` and warn when zero tests found
-- [x] Add missing discovery edge case tests (autouse fixtures, nested TestClass)
-- [x] Add CI job for running ignored tests separately
+> **Implementation Details:** For the complete task breakdown, see git history for v0.1.1-v0.1.5 tags.
 
 ---
 
