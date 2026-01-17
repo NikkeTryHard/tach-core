@@ -55,32 +55,45 @@ flowchart TB
     subgraph Phase2["Phase 2: Plugin Compatibility 🔨 IN PROGRESS"]
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
-        P2_1["0.2.1 pytest-django"]
-        P2_2["0.2.2 pytest-asyncio"]
-        P2_3["0.2.3 Additional Plugins"]
-        P2_31["0.2.3.1 Landlock V4 Network"]
-        P2_4["0.2.4 Plugin Stabilization"]
+        P2_1["0.2.1 Wrapper Hooks\n(yield/resume semantics)"]
+        P2_2["0.2.2 Effect System\n(RegisterMarker emission)"]
+        P2_3["0.2.3 Plugin Shims"]
+        P2_31["0.2.3.1 pytest-django"]
+        P2_32["0.2.3.2 pytest-asyncio"]
+        P2_33["0.2.3.3 pytest-mock"]
+        P2_34["0.2.3.4 Landlock V4 Network"]
+        P2_35["0.2.3.5 Landlock V5 IOCTL_DEV"]
+        P2_36["0.2.3.6 Landlock V6 IPC Scope"]
+        P2_4["0.2.4 Plugin Detection\n(Auto-detect/warn)"]
+        P2_5["0.2.5 Plugin Stabilization"]
 
         P2_0 --> P2_1
-        P2_0 --> P2_2
-        P2_0 --> P2_3
-        P2_0 --> P2_31
-        P2_1 --> P2_4
-        P2_2 --> P2_4
-        P2_3 --> P2_4
-        P2_31 -.->|optional| P2_4
+        P2_1 --> P2_2
+        P2_2 --> P2_3
+        P2_3 --> P2_31
+        P2_3 --> P2_32
+        P2_3 --> P2_33
+        P2_3 --> P2_34
+        P2_34 -.->|optional| P2_35
+        P2_35 -.->|optional| P2_36
+        P2_31 --> P2_4
+        P2_32 --> P2_4
+        P2_33 --> P2_4
+        P2_4 --> P2_5
     end
 
     subgraph Phase3["Phase 3: Database Integration"]
         direction TB
         P3_0["0.3.0 Django DB\n(Transaction Rollback)"]
         P3_1["0.3.1 SQLAlchemy\n(Session Mgmt)"]
-        P3_2["0.3.2 Connection Mgmt\n(FD Handover)"]
-        P3_3["0.3.3 Additional DBs\n(Postgres/MySQL/SQLite)"]
+        P3_2["0.3.2 Connection Mgmt\n(FD Teleportation)"]
+        P3_3["0.3.3 Savepoint Isolation\n(Preserve Pools)"]
+        P3_4["0.3.4 Additional DBs\n(Postgres/MySQL/SQLite)"]
 
         P3_0 --> P3_1
         P3_1 --> P3_2
         P3_2 --> P3_3
+        P3_3 --> P3_4
     end
 
     subgraph Phase4["Phase 4: Fixture Lifecycle"]
@@ -88,77 +101,115 @@ flowchart TB
         P4_0["0.4.0 Session Fixtures\n(Shared Memory Cache)"]
         P4_1["0.4.1 Module Fixtures\n(Boundary Detection)"]
         P4_2["0.4.2 Class Fixtures"]
-        P4_3["0.4.3 Advanced Features\n(Autouse/Parametrized)"]
+        P4_3["0.4.3 Autouse Injection\n(Auto-inject autouse=True)"]
+        P4_4["0.4.4 Parametrized Fixtures\n(Expand params at discovery)"]
+        P4_5["0.4.5 Zygote Warmup\n(Configurable pre-imports)"]
+        P4_6["0.4.6 Zygote Pool\n(Per-scope pools)"]
 
         P4_0 --> P4_1
         P4_1 --> P4_2
         P4_2 --> P4_3
+        P4_3 --> P4_4
+        P4_4 --> P4_5
+        P4_5 --> P4_6
     end
 
     subgraph Phase5["Phase 5: Developer Experience"]
         direction TB
-        P5_0["0.5.0 Enhanced Tracebacks"]
+        P5_0["0.5.0 Enhanced Tracebacks ✅\n(Colorization done)"]
         P5_1["0.5.1 Debug Mode"]
         P5_2["0.5.2 Interactive Debugging\n(pdb/breakpoint)"]
-        P5_3["0.5.3 Output Customization"]
-        P5_4["0.5.4 Coverage Optimization\n(SlipCover-style)"]
+        P5_3["0.5.3 Watch Mode Enhancements\n(Targeted re-discovery)"]
+        P5_4["0.5.4 Smart Watch Filtering\n(.tachignore support)"]
+        P5_5["0.5.5 Log Capture\n(Structured parsing)"]
+        P5_6["0.5.6 Coverage Optimization ✅\n(PEP 669 done)"]
 
         P5_0 --> P5_1
         P5_1 --> P5_2
         P5_2 --> P5_3
         P5_3 --> P5_4
+        P5_4 --> P5_5
+        P5_5 --> P5_6
     end
 
     subgraph Phase6["Phase 6: Configuration"]
         direction TB
         P6_0["0.6.0 pyproject.toml Schema"]
-        P6_1["0.6.1 Test Configuration"]
-        P6_2["0.6.2 Execution Config"]
-        P6_3["0.6.3 Config Profiles"]
+        P6_1["0.6.1 ENV_DENYLIST\n(Security filtering)"]
+        P6_2["0.6.2 Toxicity Config\n(Configurable blocklist)"]
+        P6_3["0.6.3 Plugin Config\n(Priority/disabled)"]
+        P6_4["0.6.4 Scheduler Persistence\n(Resume interrupted runs)"]
+        P6_5["0.6.5 Config Profiles"]
 
         P6_0 --> P6_1
         P6_1 --> P6_2
         P6_2 --> P6_3
+        P6_3 --> P6_4
+        P6_4 --> P6_5
     end
 
     subgraph Phase7["Phase 7: Performance"]
         direction TB
-        P7_0["0.7.0 Memory Optimization\n(Snapshot Compression)"]
-        P7_1["0.7.1 Adaptive Scheduling\n(Duration Prediction)"]
-        P7_2["0.7.2 Lazy Loading\n(On-demand Import)"]
-        P7_3["0.7.3 Parallel Discovery\n(Rayon Integration)"]
-        P7_4["0.7.4 Advanced Snapshots\n(Kernel LKM Research)"]
+        P7_0["0.7.0 Test History Store\n(SQLite duration cache)"]
+        P7_1["0.7.1 Memory Optimization\n(Snapshot Compression)"]
+        P7_2["0.7.2 UFFD Write-Protect\n(Dirty Page Tracking)"]
+        P7_3["0.7.3 Vectorized Restore\n(Batch UFFDIO_COPY)"]
+        P7_4["0.7.4 TLS Calibration ✅\n(Sentinel scan done)"]
+        P7_5["0.7.5 Adaptive Scheduling\n(Duration Prediction)"]
+        P7_6["0.7.6 Lazy Loading\n(On-demand Import)"]
+        P7_7["0.7.7 Advanced Snapshots\n(Kernel LKM Research)"]
+        P7_8["0.7.8 UFFD_EVENT_FORK\n(Fork Tracking)"]
+        P7_9["0.7.9 UFFD_EVENT_REMAP\n(mremap Tracking)"]
 
         P7_0 --> P7_1
         P7_1 --> P7_2
         P7_2 --> P7_3
         P7_3 --> P7_4
+        P7_4 --> P7_5
+        P7_5 --> P7_6
+        P7_6 --> P7_7
+        P7_7 --> P7_8
+        P7_8 --> P7_9
     end
 
     subgraph Phase8["Phase 8: Platform Integration"]
         direction TB
-        P8_0["0.8.0 GitHub Actions"]
-        P8_1["0.8.1 Other CI Platforms"]
-        P8_2["0.8.2 Reporting\n(HTML/Flaky Detection)"]
-        P8_3["0.8.3 Coverage Formats"]
-        P8_4["0.8.4 Sub-Interpreters\n(PEP 684 Experimental)"]
+        P8_0["0.8.0 GitHub Actions\n(Annotations/Summary)"]
+        P8_1["0.8.1 JUnit XML ✅\n(Already implemented)"]
+        P8_2["0.8.2 Other CI Platforms\n(TeamCity/Azure DevOps)"]
+        P8_3["0.8.3 Coverage Formats\n(Cobertura/HTML)"]
+        P8_4["0.8.4 Sub-Interp Architecture\n(Design: Zygote hybrid)"]
+        P8_5["0.8.5 Sub-Interpreters\n(PEP 684 Experimental)"]
+        P8_6["0.8.6 Sub-Interp State Reset\n(Module re-init)"]
 
         P8_0 --> P8_1
         P8_1 --> P8_2
         P8_2 --> P8_3
         P8_3 --> P8_4
+        P8_4 --> P8_5
+        P8_5 --> P8_6
     end
 
     subgraph Phase9["Phase 9: Stability"]
         direction TB
-        P9_0["0.9.0 Crash Recovery"]
-        P9_1["0.9.1 Signal Handling"]
-        P9_2["0.9.2 Resource Management\n(FD/Memory Limits)"]
-        P9_3["0.9.3 Stress Testing\n(10k+ Tests)"]
+        P9_0["0.9.0 Crash Recovery\n(SIGCHLD detection)"]
+        P9_1["0.9.1 Signal Routing\n(Debug mode handling)"]
+        P9_2["0.9.2 CleanupGuard\n(Mutex poison immunity)"]
+        P9_3["0.9.3 UFFD FD Limits\n(Per-worker tracking)"]
+        P9_4["0.9.4 Snapshot Memory\n(Golden page budget)"]
+        P9_5["0.9.5 OverlayFS Cleanup\n(Upperdir pruning)"]
+        P9_6["0.9.6 Seccomp Limits\n(BPF instruction count)"]
+        P9_7["0.9.7 Protocol Versioning\n(Upgrade path)"]
+        P9_8["0.9.8 Stress Testing\n(10k+ Tests)"]
 
         P9_0 --> P9_1
         P9_1 --> P9_2
         P9_2 --> P9_3
+        P9_3 --> P9_4
+        P9_4 --> P9_5
+        P9_5 --> P9_6
+        P9_6 --> P9_7
+        P9_7 --> P9_8
     end
 
     subgraph Phase10["Phase 10: Release 🔵 MILESTONE"]
@@ -205,12 +256,15 @@ flowchart TB
     Phase10 --> Future
 
     %% Cross-phase dependencies
-    P2_1 -.->|"Django fixtures"| P3_0
+    P2_31 -.->|"Django fixtures"| P3_0
     P3_0 -.->|"DB transactions"| P4_0
-    P4_3 -.->|"fixture viz"| P5_1
-    P5_4 -.->|"PEP 669 coverage"| P8_3
-    P7_4 -.->|"userfaultfd perf"| P9_3
-    P8_4 -.->|"sub-interp isolation"| P9_2
+    P4_6 -.->|"fixture viz"| P5_1
+    P5_6 -.->|"PEP 669 coverage"| P8_3
+    P7_9 -.->|"userfaultfd perf"| P9_8
+    P8_6 -.->|"sub-interp isolation"| P9_3
+    P2_34 -.->|"Landlock V4 network"| P9_3
+    P7_2 -.->|"write-protect mode"| P9_8
+    P7_8 -.->|"fork tracking"| P9_0
 
     %% Styling
     classDef done fill:#22c55e,stroke:#16a34a,color:#fff
@@ -220,14 +274,17 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0 done
-    class P2_1,P2_2,P2_3,P2_31,P2_4 pending
-    class P3_0,P3_1,P3_2,P3_3 pending
-    class P4_0,P4_1,P4_2,P4_3 pending
-    class P5_0,P5_1,P5_2,P5_3,P5_4 pending
-    class P6_0,P6_1,P6_2,P6_3 pending
-    class P7_0,P7_1,P7_2,P7_3,P7_4 pending
-    class P8_0,P8_1,P8_2,P8_3,P8_4 pending
-    class P9_0,P9_1,P9_2,P9_3 pending
+    class P2_1,P2_2,P2_3,P2_31,P2_32,P2_33,P2_34,P2_35,P2_36,P2_4,P2_5 pending
+    class P3_0,P3_1,P3_2,P3_3,P3_4 pending
+    class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
+    class P5_0,P5_6 done
+    class P5_1,P5_2,P5_3,P5_4,P5_5 pending
+    class P6_0,P6_1,P6_2,P6_3,P6_4,P6_5 pending
+    class P7_4 done
+    class P7_0,P7_1,P7_2,P7_3,P7_5,P7_6,P7_7,P7_8,P7_9 pending
+    class P8_1 done
+    class P8_0,P8_2,P8_3,P8_4,P8_5,P8_6 pending
+    class P9_0,P9_1,P9_2,P9_3,P9_4,P9_5,P9_6,P9_7,P9_8 pending
     class P10_0,P10_1,P10_2,P10_3,P10_4 pending
     class P10_5 milestone
     class F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 pending
@@ -258,6 +315,40 @@ flowchart TB
 | snob          | Test selection only | N/A         | Full execution engine     |
 
 > **Key Insight**: No existing tool combines Tach's speed (<50μs reset), isolation (userfaultfd), and compatibility (full pytest fixtures). See [external-research.md §2.3](external-research.md#23-rust-based-python-test-runners) for detailed analysis.
+
+### Competitive Feature Matrix
+
+| Feature            | Tach        | pytest-xdist | Maelstrom  | snob    | rtest |
+| ------------------ | ----------- | ------------ | ---------- | ------- | ----- |
+| Per-test isolation | userfaultfd | None         | Containers | None    | None  |
+| Reset time         | <50μs       | N/A          | 50-100ms   | N/A     | N/A   |
+| Full fixtures      | Yes         | Yes          | Limited    | N/A     | No    |
+| Test selection     | Planned     | No           | No         | **Yes** | No    |
+| Distributed        | Planned     | Yes          | Yes        | No      | No    |
+| Mutation testing   | Planned     | No           | No         | No      | No    |
+| Static discovery   | Yes         | No           | Yes        | Yes     | Yes   |
+
+> **Key Differentiator**: Tach is the only tool combining sub-millisecond isolation with full pytest fixture support. Competitors sacrifice either speed (Maelstrom) or compatibility (rtest, karva).
+
+### Container Compatibility
+
+Tach uses kernel features that require specific container configurations:
+
+| Container Mode       | Landlock | Seccomp | userfaultfd | Recommendation           |
+| -------------------- | -------- | ------- | ----------- | ------------------------ |
+| Docker default       | No       | Yes     | No          | Not supported            |
+| Docker privileged    | Yes      | Yes     | Yes         | **Recommended for dev**  |
+| Docker + SYS_PTRACE  | Yes      | Yes     | Yes         | Production alternative   |
+| Podman rootless      | No       | No      | No          | Not supported            |
+| Kubernetes (default) | Varies   | Varies  | No          | Requires SecurityContext |
+| Native Linux         | Yes      | Yes     | Yes         | Full support             |
+
+**Required Container Dependencies:**
+
+- `iproute2` package for network namespace configuration
+- Kernel 5.13+ for Landlock support
+
+> **External Ref**: [container-compatibility.md](container-compatibility.md)
 
 ### Python Version Compatibility
 
@@ -325,6 +416,34 @@ flowchart TB
   > 5. Provide `--affected` CLI flag for CI integration
 - [ ] **Flaky Test Detection**: nextest-style retry and flakiness tracking
 - [ ] **Distributed Execution**: Maelstrom-style cluster mode for CI farms
+
+### What Tach Must Learn From Competitors
+
+Based on [external-research.md §24](external-research.md#24-what-tach-must-learn-priority-order):
+
+**From snob (Test Impact Analysis):**
+
+- Dependency graph analysis for test selection
+- Git commit range integration (`--affected --commit-range HEAD~5..HEAD`)
+- Cache dependency graph with file hash invalidation
+
+**From nextest (CI Integration):**
+
+- Test partitioning for parallel CI jobs
+- Flaky test detection with automatic retry
+- Progress reporting UX patterns
+
+**From Maelstrom (Distribution):**
+
+- Broker/worker architecture for cluster mode
+- OCI-like container images for reproducibility
+- Cross-node result aggregation
+
+**From pymute (Quality):**
+
+- Mutation testing integration
+- Parallel mutant execution patterns
+- Quality score reporting
 
 ### Research-to-Implementation Mapping
 
