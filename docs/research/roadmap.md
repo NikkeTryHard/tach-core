@@ -400,6 +400,50 @@ The 0.1.x series focuses on solidifying the alpha release, improving documentati
 
 The 0.2.x series introduces a plugin compatibility layer that intercepts common pytest plugin hooks. This is NOT full `pluggy` support - instead, we implement targeted shims for the most popular plugins.
 
+### 0.2.x Development Flow
+
+```mermaid
+flowchart TD
+    subgraph Foundation ["Foundation (Complete)"]
+        A[0.2.0 Hook Framework]
+    end
+
+    subgraph Parallel ["Parallel Development Phase"]
+        B[0.2.1 pytest-django]
+        C[0.2.2 pytest-asyncio]
+        D[0.2.3 Additional Plugins]
+        E[0.2.3.1 Landlock V4 Network]
+    end
+
+    subgraph Integration ["Integration Phase"]
+        F[0.2.4 Testing & Stabilization]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+
+    B --> F
+    C --> F
+    D --> F
+    E -.->|optional| F
+
+    style A fill:#90EE90
+    style B fill:#87CEEB
+    style C fill:#87CEEB
+    style D fill:#87CEEB
+    style E fill:#DDA0DD
+    style F fill:#FFB347
+```
+
+**Legend:**
+
+- Green: Complete
+- Blue: Plugin shims (can be developed in parallel)
+- Purple: Kernel feature (fully independent)
+- Orange: Integration (requires all plugin shims complete)
+
 ### 0.2.0 - Hook Interception Framework
 
 **Target**: Core infrastructure for intercepting pytest hooks.
@@ -450,6 +494,8 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: First-class Django test support.
 
+> **Parallelization**: Can be developed in parallel with 0.2.2, 0.2.3, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
+
 > **Note**: Marker detection (`django_db`, `urls`, etc.) is already implemented in core discovery. Tests marked with `@pytest.mark.django_db` are detected and the marker name is available in `TestCase.markers`. The items below are about _executing_ the marker behavior.
 
 #### Marker Support
@@ -491,6 +537,8 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Native async/await test support.
 
+> **Parallelization**: Can be developed in parallel with 0.2.1, 0.2.3, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
+
 #### Async Detection
 
 - [x] Detect async test functions (`async def test_...`)
@@ -529,6 +577,8 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 ### 0.2.3 - Additional Plugin Support
 
 **Target**: Support for commonly used pytest plugins.
+
+> **Parallelization**: Can be developed in parallel with 0.2.1, 0.2.2, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
 
 #### pytest-mock
 
@@ -579,6 +629,8 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 **Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
 
+> **Parallelization**: Fully independent. Can be developed at any time after 0.2.0. This is a kernel feature enhancement with no dependencies on plugin shims (0.2.1-0.2.3).
+
 #### Network Restriction Rules
 
 - [ ] Detect Landlock ABI V4+ at runtime
@@ -602,6 +654,8 @@ allow_bind_ports = [8000, 8080]  # Empty = no binding allowed
 ### 0.2.4 - Plugin Testing and Stabilization
 
 **Target**: Ensure plugin shims work correctly with real-world projects.
+
+> **Parallelization**: SEQUENTIAL - Must wait for 0.2.1, 0.2.2, and 0.2.3 to complete. This version tests and stabilizes all plugin shims, so the plugins must exist first.
 
 #### Testing
 
