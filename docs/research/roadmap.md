@@ -127,7 +127,7 @@ flowchart TB
         P7_1["0.7.1 Adaptive Scheduling\n(Duration Prediction)"]
         P7_2["0.7.2 Lazy Loading\n(On-demand Import)"]
         P7_3["0.7.3 Parallel Discovery\n(Rayon Integration)"]
-        P7_4["0.7.4 Advanced Snapshots\n(userfaultfd Research)"]
+        P7_4["0.7.4 Advanced Snapshots\n(Kernel LKM Research)"]
 
         P7_0 --> P7_1
         P7_1 --> P7_2
