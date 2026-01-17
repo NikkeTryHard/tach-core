@@ -35,6 +35,7 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
+    #[must_use]
     pub fn new() -> Self {
         let mut registry = Self {
             plugins: HashMap::new(),

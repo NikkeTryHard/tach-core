@@ -71,10 +71,12 @@ pub struct HookResult {
 }
 
 impl HookResult {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_value(value: Option<String>) -> Self {
         Self {
             return_value: value,
@@ -82,6 +84,7 @@ impl HookResult {
         }
     }
 
+    #[must_use]
     pub fn with_error(error: String, source: PathBuf) -> Self {
         Self {
             error: Some(error),
@@ -182,6 +185,7 @@ pub struct HookRegistry {
 
 impl HookRegistry {
     /// Create a new empty registry
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

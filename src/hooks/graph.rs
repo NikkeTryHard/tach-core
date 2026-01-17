@@ -16,6 +16,7 @@ pub struct HookDependencyGraph {
 }
 
 impl HookDependencyGraph {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

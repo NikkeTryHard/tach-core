@@ -32,6 +32,7 @@ pub struct HookCaller<'a> {
 
 impl<'a> HookCaller<'a> {
     /// Create a new HookCaller with the given registry and project root
+    #[must_use]
     pub fn new(registry: &'a HookRegistry, project_root: impl Into<PathBuf>) -> Self {
         Self {
             registry,
