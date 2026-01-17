@@ -489,9 +489,9 @@ Before 1.0.0, verify all critical research requirements are met.
 | TLS Segment Registration (`fs_base`)      | _Userfaultfd and CPython Allocator_        | [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)             | Pending  |
 | Free-Threaded Python (3.13t/3.14t)        | —                                          | [py-free-threading](https://py-free-threading.github.io/)                            | Pending  |
 
-### Deep Dive Documentation
+### Documentation Index
 
-Comprehensive technical analysis derived from source code (see [README.md](README.md) for full index):
+#### Research Deep Dives (~183KB)
 
 | Document                                                             | Focus        | Key Topics                                     |
 | -------------------------------------------------------------------- | ------------ | ---------------------------------------------- |
@@ -503,12 +503,35 @@ Comprehensive technical analysis derived from source code (see [README.md](READM
 | [core-infrastructure-deep-dive.md](core-infrastructure-deep-dive.md) | Foundation   | Config, errors, protocol, allocator            |
 | [python-harness-deep-dive.md](python-harness-deep-dive.md)           | Python Side  | Entry point, pytest layer, FFI bridge          |
 
-**Modular Isolation Docs:**
+#### Modular Isolation Docs
 
 - [isolation-overview.md](isolation-overview.md) - Architecture summary
 - [isolation-landlock.md](isolation-landlock.md) - Filesystem sandboxing (ABI V1-V6)
 - [isolation-seccomp.md](isolation-seccomp.md) - Syscall filtering
 - [isolation-userfaultfd.md](isolation-userfaultfd.md) - Memory snapshotting
+
+#### Research & Analysis
+
+| Document                                                 | Size | Purpose                                            |
+| -------------------------------------------------------- | ---- | -------------------------------------------------- |
+| [README.md](README.md)                                   | 15KB | Research index, paper summaries, component mapping |
+| [external-research.md](external-research.md)             | 49KB | Competitive analysis, 10+ Rust-Python tools        |
+| [topic-archive.md](topic-archive.md)                     | 60KB | Zygote, memory, fork safety, cross-platform        |
+| [container-compatibility.md](container-compatibility.md) | 14KB | Docker, Podman, K8s requirements                   |
+| [tooling-conflicts.md](tooling-conflicts.md)             | 11KB | `.ignore` file handling, Claude Code conflicts     |
+| [test-discovery-analysis.md](test-discovery-analysis.md) | 15KB | 24 ignored test categories, edge cases             |
+
+#### User Documentation
+
+| Document                                                 | Purpose                                        |
+| -------------------------------------------------------- | ---------------------------------------------- |
+| [../quickstart.md](../quickstart.md)                     | Installation, first run, migration from pytest |
+| [../configuration.md](../configuration.md)               | CLI flags, pyproject.toml, env vars            |
+| [../troubleshooting.md](../troubleshooting.md)           | Common errors, kernel issues, debugging        |
+| [../api-reference.md](../api-reference.md)               | Public API, markers, fixtures                  |
+| [../python-compatibility.md](../python-compatibility.md) | Python 3.10-3.14 support matrix                |
+| [../development.md](../development.md)                   | Contributing, build commands, test structure   |
+| [../benchmarks.md](../benchmarks.md)                     | Performance measurements, comparisons          |
 
 ### Future Phases (Post-1.0)
 
