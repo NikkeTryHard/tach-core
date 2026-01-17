@@ -55,8 +55,8 @@ flowchart TB
     subgraph Phase2["Phase 2: Plugin Compatibility 🔨 IN PROGRESS"]
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
-        P2_1["0.2.1 Wrapper Hooks\n(yield/resume semantics)"]
-        P2_2["0.2.2 Effect System\n(RegisterMarker emission)"]
+        P2_1["0.2.1 Wrapper Hooks<br>(yield/resume semantics)"]
+        P2_2["0.2.2 Effect System<br>(RegisterMarker emission)"]
         P2_3["0.2.3 Plugin Shims"]
         P2_31["0.2.3.1 pytest-django"]
         P2_32["0.2.3.2 pytest-asyncio"]
@@ -64,7 +64,7 @@ flowchart TB
         P2_34["0.2.3.4 Landlock V4 Network"]
         P2_35["0.2.3.5 Landlock V5 IOCTL_DEV"]
         P2_36["0.2.3.6 Landlock V6 IPC Scope"]
-        P2_4["0.2.4 Plugin Detection\n(Auto-detect/warn)"]
+        P2_4["0.2.4 Plugin Detection<br>(Auto-detect/warn)"]
         P2_5["0.2.5 Plugin Stabilization"]
 
         P2_0 --> P2_1
@@ -84,11 +84,11 @@ flowchart TB
 
     subgraph Phase3["Phase 3: Database Integration"]
         direction TB
-        P3_0["0.3.0 Django DB\n(Transaction Rollback)"]
-        P3_1["0.3.1 SQLAlchemy\n(Session Mgmt)"]
-        P3_2["0.3.2 Connection Mgmt\n(FD Teleportation)"]
-        P3_3["0.3.3 Savepoint Isolation\n(Preserve Pools)"]
-        P3_4["0.3.4 Additional DBs\n(Postgres/MySQL/SQLite)"]
+        P3_0["0.3.0 Django DB<br>(Transaction Rollback)"]
+        P3_1["0.3.1 SQLAlchemy<br>(Session Mgmt)"]
+        P3_2["0.3.2 Connection Mgmt<br>(FD Teleportation)"]
+        P3_3["0.3.3 Savepoint Isolation<br>(Preserve Pools)"]
+        P3_4["0.3.4 Additional DBs<br>(Postgres/MySQL/SQLite)"]
 
         P3_0 --> P3_1
         P3_1 --> P3_2
@@ -98,13 +98,13 @@ flowchart TB
 
     subgraph Phase4["Phase 4: Fixture Lifecycle"]
         direction TB
-        P4_0["0.4.0 Session Fixtures\n(Shared Memory Cache)"]
-        P4_1["0.4.1 Module Fixtures\n(Boundary Detection)"]
+        P4_0["0.4.0 Session Fixtures<br>(Shared Memory Cache)"]
+        P4_1["0.4.1 Module Fixtures<br>(Boundary Detection)"]
         P4_2["0.4.2 Class Fixtures"]
-        P4_3["0.4.3 Autouse Injection\n(Auto-inject autouse=True)"]
-        P4_4["0.4.4 Parametrized Fixtures\n(Expand params at discovery)"]
-        P4_5["0.4.5 Zygote Warmup\n(Configurable pre-imports)"]
-        P4_6["0.4.6 Zygote Pool\n(Per-scope pools)"]
+        P4_3["0.4.3 Autouse Injection<br>(Auto-inject autouse=True)"]
+        P4_4["0.4.4 Parametrized Fixtures<br>(Expand params at discovery)"]
+        P4_5["0.4.5 Zygote Warmup<br>(Configurable pre-imports)"]
+        P4_6["0.4.6 Zygote Pool<br>(Per-scope pools)"]
 
         P4_0 --> P4_1
         P4_1 --> P4_2
@@ -116,13 +116,13 @@ flowchart TB
 
     subgraph Phase5["Phase 5: Developer Experience"]
         direction TB
-        P5_0["0.5.0 Enhanced Tracebacks ✅\n(Colorization done)"]
+        P5_0["0.5.0 Enhanced Tracebacks ✅<br>(Colorization done)"]
         P5_1["0.5.1 Debug Mode"]
-        P5_2["0.5.2 Interactive Debugging\n(pdb/breakpoint)"]
-        P5_3["0.5.3 Watch Mode Enhancements\n(Targeted re-discovery)"]
-        P5_4["0.5.4 Smart Watch Filtering\n(.tachignore support)"]
-        P5_5["0.5.5 Log Capture\n(Structured parsing)"]
-        P5_6["0.5.6 Coverage Optimization ✅\n(PEP 669 done)"]
+        P5_2["0.5.2 Interactive Debugging<br>(pdb/breakpoint)"]
+        P5_3["0.5.3 Watch Mode Enhancements<br>(Targeted re-discovery)"]
+        P5_4["0.5.4 Smart Watch Filtering<br>(.tachignore support)"]
+        P5_5["0.5.5 Log Capture<br>(Structured parsing)"]
+        P5_6["0.5.6 Coverage Optimization ✅<br>(PEP 669 done)"]
 
         P5_0 --> P5_1
         P5_1 --> P5_2
@@ -135,10 +135,10 @@ flowchart TB
     subgraph Phase6["Phase 6: Configuration"]
         direction TB
         P6_0["0.6.0 pyproject.toml Schema"]
-        P6_1["0.6.1 ENV_DENYLIST\n(Security filtering)"]
-        P6_2["0.6.2 Toxicity Config\n(Configurable blocklist)"]
-        P6_3["0.6.3 Plugin Config\n(Priority/disabled)"]
-        P6_4["0.6.4 Scheduler Persistence\n(Resume interrupted runs)"]
+        P6_1["0.6.1 ENV_DENYLIST<br>(Security filtering)"]
+        P6_2["0.6.2 Toxicity Config<br>(Configurable blocklist)"]
+        P6_3["0.6.3 Plugin Config<br>(Priority/disabled)"]
+        P6_4["0.6.4 Scheduler Persistence<br>(Resume interrupted runs)"]
         P6_5["0.6.5 Config Profiles"]
 
         P6_0 --> P6_1
@@ -150,16 +150,16 @@ flowchart TB
 
     subgraph Phase7["Phase 7: Performance"]
         direction TB
-        P7_0["0.7.0 Test History Store\n(SQLite duration cache)"]
-        P7_1["0.7.1 Memory Optimization\n(Snapshot Compression)"]
-        P7_2["0.7.2 UFFD Write-Protect\n(Dirty Page Tracking)"]
-        P7_3["0.7.3 Vectorized Restore\n(Batch UFFDIO_COPY)"]
-        P7_4["0.7.4 TLS Calibration ✅\n(Sentinel scan done)"]
-        P7_5["0.7.5 Adaptive Scheduling\n(Duration Prediction)"]
-        P7_6["0.7.6 Lazy Loading\n(On-demand Import)"]
-        P7_7["0.7.7 Advanced Snapshots\n(Kernel LKM Research)"]
-        P7_8["0.7.8 UFFD_EVENT_FORK\n(Fork Tracking)"]
-        P7_9["0.7.9 UFFD_EVENT_REMAP\n(mremap Tracking)"]
+        P7_0["0.7.0 Test History Store<br>(SQLite duration cache)"]
+        P7_1["0.7.1 Memory Optimization<br>(Snapshot Compression)"]
+        P7_2["0.7.2 UFFD Write-Protect<br>(Dirty Page Tracking)"]
+        P7_3["0.7.3 Vectorized Restore<br>(Batch UFFDIO_COPY)"]
+        P7_4["0.7.4 TLS Calibration ✅<br>(Sentinel scan done)"]
+        P7_5["0.7.5 Adaptive Scheduling<br>(Duration Prediction)"]
+        P7_6["0.7.6 Lazy Loading<br>(On-demand Import)"]
+        P7_7["0.7.7 Advanced Snapshots<br>(Kernel LKM Research)"]
+        P7_8["0.7.8 UFFD_EVENT_FORK<br>(Fork Tracking)"]
+        P7_9["0.7.9 UFFD_EVENT_REMAP<br>(mremap Tracking)"]
 
         P7_0 --> P7_1
         P7_1 --> P7_2
@@ -174,13 +174,13 @@ flowchart TB
 
     subgraph Phase8["Phase 8: Platform Integration"]
         direction TB
-        P8_0["0.8.0 GitHub Actions\n(Annotations/Summary)"]
-        P8_1["0.8.1 JUnit XML ✅\n(Already implemented)"]
-        P8_2["0.8.2 Other CI Platforms\n(TeamCity/Azure DevOps)"]
-        P8_3["0.8.3 Coverage Formats\n(Cobertura/HTML)"]
-        P8_4["0.8.4 Sub-Interp Architecture\n(Design: Zygote hybrid)"]
-        P8_5["0.8.5 Sub-Interpreters\n(PEP 684 Experimental)"]
-        P8_6["0.8.6 Sub-Interp State Reset\n(Module re-init)"]
+        P8_0["0.8.0 GitHub Actions<br>(Annotations/Summary)"]
+        P8_1["0.8.1 JUnit XML ✅<br>(Already implemented)"]
+        P8_2["0.8.2 Other CI Platforms<br>(TeamCity/Azure DevOps)"]
+        P8_3["0.8.3 Coverage Formats<br>(Cobertura/HTML)"]
+        P8_4["0.8.4 Sub-Interp Architecture<br>(Design: Zygote hybrid)"]
+        P8_5["0.8.5 Sub-Interpreters<br>(PEP 684 Experimental)"]
+        P8_6["0.8.6 Sub-Interp State Reset<br>(Module re-init)"]
 
         P8_0 --> P8_1
         P8_1 --> P8_2
@@ -192,15 +192,15 @@ flowchart TB
 
     subgraph Phase9["Phase 9: Stability"]
         direction TB
-        P9_0["0.9.0 Crash Recovery\n(SIGCHLD detection)"]
-        P9_1["0.9.1 Signal Routing\n(Debug mode handling)"]
-        P9_2["0.9.2 CleanupGuard\n(Mutex poison immunity)"]
-        P9_3["0.9.3 UFFD FD Limits\n(Per-worker tracking)"]
-        P9_4["0.9.4 Snapshot Memory\n(Golden page budget)"]
-        P9_5["0.9.5 OverlayFS Cleanup\n(Upperdir pruning)"]
-        P9_6["0.9.6 Seccomp Limits\n(BPF instruction count)"]
-        P9_7["0.9.7 Protocol Versioning\n(Upgrade path)"]
-        P9_8["0.9.8 Stress Testing\n(10k+ Tests)"]
+        P9_0["0.9.0 Crash Recovery<br>(SIGCHLD detection)"]
+        P9_1["0.9.1 Signal Routing<br>(Debug mode handling)"]
+        P9_2["0.9.2 CleanupGuard<br>(Mutex poison immunity)"]
+        P9_3["0.9.3 UFFD FD Limits<br>(Per-worker tracking)"]
+        P9_4["0.9.4 Snapshot Memory<br>(Golden page budget)"]
+        P9_5["0.9.5 OverlayFS Cleanup<br>(Upperdir pruning)"]
+        P9_6["0.9.6 Seccomp Limits<br>(BPF instruction count)"]
+        P9_7["0.9.7 Protocol Versioning<br>(Upgrade path)"]
+        P9_8["0.9.8 Stress Testing<br>(10k+ Tests)"]
 
         P9_0 --> P9_1
         P9_1 --> P9_2
@@ -214,12 +214,12 @@ flowchart TB
 
     subgraph Phase10["Phase 10: Release 🔵 MILESTONE"]
         direction TB
-        P10_0["0.10.0 Beta 1\n(Feature Freeze)"]
+        P10_0["0.10.0 Beta 1<br>(Feature Freeze)"]
         P10_1["0.10.1 Beta 1 Fixes"]
         P10_2["0.11.0 Beta 2"]
         P10_3["0.11.1 RC1"]
         P10_4["0.11.2 RC2"]
-        P10_5["1.0.0 Production\n(API Stability)"]
+        P10_5["1.0.0 Production<br>(API Stability)"]
 
         P10_0 --> P10_1
         P10_1 --> P10_2
