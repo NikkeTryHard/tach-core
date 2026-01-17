@@ -79,6 +79,143 @@ jobs:
         with:
           command: check all
 
+  # Rust unit tests - standalone job for faster feedback
+  unit-tests:
+    name: Rust Unit Tests
+    runs-on: ubuntu-latest
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set PYO3_PYTHON
+        run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
+      - name: Run unit tests
+        run: cargo test --lib --all-features
+
+  # Rust integration tests - all tests in rust_tests/ except proptest
+  rust-integration:
+    name: Rust Integration Tests
+    runs-on: ubuntu-latest
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set PYO3_PYTHON
+        run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
+      - name: Install Python dependencies
+        run: pip install pytest pytest-asyncio numpy django
+      - name: Run integration tests (excluding proptest)
+        run: |
+          cargo test --test cli_integration
+          cargo test --test discovery_integration
+          cargo test --test sandbox_enforcement
+          cargo test --test hooks_test
+          cargo test --test effect_ipc_integration
+          cargo test --test toxicity_integration
+          cargo test --test errors_integration
+          cargo test --test diagnostics_integration
+          cargo test --test loader_integration
+          cargo test --test plugin_bridge_integration
+          cargo test --test resolver_integration
+          cargo test --test protocol_integration
+          cargo test --test phase4_integration
+          cargo test --test tagging_integrity
+          cargo test --test restoration_invariant
+          cargo test --test snapshot_integration
+          cargo test --test concurrent_stress -- --test-threads=2
+          cargo test --test coverage_e2e
+          cargo test --test coverage_flag_tests
+          cargo test --test dry_run_accuracy_tests
+          cargo test --test durations_flag_tests
+          cargo test --test exit_behavior_tests
+          cargo test --test exit_code_tests
+          cargo test --test filter_expression_tests
+          cargo test --test json_schema_tests
+          cargo test --test junit_xml_tests
+          cargo test --test kernel_compat_tests
+          cargo test --test physics_check
+          cargo test --test timeout_behavior_tests
+          cargo test --test traceback_format_tests
+          cargo test --test verbosity_level_tests
+          cargo test --test watch_mode_tests
+          cargo test --test worker_count_tests
+        timeout-minutes: 25
+
+  # MSRV verification - ensure compatibility with minimum supported Rust version
+  msrv:
+    name: MSRV Check (Rust 1.88)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set PYO3_PYTHON
+        run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
+      - name: Check MSRV compatibility
+        run: cargo check --all-features
+
+  # Binary size check - prevent bloat
+  binary-size:
+    name: Binary Size Check
+    runs-on: ubuntu-latest
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set PYO3_PYTHON
+        run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
+      - name: Build release binary
+        run: cargo build --release
+      - name: Check binary size
+        run: |
+          SIZE=$(stat -c%s target/release/tach-core)
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "Binary size: ${SIZE_MB}MB ($SIZE bytes)"
+          # Fail if > 50MB
+          if [ "$SIZE" -gt 52428800 ]; then
+            echo "::error::Binary too large: ${SIZE_MB}MB > 50MB threshold"
+            exit 1
+          fi
+          echo "::notice::Binary size: ${SIZE_MB}MB - within threshold"
+
   # Only runs when code changes
   coverage:
     name: Code Coverage (llvm-cov)
@@ -211,6 +348,7 @@ jobs:
           pytest tests/gauntlet_012/ -v --tb=short
           pytest tests/gauntlet_013/ -v --tb=short
           pytest tests/gauntlet_014/ -v --tb=short
+          pytest tests/gauntlet_015/ -v --tb=short
           pytest tests/gauntlet_phase1/ -v --tb=short
           pytest tests/gauntlet_phase2/ -v --tb=short
           pytest tests/gauntlet_phase3/ -v --tb=short
@@ -236,6 +374,10 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           pytest tests/django_project/ -v --tb=short || echo "Django tests skipped"
+
+      - name: Run golden tests (PR to master)
+        if: github.event_name == 'pull_request' && github.base_ref == 'master'
+        run: GOLDEN_TESTS=1 pytest tests/regression/golden/ -v --tb=short
 
   # Only runs when code changes
   proptest:
