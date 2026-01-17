@@ -408,36 +408,36 @@ pub fn builtin_hook_specs() -> HashMap<String, HookSpec> {
     let mut specs = HashMap::new();
 
     specs.insert(
-        "pytest_configure".to_string(),
+        hook_names::PYTEST_CONFIGURE.to_string(),
         HookSpec {
-            name: "pytest_configure".to_string(),
+            name: hook_names::PYTEST_CONFIGURE.to_string(),
             modifies_global_state: true,
             cacheable: true,
         },
     );
 
     specs.insert(
-        "pytest_collection_modifyitems".to_string(),
+        hook_names::PYTEST_COLLECTION_MODIFYITEMS.to_string(),
         HookSpec {
-            name: "pytest_collection_modifyitems".to_string(),
+            name: hook_names::PYTEST_COLLECTION_MODIFYITEMS.to_string(),
             modifies_global_state: false,
             cacheable: true,
         },
     );
 
     specs.insert(
-        "pytest_runtest_setup".to_string(),
+        hook_names::PYTEST_RUNTEST_SETUP.to_string(),
         HookSpec {
-            name: "pytest_runtest_setup".to_string(),
+            name: hook_names::PYTEST_RUNTEST_SETUP.to_string(),
             modifies_global_state: false,
             cacheable: false,
         },
     );
 
     specs.insert(
-        "pytest_runtest_teardown".to_string(),
+        hook_names::PYTEST_RUNTEST_TEARDOWN.to_string(),
         HookSpec {
-            name: "pytest_runtest_teardown".to_string(),
+            name: hook_names::PYTEST_RUNTEST_TEARDOWN.to_string(),
             modifies_global_state: false,
             cacheable: false,
         },
@@ -462,36 +462,36 @@ pub fn builtin_hook_specs() -> HashMap<String, HookSpec> {
     );
 
     specs.insert(
-        "pytest_runtest_call".to_string(),
+        hook_names::PYTEST_RUNTEST_CALL.to_string(),
         HookSpec {
-            name: "pytest_runtest_call".to_string(),
+            name: hook_names::PYTEST_RUNTEST_CALL.to_string(),
             modifies_global_state: false,
             cacheable: false, // Called per-test
         },
     );
 
     specs.insert(
-        "pytest_runtest_makereport".to_string(),
+        hook_names::PYTEST_RUNTEST_MAKEREPORT.to_string(),
         HookSpec {
-            name: "pytest_runtest_makereport".to_string(),
+            name: hook_names::PYTEST_RUNTEST_MAKEREPORT.to_string(),
             modifies_global_state: false,
             cacheable: false, // Called per-test
         },
     );
 
     specs.insert(
-        "pytest_sessionstart".to_string(),
+        hook_names::PYTEST_SESSIONSTART.to_string(),
         HookSpec {
-            name: "pytest_sessionstart".to_string(),
+            name: hook_names::PYTEST_SESSIONSTART.to_string(),
             modifies_global_state: true, // Session-level
             cacheable: true,
         },
     );
 
     specs.insert(
-        "pytest_sessionfinish".to_string(),
+        hook_names::PYTEST_SESSIONFINISH.to_string(),
         HookSpec {
-            name: "pytest_sessionfinish".to_string(),
+            name: hook_names::PYTEST_SESSIONFINISH.to_string(),
             modifies_global_state: true, // Session-level
             cacheable: true,
         },
@@ -516,12 +516,12 @@ mod tests {
 
         let hook = Hook {
             spec: HookSpec {
-                name: "pytest_configure".to_string(),
+                name: hook_names::PYTEST_CONFIGURE.to_string(),
                 modifies_global_state: true,
                 cacheable: true,
             },
             source: PathBuf::from("conftest.py"),
-            function_name: "pytest_configure".to_string(),
+            function_name: hook_names::PYTEST_CONFIGURE.to_string(),
             line_number: 10,
             is_wrapper: false,
         };
@@ -535,16 +535,16 @@ mod tests {
     fn test_builtin_specs() {
         let specs = builtin_hook_specs();
         assert_eq!(specs.len(), 10, "Should have 10 builtin hook specs");
-        assert!(specs.contains_key("pytest_configure"));
+        assert!(specs.contains_key(hook_names::PYTEST_CONFIGURE));
         assert!(specs.contains_key("pytest_unconfigure"));
-        assert!(specs.contains_key("pytest_collection_modifyitems"));
+        assert!(specs.contains_key(hook_names::PYTEST_COLLECTION_MODIFYITEMS));
         assert!(specs.contains_key("pytest_collection_finish"));
-        assert!(specs.contains_key("pytest_runtest_setup"));
-        assert!(specs.contains_key("pytest_runtest_call"));
-        assert!(specs.contains_key("pytest_runtest_teardown"));
-        assert!(specs.contains_key("pytest_runtest_makereport"));
-        assert!(specs.contains_key("pytest_sessionstart"));
-        assert!(specs.contains_key("pytest_sessionfinish"));
+        assert!(specs.contains_key(hook_names::PYTEST_RUNTEST_SETUP));
+        assert!(specs.contains_key(hook_names::PYTEST_RUNTEST_CALL));
+        assert!(specs.contains_key(hook_names::PYTEST_RUNTEST_TEARDOWN));
+        assert!(specs.contains_key(hook_names::PYTEST_RUNTEST_MAKEREPORT));
+        assert!(specs.contains_key(hook_names::PYTEST_SESSIONSTART));
+        assert!(specs.contains_key(hook_names::PYTEST_SESSIONFINISH));
     }
 
     #[test]
@@ -554,12 +554,12 @@ mod tests {
         // Register a toxic hook (pytest_configure modifies global state)
         let toxic_hook = Hook {
             spec: HookSpec {
-                name: "pytest_configure".to_string(),
+                name: hook_names::PYTEST_CONFIGURE.to_string(),
                 modifies_global_state: true,
                 cacheable: true,
             },
             source: PathBuf::from("tests/conftest.py"),
-            function_name: "pytest_configure".to_string(),
+            function_name: hook_names::PYTEST_CONFIGURE.to_string(),
             line_number: 5,
             is_wrapper: false,
         };
