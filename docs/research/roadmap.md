@@ -275,7 +275,8 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0 done
-    class P2_1,P2_2,P2_3,P2_31,P2_32,P2_33,P2_34,P2_35,P2_36,P2_4,P2_5 pending
+    class P2_1 inProgress
+    class P2_2,P2_3,P2_31,P2_32,P2_33,P2_34,P2_35,P2_36,P2_4,P2_5 pending
     class P3_0,P3_1,P3_2,P3_3,P3_4 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
     class P5_0,P5_6 done
