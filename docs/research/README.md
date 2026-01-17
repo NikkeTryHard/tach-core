@@ -166,3 +166,59 @@ Verbose source papers have been moved to `docs/archive/research-papers/`.
 - [topic-archive.md](topic-archive.md) - Detailed analysis of each research topic
 - [external-research.md](external-research.md) - Analysis of related external projects
 - [container-compatibility.md](container-compatibility.md) - Container runtime compatibility research
+
+---
+
+## Deep Dive Documentation
+
+Comprehensive technical documentation derived from source code analysis:
+
+```mermaid
+flowchart TB
+    subgraph Core["Core Systems"]
+        CORE[core-infrastructure-deep-dive.md]
+        HARNESS[python-harness-deep-dive.md]
+    end
+
+    subgraph Discovery["Test Discovery"]
+        DISC[discovery-deep-dive.md]
+    end
+
+    subgraph Execution["Test Execution"]
+        EXEC[execution-deep-dive.md]
+        HOOKS[hooks-deep-dive.md]
+    end
+
+    subgraph Isolation["Process Isolation"]
+        ISO[isolation-deep-dive.md]
+    end
+
+    subgraph Output["Results & Coverage"]
+        REPORT[reporting-deep-dive.md]
+    end
+
+    CORE --> DISC
+    CORE --> EXEC
+    DISC --> EXEC
+    EXEC --> ISO
+    EXEC --> HOOKS
+    HARNESS --> HOOKS
+    HARNESS --> REPORT
+    ISO --> REPORT
+```
+
+| Document                                                             | Size | Description                                                                     |
+| :------------------------------------------------------------------- | :--- | :------------------------------------------------------------------------------ |
+| [isolation-deep-dive.md](isolation-deep-dive.md)                     | 28KB | Landlock, Seccomp, namespaces, userfaultfd snapshotting, calibration system     |
+| [discovery-deep-dive.md](discovery-deep-dive.md)                     | 28KB | AST parsing, test pattern matching, fixture resolution, toxicity classification |
+| [execution-deep-dive.md](execution-deep-dive.md)                     | 24KB | Zygote model, supervisor-worker IPC, scheduling, memory reset cycle             |
+| [hooks-deep-dive.md](hooks-deep-dive.md)                             | 26KB | Hook registry, pytest compatibility, effect recording/replay, plugin shims      |
+| [reporting-deep-dive.md](reporting-deep-dive.md)                     | 25KB | PEP 669 coverage, ring buffer design, JUnit XML, traceback formatting           |
+| [core-infrastructure-deep-dive.md](core-infrastructure-deep-dive.md) | 28KB | Configuration, error handling, diagnostics, IPC protocol, allocator integration |
+| [python-harness-deep-dive.md](python-harness-deep-dive.md)           | 24KB | Python entry point, pytest layer, fixture execution, FFI bridge                 |
+
+**Total Deep Dive Documentation:** ~183KB across 7 documents
+
+---
+
+_Last updated: 2026-01-17_
