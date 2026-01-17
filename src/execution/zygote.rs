@@ -760,12 +760,9 @@ except Exception as e:
     //     -> Supervisor (main.rs) -> bincode decode -> HookRegistry.record_effect()
     //
     // ============================================================================
-    let effects_encoded =
-        bincode::serde::encode_to_vec(&session_effects, bincode::config::standard())
-            .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
-    let effects_len = (effects_encoded.len() as u32).to_le_bytes();
-    cmd_socket.write_all(&effects_len)?;
-    cmd_socket.write_all(&effects_encoded)?;
+    let framed_effects = encode_with_length(&session_effects)
+        .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
+    cmd_socket.write_all(&framed_effects)?;
 
     // Channel for collecting results from worker threads
     let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
