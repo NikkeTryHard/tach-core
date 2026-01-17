@@ -284,6 +284,7 @@ flowchart TB
 | Landlock V3        | 6.2            | 6.7+        | `LANDLOCK_ACCESS_FS_TRUNCATE`                 |
 | Landlock V4        | 6.7            | 6.10+       | **Network restrictions** (TCP bind/connect)   |
 | Landlock V5        | 6.10           | 6.10+       | `LANDLOCK_ACCESS_FS_IOCTL_DEV`                |
+| Landlock V6        | 6.12           | 6.12+       | Scope controls (IPC restrictions, signal)     |
 | userfaultfd        | 4.3            | 5.10+       | Basic page fault handling                     |
 | userfaultfd WP     | 5.7            | 5.10+       | Write-protect mode for dirty tracking         |
 | OverlayFS metacopy | 5.11           | 5.15+       | Optimized copy-up for metadata                |
@@ -352,17 +353,22 @@ Before 1.0.0, verify all critical research requirements are met.
 
 **Original Research Requirements:**
 
-| Requirement                               | Research Source                            | External Ref                                                                         | Status  |
-| ----------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ | ------- |
-| Allocator Quiesce (`thread.tcache.flush`) | _Memory Snapshotting with Userfaultfd_     | [jemalloc mallctl](https://jemalloc.net/jemalloc.3.html)                             | Pending |
-| Toxicity Detection (fork-unsafe patterns) | _Static Analysis for Toxic Python Modules_ | [POSIX fork()](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) | Pending |
-| Namespace Isolation (CLONE_NEWNS/NET)     | _Compatibility Layer Blueprint_            | [Landlock docs](https://docs.kernel.org/userspace-api/landlock.html)                 | Pending |
-| Database Dispose (connection pools)       | _Fork Safety of Python C-Extensions_       | —                                                                                    | Pending |
-| TLS Restoration (mimalloc, Python 3.13+)  | _Userfaultfd and CPython Allocator_        | [mimalloc](https://github.com/microsoft/mimalloc)                                    | Pending |
-| GIL Management (`py.allow_threads()`)     | —                                          | [PyO3 Parallelism](https://pyo3.rs/main/parallelism)                                 | Pending |
-| PyO3 0.26+ API Migration                  | —                                          | [PyO3 Migration](https://pyo3.rs/main/migration)                                     | Pending |
-| TLS Segment Registration (`fs_base`)      | _Userfaultfd and CPython Allocator_        | [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)             | Pending |
-| Free-Threaded Python (3.13t/3.14t)        | —                                          | [py-free-threading](https://py-free-threading.github.io/)                            | Pending |
+| Requirement                               | Research Source                            | External Ref                                                                         | Status   |
+| ----------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ | -------- |
+| Allocator Quiesce (`thread.tcache.flush`) | _Memory Snapshotting with Userfaultfd_     | [jemalloc mallctl](https://jemalloc.net/jemalloc.3.html)                             | Pending  |
+| Toxicity Detection (fork-unsafe patterns) | _Static Analysis for Toxic Python Modules_ | [POSIX fork()](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fork.html) | Pending  |
+| Namespace Isolation (CLONE_NEWNS/NET)     | _Compatibility Layer Blueprint_            | [Landlock docs](https://docs.kernel.org/userspace-api/landlock.html)                 | Pending  |
+| Database Dispose (connection pools)       | _Fork Safety of Python C-Extensions_       | —                                                                                    | Pending  |
+| TLS Restoration (mimalloc, Python 3.13+)  | _Userfaultfd and CPython Allocator_        | [mimalloc](https://github.com/microsoft/mimalloc)                                    | **Done** |
+| TLS Calibration (sentinel scan)           | _Userfaultfd and CPython Allocator_        | See `src/isolation/calibration.rs`                                                   | **Done** |
+| Landlock Path Canonicalization            | _Compatibility Layer Blueprint_            | [PathFd TOCTOU safety](https://docs.rs/landlock/)                                    | **Done** |
+| Seccomp Blacklist (22 syscalls)           | _Compatibility Layer Blueprint_            | See `src/isolation/sandbox.rs`                                                       | **Done** |
+| Iron Dome Integration                     | _Compatibility Layer Blueprint_            | `apply_iron_dome()` in sandbox.rs                                                    | **Done** |
+| Graceful Degradation (kernel < 5.13)      | _Compatibility Layer Blueprint_            | `SandboxStatus::NotEnforced` handling                                                | **Done** |
+| GIL Management (`py.allow_threads()`)     | —                                          | [PyO3 Parallelism](https://pyo3.rs/main/parallelism)                                 | Pending  |
+| PyO3 0.26+ API Migration                  | —                                          | [PyO3 Migration](https://pyo3.rs/main/migration)                                     | Pending  |
+| TLS Segment Registration (`fs_base`)      | _Userfaultfd and CPython Allocator_        | [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)             | Pending  |
+| Free-Threaded Python (3.13t/3.14t)        | —                                          | [py-free-threading](https://py-free-threading.github.io/)                            | Pending  |
 
 ---
 
