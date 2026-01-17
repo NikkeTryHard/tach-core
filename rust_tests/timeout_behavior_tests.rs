@@ -58,10 +58,11 @@ fn test_timeout_accepts_numeric_value() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should not have an error about invalid timeout
+    // Should succeed (exit code 0)
     assert!(
-        !stderr.contains("invalid") || !stderr.to_lowercase().contains("timeout"),
-        "--timeout 30 should be accepted. stderr:\n{}",
+        output.status.success(),
+        "--timeout 30 should be accepted and exit with 0. Exit: {:?}, stderr:\n{}",
+        output.status.code(),
         stderr
     );
 }

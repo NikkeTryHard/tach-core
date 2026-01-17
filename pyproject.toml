@@ -35,7 +35,6 @@ TACH_DEBUG_MODE = "true"
 TACH_PHASE3_VERIFIED = "true"
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 markers = [
     "allow_threads: marks test as allowed to spawn threads that outlive execution (tach-core 0.1.2)",
 ]

@@ -241,6 +241,15 @@ pub struct Cli {
     #[arg(long)]
     pub no_ignore: bool,
 
+    // =========================================================================
+    // Plugin Configuration
+    // =========================================================================
+    /// Disable specific pytest plugins.
+    ///
+    /// Can be specified multiple times: --disable-plugin pytest-sugar --disable-plugin pytest-xdist
+    #[arg(long = "disable-plugin", value_name = "PLUGIN")]
+    pub disable_plugins: Vec<String>,
+
     /// Show timing for slowest N tests.
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
@@ -590,6 +599,7 @@ pub struct MergedConfig {
     pub coverage_omit: Vec<String>,
     pub coverage_output: String,
     pub coverage_format: String,
+    pub disabled_plugins: Vec<String>,
 }
 
 impl MergedConfig {
@@ -606,6 +616,12 @@ impl MergedConfig {
         // CLI timeout takes precedence over file config
         let timeout = cli.timeout.unwrap_or_else(|| file_config.timeout());
 
+        // Merge disabled plugins from CLI and config file
+        let mut disabled_plugins = file_config.plugins.disabled.clone();
+        disabled_plugins.extend(cli.disable_plugins.clone());
+        disabled_plugins.sort();
+        disabled_plugins.dedup();
+
         Self {
             format: cli.format.clone(),
             junit_xml: cli.junit_xml.clone(),
@@ -621,6 +637,7 @@ impl MergedConfig {
             coverage_omit: cov_config.omit.unwrap_or_default(),
             coverage_output: cov_config.output.unwrap_or_else(|| ".coverage".to_string()),
             coverage_format: cov_config.format.unwrap_or_else(|| "lcov".to_string()),
+            disabled_plugins,
         }
     }
 }
