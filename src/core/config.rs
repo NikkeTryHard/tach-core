@@ -482,6 +482,10 @@ pub struct TachConfig {
     /// and is called in the supervisor when a test times out.
     /// Hook execution is limited to 5 seconds.
     pub timeout_hook: Option<String>,
+
+    /// Plugin configuration
+    #[serde(default)]
+    pub plugins: PluginConfig,
 }
 
 /// Coverage configuration for Tach
@@ -501,6 +505,18 @@ pub struct CoverageConfig {
 
     /// Output format: "lcov", "html", "json" (default: "lcov")
     pub format: Option<String>,
+}
+
+/// Plugin configuration for Tach
+#[derive(Deserialize, Default, Clone, Debug)]
+pub struct PluginConfig {
+    /// Plugins to disable (e.g., ["pytest-sugar", "pytest-xdist"])
+    #[serde(default)]
+    pub disabled: Vec<String>,
+
+    /// Plugin execution priority (first = highest priority)
+    #[serde(default)]
+    pub priority: Vec<String>,
 }
 
 impl TachConfig {
