@@ -1384,6 +1384,52 @@ def get_session_hook_effects() -> list:
     return _SESSION_HOOK_EFFECTS
 
 
+def _load_hook_function(
+    hook_module_path: str,
+    hook_function_name: str,
+    module_name: str,
+) -> tuple:
+    """Load a hook function from a conftest.py file.
+
+    This helper function handles the common module loading logic used by
+    call_hook_impl and call_collection_modifyitems.
+
+    Args:
+        hook_module_path: Path to the conftest.py containing the hook
+        hook_function_name: Name of the function to load
+        module_name: Name to use for the module in sys.modules
+
+    Returns:
+        Tuple of (hook_func, error_message)
+        - hook_func: The callable hook function, or None if loading failed
+        - error_message: Error description if loading failed, or None on success
+    """
+    import importlib.util
+
+    # Load the hook module
+    spec = importlib.util.spec_from_file_location(module_name, hook_module_path)
+    if spec is None or spec.loader is None:
+        return None, f"Could not load module spec from {hook_module_path}"
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return None, f"Failed to execute module {hook_module_path}: {e}"
+
+    # Get the hook function
+    hook_func = getattr(module, hook_function_name, None)
+    if hook_func is None:
+        return None, f"Function {hook_function_name} not found in {hook_module_path}"
+
+    if not callable(hook_func):
+        return None, f"{hook_function_name} is not callable"
+
+    return hook_func, None
+
+
 def call_hook_impl(
     hook_name: str,
     hook_module_path: str,
@@ -1411,8 +1457,6 @@ def call_hook_impl(
         - 'error': str or None - Error message if hook failed
         - 'result': Any - Return value from hook (usually None for pytest hooks)
     """
-    import importlib.util
-
     # Capture state BEFORE hook execution
     env_before = dict(os.environ)
     sys_path_before = _capture_sys_path_snapshot()
@@ -1425,32 +1469,14 @@ def call_hook_impl(
     }
 
     try:
-        # Load the hook module
-        spec = importlib.util.spec_from_file_location(
-            f"conftest_{hook_name}",
+        # Load the hook function using shared helper
+        hook_func, error = _load_hook_function(
             hook_module_path,
+            hook_function_name,
+            f"conftest_{hook_name}",
         )
-        if spec is None or spec.loader is None:
-            result["error"] = f"Could not load module spec from {hook_module_path}"
-            return result
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            result["error"] = f"Failed to execute module {hook_module_path}: {e}"
-            return result
-
-        # Get the hook function
-        hook_func = getattr(module, hook_function_name, None)
-        if hook_func is None:
-            result["error"] = f"Function {hook_function_name} not found in {hook_module_path}"
-            return result
-
-        if not callable(hook_func):
-            result["error"] = f"{hook_function_name} is not callable"
+        if error:
+            result["error"] = error
             return result
 
         # Execute the hook
@@ -1504,8 +1530,6 @@ def call_collection_modifyitems(
         - 'removed': list - Node IDs of items that were removed
         - 'reordered': bool - Whether items were reordered
     """
-    import importlib.util
-
     # Capture state BEFORE hook execution
     env_before = dict(os.environ)
     sys_path_before = _capture_sys_path_snapshot()
@@ -1525,32 +1549,14 @@ def call_collection_modifyitems(
     }
 
     try:
-        # Load the hook module
-        spec = importlib.util.spec_from_file_location(
-            "conftest_collection_modifyitems",
+        # Load the hook function using shared helper
+        hook_func, error = _load_hook_function(
             hook_module_path,
+            "pytest_collection_modifyitems",
+            "conftest_collection_modifyitems",
         )
-        if spec is None or spec.loader is None:
-            result["error"] = f"Could not load module spec from {hook_module_path}"
-            return result
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            result["error"] = f"Failed to execute module {hook_module_path}: {e}"
-            return result
-
-        # Get the hook function
-        hook_func = getattr(module, "pytest_collection_modifyitems", None)
-        if hook_func is None:
-            result["error"] = f"pytest_collection_modifyitems not found in {hook_module_path}"
-            return result
-
-        if not callable(hook_func):
-            result["error"] = "pytest_collection_modifyitems is not callable"
+        if error:
+            result["error"] = error
             return result
 
         # Execute the hook (it modifies items in-place)
