@@ -11,9 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+---
+
+## [0.2.0] - 2026-01-17
+
 ### Added
 
-- **Hook Interception Framework (v0.2.0)**: Complete pytest plugin compatibility system
+- **Hook Interception Framework**: Complete pytest plugin compatibility system
   - Hook discovery in conftest.py files with toxicity integration
   - Conftest inheritance resolution (root-to-leaf hook ordering)
   - Effect recording for pytest_configure (env vars, sys.path modifications)
@@ -267,7 +273,8 @@ Run `tach self-test` to verify system compatibility.
 > **Note:** Versions 0.1.1-0.1.4 were developed in parallel during the Foundation phase.
 > v0.1.4 is the first tagged release after v0.1.0.
 
-[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/NikkeTryHard/tach-core/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/NikkeTryHard/tach-core/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/NikkeTryHard/tach-core/releases/tag/v0.1.0
