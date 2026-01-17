@@ -161,7 +161,7 @@ flowchart TB
         P9_2 --> P9_3
     end
 
-    subgraph Phase10["Phase 10: Release 🎯 MILESTONE"]
+    subgraph Phase10["Phase 10: Release 🔵 MILESTONE"]
         direction TB
         P10_0["0.10.x Beta 1\n(Feature Freeze)"]
         P10_1["0.11.x Beta 2 + RC"]
@@ -208,7 +208,7 @@ flowchart TB
     classDef done fill:#22c55e,stroke:#16a34a,color:#fff
     classDef inProgress fill:#f59e0b,stroke:#d97706,color:#fff
     classDef pending fill:#94a3b8,stroke:#64748b,color:#fff
-    classDef milestone fill:#eab308,stroke:#ca8a04,color:#000,stroke-width:2px
+    classDef milestone fill:#3b82f6,stroke:#1d4ed8,color:#fff,stroke-width:2px
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0 done
@@ -225,7 +225,7 @@ flowchart TB
     class F1,F2,F3,F4,F5,F6,F7,F8,F9 pending
 ```
 
-**Legend:** 🟢 Done | 🟠 In Progress | ⚪ Pending | 🎯 Milestone
+**Legend:** 🟢 Done | 🟠 In Progress | ⚪ Pending | 🔵 Milestone
 
 **Current Status:**
 
