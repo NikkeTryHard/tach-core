@@ -58,7 +58,7 @@ flowchart TB
         P2_1["0.2.1 Wrapper Hooks<br>(yield/resume semantics)"]
         P2_2["0.2.2 Effect System<br>(RegisterMarker emission)"]
         P2_3["0.2.3 Plugin Shims"]
-        P2_31["0.2.3.1 pytest-django"]
+        P2_31["0.2.3.1 pytest-django ✅"]
         P2_32["0.2.3.2 pytest-asyncio"]
         P2_33["0.2.3.3 pytest-mock"]
         P2_34["0.2.3.4 Landlock V4 Network"]
