@@ -21,10 +21,12 @@
 
 mod caller;
 mod graph;
+mod plugins;
 mod registry;
 
 pub use caller::HookCaller;
 pub use graph::HookDependencyGraph;
+pub use plugins::{PluginRegistry, PluginStatus};
 pub use registry::{
     AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, HookSpec, SysPathAction,
     aggregate_results, builtin_hook_specs,
