@@ -83,6 +83,7 @@ impl HookResult {
     pub fn with_value(value: Option<String>) -> Self {
         Self {
             return_value: value,
+            hook_found: true, // If we have a value, hook was found
             ..Default::default()
         }
     }
@@ -150,6 +151,9 @@ pub fn aggregate_results(results: &[HookResult], strategy: AggregationStrategy) 
             // No return value aggregation needed
         }
     }
+
+    // Propagate hook_found if any result had it set
+    aggregated.hook_found = results.iter().any(|r| r.hook_found);
 
     aggregated
 }
