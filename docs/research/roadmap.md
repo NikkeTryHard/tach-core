@@ -599,6 +599,8 @@ flowchart TD
 
 ### 0.2.1 - pytest-django Support
 
+**Status**: 🔨 IN PROGRESS
+
 **Target**: First-class Django test support.
 
 > **Parallelization**: Can be developed in parallel with 0.2.2, 0.2.3, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
