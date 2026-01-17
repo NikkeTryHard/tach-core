@@ -253,8 +253,8 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0,P5_0,P5_6,P7_4,P8_1 done
-    class P2_1 inProgress
-    class P5_1,P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
+    class P2_1,P5_1 inProgress
+    class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
     class P2_2,P2_3,P2_4 canStart
     class P2_5 pending
     class P3_0,P3_1,P3_2,P3_3 pending
@@ -1070,6 +1070,8 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] Support unified diff format
 
 ### 0.5.1 - Debug Mode
+
+**Status**: 🔨 IN PROGRESS
 
 **Target**: Deep visibility into Tach internals.
 
