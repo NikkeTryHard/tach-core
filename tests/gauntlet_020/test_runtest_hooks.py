@@ -241,3 +241,74 @@ def pytest_runtest_teardown(item, nextitem):
         assert result["error"] is None
         effects = [e for e in result["effects"] if e["type"] == "SetEnv"]
         assert any(e["key"] == "LAST_TEST_TEARDOWN" for e in effects)
+
+
+def test_runtest_makereport_basic():
+    """pytest_runtest_makereport can be called and return data."""
+    harness_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
+    )
+    harness_path = os.path.abspath(harness_path)
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tach_harness", harness_path)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        conftest_path = os.path.join(tmpdir, "conftest.py")
+        with open(conftest_path, "w") as f:
+            f.write(
+                """
+def pytest_runtest_makereport(item, call):
+    # Return custom data
+    return {"custom_field": "custom_value"}
+"""
+            )
+
+        result = harness.call_hook_impl(
+            conftest_path=conftest_path,
+            hook_name="pytest_runtest_makereport",
+            args={"item": None, "call": None},
+        )
+
+        assert result["error"] is None
+        assert result["return_value"] is not None
+
+
+def test_runtest_makereport_with_env_effect():
+    """pytest_runtest_makereport can set environment variables."""
+    harness_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
+    )
+    harness_path = os.path.abspath(harness_path)
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tach_harness", harness_path)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        conftest_path = os.path.join(tmpdir, "conftest.py")
+        with open(conftest_path, "w") as f:
+            f.write(
+                """
+import os
+def pytest_runtest_makereport(item, call):
+    os.environ["MAKEREPORT_CALLED"] = "yes"
+"""
+            )
+
+        os.environ.pop("MAKEREPORT_CALLED", None)
+
+        result = harness.call_hook_impl(
+            conftest_path=conftest_path,
+            hook_name="pytest_runtest_makereport",
+            args={"item": None, "call": None},
+        )
+
+        assert result["error"] is None
+        effects = [e for e in result["effects"] if e["type"] == "SetEnv"]
+        assert any(e["key"] == "MAKEREPORT_CALLED" for e in effects)
