@@ -1384,6 +1384,209 @@ def get_session_hook_effects() -> list:
     return _SESSION_HOOK_EFFECTS
 
 
+def call_hook_impl(
+    hook_name: str,
+    hook_module_path: str,
+    hook_function_name: str,
+    hook_args: dict,
+) -> dict:
+    """Execute a pytest hook implementation and capture its effects.
+
+    This function loads and executes a hook implementation from a conftest.py file,
+    capturing any environment variable or sys.path changes made by the hook.
+
+    The function uses try/finally to ensure effects are ALWAYS captured, even if
+    the hook raises an exception or returns early on error paths.
+
+    Args:
+        hook_name: Name of the hook (e.g., "pytest_configure")
+        hook_module_path: Path to the conftest.py containing the hook
+        hook_function_name: Name of the function to call
+        hook_args: Arguments to pass to the hook function
+
+    Returns:
+        Dict with keys:
+        - 'success': bool - Whether the hook executed successfully
+        - 'effects': list - List of effect dicts (SetEnv, ModifySysPath)
+        - 'error': str or None - Error message if hook failed
+        - 'result': Any - Return value from hook (usually None for pytest hooks)
+    """
+    import importlib.util
+
+    # Capture state BEFORE hook execution
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
+
+    result = {
+        "success": False,
+        "effects": [],
+        "error": None,
+        "result": None,
+    }
+
+    try:
+        # Load the hook module
+        spec = importlib.util.spec_from_file_location(
+            f"conftest_{hook_name}",
+            hook_module_path,
+        )
+        if spec is None or spec.loader is None:
+            result["error"] = f"Could not load module spec from {hook_module_path}"
+            return result
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+
+        try:
+            spec.loader.exec_module(module)
+        except Exception as e:
+            result["error"] = f"Failed to execute module {hook_module_path}: {e}"
+            return result
+
+        # Get the hook function
+        hook_func = getattr(module, hook_function_name, None)
+        if hook_func is None:
+            result["error"] = f"Function {hook_function_name} not found in {hook_module_path}"
+            return result
+
+        if not callable(hook_func):
+            result["error"] = f"{hook_function_name} is not callable"
+            return result
+
+        # Execute the hook
+        try:
+            hook_result = hook_func(**hook_args)
+            result["result"] = hook_result
+            result["success"] = True
+        except Exception as e:
+            result["error"] = f"Hook {hook_name} raised exception: {e}"
+            # Note: We still capture effects even on exception
+            # because the hook may have made changes before failing
+
+    finally:
+        # ALWAYS capture effects, even on error paths
+        # This ensures we don't lose track of state changes
+        env_after = dict(os.environ)
+        sys_path_after = _capture_sys_path_snapshot()
+
+        env_effects = _compute_env_delta(env_before, env_after)
+        sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+        result["effects"] = env_effects + sys_path_effects
+
+    return result
+
+
+def call_collection_modifyitems(
+    hook_module_path: str,
+    config: object,
+    items: list,
+) -> dict:
+    """Execute pytest_collection_modifyitems hook and capture its effects.
+
+    This function loads and executes pytest_collection_modifyitems from a conftest.py,
+    capturing environment and sys.path changes. The hook may modify the items list
+    in-place (filtering, reordering).
+
+    Uses try/finally to ensure effects are ALWAYS captured, even on errors.
+
+    Args:
+        hook_module_path: Path to the conftest.py containing the hook
+        config: Pytest config object to pass to the hook
+        items: List of pytest items (may be modified in-place by hook)
+
+    Returns:
+        Dict with keys:
+        - 'success': bool - Whether the hook executed successfully
+        - 'effects': list - List of effect dicts (SetEnv, ModifySysPath)
+        - 'error': str or None - Error message if hook failed
+        - 'items_before': int - Number of items before hook execution
+        - 'items_after': int - Number of items after hook execution
+        - 'removed': list - Node IDs of items that were removed
+        - 'reordered': bool - Whether items were reordered
+    """
+    import importlib.util
+
+    # Capture state BEFORE hook execution
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
+
+    # Capture items state before
+    items_before_count = len(items)
+    items_before_ids = [getattr(item, "nodeid", str(item)) for item in items]
+
+    result = {
+        "success": False,
+        "effects": [],
+        "error": None,
+        "items_before": items_before_count,
+        "items_after": items_before_count,
+        "removed": [],
+        "reordered": False,
+    }
+
+    try:
+        # Load the hook module
+        spec = importlib.util.spec_from_file_location(
+            "conftest_collection_modifyitems",
+            hook_module_path,
+        )
+        if spec is None or spec.loader is None:
+            result["error"] = f"Could not load module spec from {hook_module_path}"
+            return result
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+
+        try:
+            spec.loader.exec_module(module)
+        except Exception as e:
+            result["error"] = f"Failed to execute module {hook_module_path}: {e}"
+            return result
+
+        # Get the hook function
+        hook_func = getattr(module, "pytest_collection_modifyitems", None)
+        if hook_func is None:
+            result["error"] = f"pytest_collection_modifyitems not found in {hook_module_path}"
+            return result
+
+        if not callable(hook_func):
+            result["error"] = "pytest_collection_modifyitems is not callable"
+            return result
+
+        # Execute the hook (it modifies items in-place)
+        try:
+            hook_func(config=config, items=items)
+            result["success"] = True
+        except Exception as e:
+            result["error"] = f"pytest_collection_modifyitems raised exception: {e}"
+            # Note: We still capture effects even on exception
+
+        # Capture items state after
+        items_after_count = len(items)
+        items_after_ids = [getattr(item, "nodeid", str(item)) for item in items]
+
+        result["items_after"] = items_after_count
+
+        # Determine removed items
+        removed = [nid for nid in items_before_ids if nid not in items_after_ids]
+        result["removed"] = removed
+
+        # Determine if reordered (same items but different order)
+        if items_before_count == items_after_count and items_before_ids != items_after_ids:
+            result["reordered"] = True
+
+    finally:
+        # ALWAYS capture effects, even on error paths
+        env_after = dict(os.environ)
+        sys_path_after = _capture_sys_path_snapshot()
+
+        env_effects = _compute_env_delta(env_before, env_after)
+        sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+        result["effects"] = env_effects + sys_path_effects
+
+    return result
+
+
 def apply_cached_effects(effects: list) -> int:
     """Apply cached effects to the worker process.
 
