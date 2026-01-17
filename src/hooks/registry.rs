@@ -68,6 +68,9 @@ pub struct HookResult {
     pub source: Option<PathBuf>,
     /// Error message if hook failed
     pub error: Option<String>,
+    /// Whether the hook function was found in the conftest
+    #[serde(default)]
+    pub hook_found: bool,
 }
 
 impl HookResult {
@@ -164,6 +167,9 @@ pub enum HookEffect {
     /// While the Python-side doesn't currently emit this effect (markers are
     /// typically registered via config.addinivalue_line), the type exists for
     /// future use and IPC completeness.
+    ///
+    /// TODO(v0.3.0): Implement marker registration tracking in call_hook_impl
+    /// when pytest_configure hooks call config.addinivalue_line("markers", ...).
     RegisterMarker { name: String, description: String },
     /// Hook modified test collection (reordering, deselection)
     ModifyItems {

@@ -1389,21 +1389,32 @@ def call_hook_impl(
     hook_name: str,
     args: dict,
 ) -> dict:
-    """Load a conftest.py module and call the specified hook function.
+    """Call a specific hook function from a conftest.py file.
 
-    This function is the Python-side bridge for executing hook implementations.
-    It handles module loading, function invocation, effect capture, and error handling.
+    This function loads and executes a pytest hook from a conftest.py file,
+    capturing any side effects (environment changes, sys.path modifications).
+
+    **Module Loading Behavior:**
+    Each call loads the conftest module fresh using importlib. This is intentional
+    for isolation - each hook call gets independent module state. Be aware that:
+    - Module-level code runs on every hook call
+    - Multiple hooks from the same conftest cause multiple loads
+    - No caching is performed between calls
+
+    This design prioritizes correctness over performance, ensuring hooks don't
+    interfere with each other through shared module state.
 
     Args:
-        conftest_path: Absolute path to the conftest.py file containing the hook
-        hook_name: Name of the hook function to call (e.g., "pytest_configure")
-        args: Dictionary of arguments to pass to the hook function
+        conftest_path: Absolute path to the conftest.py file
+        hook_name: Name of the hook function (e.g., "pytest_configure")
+        args: Dictionary of arguments to pass to the hook
 
     Returns:
-        Dict with keys:
-        - return_value: JSON-serialized return value from hook, or None
-        - effects: List of effect dicts (SetEnv, ModifySysPath)
-        - error: Error message string if hook failed, or None
+        dict with keys:
+        - return_value: Hook's return value (JSON-serialized if complex)
+        - effects: List of captured side effects
+        - error: Error message if execution failed, None otherwise
+        - hook_found: True if hook existed, False if conftest didn't implement it
     """
     import json
 
@@ -1411,6 +1422,7 @@ def call_hook_impl(
         "return_value": None,
         "effects": [],
         "error": None,
+        "hook_found": False,
     }
 
     # Capture state before hook execution
@@ -1444,6 +1456,9 @@ def call_hook_impl(
             return result
 
         hook_func = getattr(module, hook_name)
+
+        # Hook was found - mark it
+        result["hook_found"] = True
 
         # Filter args to only those accepted by the hook function signature
         sig = inspect.signature(hook_func)

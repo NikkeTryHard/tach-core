@@ -189,6 +189,13 @@ impl<'a> HookCaller<'a> {
             hook_result.error = error.extract::<String>().ok();
         }
 
+        // Extract hook_found
+        if let Ok(hook_found) = result.get_item("hook_found")
+            && !hook_found.is_none()
+        {
+            hook_result.hook_found = hook_found.extract::<bool>().unwrap_or(false);
+        }
+
         // Extract effects
         if let Ok(effects) = result.get_item("effects")
             && let Ok(effects_list) = effects.extract::<Vec<Bound<'_, PyAny>>>()

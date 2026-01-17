@@ -275,3 +275,42 @@ def test_call_hook_impl_pytest_configure():
     )
     assert configured_effect is not None
     assert configured_effect["value"] == "true"
+
+
+def test_call_hook_impl_returns_hook_found_true():
+    """Test that existing hooks set hook_found=True."""
+    import importlib.util
+
+    harness_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
+    )
+    harness_path = os.path.abspath(harness_path)
+    spec = importlib.util.spec_from_file_location("tach_harness", harness_path)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    conftest_path = os.path.join(os.path.dirname(__file__), "conftest.py")
+    # Use custom_hook_with_return which doesn't require arguments
+    result = harness.call_hook_impl(conftest_path, "custom_hook_with_return", {})
+
+    assert result["hook_found"] is True
+    assert result["error"] is None
+
+
+def test_call_hook_impl_returns_hook_found_false():
+    """Test that missing hooks set hook_found=False."""
+    import importlib.util
+
+    harness_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
+    )
+    harness_path = os.path.abspath(harness_path)
+    spec = importlib.util.spec_from_file_location("tach_harness", harness_path)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    conftest_path = os.path.join(os.path.dirname(__file__), "conftest.py")
+    result = harness.call_hook_impl(conftest_path, "nonexistent_hook_xyz", {})
+
+    assert result["hook_found"] is False
+    assert result["error"] is None
