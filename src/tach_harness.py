@@ -1731,7 +1731,131 @@ def init_session(root_dir: str):
     os.write(2, f"[harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
 
 
-def run_test(file_path: str, node_id: str, cached_effects: list = None) -> tuple:
+def _parse_django_db_marker(marker_info: list) -> dict | None:
+    """
+    Parse @pytest.mark.django_db marker arguments.
+
+    Looks for a marker named 'django_db' in the marker_info list and
+    extracts its arguments for database isolation configuration.
+
+    Args:
+        marker_info: List of marker dicts with 'name' and 'args' keys
+
+    Returns:
+        dict with keys: transaction, reset_sequences, databases
+        Returns None if no django_db marker present.
+    """
+    if not marker_info:
+        return None
+
+    for marker in marker_info:
+        if isinstance(marker, dict) and marker.get("name") == "django_db":
+            args = marker.get("args", {})
+            return {
+                "transaction": args.get("transaction", False),
+                "reset_sequences": args.get("reset_sequences", False),
+                "databases": args.get("databases", None),  # None means all databases
+            }
+
+    return None
+
+
+def _close_django_connections():
+    """Close all Django database connections before fork.
+
+    This should be called in the Zygote before forking workers to ensure
+    each worker gets fresh database connections.
+    """
+    if "django" not in sys.modules:
+        return
+    try:
+        from django.db import connections
+
+        connections.close_all()
+    except Exception:
+        pass
+
+
+def _apply_django_db_isolation(marker_args: dict | None) -> list:
+    """Apply database isolation based on marker args.
+
+    Uses SAVEPOINT for transaction isolation when transaction=False (default).
+    When transaction=True, no isolation is applied (test manages its own transactions).
+
+    Args:
+        marker_args: Parsed django_db marker arguments, or None for default behavior
+
+    Returns:
+        List of (alias, savepoint_id) tuples for cleanup
+    """
+    if "django" not in sys.modules:
+        return []
+
+    try:
+        from django.conf import settings
+
+        if not settings.configured:
+            return []
+    except ImportError:
+        return []
+
+    from django.db import connections, transaction
+
+    # Close stale connections first
+    try:
+        connections.close_all()
+    except Exception as e:
+        print(f"[harness] WARN: Failed to close Django connections: {e}", file=sys.stderr)
+
+    # If no marker_args, apply default isolation to all databases
+    if marker_args is None:
+        marker_args = {"transaction": False, "reset_sequences": False, "databases": None}
+
+    # If transaction=True, skip isolation (test manages its own transactions)
+    if marker_args.get("transaction", False):
+        return []
+
+    # Determine which databases to isolate
+    databases = marker_args.get("databases")
+    if databases is None:
+        databases = list(connections)
+
+    # Create savepoints for each database
+    savepoints = []
+    for alias in databases:
+        try:
+            # Ensure connection is usable
+            conn = connections[alias]
+            conn.ensure_connection()
+
+            # Create savepoint for isolation
+            sid = transaction.savepoint(using=alias)
+            savepoints.append((alias, sid))
+        except Exception as e:
+            print(f"[harness] WARN: Failed to create savepoint for '{alias}': {e}", file=sys.stderr)
+
+    return savepoints
+
+
+def _cleanup_django_db_isolation(savepoints: list):
+    """Rollback savepoints after test to restore database state.
+
+    Args:
+        savepoints: List of (alias, savepoint_id) tuples from _apply_django_db_isolation
+    """
+    if not savepoints:
+        return
+
+    from django.db import transaction
+
+    for alias, sid in reversed(savepoints):
+        try:
+            transaction.savepoint_rollback(sid, using=alias)
+        except Exception as e:
+            print(f"[harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
+
+
+def run_test(file_path: str, node_id: str, cached_effects: list = None, marker_info: list = None) -> tuple:
     """
     Execute a single pytest test item using pre-collected session.
 
@@ -1743,10 +1867,15 @@ def run_test(file_path: str, node_id: str, cached_effects: list = None) -> tuple
     This ensures that environment variables and sys.path modifications from
     pytest_configure are restored after memory reset.
 
+    Django Database Isolation (v0.2.1):
+    Parses marker_info to extract @pytest.mark.django_db arguments and applies
+    appropriate database isolation using SAVEPOINT/ROLLBACK.
+
     Args:
         file_path: Path to the test file
         node_id: Pytest node ID (e.g., "tests/test_foo.py::test_bar")
         cached_effects: Optional list of effects to apply before test (from TestPayload)
+        marker_info: Optional list of marker info dicts with 'name' and 'args' keys
 
     Returns:
         Tuple of (status, duration, message, thread_leaked)
@@ -1823,41 +1952,16 @@ def run_test(file_path: str, node_id: str, cached_effects: list = None) -> tuple
 
             target_item.obj = make_sync_wrapper(original_obj)
 
-        # Django Transaction Isolation
-        django_atomics = []
-        if "django" in sys.modules:
-            try:
-                from django.conf import settings
-
-                if settings.configured:
-                    from django.db import connections, transaction
-
-                    try:
-                        connections.close_all()
-                    except Exception as e:
-                        print(f"[harness] WARN: Failed to close Django connections: {e}", file=sys.stderr)
-                    for alias in connections:
-                        try:
-                            atomic = transaction.atomic(using=alias)
-                            atomic.__enter__()
-                            django_atomics.append((alias, atomic))
-                        except Exception as e:
-                            print(f"[harness] WARN: Failed to start transaction for '{alias}': {e}", file=sys.stderr)
-            except ImportError:
-                pass
+        # Django Database Isolation (v0.2.1)
+        # Parse marker_info to get django_db settings and apply SAVEPOINT isolation
+        django_db_args = _parse_django_db_marker(marker_info)
+        django_savepoints = _apply_django_db_isolation(django_db_args)
 
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
-            if django_atomics:
-                from django.db import transaction
-
-                for alias, atomic in reversed(django_atomics):
-                    try:
-                        transaction.set_rollback(True, using=alias)
-                        atomic.__exit__(None, None, None)
-                    except Exception as e:
-                        print(f"[harness] WARN: Failed to rollback transaction for '{alias}': {e}", file=sys.stderr)
+            # Rollback savepoints to restore database state
+            _cleanup_django_db_isolation(django_savepoints)
 
         duration = time.perf_counter() - start
 
@@ -2034,7 +2138,7 @@ def should_worker_exit(is_toxic: bool, thread_leaked: bool = False) -> bool:
 # =============================================================================
 
 
-def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple:
+def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool, cached_effects: list = None, marker_info: list = None) -> tuple:
     """Execute one iteration of the worker loop.
 
     This is the main entry point for persistent workers.
@@ -2044,6 +2148,8 @@ def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple
         file_path: Path to the test file
         node_id: Full pytest node ID
         is_toxic: Whether this test is toxic
+        cached_effects: Optional list of effects to apply before test
+        marker_info: Optional list of marker info for Django isolation
 
     Returns:
         Tuple of (status, duration, message, should_exit)
@@ -2053,7 +2159,7 @@ def worker_loop_iteration(file_path: str, node_id: str, is_toxic: bool) -> tuple
         - should_exit: Whether worker should exit after this test
     """
     # 1. Execute the test (now returns 4 values including thread_leaked)
-    status, duration, message, thread_leaked = run_test(file_path, node_id)
+    status, duration, message, thread_leaked = run_test(file_path, node_id, cached_effects, marker_info)
 
     # 2. Determine if worker should exit (consider thread leaks)
     exit_after = should_worker_exit(is_toxic, thread_leaked)

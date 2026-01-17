@@ -1133,6 +1133,78 @@ fn convert_cached_effects_to_py<'py>(
     Ok(py_list)
 }
 
+/// Convert MarkerInfo Vec to Python list of dicts for harness.
+///
+/// Each MarkerInfo is converted to a dict with 'name' and 'args' keys.
+/// The args HashMap is converted to a Python dict.
+fn convert_marker_info_to_py<'py>(
+    py: Python<'py>,
+    marker_info: &[crate::discovery::MarkerInfo],
+) -> PyResult<Bound<'py, PyList>> {
+    use pyo3::types::{PyDict, PyList};
+
+    let py_list = PyList::empty(py);
+
+    for marker in marker_info {
+        let py_dict = PyDict::new(py);
+        py_dict.set_item("name", &marker.name)?;
+
+        // Convert args HashMap to Python dict
+        let args_dict = PyDict::new(py);
+        for (key, value) in &marker.args {
+            // Convert serde_json::Value to Python object
+            let py_value = json_value_to_py(py, value)?;
+            args_dict.set_item(key, py_value)?;
+        }
+        py_dict.set_item("args", args_dict)?;
+
+        py_list.append(py_dict)?;
+    }
+
+    Ok(py_list)
+}
+
+/// Convert serde_json::Value to PyObject
+fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+    use pyo3::types::{PyList, PyString};
+
+    match value {
+        serde_json::Value::Null => Ok(py.None()),
+        serde_json::Value::Bool(b) => {
+            // For bool, use into_pyobject and convert Borrowed to owned
+            let borrowed = b.into_pyobject(py)?;
+            Ok(borrowed.to_owned().into_any().unbind())
+        }
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.into_pyobject(py)?.into_any().unbind())
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.into_pyobject(py)?.into_any().unbind())
+            } else {
+                Ok(py.None())
+            }
+        }
+        serde_json::Value::String(s) => Ok(PyString::new(py, s).into_any().unbind()),
+        serde_json::Value::Array(arr) => {
+            let py_list = PyList::empty(py);
+            for item in arr {
+                let py_item = json_value_to_py(py, item)?;
+                py_list.append(py_item)?;
+            }
+            Ok(py_list.into_any().unbind())
+        }
+        serde_json::Value::Object(obj) => {
+            use pyo3::types::PyDict;
+            let py_dict = PyDict::new(py);
+            for (k, v) in obj {
+                let py_v = json_value_to_py(py, v)?;
+                py_dict.set_item(k, py_v)?;
+            }
+            Ok(py_dict.into_any().unbind())
+        }
+    }
+}
+
 /// Convert Python list of effect dicts to Rust Vec<HookEffect>.
 ///
 /// This is the inverse of `convert_cached_effects_to_py`. It's used to retrieve
@@ -1387,6 +1459,7 @@ fn run_worker(payload: &TestPayload) -> TestResult {
     );
 
     // Call Python harness with cached effects (v0.2.0 Hook Interception)
+    // and marker_info (v0.2.1 Django Support)
     let result = Python::attach(|py| -> Result<(u8, f64, String, bool), PyErr> {
         let harness = py.import("tach_harness")?;
         let run_test = harness.getattr("run_test")?;
@@ -1395,8 +1468,11 @@ fn run_worker(payload: &TestPayload) -> TestResult {
         // HookEffect enum -> Python dict with 'type' key
         let cached_effects = convert_cached_effects_to_py(py, &payload.cached_effects)?;
 
-        // Pass file_path, FULL node_id, and cached_effects to harness
-        let result = run_test.call1((&payload.file_path, &full_node_id, cached_effects))?;
+        // Convert marker_info to Python list of dicts (v0.2.1)
+        let marker_info = convert_marker_info_to_py(py, &payload.marker_info)?;
+
+        // Pass file_path, FULL node_id, cached_effects, and marker_info to harness
+        let result = run_test.call1((&payload.file_path, &full_node_id, cached_effects, marker_info))?;
         let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
     });
