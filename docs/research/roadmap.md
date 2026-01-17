@@ -127,6 +127,7 @@ flowchart TB
         P6_0 --> P6_1
         P6_0 --> P6_2
         P6_0 --> P6_3
+        P6_0 --> P6_4
         P6_4 --> P6_5
     end
 
@@ -240,18 +241,22 @@ flowchart TB
     P5_6 -.->|"PEP 669 coverage"| P8_3
     P7_8 -.->|"fork tracking"| P9_0
 
+    %% Note: Some nodes (P5_0, P5_5, P5_6, P7_4, P7_6, P8_1) are intentionally disconnected
+    %% They represent completed standalone work or items that can start independently
+
     %% Styling
     classDef done fill:#22c55e,stroke:#16a34a,color:#fff
     classDef inProgress fill:#f59e0b,stroke:#d97706,color:#fff
     classDef canStart fill:#3b82f6,stroke:#1d4ed8,color:#fff
     classDef pending fill:#94a3b8,stroke:#64748b,color:#fff
-    classDef milestone fill:#3b82f6,stroke:#1d4ed8,color:#fff,stroke-width:2px
+    classDef milestone fill:#8b5cf6,stroke:#7c3aed,color:#fff,stroke-width:2px
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0,P5_0,P5_6,P7_4,P8_1 done
     class P2_1 inProgress
     class P5_1,P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
-    class P2_2,P2_3,P2_4,P2_5 pending
+    class P2_2,P2_3,P2_4 canStart
+    class P2_5 pending
     class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
     class P5_2,P5_4 pending
@@ -264,7 +269,7 @@ flowchart TB
     class F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 pending
 ```
 
-**Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🔷 Milestone
+**Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🟣 Milestone
 
 **Current Status:**
 
@@ -667,7 +672,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [ ] Support `-n` flag as alias for `--workers`
 - [ ] Ignore xdist-specific markers gracefully
 
-### 0.2.3.1 - Landlock V4 Network Isolation (Kernel 6.7+)
+### 0.2.4 - Landlock V4-V6 Network Isolation (Kernel 6.7+)
 
 **Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
 
@@ -693,7 +698,7 @@ allow_bind_ports = [8000, 8080]  # Empty = no binding allowed
 
 > **External Ref:** [Landlock Kernel Docs - Network](https://docs.kernel.org/userspace-api/landlock.html)
 
-### 0.2.4 - Plugin Testing and Stabilization
+### 0.2.5 - Plugin Testing and Stabilization
 
 **Target**: Ensure plugin shims work correctly with real-world projects.
 
