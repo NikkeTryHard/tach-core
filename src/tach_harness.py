@@ -1843,7 +1843,12 @@ def _apply_django_db_isolation(marker_args: dict[str, Any] | None) -> list[tuple
 
     from django.db import connections, transaction, DatabaseError
 
-    # Close stale connections first
+    # Close stale connections first.
+    # IMPORTANT: This is required for fork-based isolation. After fork(),
+    # database connections inherited from the zygote process are stale and
+    # MUST be closed before creating new ones. This is NOT "connection pool
+    # thrashing" - it's required for correctness in forked child processes.
+    # See: Django docs on database connections in multi-process environments.
     try:
         connections.close_all()
     except DatabaseError as e:

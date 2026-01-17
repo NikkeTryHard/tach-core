@@ -200,9 +200,9 @@ pub enum HookEffect {
     /// Django database marker configuration
     ///
     /// Parsed from @pytest.mark.django_db(transaction=True, reset_sequences=False, databases=["default"]).
-    /// This variant exists for protocol completeness but is handled entirely on the Python side
-    /// by tach_harness.py via marker_info. The Rust side only passes it through for IPC.
-    #[allow(dead_code)]
+    /// This variant is matched in zygote.rs (convert_cached_effects_to_py) but actual database
+    /// isolation is delegated to Python (tach_harness.py) which applies SAVEPOINT isolation
+    /// based on marker_info passed to run_test(). The Rust side skips this effect type.
     DjangoDbSetup {
         /// If true, use real transactions (no rollback isolation)
         transaction: bool,
