@@ -489,6 +489,43 @@ Before 1.0.0, verify all critical research requirements are met.
 | TLS Segment Registration (`fs_base`)      | _Userfaultfd and CPython Allocator_        | [arch_prctl(2)](https://man7.org/linux/man-pages/man2/arch_prctl.2.html)             | Pending  |
 | Free-Threaded Python (3.13t/3.14t)        | —                                          | [py-free-threading](https://py-free-threading.github.io/)                            | Pending  |
 
+### Deep Dive Documentation
+
+Comprehensive technical analysis derived from source code (see [README.md](README.md) for full index):
+
+| Document                                                             | Focus        | Key Topics                                     |
+| -------------------------------------------------------------------- | ------------ | ---------------------------------------------- |
+| [isolation-deep-dive.md](isolation-deep-dive.md)                     | Sandboxing   | Landlock, Seccomp, namespaces, userfaultfd     |
+| [discovery-deep-dive.md](discovery-deep-dive.md)                     | Test Finding | AST parsing, fixtures, toxicity classification |
+| [execution-deep-dive.md](execution-deep-dive.md)                     | Runtime      | Zygote model, scheduler, watch mode            |
+| [hooks-deep-dive.md](hooks-deep-dive.md)                             | Plugins      | Hook registry, effect recording, plugin shims  |
+| [reporting-deep-dive.md](reporting-deep-dive.md)                     | Output       | PEP 669 coverage, ring buffers, JUnit XML      |
+| [core-infrastructure-deep-dive.md](core-infrastructure-deep-dive.md) | Foundation   | Config, errors, protocol, allocator            |
+| [python-harness-deep-dive.md](python-harness-deep-dive.md)           | Python Side  | Entry point, pytest layer, FFI bridge          |
+
+**Modular Isolation Docs:**
+
+- [isolation-overview.md](isolation-overview.md) - Architecture summary
+- [isolation-landlock.md](isolation-landlock.md) - Filesystem sandboxing (ABI V1-V6)
+- [isolation-seccomp.md](isolation-seccomp.md) - Syscall filtering
+- [isolation-userfaultfd.md](isolation-userfaultfd.md) - Memory snapshotting
+
+### Future Phases (Post-1.0)
+
+> Detailed specs in [external-research.md](external-research.md) and [topic-archive.md](topic-archive.md)
+
+| Version | Feature          | Learn From                |
+| ------- | ---------------- | ------------------------- |
+| 0.12.x  | Remote Execution | Maelstrom broker/worker   |
+| 0.13.x  | Test Sharding    | nextest `--shard N/M`     |
+| 0.14.x  | Visual Testing   | Playwright snapshots      |
+| 0.15.x  | AI-Powered       | Flaky detection, test gen |
+| 0.16.x  | Mutation Testing | pymute patterns           |
+| 0.17.x  | Property-Based   | hypothesis integration    |
+| 0.18.x  | Contract Testing | OpenAPI validation        |
+| 0.19.x  | Benchmarking     | `@benchmark` marker       |
+| 0.20.x  | Observability    | OpenTelemetry, Prometheus |
+
 ---
 
 ## 0.1.x - Foundation (Complete)
