@@ -146,6 +146,7 @@ impl FdTeleportRequest {
 
 /// Result of FD adoption on the Worker side
 #[derive(Debug)]
+#[must_use = "FdAdoptionResult must be checked to confirm file descriptors were adopted"]
 pub struct FdAdoptionResult {
     /// Number of FDs successfully adopted
     pub adopted_count: usize,

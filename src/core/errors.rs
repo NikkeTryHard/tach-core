@@ -1092,6 +1092,7 @@ impl CategorizedError {
     /// let enhanced = err.with_context_aware_suggestion();
     /// // If running in Docker, suggestion now includes Docker-specific advice
     /// ```
+    #[must_use]
     pub fn with_context_aware_suggestion(mut self) -> Self {
         use crate::suggestions::{SuggestionContext, detect_condition_from_error, get_suggestion};
 
@@ -1108,6 +1109,7 @@ impl CategorizedError {
     ///
     /// This is a lighter-weight version that doesn't perform full
     /// system context detection. Use this when performance is critical.
+    #[must_use]
     pub fn with_quick_suggestion(mut self) -> Self {
         use crate::suggestions::{detect_condition_from_error, quick_suggestion};
 

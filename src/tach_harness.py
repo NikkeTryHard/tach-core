@@ -1384,198 +1384,211 @@ def get_session_hook_effects() -> list:
     return _SESSION_HOOK_EFFECTS
 
 
-def call_hook_impl(
-    conftest_path: str,
-    hook_name: str,
-    args: dict,
-) -> dict:
-    """Call a specific hook function from a conftest.py file.
+def _load_hook_function(
+    hook_module_path: str,
+    hook_function_name: str,
+    module_name: str,
+) -> tuple[object | None, str | None]:
+    """Load a hook function from a conftest.py file.
 
-    This function loads and executes a pytest hook from a conftest.py file,
-    capturing any side effects (environment changes, sys.path modifications).
-
-    **Module Loading Behavior:**
-    Each call loads the conftest module fresh using importlib. This is intentional
-    for isolation - each hook call gets independent module state. Be aware that:
-    - Module-level code runs on every hook call
-    - Multiple hooks from the same conftest cause multiple loads
-    - No caching is performed between calls
-
-    This design prioritizes correctness over performance, ensuring hooks don't
-    interfere with each other through shared module state.
+    This helper function handles the common module loading logic used by
+    call_hook_impl and call_collection_modifyitems.
 
     Args:
-        conftest_path: Absolute path to the conftest.py file
-        hook_name: Name of the hook function (e.g., "pytest_configure")
-        args: Dictionary of arguments to pass to the hook
+        hook_module_path: Path to the conftest.py containing the hook
+        hook_function_name: Name of the function to load
+        module_name: Name to use for the module in sys.modules
 
     Returns:
-        dict with keys:
-        - return_value: Hook's return value (JSON-serialized if complex)
-        - effects: List of captured side effects
-        - error: Error message if execution failed, None otherwise
-        - hook_found: True if hook existed, False if conftest didn't implement it
+        Tuple of (hook_func, error_message)
+        - hook_func: The callable hook function, or None if loading failed
+        - error_message: Error description if loading failed, or None on success
     """
-    import json
+    import importlib.util
 
-    result = {
-        "return_value": None,
-        "effects": [],
-        "error": None,
-        "hook_found": False,
-    }
+    # Load the hook module
+    spec = importlib.util.spec_from_file_location(module_name, hook_module_path)
+    if spec is None or spec.loader is None:
+        return None, f"Could not load module spec from {hook_module_path}"
 
-    # Capture state before hook execution
-    env_before = dict(os.environ)
-    sys_path_before = list(sys.path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
 
     try:
-        # Load the conftest module dynamically
-        spec = importlib.util.spec_from_file_location("conftest", conftest_path)
-        if spec is None or spec.loader is None:
-            result["error"] = f"Could not load module spec from {conftest_path}"
-            return result
-
-        module = importlib.util.module_from_spec(spec)
-
-        # Ensure conftest directory is in sys.path for imports
-        conftest_dir = os.path.dirname(os.path.abspath(conftest_path))
-        if conftest_dir not in sys.path:
-            sys.path.insert(0, conftest_dir)
-
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            result["error"] = f"Failed to execute module {conftest_path}: {e}"
-            return result
-
-        # Check if the hook function exists
-        if not hasattr(module, hook_name):
-            # Not an error - the conftest simply doesn't implement this hook
-            # Return empty result with no error
-            return result
-
-        hook_func = getattr(module, hook_name)
-
-        # Hook was found - mark it
-        result["hook_found"] = True
-
-        # Filter args to only those accepted by the hook function signature
-        sig = inspect.signature(hook_func)
-        valid_args = {k: v for k, v in args.items() if k in sig.parameters}
-
-        try:
-            return_value = hook_func(**valid_args)
-            if return_value is not None:
-                try:
-                    # Serialize return value to JSON for cross-boundary transport
-                    if isinstance(return_value, str):
-                        result["return_value"] = return_value
-                    else:
-                        result["return_value"] = json.dumps(return_value)
-                except (TypeError, ValueError):
-                    # Fall back to string representation if JSON fails
-                    result["return_value"] = str(return_value)
-        except Exception as e:
-            result["error"] = f"Hook execution failed: {e}"
-
+        spec.loader.exec_module(module)
     except Exception as e:
-        result["error"] = f"Hook loading failed: {e}"
-        return result
+        return None, f"Failed to execute module {hook_module_path}: {e}"
 
-    # Capture state after hook execution and compute deltas
-    env_after = dict(os.environ)
-    sys_path_after = list(sys.path)
+    # Get the hook function
+    hook_func = getattr(module, hook_function_name, None)
+    if hook_func is None:
+        return None, f"Function {hook_function_name} not found in {hook_module_path}"
 
-    result["effects"].extend(_compute_env_delta(env_before, env_after))
-    result["effects"].extend(_compute_sys_path_delta(sys_path_before, sys_path_after))
+    if not callable(hook_func):
+        return None, f"{hook_function_name} is not callable"
+
+    return hook_func, None
+
+
+def call_hook_impl(
+    hook_name: str,
+    hook_module_path: str,
+    hook_function_name: str,
+    hook_args: dict,
+) -> dict:
+    """Execute a pytest hook implementation and capture its effects.
+
+    This function loads and executes a hook implementation from a conftest.py file,
+    capturing any environment variable or sys.path changes made by the hook.
+
+    The function uses try/finally to ensure effects are ALWAYS captured, even if
+    the hook raises an exception or returns early on error paths.
+
+    Args:
+        hook_name: Name of the hook (e.g., "pytest_configure")
+        hook_module_path: Path to the conftest.py containing the hook
+        hook_function_name: Name of the function to call
+        hook_args: Arguments to pass to the hook function
+
+    Returns:
+        Dict with keys:
+        - 'success': bool - Whether the hook executed successfully
+        - 'effects': list - List of effect dicts (SetEnv, ModifySysPath)
+        - 'error': str or None - Error message if hook failed
+        - 'result': Any - Return value from hook (usually None for pytest hooks)
+    """
+    # Capture state BEFORE hook execution
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
+
+    result = {
+        "success": False,
+        "effects": [],
+        "error": None,
+        "result": None,
+    }
+
+    try:
+        # Load the hook function using shared helper
+        hook_func, error = _load_hook_function(
+            hook_module_path,
+            hook_function_name,
+            f"conftest_{hook_name}",
+        )
+        if error:
+            result["error"] = error
+            return result
+
+        # Execute the hook
+        try:
+            hook_result = hook_func(**hook_args)
+            result["result"] = hook_result
+            result["success"] = True
+        except Exception as e:
+            result["error"] = f"Hook {hook_name} raised exception: {e}"
+            # Note: We still capture effects even on exception
+            # because the hook may have made changes before failing
+
+    finally:
+        # ALWAYS capture effects, even on error paths
+        # This ensures we don't lose track of state changes
+        env_after = dict(os.environ)
+        sys_path_after = _capture_sys_path_snapshot()
+
+        env_effects = _compute_env_delta(env_before, env_after)
+        sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+        result["effects"] = env_effects + sys_path_effects
 
     return result
 
 
 def call_collection_modifyitems(
-    conftest_path: str,
-    items: list[str],
+    hook_module_path: str,
+    config: object,
+    items: list,
 ) -> dict:
-    """Call pytest_collection_modifyitems hook and track item changes.
+    """Execute pytest_collection_modifyitems hook and capture its effects.
 
-    This function invokes the pytest_collection_modifyitems hook with a mutable
-    list of test item IDs. The hook can reorder, add, or remove items.
+    This function loads and executes pytest_collection_modifyitems from a conftest.py,
+    capturing environment and sys.path changes. The hook may modify the items list
+    in-place (filtering, reordering).
+
+    Uses try/finally to ensure effects are ALWAYS captured, even on errors.
 
     Args:
-        conftest_path: Path to conftest.py containing the hook
-        items: List of test node IDs to pass to the hook
+        hook_module_path: Path to the conftest.py containing the hook
+        config: Pytest config object to pass to the hook
+        items: List of pytest items (may be modified in-place by hook)
 
     Returns:
-        dict with keys:
-        - reordered: True if item order changed
-        - removed: List of removed item IDs
-        - new_order: List of items after modification
-        - error: Error message if failed
+        Dict with keys:
+        - 'success': bool - Whether the hook executed successfully
+        - 'effects': list - List of effect dicts (SetEnv, ModifySysPath)
+        - 'error': str or None - Error message if hook failed
+        - 'items_before': int - Number of items before hook execution
+        - 'items_after': int - Number of items after hook execution
+        - 'removed': list - Node IDs of items that were removed
+        - 'reordered': bool - Whether items were reordered
     """
+    # Capture state BEFORE hook execution
+    env_before = dict(os.environ)
+    sys_path_before = _capture_sys_path_snapshot()
+
+    # Capture items state before
+    items_before_count = len(items)
+    items_before_ids = [getattr(item, "nodeid", str(item)) for item in items]
+
     result = {
-        "reordered": False,
-        "removed": [],
-        "new_order": list(items),
+        "success": False,
+        "effects": [],
         "error": None,
+        "items_before": items_before_count,
+        "items_after": items_before_count,
+        "removed": [],
+        "reordered": False,
     }
 
-    original_items = list(items)
-    mutable_items = list(items)
-
     try:
-        # Load conftest module
-        spec = importlib.util.spec_from_file_location("conftest", conftest_path)
-        if spec is None or spec.loader is None:
-            result["error"] = f"Could not load {conftest_path}"
+        # Load the hook function using shared helper
+        hook_func, error = _load_hook_function(
+            hook_module_path,
+            "pytest_collection_modifyitems",
+            "conftest_collection_modifyitems",
+        )
+        if error:
+            result["error"] = error
             return result
 
-        module = importlib.util.module_from_spec(spec)
+        # Execute the hook (it modifies items in-place)
+        try:
+            hook_func(config=config, items=items)
+            result["success"] = True
+        except Exception as e:
+            result["error"] = f"pytest_collection_modifyitems raised exception: {e}"
+            # Note: We still capture effects even on exception
 
-        # Add conftest directory to sys.path for imports
-        conftest_dir = os.path.dirname(os.path.abspath(conftest_path))
-        if conftest_dir not in sys.path:
-            sys.path.insert(0, conftest_dir)
+        # Capture items state after
+        items_after_count = len(items)
+        items_after_ids = [getattr(item, "nodeid", str(item)) for item in items]
 
-        spec.loader.exec_module(module)
+        result["items_after"] = items_after_count
 
-        if not hasattr(module, "pytest_collection_modifyitems"):
-            # Not an error - conftest simply doesn't implement this hook
-            return result
-
-        hook_func = getattr(module, "pytest_collection_modifyitems")
-
-        # Call hook - it modifies items in place
-        # Filter args to match function signature
-        sig = inspect.signature(hook_func)
-        valid_params = set(sig.parameters.keys())
-
-        kwargs = {}
-        if "items" in valid_params:
-            kwargs["items"] = mutable_items
-        if "session" in valid_params:
-            kwargs["session"] = None
-        if "config" in valid_params:
-            kwargs["config"] = None
-
-        hook_func(**kwargs)
-
-        result["new_order"] = mutable_items
-
-        # Detect removals
-        removed = [item for item in original_items if item not in mutable_items]
+        # Determine removed items
+        removed = [nid for nid in items_before_ids if nid not in items_after_ids]
         result["removed"] = removed
 
-        # Detect reordering (items that are in both but different positions)
-        common_items = [item for item in original_items if item in mutable_items]
-        if common_items:
-            new_positions = [
-                mutable_items.index(item) for item in common_items if item in mutable_items
-            ]
-            result["reordered"] = new_positions != sorted(new_positions)
+        # Determine if reordered (same items but different order)
+        if items_before_count == items_after_count and items_before_ids != items_after_ids:
+            result["reordered"] = True
 
-    except Exception as e:
-        result["error"] = str(e)
+    finally:
+        # ALWAYS capture effects, even on error paths
+        env_after = dict(os.environ)
+        sys_path_after = _capture_sys_path_snapshot()
+
+        env_effects = _compute_env_delta(env_before, env_after)
+        sys_path_effects = _compute_sys_path_delta(sys_path_before, sys_path_after)
+        result["effects"] = env_effects + sys_path_effects
 
     return result
 

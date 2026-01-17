@@ -1012,26 +1012,34 @@ fn run_tests(
             }
 
             // HOOK EFFECT BRIDGE (v0.2.0): Receive session effects from Zygote
-            // The Zygote sends bincode-encoded Vec<HookEffect> after the ready byte
-            // Format: length (4 bytes LE) + bincode data
-            let mut effects_len_buf = [0u8; 4];
-            cmd_sock_clone.read_exact(&mut effects_len_buf)?;
-            let effects_len = u32::from_le_bytes(effects_len_buf) as usize;
+            // The Zygote sends framed bincode-encoded Vec<HookEffect> after the ready byte
+            // Format: magic(2) + version(1) + reserved(1) + length(4) + bincode data
+            let mut header_buf = [0u8; tach_core::protocol::HEADER_SIZE];
+            cmd_sock_clone.read_exact(&mut header_buf)?;
+
+            // Extract length from header bytes 4-7 (little-endian u32)
+            let effects_len =
+                u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+                    as usize;
 
             if effects_len > 0 {
-                let mut effects_buf = vec![0u8; effects_len];
-                cmd_sock_clone.read_exact(&mut effects_buf)?;
+                // Allocate buffer for header + payload and decode with validation
+                let mut full_buf = vec![0u8; tach_core::protocol::HEADER_SIZE + effects_len];
+                full_buf[..tach_core::protocol::HEADER_SIZE].copy_from_slice(&header_buf);
+                cmd_sock_clone.read_exact(&mut full_buf[tach_core::protocol::HEADER_SIZE..])?;
 
                 let session_effects: Vec<tach_core::hooks::HookEffect> =
-                    bincode::serde::decode_from_slice(&effects_buf, bincode::config::standard())
-                        .map(|(effects, _)| effects)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "[tach:supervisor] Warning: Failed to decode session effects: {}",
-                                e
-                            );
-                            Vec::new()
-                        });
+                    tach_core::protocol::decode_with_limit(
+                        &full_buf,
+                        tach_core::protocol::MAX_PAYLOAD_SIZE,
+                    )
+                    .unwrap_or_else(|e| {
+                        eprintln!(
+                            "[tach:supervisor] Warning: Failed to decode session effects: {}",
+                            e
+                        );
+                        Vec::new()
+                    });
 
                 if !session_effects.is_empty() {
                     if !is_json {

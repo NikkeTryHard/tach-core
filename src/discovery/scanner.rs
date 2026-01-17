@@ -102,6 +102,7 @@ pub struct TestModule {
 
 /// Discovery result containing all parsed modules
 #[derive(Debug)]
+#[must_use = "DiscoveryResult contains the test suite - ignoring it makes discovery useless"]
 pub struct DiscoveryResult {
     pub modules: Vec<TestModule>,
 }

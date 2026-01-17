@@ -92,6 +92,7 @@ impl Remediation {
 
 /// Result of a single diagnostic check
 #[derive(Debug, Clone)]
+#[must_use = "DiagnosticResult must be checked - ignoring it likely means a self-test check was skipped"]
 pub struct DiagnosticResult {
     /// Name of the check
     pub name: String,

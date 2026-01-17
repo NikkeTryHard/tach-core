@@ -1,53 +1,39 @@
-# conftest.py - Test fixtures for gauntlet_020 (Hook Caller tests)
-#
-# This conftest demonstrates hook implementations that can be called
-# by the call_hook_impl() function in tach_harness.py
-
+"""Root conftest for v0.2.0 hook testing."""
 import os
 import sys
 
+import pytest
+
+_autouse_counter = {"count": 0}
+
 
 def pytest_configure(config):
-    """Session-level hook that sets environment variables and modifies sys.path."""
-    os.environ["GAUNTLET_020_CONFIGURED"] = "true"
-    os.environ["HOOK_TEST_VALUE"] = "from_pytest_configure"
+    """Session-level hook that modifies environment."""
+    os.environ["TACH_020_ROOT_HOOK"] = "executed"
+    sys.path.insert(0, "/tmp/tach_020_test_path")
+
+    # Register custom markers to avoid pytest warnings
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+    )
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests"
+    )
 
 
-def pytest_collection_modifyitems(session, config, items):
-    """Collection hook that can reorder or filter tests."""
-    # This hook doesn't modify items, just returns a value for testing
-    return ["item1", "item2", "item3"]
+@pytest.fixture(autouse=True)
+def track_autouse_execution():
+    """Autouse fixture that runs for every test."""
+    _autouse_counter["count"] += 1
+    yield
 
 
-def pytest_runtest_setup(item):
-    """Per-test setup hook."""
-    # Side-effect only hook - no return value
-    pass
+@pytest.fixture
+def autouse_count_tracker():
+    """Fixture to expose autouse counter to tests."""
+    return _autouse_counter
 
 
-def custom_hook_with_return():
-    """Custom hook that returns a value (for testing non-pytest hooks)."""
-    return {"status": "success", "count": 42}
-
-
-def custom_hook_with_env_effect():
-    """Custom hook that modifies environment."""
-    os.environ["CUSTOM_HOOK_VAR"] = "custom_value"
-    return "effect_applied"
-
-
-def custom_hook_with_sys_path_effect(test_path: str = "/tach_test_hook_caller_unique_path_12345"):
-    """Hook that modifies sys.path for testing effect capture."""
-    if test_path not in sys.path:
-        sys.path.insert(0, test_path)
-    return "path_added"
-
-
-def hook_with_error():
-    """Hook that raises an exception (for error handling tests)."""
-    raise ValueError("Intentional test error")
-
-
-def hook_with_args(name: str, value: int = 10):
-    """Hook that accepts arguments."""
-    return f"name={name}, value={value}"
+def get_autouse_count():
+    """Helper to check autouse execution count."""
+    return _autouse_counter["count"]

@@ -649,6 +649,7 @@ impl RestoreRegion {
 
 /// Result of a vectorized restore operation
 #[derive(Debug)]
+#[must_use = "VectorizedRestoreResult must be checked to confirm memory restoration succeeded"]
 pub struct VectorizedRestoreResult {
     /// Total bytes written
     pub bytes_written: usize,
