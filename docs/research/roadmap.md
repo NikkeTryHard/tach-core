@@ -55,31 +55,20 @@ flowchart TB
     subgraph Phase2["Phase 2: Plugin Compatibility 🔨 IN PROGRESS"]
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
-        P2_1["0.2.1 Wrapper Hooks<br>(yield/resume semantics)"]
-        P2_2["0.2.2 Effect System<br>(RegisterMarker emission)"]
-        P2_3["0.2.3 Plugin Shims"]
-        P2_31["0.2.3.1 pytest-django ✅"]
-        P2_32["0.2.3.2 pytest-asyncio"]
-        P2_33["0.2.3.3 pytest-mock"]
-        P2_34["0.2.3.4 Landlock V4 Network"]
-        P2_35["0.2.3.5 Landlock V5 IOCTL_DEV"]
-        P2_36["0.2.3.6 Landlock V6 IPC Scope"]
-        P2_4["0.2.4 Plugin Detection<br>(Auto-detect/warn)"]
+        P2_1["0.2.1 pytest-django"]
+        P2_2["0.2.2 pytest-asyncio"]
+        P2_3["0.2.3 pytest-mock/env/timeout"]
+        P2_4["0.2.4 Landlock V4-V6"]
         P2_5["0.2.5 Plugin Stabilization"]
 
         P2_0 --> P2_1
-        P2_1 --> P2_2
-        P2_2 --> P2_3
-        P2_3 --> P2_31
-        P2_3 --> P2_32
-        P2_3 --> P2_33
-        P2_3 --> P2_34
-        P2_34 -.->|optional| P2_35
-        P2_35 -.->|optional| P2_36
-        P2_31 --> P2_4
-        P2_32 --> P2_4
-        P2_33 --> P2_4
-        P2_4 --> P2_5
+        P2_0 --> P2_2
+        P2_0 --> P2_3
+        P2_0 --> P2_4
+        P2_1 --> P2_5
+        P2_2 --> P2_5
+        P2_3 --> P2_5
+        P2_4 -.->|optional| P2_5
     end
 
     subgraph Phase3["Phase 3: Database Integration"]
@@ -87,13 +76,11 @@ flowchart TB
         P3_0["0.3.0 Django DB<br>(Transaction Rollback)"]
         P3_1["0.3.1 SQLAlchemy<br>(Session Mgmt)"]
         P3_2["0.3.2 Connection Mgmt<br>(FD Teleportation)"]
-        P3_3["0.3.3 Savepoint Isolation<br>(Preserve Pools)"]
-        P3_4["0.3.4 Additional DBs<br>(Postgres/MySQL/SQLite)"]
+        P3_3["0.3.3 Additional DBs<br>(Postgres/MySQL/SQLite)"]
 
-        P3_0 --> P3_1
+        P3_0 --> P3_2
         P3_1 --> P3_2
         P3_2 --> P3_3
-        P3_3 --> P3_4
     end
 
     subgraph Phase4["Phase 4: Fixture Lifecycle"]
@@ -108,8 +95,8 @@ flowchart TB
 
         P4_0 --> P4_1
         P4_1 --> P4_2
-        P4_2 --> P4_3
-        P4_3 --> P4_4
+        P4_2 --> P4_5
+        P4_3 --> P4_5
         P4_4 --> P4_5
         P4_5 --> P4_6
     end
@@ -124,12 +111,8 @@ flowchart TB
         P5_5["0.5.5 Log Capture<br>(Structured parsing)"]
         P5_6["0.5.6 Coverage Optimization ✅<br>(PEP 669 done)"]
 
-        P5_0 --> P5_1
         P5_1 --> P5_2
-        P5_2 --> P5_3
         P5_3 --> P5_4
-        P5_4 --> P5_5
-        P5_5 --> P5_6
     end
 
     subgraph Phase6["Phase 6: Configuration"]
@@ -142,9 +125,9 @@ flowchart TB
         P6_5["0.6.5 Config Profiles"]
 
         P6_0 --> P6_1
-        P6_1 --> P6_2
-        P6_2 --> P6_3
-        P6_3 --> P6_4
+        P6_0 --> P6_2
+        P6_0 --> P6_3
+        P6_0 --> P6_4
         P6_4 --> P6_5
     end
 
@@ -161,14 +144,11 @@ flowchart TB
         P7_8["0.7.8 UFFD_EVENT_FORK<br>(Fork Tracking)"]
         P7_9["0.7.9 UFFD_EVENT_REMAP<br>(mremap Tracking)"]
 
-        P7_0 --> P7_1
+        P7_0 --> P7_5
         P7_1 --> P7_2
         P7_2 --> P7_3
-        P7_3 --> P7_4
-        P7_4 --> P7_5
-        P7_5 --> P7_6
-        P7_6 --> P7_7
-        P7_7 --> P7_8
+        P7_3 --> P7_7
+        P7_1 --> P7_8
         P7_8 --> P7_9
     end
 
@@ -182,10 +162,8 @@ flowchart TB
         P8_5["0.8.5 Sub-Interpreters<br>(PEP 684 Experimental)"]
         P8_6["0.8.6 Sub-Interp State Reset<br>(Module re-init)"]
 
-        P8_0 --> P8_1
-        P8_1 --> P8_2
+        P8_0 --> P8_2
         P8_2 --> P8_3
-        P8_3 --> P8_4
         P8_4 --> P8_5
         P8_5 --> P8_6
     end
@@ -244,61 +222,62 @@ flowchart TB
         F10["0.20.x Observability"]
     end
 
-    %% Phase Dependencies
+    %% Phase Dependencies (Phase 1 enables parallel work)
     Phase1 --> Phase2
+    Phase1 --> Phase5
+    Phase1 --> Phase6
+    Phase1 --> Phase7
+    Phase1 --> Phase8
+    Phase1 --> Phase9
     Phase2 --> Phase3
     Phase3 --> Phase4
-    Phase4 --> Phase5
-    Phase5 --> Phase6
-    Phase6 --> Phase7
-    Phase7 --> Phase8
-    Phase8 --> Phase9
+    Phase4 --> Phase10
     Phase9 --> Phase10
     Phase10 --> Future
 
     %% Cross-phase dependencies
-    P2_31 -.->|"Django fixtures"| P3_0
+    P2_1 -.->|"Django fixtures"| P3_0
     P3_0 -.->|"DB transactions"| P4_0
-    P4_6 -.->|"fixture viz"| P5_1
     P5_6 -.->|"PEP 669 coverage"| P8_3
-    P7_9 -.->|"userfaultfd perf"| P9_8
-    P8_6 -.->|"sub-interp isolation"| P9_3
-    P2_34 -.->|"Landlock V4 network"| P9_3
-    P7_2 -.->|"write-protect mode"| P9_8
     P7_8 -.->|"fork tracking"| P9_0
+
+    %% Note: Some nodes (P5_0, P5_5, P5_6, P7_4, P7_6, P8_1) are intentionally disconnected
+    %% They represent completed standalone work or items that can start independently
 
     %% Styling
     classDef done fill:#22c55e,stroke:#16a34a,color:#fff
     classDef inProgress fill:#f59e0b,stroke:#d97706,color:#fff
+    classDef canStart fill:#3b82f6,stroke:#1d4ed8,color:#fff
     classDef pending fill:#94a3b8,stroke:#64748b,color:#fff
-    classDef milestone fill:#3b82f6,stroke:#1d4ed8,color:#fff,stroke-width:2px
+    classDef milestone fill:#8b5cf6,stroke:#7c3aed,color:#fff,stroke-width:2px
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
-    class P2_0 done
-    class P2_1 inProgress
-    class P2_2,P2_3,P2_31,P2_32,P2_33,P2_34,P2_35,P2_36,P2_4,P2_5 pending
-    class P3_0,P3_1,P3_2,P3_3,P3_4 pending
+    class P2_0,P5_0,P5_6,P7_4,P8_1 done
+    class P2_1,P5_1 inProgress
+    class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
+    class P2_2,P2_3,P2_4 canStart
+    class P2_5 pending
+    class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
-    class P5_0,P5_6 done
-    class P5_1,P5_2,P5_3,P5_4,P5_5 pending
-    class P6_0,P6_1,P6_2,P6_3,P6_4,P6_5 pending
-    class P7_4 done
-    class P7_0,P7_1,P7_2,P7_3,P7_5,P7_6,P7_7,P7_8,P7_9 pending
-    class P8_1 done
-    class P8_0,P8_2,P8_3,P8_4,P8_5,P8_6 pending
-    class P9_0,P9_1,P9_2,P9_3,P9_4,P9_5,P9_6,P9_7,P9_8 pending
+    class P5_2,P5_4 pending
+    class P6_1,P6_3,P6_4,P6_5 pending
+    class P7_2,P7_3,P7_5,P7_7,P7_8,P7_9 pending
+    class P8_2,P8_3,P8_4,P8_5,P8_6 pending
+    class P9_0,P9_1,P9_3,P9_4,P9_8 pending
     class P10_0,P10_1,P10_2,P10_3,P10_4 pending
     class P10_5 milestone
     class F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 pending
 ```
 
-**Legend:** 🟢 Done | 🟠 In Progress | ⚪ Pending | 🔵 Milestone
+**Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🟣 Milestone
 
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - Hook framework done, plugin shims pending
-- Phases 3-10: Not started
+- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 in progress, 0.2.2-0.2.4 can start in parallel
+- Phases 3-4: Blocked by Phase 2 plugin work
+- Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
+- Phase 10: Not started
 
 ---
 
@@ -508,49 +487,7 @@ Before 1.0.0, verify all critical research requirements are met.
 
 The 0.2.x series introduces a plugin compatibility layer that intercepts common pytest plugin hooks. This is NOT full `pluggy` support - instead, we implement targeted shims for the most popular plugins.
 
-### 0.2.x Development Flow
-
-```mermaid
-flowchart TD
-    subgraph Foundation ["Foundation (Complete)"]
-        A[0.2.0 Hook Framework]
-    end
-
-    subgraph Parallel ["Parallel Development Phase"]
-        B[0.2.1 pytest-django]
-        C[0.2.2 pytest-asyncio]
-        D[0.2.3 Additional Plugins]
-        E[0.2.3.1 Landlock V4 Network]
-    end
-
-    subgraph Integration ["Integration Phase"]
-        F[0.2.4 Testing & Stabilization]
-    end
-
-    A --> B
-    A --> C
-    A --> D
-    A --> E
-
-    B --> F
-    C --> F
-    D --> F
-    E -.->|optional| F
-
-    style A fill:#90EE90
-    style B fill:#87CEEB
-    style C fill:#87CEEB
-    style D fill:#87CEEB
-    style E fill:#DDA0DD
-    style F fill:#FFB347
-```
-
-**Legend:**
-
-- Green: Complete
-- Blue: Plugin shims (can be developed in parallel)
-- Purple: Kernel feature (fully independent)
-- Orange: Integration (requires all plugin shims complete)
+> **Development Flow:** See the main flowchart at the top of this document for task dependencies. Items 0.2.1-0.2.4 can be developed in parallel after 0.2.0 is complete.
 
 ### 0.2.0 - Hook Interception Framework
 
@@ -600,7 +537,7 @@ flowchart TD
 
 ### 0.2.1 - pytest-django Support
 
-**Status**: ✅ COMPLETE
+**Status**: 🔨 IN PROGRESS
 
 **Target**: First-class Django test support.
 
@@ -610,11 +547,11 @@ flowchart TD
 
 #### Marker Support
 
-- [x] `@pytest.mark.django_db` - Enable database access
+- [ ] `@pytest.mark.django_db` - Enable database access
   > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
-  - [x] `transaction=True` - Use real transactions (parsing implemented, execution deferred to 0.3.0)
-  - [x] `reset_sequences=True` - Reset auto-increment (parsing implemented)
-  - [x] `databases=['default', 'secondary']` - Multi-db (parsing implemented)
+  - [ ] `transaction=True` - Use real transactions
+  - [ ] `reset_sequences=True` - Reset auto-increment
+  - [ ] `databases=['default', 'secondary']` - Multi-db
 - [ ] `@pytest.mark.urls('myapp.test_urls')` - URL override
 - [ ] `@pytest.mark.ignore_template_errors` - Template error handling
 
@@ -735,7 +672,7 @@ flowchart TD
 - [ ] Support `-n` flag as alias for `--workers`
 - [ ] Ignore xdist-specific markers gracefully
 
-### 0.2.3.1 - Landlock V4 Network Isolation (Kernel 6.7+)
+### 0.2.4 - Landlock V4-V6 Network Isolation (Kernel 6.7+)
 
 **Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
 
@@ -761,7 +698,7 @@ allow_bind_ports = [8000, 8080]  # Empty = no binding allowed
 
 > **External Ref:** [Landlock Kernel Docs - Network](https://docs.kernel.org/userspace-api/landlock.html)
 
-### 0.2.4 - Plugin Testing and Stabilization
+### 0.2.5 - Plugin Testing and Stabilization
 
 **Target**: Ensure plugin shims work correctly with real-world projects.
 
@@ -1133,6 +1070,8 @@ The 0.5.x series focuses on making Tach a joy to use. Better error messages, pow
 - [ ] Support unified diff format
 
 ### 0.5.1 - Debug Mode
+
+**Status**: 🔨 IN PROGRESS
 
 **Target**: Deep visibility into Tach internals.
 
