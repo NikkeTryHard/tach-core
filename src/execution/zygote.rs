@@ -1120,6 +1120,11 @@ fn convert_cached_effects_to_py<'py>(
                 // Skip NoEffect - nothing to apply
                 continue;
             }
+            crate::hooks::HookEffect::DjangoDbSetup { .. } => {
+                // DjangoDbSetup is handled by Python harness via marker_info
+                // Not converted to Python dict here - it's already in marker_info
+                continue;
+            }
         }
 
         py_list.append(py_dict)?;
@@ -2166,6 +2171,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let encoded = encode_with_length(&original).expect("Serialization should succeed");
@@ -2210,6 +2216,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();

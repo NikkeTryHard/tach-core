@@ -149,6 +149,7 @@ proptest! {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let serialized = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).expect("Failed to serialize");

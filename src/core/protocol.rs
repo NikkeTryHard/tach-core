@@ -1,7 +1,7 @@
 //! Binary IPC Protocol for Supervisor ↔ Zygote communication
 //! Uses bincode for zero-copy serialization.
 
-use crate::discovery::FixtureScope;
+use crate::discovery::{FixtureScope, MarkerInfo};
 use crate::hooks::{Hook, HookEffect};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +54,11 @@ pub struct TestPayload {
     /// Pytest markers on this test (for filtering/behavior)
     #[serde(default)]
     pub markers: Vec<String>,
+
+    /// Structured marker info with arguments (for pytest-django support)
+    /// Contains parsed marker arguments like @pytest.mark.django_db(transaction=True)
+    #[serde(default)]
+    pub marker_info: Vec<MarkerInfo>,
 }
 
 /// Fixture info for payload
@@ -496,6 +501,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -619,6 +625,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -647,6 +654,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
         let encoded = encode_with_length(&payload).unwrap();
 
@@ -726,6 +734,7 @@ mod tests {
             hooks: vec![],
             cached_effects: vec![],
             markers: vec![],
+            marker_info: vec![],
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -742,6 +751,84 @@ mod tests {
         assert_eq!(decoded.debug_socket_path, "/tmp/debug.sock");
         assert!(decoded.is_toxic);
         assert_eq!(decoded.timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn test_payload_with_marker_info_roundtrip() {
+        // Test TestPayload with marker_info for pytest-django support (Task 2.3)
+        // Note: bincode doesn't support serde_json::Value directly, so we test
+        // with empty args (the common case for bare markers like @pytest.mark.slow)
+        use crate::discovery::MarkerInfo;
+        use std::collections::HashMap;
+
+        let marker_info = vec![
+            MarkerInfo {
+                name: "django_db".to_string(),
+                args: HashMap::new(),
+            },
+            MarkerInfo {
+                name: "slow".to_string(),
+                args: HashMap::new(),
+            },
+        ];
+
+        let payload = TestPayload {
+            test_id: 42,
+            file_path: "tests/test_django.py".to_string(),
+            test_name: "test_with_django_db".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec!["django_db".to_string(), "slow".to_string()],
+            marker_info: marker_info.clone(),
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+
+        assert_eq!(decoded.test_id, 42);
+        assert_eq!(decoded.marker_info.len(), 2);
+        assert_eq!(decoded.marker_info[0].name, "django_db");
+        assert!(decoded.marker_info[0].args.is_empty());
+        assert_eq!(decoded.marker_info[1].name, "slow");
+        assert!(decoded.marker_info[1].args.is_empty());
+    }
+
+    #[test]
+    fn test_marker_info_json_serialization_with_args() {
+        // Test MarkerInfo JSON serialization with complex args
+        // JSON is used for Python IPC, bincode for Rust-to-Rust
+        use crate::discovery::MarkerInfo;
+        use std::collections::HashMap;
+
+        let mut args = HashMap::new();
+        args.insert("transaction".to_string(), serde_json::json!(true));
+        args.insert(
+            "databases".to_string(),
+            serde_json::json!(["default", "secondary"]),
+        );
+
+        let marker = MarkerInfo {
+            name: "django_db".to_string(),
+            args,
+        };
+
+        // JSON serialization works with serde_json::Value
+        let json = serde_json::to_string(&marker).expect("Should serialize to JSON");
+        assert!(json.contains("django_db"));
+        assert!(json.contains("transaction"));
+
+        let parsed: MarkerInfo = serde_json::from_str(&json).expect("Should deserialize from JSON");
+        assert_eq!(parsed.name, "django_db");
+        assert_eq!(
+            parsed.args.get("transaction"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

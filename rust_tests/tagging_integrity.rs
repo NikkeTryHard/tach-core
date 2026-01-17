@@ -99,6 +99,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     parametrized_args: vec![],
                     timeout_secs: None,
                     markers: vec![],
+                    marker_info: vec![],
                 }],
                 fixtures: vec![],
                 hooks: vec![],
@@ -114,6 +115,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                     parametrized_args: vec![],
                     timeout_secs: None,
                     markers: vec![],
+                    marker_info: vec![],
                 }],
                 fixtures: vec![],
                 hooks: vec![],
@@ -175,6 +177,7 @@ fn test_toxicity_survives_serialization_roundtrip() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     // Create a safe TestPayload
@@ -191,6 +194,7 @@ fn test_toxicity_survives_serialization_roundtrip() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     // Serialize using bincode (same as scheduler.rs)
@@ -267,6 +271,7 @@ def test_network_stuff():
                 parametrized_args: vec![],
                 timeout_secs: None,
                 markers: vec![],
+                marker_info: vec![],
             }],
             fixtures: vec![],
             hooks: vec![],
@@ -307,6 +312,7 @@ def test_network_stuff():
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)
@@ -371,6 +377,7 @@ fn test_transitive_toxicity_propagation() {
                 parametrized_args: vec![],
                 timeout_secs: None,
                 markers: vec![],
+                marker_info: vec![],
             }],
             fixtures: vec![],
             hooks: vec![],

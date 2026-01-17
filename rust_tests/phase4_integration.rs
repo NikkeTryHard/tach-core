@@ -153,6 +153,7 @@ fn test_payload_is_toxic_propagation() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     let toxic_payload = TestPayload {
@@ -168,6 +169,7 @@ fn test_payload_is_toxic_propagation() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     // Verify is_toxic is correctly set
@@ -461,5 +463,6 @@ fn create_runnable_test(name: &str, is_toxic: bool) -> RunnableTest {
         is_toxic,
         timeout_secs: None,
         markers: vec![],
+        marker_info: vec![],
     }
 }

@@ -88,6 +88,9 @@ pub struct RunnableTest {
     pub timeout_secs: Option<u64>,
     /// Pytest markers on this test (e.g., "slow", "skip", "django_db")
     pub markers: Vec<String>,
+    /// Structured marker info with arguments (for pytest-django support)
+    /// Contains parsed marker arguments like @pytest.mark.django_db(transaction=True)
+    pub marker_info: Vec<crate::discovery::MarkerInfo>,
 }
 
 /// A resolved fixture with full context
@@ -356,6 +359,7 @@ impl<'a> Resolver<'a> {
             is_toxic: false, // Set later by ToxicityGraph
             timeout_secs: test.timeout_secs,
             markers: test.markers.clone(),
+            marker_info: test.marker_info.clone(),
         })
     }
 

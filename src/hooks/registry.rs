@@ -197,6 +197,16 @@ pub enum HookEffect {
         removed: Vec<String>,
         reordered: bool,
     },
+    /// Django database marker configuration
+    /// Parsed from @pytest.mark.django_db(transaction=True, reset_sequences=False, databases=["default"])
+    DjangoDbSetup {
+        /// If true, use real transactions (no rollback isolation)
+        transaction: bool,
+        /// If true, reset database sequences after test
+        reset_sequences: bool,
+        /// List of database aliases to apply isolation to
+        databases: Vec<String>,
+    },
     /// Hook has no observable effects
     NoEffect,
 }
@@ -774,6 +784,65 @@ mod tests {
         if let HookEffect::ModifySysPath { action, path } = parsed {
             assert_eq!(action, SysPathAction::Prepend);
             assert_eq!(path, "/custom/path");
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_django_db_setup_effect_serialization() {
+        // Test DjangoDbSetup effect serialization (Task 2.4)
+        let effect = HookEffect::DjangoDbSetup {
+            transaction: true,
+            reset_sequences: false,
+            databases: vec!["default".to_string(), "secondary".to_string()],
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&effect).expect("Should serialize");
+        assert!(json.contains("DjangoDbSetup"));
+        assert!(json.contains("transaction"));
+        assert!(json.contains("databases"));
+
+        // Deserialize back
+        let parsed: HookEffect = serde_json::from_str(&json).expect("Should deserialize");
+        if let HookEffect::DjangoDbSetup {
+            transaction,
+            reset_sequences,
+            databases,
+        } = parsed
+        {
+            assert!(transaction);
+            assert!(!reset_sequences);
+            assert_eq!(databases.len(), 2);
+            assert_eq!(databases[0], "default");
+            assert_eq!(databases[1], "secondary");
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_django_db_setup_effect_defaults() {
+        // Test default values for DjangoDbSetup
+        let effect = HookEffect::DjangoDbSetup {
+            transaction: false,
+            reset_sequences: false,
+            databases: vec![],
+        };
+
+        let json = serde_json::to_string(&effect).expect("Should serialize");
+        let parsed: HookEffect = serde_json::from_str(&json).expect("Should deserialize");
+
+        if let HookEffect::DjangoDbSetup {
+            transaction,
+            reset_sequences,
+            databases,
+        } = parsed
+        {
+            assert!(!transaction);
+            assert!(!reset_sequences);
+            assert!(databases.is_empty());
         } else {
             panic!("Wrong variant");
         }

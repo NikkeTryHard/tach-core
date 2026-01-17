@@ -24,6 +24,7 @@ fn test_serialize_test_payload() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");
@@ -101,6 +102,7 @@ fn test_roundtrip_test_payload() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     let encoded = encode_with_length(&original).expect("Should serialize");
@@ -176,6 +178,7 @@ fn test_empty_fixtures_payload() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize empty fixtures");
@@ -197,6 +200,7 @@ fn test_async_payload() {
         hooks: vec![],
         cached_effects: vec![],
         markers: vec![],
+        marker_info: vec![],
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");

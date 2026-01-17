@@ -444,6 +444,7 @@ impl Scheduler {
             hooks,
             cached_effects,
             markers: test.markers.clone(),
+            marker_info: test.marker_info.clone(),
         };
 
         // Use encode_with_length which includes protocol header
@@ -825,6 +826,7 @@ mod tests {
             is_toxic,
             timeout_secs: None,
             markers: vec![],
+            marker_info: vec![],
         }
     }
 
@@ -1083,6 +1085,7 @@ mod tests {
             is_toxic: false,
             timeout_secs: Some(30),
             markers: vec!["slow".to_string()],
+            marker_info: vec![],
         };
 
         assert_eq!(test.test_name, "test_with_fixtures");
