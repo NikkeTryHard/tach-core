@@ -233,6 +233,8 @@ pub fn apply_landlock(project_root: &Path, worker_id: u32) -> Result<SandboxStat
     let ruleset = add_path_rule_if_exists(ruleset, "/proc", read_access)?;
     // /sys is needed for some hardware detection
     let ruleset = add_path_rule_if_exists(ruleset, "/sys", read_access)?;
+    // /opt is needed for CI environments (GitHub Actions installs Python here)
+    let ruleset = add_path_rule_if_exists(ruleset, "/opt", read_access)?;
 
     // ========================================================================
     // ADD READ-WRITE RULES
