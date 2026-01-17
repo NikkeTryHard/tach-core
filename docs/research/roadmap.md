@@ -229,6 +229,7 @@ flowchart TB
     end
 
     subgraph Future["Future (Post-1.0)"]
+        %% Details in "Future Phases (Post-1.0)" table below
         direction LR
         F0["1.1.x Maintenance"]
         F1["1.2.x Features"]
@@ -491,7 +492,7 @@ Before 1.0.0, verify all critical research requirements are met.
 | 0.1.4   | Dependencies       | PyO3 0.27.2, Rust 2024 Edition, Python 3.14 support                          |
 | 0.1.5   | Tooling Research   | `.ignore` conflicts, container compatibility, test discovery analysis        |
 
-> **Implementation Details:** For the complete task breakdown, see git history for v0.1.1-v0.1.5 tags.
+> **Implementation Details:** For complete task breakdown and research references, see git history for v0.1.1-v0.1.5 tags.
 
 ---
 
