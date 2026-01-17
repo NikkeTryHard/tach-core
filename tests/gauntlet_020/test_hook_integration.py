@@ -270,7 +270,15 @@ def pytest_configure(config):
             assert result["return_value"] is None
 
     def test_missing_hook_returns_empty_result(self):
-        """Missing hooks should return empty result, not error."""
+        """Missing hooks should return empty result, not error.
+
+        This is intentional behavior: if a conftest.py doesn't implement a
+        particular hook, that's not an error - it just means the conftest
+        doesn't participate in that hook. This is how pytest works.
+
+        Contrast with test_hook_exception_is_captured which tests the case
+        where a hook EXISTS but raises an exception during execution.
+        """
         harness_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
         )
@@ -314,6 +322,50 @@ def some_other_function():
 
         # Should return an error
         assert result["error"] is not None
+
+    def test_effects_captured_even_on_hook_error(self):
+        """Effects captured before exception should be preserved.
+
+        When a hook sets environment variables or modifies sys.path before
+        raising an exception, those effects should still be captured in the
+        result. This ensures we don't lose state changes that happened before
+        the error.
+        """
+        harness_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "src", "tach_harness.py"
+        )
+        harness_path = os.path.abspath(harness_path)
+
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("tach_harness", harness_path)
+        harness = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(harness)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conftest_path = os.path.join(tmpdir, "conftest.py")
+            with open(conftest_path, "w") as f:
+                f.write("""
+import os
+def pytest_configure(config):
+    os.environ["EFFECT_BEFORE_ERROR"] = "captured"
+    raise RuntimeError("Error after setting env var")
+""")
+
+            # Clear env var
+            os.environ.pop("EFFECT_BEFORE_ERROR", None)
+
+            result = harness.call_hook_impl(conftest_path, "pytest_configure", {"config": None})
+
+            # Should have error
+            assert result["error"] is not None
+            assert "Error after setting env var" in result["error"]
+
+            # Should ALSO have captured the effect that happened before the error
+            env_effects = [e for e in result["effects"] if e["type"] == "SetEnv"]
+            effect = next((e for e in env_effects if e.get("key") == "EFFECT_BEFORE_ERROR"), None)
+            assert effect is not None, "Effect before error should be captured"
+            assert effect["value"] == "captured"
 
 
 class TestHookReturnValues:
