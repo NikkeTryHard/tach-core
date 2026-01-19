@@ -47,7 +47,9 @@ WARNING: Bypassing may cause kernel crashes, permission errors, and flaky tests.
     }
 
     // Native Linux - warn but allow (CI systems, etc.)
-    println!("cargo:warning=Building outside Docker container. Use 'docker compose exec dev bash' for full feature support.");
+    println!(
+        "cargo:warning=Building outside Docker container. Use 'docker compose exec dev bash' for full feature support."
+    );
 }
 
 fn is_docker_environment() -> bool {

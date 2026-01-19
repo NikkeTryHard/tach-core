@@ -1475,7 +1475,12 @@ fn run_worker(payload: &TestPayload) -> TestResult {
         let marker_info = convert_marker_info_to_py(py, &payload.marker_info)?;
 
         // Pass file_path, FULL node_id, cached_effects, and marker_info to harness
-        let result = run_test.call1((&payload.file_path, &full_node_id, cached_effects, marker_info))?;
+        let result = run_test.call1((
+            &payload.file_path,
+            &full_node_id,
+            cached_effects,
+            marker_info,
+        ))?;
         let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
     });
