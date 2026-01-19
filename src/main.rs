@@ -214,8 +214,8 @@ fn main() -> Result<()> {
 
     // Handle subcommands
     match &cli.command {
-        Some(Commands::List) => {
-            return handle_list_command(&cwd, is_json, cli.no_ignore);
+        Some(Commands::List { path }) => {
+            return handle_list_command(&cwd, path, is_json, cli.no_ignore);
         }
         Some(Commands::SelfTest) => {
             return handle_self_test_command();
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
     // --- COLLECT-ONLY MODE (pytest compatibility) ---
     // Alias for 'tach list' command
     if cli.collect_only {
-        return handle_list_command(&cwd, is_json, cli.no_ignore);
+        return handle_list_command(&cwd, &cli.path, is_json, cli.no_ignore);
     }
 
     // --- DRY-RUN MODE ---
@@ -690,11 +690,17 @@ fn warn_if_blocking_patterns(cwd: &Path, is_empty: bool, is_json: bool) {
 }
 
 /// Handle the `list` subcommand
-fn handle_list_command(cwd: &Path, is_json: bool, no_ignore: bool) -> Result<()> {
-    let discovery_result = discovery::discover(cwd, no_ignore)?;
+fn handle_list_command(cwd: &Path, target_path: &str, is_json: bool, no_ignore: bool) -> Result<()> {
+    // Resolve target path (absolute or relative to cwd)
+    let target = if std::path::Path::new(target_path).is_absolute() {
+        std::path::PathBuf::from(target_path)
+    } else {
+        cwd.join(target_path)
+    };
+    let discovery_result = discovery::discover(&target, no_ignore)?;
 
     // Warn if no tests found and dangerous patterns detected in .ignore
-    warn_if_blocking_patterns(cwd, discovery_result.modules.is_empty(), is_json);
+    warn_if_blocking_patterns(&target, discovery_result.modules.is_empty(), is_json);
 
     if is_json {
         discovery::dump_json(&discovery_result)?;

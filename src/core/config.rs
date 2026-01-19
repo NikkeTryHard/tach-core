@@ -362,7 +362,11 @@ pub enum Commands {
     Test,
 
     /// List discovered tests without running
-    List,
+    List {
+        /// Test directory or file pattern
+        #[arg(default_value = ".")]
+        path: String,
+    },
 
     /// Run self-diagnostics to verify kernel support
     ///
