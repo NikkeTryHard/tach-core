@@ -38,7 +38,7 @@ experiments = []
 # Core
 pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
 anyhow = "1.0.100"
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 dashmap = "6.1"
 libc = "0.2"
 
