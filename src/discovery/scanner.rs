@@ -648,10 +648,10 @@ fn extract_marker_arguments(call: &ast::ExprCall) -> HashMap<String, serde_json:
     let mut args = HashMap::new();
 
     for keyword in &call.keywords {
-        if let Some(ref arg_name) = keyword.arg {
-            if let Some(value) = expr_to_json_value(&keyword.value) {
-                args.insert(arg_name.to_string(), value);
-            }
+        if let Some(ref arg_name) = keyword.arg
+            && let Some(value) = expr_to_json_value(&keyword.value)
+        {
+            args.insert(arg_name.to_string(), value);
         }
     }
 

@@ -1165,7 +1165,7 @@ fn convert_marker_info_to_py<'py>(
 }
 
 /// Convert serde_json::Value to PyObject
-fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     use pyo3::types::{PyList, PyString};
 
     match value {
