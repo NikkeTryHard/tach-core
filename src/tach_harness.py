@@ -57,6 +57,7 @@ class EventLoopManager:
         self._loops: dict[str, asyncio.AbstractEventLoop] = {}
         self._current_scope: str = "function"
         self._auto_mode: bool = False
+        self._policy: Optional[asyncio.AbstractEventLoopPolicy] = None
 
     @classmethod
     def get_instance(cls) -> "EventLoopManager":
@@ -76,10 +77,17 @@ class EventLoopManager:
         self._current_scope = loop_scope
         self._auto_mode = auto_mode
 
+    def set_policy(self, policy: asyncio.AbstractEventLoopPolicy) -> None:
+        """Set custom event loop policy for creating new loops."""
+        self._policy = policy
+
     def get_loop(self, scope_key: str) -> asyncio.AbstractEventLoop:
         """Get or create event loop for the given scope key."""
         if scope_key not in self._loops:
-            loop = asyncio.new_event_loop()
+            if self._policy is not None:
+                loop = self._policy.new_event_loop()
+            else:
+                loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loops[scope_key] = loop
         return self._loops[scope_key]
@@ -131,6 +139,24 @@ class EventLoopManager:
     @property
     def current_scope(self) -> str:
         return self._current_scope
+
+
+def detect_uvloop() -> bool:
+    """Detect if uvloop is available."""
+    try:
+        import uvloop  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
+    """Get uvloop policy if available, None otherwise."""
+    try:
+        import uvloop
+        return uvloop.EventLoopPolicy()
+    except ImportError:
+        return None
 
 
 def run_async_fixture(
