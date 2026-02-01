@@ -2298,6 +2298,170 @@ def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
             print(f"[tach:harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
 
 
+# =============================================================================
+# Django URL and Template Markers (v0.2.4 - Issue #35)
+# =============================================================================
+
+
+def _parse_urls_marker(marker_info: list[dict[str, Any]] | None) -> str | None:
+    """Extract URL module path from @pytest.mark.urls marker.
+
+    The urls marker accepts a single positional argument specifying the
+    ROOT_URLCONF module to use for the test.
+
+    Example:
+        @pytest.mark.urls('myapp.test_urls')
+
+    Args:
+        marker_info: List of marker dictionaries from discovery.
+
+    Returns:
+        The URL module path string, or None if marker not present.
+    """
+    if not marker_info:
+        return None
+
+    for marker in marker_info:
+        if isinstance(marker, dict) and marker.get("name") == "urls":
+            args = marker.get("args", {})
+            # Positional arg is stored with key "0"
+            return args.get("0")
+
+    return None
+
+
+def _apply_urls_override(urlconf: str | None) -> str | None:
+    """Override ROOT_URLCONF for a test and clear URL resolver cache.
+
+    Args:
+        urlconf: The URL module path to use, or None to skip override.
+
+    Returns:
+        The original ROOT_URLCONF value for restoration, or None if not applied.
+    """
+    if urlconf is None or not _is_django_available():
+        return None
+
+    try:
+        from django.conf import settings
+        from django.urls import clear_url_caches
+
+        original = getattr(settings, "ROOT_URLCONF", None)
+        settings.ROOT_URLCONF = urlconf
+        clear_url_caches()
+        return original
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to apply urls override: {e}", file=sys.stderr)
+        return None
+
+
+def _cleanup_urls_override(original_urlconf: str | None) -> None:
+    """Restore original ROOT_URLCONF after test.
+
+    Args:
+        original_urlconf: The original ROOT_URLCONF value to restore,
+            or None if no override was applied.
+    """
+    if original_urlconf is None:
+        return
+
+    try:
+        from django.conf import settings
+        from django.urls import clear_url_caches
+
+        settings.ROOT_URLCONF = original_urlconf
+        clear_url_caches()
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to restore urls: {e}", file=sys.stderr)
+
+
+def _parse_ignore_template_errors_marker(marker_info: list[dict[str, Any]] | None) -> bool:
+    """Check if @pytest.mark.ignore_template_errors marker is present.
+
+    Args:
+        marker_info: List of marker dictionaries from discovery.
+
+    Returns:
+        True if the marker is present, False otherwise.
+    """
+    if not marker_info:
+        return False
+
+    for marker in marker_info:
+        if isinstance(marker, dict) and marker.get("name") == "ignore_template_errors":
+            return True
+
+    return False
+
+
+def _apply_ignore_template_errors(ignore: bool) -> dict[str, Any] | None:
+    """Disable template debug mode to suppress template errors.
+
+    When ignore_template_errors is set, we disable DEBUG and template
+    debugging to prevent TemplateSyntaxError from being raised.
+
+    Args:
+        ignore: Whether to ignore template errors.
+
+    Returns:
+        Dictionary of original settings for restoration, or None if not applied.
+    """
+    if not ignore or not _is_django_available():
+        return None
+
+    try:
+        from django.conf import settings
+
+        originals: dict[str, Any] = {}
+
+        # Save and modify DEBUG
+        originals["DEBUG"] = getattr(settings, "DEBUG", False)
+
+        # Save and modify TEMPLATES debug settings
+        if hasattr(settings, "TEMPLATES"):
+            originals["TEMPLATES"] = []
+            for i, template_config in enumerate(settings.TEMPLATES):
+                if isinstance(template_config, dict):
+                    orig_debug = template_config.get("OPTIONS", {}).get("debug")
+                    originals["TEMPLATES"].append(orig_debug)
+                    # Set debug to False to suppress template errors
+                    if "OPTIONS" not in template_config:
+                        template_config["OPTIONS"] = {}
+                    template_config["OPTIONS"]["debug"] = False
+
+        return originals
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to apply ignore_template_errors: {e}", file=sys.stderr)
+        return None
+
+
+def _cleanup_ignore_template_errors(originals: dict[str, Any] | None) -> None:
+    """Restore original template settings after test.
+
+    Args:
+        originals: Dictionary of original settings from _apply_ignore_template_errors,
+            or None if no override was applied.
+    """
+    if originals is None:
+        return
+
+    try:
+        from django.conf import settings
+
+        # Restore TEMPLATES debug settings
+        if "TEMPLATES" in originals and hasattr(settings, "TEMPLATES"):
+            for i, orig_debug in enumerate(originals["TEMPLATES"]):
+                if i < len(settings.TEMPLATES):
+                    template_config = settings.TEMPLATES[i]
+                    if isinstance(template_config, dict) and "OPTIONS" in template_config:
+                        if orig_debug is None:
+                            template_config["OPTIONS"].pop("debug", None)
+                        else:
+                            template_config["OPTIONS"]["debug"] = orig_debug
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to restore template settings: {e}", file=sys.stderr)
+
+
 def run_test(
     file_path: str,
     node_id: str,
@@ -2422,9 +2586,19 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
+        # Django URL and Template Markers (v0.2.4 - Issue #35)
+        urlconf = _parse_urls_marker(marker_info)
+        original_urlconf = _apply_urls_override(urlconf)
+
+        ignore_templates = _parse_ignore_template_errors_marker(marker_info)
+        template_originals = _apply_ignore_template_errors(ignore_templates)
+
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
+            # Cleanup in reverse order of application
+            _cleanup_ignore_template_errors(template_originals)
+            _cleanup_urls_override(original_urlconf)
             # Rollback savepoints to restore database state
             _cleanup_django_db_isolation(django_savepoints)
 

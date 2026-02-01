@@ -57,13 +57,14 @@ flowchart TB
         P2_0["0.2.0 Hook Framework ✅"]
         P2_1["0.2.1 pytest-django ✅"]
         P2_2["0.2.2 pytest-asyncio ✅"]
-        P2_3["0.2.3 pytest-mock/env/timeout ✅"]
+        P2_3["0.2.3 pytest-mock/env/timeout + Django Markers ✅"]
         P2_4["0.2.4 Landlock V4-V6"]
         P2_5["0.2.5 Plugin Stabilization"]
 
         P2_0 --> P2_1
         P2_0 --> P2_2
         P2_0 --> P2_3
+        P2_1 --> P2_3
         P2_0 --> P2_4
         P2_1 --> P2_5
         P2_2 --> P2_5
@@ -274,7 +275,7 @@ flowchart TB
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2 done, 0.2.3 done, 0.2.4 can start
+- Phase 2 (0.2.x): In Progress - 0.2.0-0.2.4 done, 0.2.5 (Landlock) can start
 - Phases 3-4: Blocked by Phase 2 plugin work
 - Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
 - Phase 10: Not started
@@ -629,13 +630,13 @@ See #39 for tracking:
 - [x] Support gather/wait patterns
 - [x] Handle TaskGroup cleanup
 
-### 0.2.3 - Additional Plugin Support
+### 0.2.3 - Additional Plugin Support + Django Markers
 
-**Target**: Support for commonly used pytest plugins.
+**Target**: Support for commonly used pytest plugins and additional Django markers.
 
 **Status**: ✅ COMPLETE
 
-> **Parallelization**: Can be developed in parallel with 0.2.1, 0.2.2, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
+> **Parallelization**: Can be developed in parallel with 0.2.1 and 0.2.2. Only requires 0.2.0 (hook framework) to be complete.
 
 #### pytest-mock
 
@@ -672,6 +673,22 @@ See #39 for tracking:
 - [x] Per-phase timeouts (setup, call, teardown)
   > Note: Current implementation is aggregate timeout. Per-phase is future enhancement.
 
+#### Django URL and Template Markers (Issue #35)
+
+- [x] `@pytest.mark.urls('myapp.test_urls')` - Override ROOT_URLCONF per test
+- [x] `@pytest.mark.ignore_template_errors` - Suppress template errors
+- [x] Positional argument extraction in Rust scanner
+- [x] URL cache clearing on override/restore
+- [x] Template debug mode toggle
+
+#### Deferred to 0.3.x (Database Integration)
+
+The following django_db marker options require deeper database transaction support:
+
+- `transaction=True` - Use real transactions (not savepoints)
+- `reset_sequences=True` - Reset auto-increment sequences
+- `databases=['default', 'secondary']` - Multi-database support
+
 #### pytest-cov (Deferred)
 
 - [ ] Detect pytest-cov and warn about Tach's native coverage
@@ -691,7 +708,7 @@ See #39 for tracking:
 
 **Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
 
-> **Parallelization**: Fully independent. Can be developed at any time after 0.2.0. This is a kernel feature enhancement with no dependencies on plugin shims (0.2.1-0.2.3).
+> **Parallelization**: Fully independent. Can be developed at any time after 0.2.0. This is a kernel feature enhancement with no dependencies on plugin shims (0.2.1-0.2.4).
 
 #### Network Restriction Rules
 
@@ -713,7 +730,7 @@ allow_bind_ports = [8000, 8080]  # Empty = no binding allowed
 
 > **External Ref:** [Landlock Kernel Docs - Network](https://docs.kernel.org/userspace-api/landlock.html)
 
-### 0.2.5 - Plugin Testing and Stabilization
+### 0.2.6 - Plugin Testing and Stabilization
 
 **Target**: Ensure plugin shims work correctly with real-world projects.
 

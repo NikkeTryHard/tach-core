@@ -646,9 +646,19 @@ fn expr_to_json_value(expr: &ast::Expr) -> Option<serde_json::Value> {
 /// Extract keyword arguments from a Call expression
 ///
 /// Returns a HashMap of argument name -> JSON value
+/// Positional args are stored with numeric keys ("0", "1", etc.)
 fn extract_marker_arguments(call: &ast::ExprCall) -> HashMap<String, serde_json::Value> {
     let mut args = HashMap::new();
 
+    // Capture positional arguments with numeric keys
+    // e.g., @pytest.mark.urls('myapp.test_urls') -> {"0": "myapp.test_urls"}
+    for (i, arg) in call.args.iter().enumerate() {
+        if let Some(value) = expr_to_json_value(arg) {
+            args.insert(i.to_string(), value);
+        }
+    }
+
+    // Capture keyword arguments
     for keyword in &call.keywords {
         if let Some(ref arg_name) = keyword.arg
             && let Some(value) = expr_to_json_value(&keyword.value)
