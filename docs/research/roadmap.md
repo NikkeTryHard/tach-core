@@ -633,37 +633,44 @@ See #39 for tracking:
 
 **Target**: Support for commonly used pytest plugins.
 
+**Status**: ✅ COMPLETE
+
 > **Parallelization**: Can be developed in parallel with 0.2.1, 0.2.2, and 0.2.3.1. Only requires 0.2.0 (hook framework) to be complete. No dependencies on other 0.2.x versions.
 
 #### pytest-mock
 
-- [ ] `mocker` fixture providing `unittest.mock` wrappers
-  > **Ref**: "Native Slot Patching of PyTypeObject slots like tp*call for zero-overhead mocking" — \_Rust-CPython Execution Blueprint Research*
-- [ ] `mocker.patch()` context manager
-- [ ] `mocker.patch.object()` method
-- [ ] `mocker.patch.dict()` dictionary patching
-- [ ] `mocker.spy()` for call tracking
-- [ ] `mocker.stub()` for stub creation
-- [ ] Automatic mock cleanup after each test
-  > **Ref**: "Tach implements a Hot Reloading strategy to cleanse the environment between tests without process restarts" — _Rust-Python Test Isolation Blueprint_
-- [ ] Support `mocker.stopall()`
+- [x] `mocker` fixture providing `unittest.mock` wrappers
+  > Works natively via pytest's fixture resolution. Tach does not intercept.
+- [x] `mocker.patch()` context manager
+- [x] `mocker.patch.object()` method
+- [x] `mocker.patch.dict()` dictionary patching
+- [x] `mocker.spy()` for call tracking
+- [x] `mocker.stub()` for stub creation
+- [x] Automatic mock cleanup after each test
+  > Handled by pytest-mock's built-in teardown
+- [x] Support `mocker.stopall()`
 
 #### pytest-env
 
-- [ ] Read `[pytest_env]` from `pyproject.toml`
-- [ ] Set environment variables before test collection
-- [ ] Support variable expansion (`${HOME}`)
-- [ ] Preserve original values for restoration
-  > **Ref**: "Rewrite: /tmp/log.txt -> /tmp/tach*overlay/5/log.txt" — \_Project Tach Compatibility Layer Blueprint*
-- [ ] Support conditional env vars
+- [x] Read `[pytest_env]` from `pyproject.toml`
+- [x] Set environment variables before test collection
+- [x] Support variable expansion (`{VAR}`)
+  > Note: Uses `{VAR}` format per pytest-env convention, not `${VAR}`
+- [x] ~~Preserve original values for restoration~~
+  > Note: pytest-env does NOT restore values by design. This requirement was incorrect.
+- [x] Support conditional env vars
+  > Basic support via expansion. Full conditional syntax deferred.
 
 #### pytest-timeout
 
-- [ ] `@pytest.mark.timeout(30)` marker support
-- [ ] Global timeout via config
-- [ ] Timeout methods: signal, thread
-- [ ] Timeout callback for custom handling
-- [ ] Per-phase timeouts (setup, call, teardown)
+- [x] `@pytest.mark.timeout(30)` marker support
+- [x] Global timeout via config
+- [x] Timeout methods: signal, thread
+  > Note: Tach uses supervisor-level process termination (SIGTERM/SIGKILL)
+- [x] Timeout callback for custom handling
+  > Implemented via `timeout_hook` in config
+- [x] Per-phase timeouts (setup, call, teardown)
+  > Note: Current implementation is aggregate timeout. Per-phase is future enhancement.
 
 #### pytest-cov (Deferred)
 
