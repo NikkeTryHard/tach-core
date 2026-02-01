@@ -72,3 +72,17 @@ def test_async_timeout_with_cleanup():
         assert len(cleanup_called) == 1
     finally:
         loop.close()
+
+
+def test_async_timeout_coro_returns_none():
+    """Coroutine returning None should not be treated as timeout."""
+    async def returns_none():
+        return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        result, timed_out = run_with_timeout(loop, returns_none(), timeout=1.0)
+        assert timed_out is False
+        assert result is None
+    finally:
+        loop.close()

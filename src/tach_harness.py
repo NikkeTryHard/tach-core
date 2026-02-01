@@ -177,6 +177,10 @@ def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
         return None
 
 
+# Sentinel value to distinguish timeout from legitimate None return
+_TIMEOUT_SENTINEL = object()
+
+
 def run_with_timeout(
     loop: asyncio.AbstractEventLoop,
     coro,
@@ -200,11 +204,11 @@ def run_with_timeout(
         try:
             return await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
-            return None
+            return _TIMEOUT_SENTINEL
 
     try:
         result = loop.run_until_complete(with_timeout())
-        if result is None:
+        if result is _TIMEOUT_SENTINEL:
             return None, True
         return result, False
     except asyncio.CancelledError:
