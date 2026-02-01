@@ -254,6 +254,41 @@ def ensure_no_running_loop():
                 pass  # Loop may have been closed
 
 
+def cleanup_pending_tasks(loop: asyncio.AbstractEventLoop) -> int:
+    """Cancel and await all pending tasks in the loop.
+
+    This ensures proper cleanup of tasks created with asyncio.gather(),
+    asyncio.create_task(), or TaskGroup (Python 3.11+).
+
+    Args:
+        loop: Event loop to clean up
+
+    Returns:
+        Number of tasks that were cancelled
+    """
+    try:
+        pending = asyncio.all_tasks(loop)
+    except RuntimeError:
+        return 0
+
+    if not pending:
+        return 0
+
+    for task in pending:
+        task.cancel()
+
+    # Give tasks a chance to handle cancellation
+    async def wait_cancelled():
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    try:
+        loop.run_until_complete(wait_cancelled())
+    except Exception:
+        pass
+
+    return len(pending)
+
+
 def run_async_fixture(
     fixture_func: Any,
     fixture_values: dict[str, Any],
