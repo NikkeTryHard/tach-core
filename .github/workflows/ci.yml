@@ -8,9 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: true
+  RUSTC_WRAPPER: sccache
 
 jobs:
-  # Fast check - only essential stuff
   check:
     name: Format & Lint
     runs-on: ubuntu-latest
@@ -21,6 +22,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -36,7 +43,6 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # Quick unit tests only
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -46,6 +52,15 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -58,5 +73,5 @@ jobs:
       - name: Set PYO3_PYTHON
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
-      - name: Run unit tests
-        run: cargo test --lib --all-features
+      - name: Run unit tests with nextest
+        run: cargo nextest run --lib --all-features --profile ci
