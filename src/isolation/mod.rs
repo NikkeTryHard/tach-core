@@ -16,3 +16,10 @@ pub use namespace::setup_filesystem;
 
 // Re-export calibration for Zygote warm-up
 pub use calibration::TlsCalibration;
+
+// Re-export sandbox types and functions
+pub use sandbox::{
+    NetworkIsolationStatus, SandboxStatus, apply_iron_dome, apply_iron_dome_with_network,
+    apply_landlock, apply_landlock_network, apply_seccomp, detect_landlock_abi,
+    supports_landlock_network,
+};

@@ -58,7 +58,7 @@ flowchart TB
         P2_1["0.2.1 pytest-django ✅"]
         P2_2["0.2.2 pytest-asyncio ✅"]
         P2_3["0.2.3 pytest-mock/env/timeout + Django Markers ✅"]
-        P2_4["0.2.4 Landlock V4-V6"]
+        P2_4["0.2.4 Landlock V4-V6 ✅"]
         P2_5["0.2.5 Plugin Stabilization"]
 
         P2_0 --> P2_1
@@ -256,7 +256,7 @@ flowchart TB
     class P2_0,P2_1,P2_2,P2_3,P5_0,P5_6,P7_4,P8_1 done
     class P5_1 inProgress
     class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
-    class P2_4 canStart
+    class P2_4 done
     class P2_5 pending
     class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
@@ -275,7 +275,7 @@ flowchart TB
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - 0.2.0-0.2.4 done, 0.2.5 (Landlock) can start
+- Phase 2 (0.2.x): In Progress - 0.2.0-0.2.4 done, 0.2.5 (Stabilization) can start
 - Phases 3-4: Blocked by Phase 2 plugin work
 - Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
 - Phase 10: Not started
@@ -708,16 +708,18 @@ The following django_db marker options require deeper database transaction suppo
 
 **Target**: Use Landlock for network isolation when available, reducing reliance on CLONE_NEWNET.
 
+**Status**: ✅ COMPLETE
+
 > **Parallelization**: Fully independent. Can be developed at any time after 0.2.0. This is a kernel feature enhancement with no dependencies on plugin shims (0.2.1-0.2.4).
 
 #### Network Restriction Rules
 
-- [ ] Detect Landlock ABI V4+ at runtime
-- [ ] Implement TCP bind restrictions per worker
+- [x] Detect Landlock ABI V4+ at runtime
+- [x] Implement TCP bind restrictions per worker
   > Workers should only bind to assigned port ranges
-- [ ] Implement TCP connect restrictions
+- [x] Implement TCP connect restrictions
   > Block outbound connections except to localhost and configured hosts
-- [ ] Graceful fallback to `CLONE_NEWNET` on older kernels
+- [x] Graceful fallback to `CLONE_NEWNET` on older kernels
 
 #### Configuration
 
