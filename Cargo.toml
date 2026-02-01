@@ -274,3 +274,7 @@ path = "rust_tests/cli_integration.rs"
 [[test]]
 name = "hooks_test"
 path = "rust_tests/hooks_test.rs"
+
+[[test]]
+name = "landlock_network_tests"
+path = "rust_tests/landlock_network_tests.rs"

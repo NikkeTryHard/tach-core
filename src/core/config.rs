@@ -499,6 +499,9 @@ pub struct TachConfig {
     /// Plugin configuration
     #[serde(default)]
     pub plugins: PluginConfig,
+
+    /// Network isolation configuration (Landlock V4+)
+    pub network: Option<NetworkConfig>,
 }
 
 /// Coverage configuration for Tach
@@ -518,6 +521,44 @@ pub struct CoverageConfig {
 
     /// Output format: "lcov", "html", "json" (default: "lcov")
     pub format: Option<String>,
+}
+
+/// Network isolation configuration for Landlock V4+
+///
+/// Example pyproject.toml:
+/// ```toml
+/// [tool.tach.network]
+/// allow_localhost = true
+/// allow_connect = ["api.example.com:443"]
+/// allow_bind_ports = [8000, 8080]
+/// ```
+#[derive(Deserialize, Default, Clone, Debug)]
+pub struct NetworkConfig {
+    /// Allow connections to localhost (127.0.0.1, ::1). Default: true
+    pub allow_localhost: Option<bool>,
+
+    /// Allowed outbound connection targets (host:port format)
+    pub allow_connect: Option<Vec<String>>,
+
+    /// Allowed TCP bind ports. Use 0 for ephemeral ports.
+    pub allow_bind_ports: Option<Vec<u16>>,
+}
+
+impl NetworkConfig {
+    /// Check if localhost connections are allowed (default: true)
+    pub fn allow_localhost(&self) -> bool {
+        self.allow_localhost.unwrap_or(true)
+    }
+
+    /// Get allowed connection targets
+    pub fn allowed_connections(&self) -> &[String] {
+        self.allow_connect.as_deref().unwrap_or(&[])
+    }
+
+    /// Get allowed bind ports
+    pub fn allowed_bind_ports(&self) -> &[u16] {
+        self.allow_bind_ports.as_deref().unwrap_or(&[])
+    }
 }
 
 /// Plugin configuration for Tach
@@ -604,6 +645,8 @@ pub struct MergedConfig {
     pub coverage_output: String,
     pub coverage_format: String,
     pub disabled_plugins: Vec<String>,
+    /// Network isolation configuration
+    pub network: Option<NetworkConfig>,
 }
 
 impl MergedConfig {
@@ -642,6 +685,7 @@ impl MergedConfig {
             coverage_output: cov_config.output.unwrap_or_else(|| ".coverage".to_string()),
             coverage_format: cov_config.format.unwrap_or_else(|| "lcov".to_string()),
             disabled_plugins,
+            network: file_config.network.clone(),
         }
     }
 }
@@ -1015,6 +1059,67 @@ enabled = true
         let cov = config.coverage.unwrap();
         assert!(cov.source.is_none());
         assert!(cov.omit.is_none());
+    }
+
+    // =========================================================================
+    //  NetworkConfig Tests (Landlock V4+)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_network_config_full() {
+        let toml_content = r#"
+[tool.tach.network]
+allow_localhost = true
+allow_connect = ["api.example.com:443", "db.internal:5432"]
+allow_bind_ports = [8000, 8080, 0]
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        let net = config.network.unwrap();
+        assert!(net.allow_localhost.unwrap());
+        assert_eq!(net.allow_connect.as_ref().unwrap().len(), 2);
+        assert_eq!(net.allow_bind_ports.as_ref().unwrap(), &[8000, 8080, 0]);
+    }
+
+    #[test]
+    fn test_parse_network_config_defaults() {
+        let toml_content = r#"
+[tool.tach]
+timeout = 30
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        assert!(config.network.is_none());
+    }
+
+    #[test]
+    fn test_network_config_allow_localhost_default_true() {
+        let config = NetworkConfig::default();
+        assert!(config.allow_localhost());
+    }
+
+    #[test]
+    fn test_merged_config_includes_network() {
+        use clap::Parser;
+
+        let cli = Cli::parse_from(["tach", "."]);
+        let file_config = TachConfig {
+            network: Some(NetworkConfig {
+                allow_localhost: Some(true),
+                allow_connect: Some(vec!["api.example.com:443".to_string()]),
+                allow_bind_ports: Some(vec![8080]),
+            }),
+            ..Default::default()
+        };
+
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+
+        assert!(merged.network.is_some());
+        let net = merged.network.as_ref().unwrap();
+        assert!(net.allow_localhost());
+        assert_eq!(net.allowed_connections().len(), 1);
     }
 
     // =========================================================================
