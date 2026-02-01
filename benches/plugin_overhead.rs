@@ -355,7 +355,7 @@ fn bench_effect_replay(c: &mut Criterion) {
     group.bench_function("clone_effects_batch", |b| {
         let effects = sample_effects();
         b.iter(|| {
-            let cloned: Vec<HookEffect> = effects.iter().cloned().collect();
+            let cloned: Vec<HookEffect> = effects.to_vec();
             black_box(cloned)
         })
     });
