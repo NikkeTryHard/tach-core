@@ -1147,15 +1147,9 @@ LITERAL_BRACES = "{{NOT_EXPANDED}}"
 
         load_env_from_pyproject(temp_dir.path());
 
-        assert_eq!(
-            std::env::var("EXPANDED_VAR").unwrap(),
-            "/base/path/subdir"
-        );
+        assert_eq!(std::env::var("EXPANDED_VAR").unwrap(), "/base/path/subdir");
         // Double braces escape to literal braces
-        assert_eq!(
-            std::env::var("LITERAL_BRACES").unwrap(),
-            "{NOT_EXPANDED}"
-        );
+        assert_eq!(std::env::var("LITERAL_BRACES").unwrap(), "{NOT_EXPANDED}");
 
         // Cleanup
         unsafe {
