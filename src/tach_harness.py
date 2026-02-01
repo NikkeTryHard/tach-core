@@ -38,6 +38,157 @@ EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
 EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
 EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
 
+
+# =============================================================================
+# EVENT LOOP MANAGEMENT (pytest-asyncio support)
+# =============================================================================
+
+
+class EventLoopManager:
+    """Manages event loop lifecycle based on pytest-asyncio loop_scope.
+
+    Supports function, class, module, and session scopes.
+    """
+
+    _instance: Optional["EventLoopManager"] = None
+
+    def __init__(self):
+        self._loops: dict[str, asyncio.AbstractEventLoop] = {}
+        self._current_scope: str = "function"
+        self._auto_mode: bool = False
+
+    @classmethod
+    def get_instance(cls) -> "EventLoopManager":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset the singleton (for testing)."""
+        if cls._instance is not None:
+            cls._instance.close_all()
+            cls._instance = None
+
+    def configure(self, loop_scope: str = "function", auto_mode: bool = False) -> None:
+        """Configure loop scope and auto mode."""
+        self._current_scope = loop_scope
+        self._auto_mode = auto_mode
+
+    def get_loop(self, scope_key: str) -> asyncio.AbstractEventLoop:
+        """Get or create event loop for the given scope key."""
+        if scope_key not in self._loops:
+            loop = asyncio.new_event_loop()
+            self._loops[scope_key] = loop
+        return self._loops[scope_key]
+
+    def get_scope_key(self, item: Any) -> str:
+        """Determine scope key based on current scope and test item."""
+        if self._current_scope == "session":
+            return "session"
+        elif self._current_scope == "module":
+            return f"module:{getattr(item, 'fspath', 'unknown')}"
+        elif self._current_scope == "class":
+            cls = getattr(item, "cls", None)
+            if cls:
+                return f"class:{cls.__module__}.{cls.__name__}"
+            return f"function:{getattr(item, 'nodeid', 'unknown')}"
+        else:  # function scope (default)
+            return f"function:{getattr(item, 'nodeid', 'unknown')}"
+
+    def close_scope(self, scope_key: str) -> None:
+        """Close and remove the event loop for a scope."""
+        if scope_key in self._loops:
+            loop = self._loops.pop(scope_key)
+            if not loop.is_closed():
+                try:
+                    # Cancel pending tasks
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    # Run until all tasks are cancelled
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass  # Ignore cleanup errors
+                finally:
+                    loop.close()
+
+    def close_all(self) -> None:
+        """Close all managed event loops."""
+        for scope_key in list(self._loops.keys()):
+            self.close_scope(scope_key)
+
+    @property
+    def auto_mode(self) -> bool:
+        return self._auto_mode
+
+    @property
+    def current_scope(self) -> str:
+        return self._current_scope
+
+
+def run_async_fixture(
+    fixture_func: Any,
+    fixture_values: dict[str, Any],
+    loop: asyncio.AbstractEventLoop,
+) -> tuple[Any, Any]:
+    """Execute an async fixture and return its value.
+
+    Returns:
+        Tuple of (value, generator_or_none)
+    """
+    if inspect.isasyncgenfunction(fixture_func):
+        # Async generator fixture (async yield pattern)
+        async def run_gen():
+            gen = fixture_func(**fixture_values)
+            value = await gen.__anext__()
+            return value, gen
+
+        return loop.run_until_complete(run_gen())
+    else:
+        # Simple async fixture
+        coro = fixture_func(**fixture_values)
+        return loop.run_until_complete(coro), None
+
+
+def teardown_async_fixture(
+    gen: Any,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Teardown an async generator fixture."""
+    if gen is not None:
+        async def cleanup():
+            try:
+                await gen.__anext__()
+            except StopAsyncIteration:
+                pass
+        try:
+            loop.run_until_complete(cleanup())
+        except Exception:
+            pass  # Ignore cleanup errors
+
+
+def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
+    """Parse @pytest.mark.asyncio marker from test item.
+
+    Returns:
+        Tuple of (loop_scope, has_marker)
+    """
+    loop_scope = "function"  # default
+    has_marker = False
+
+    if hasattr(item, "iter_markers"):
+        for marker in item.iter_markers("asyncio"):
+            has_marker = True
+            # Extract loop_scope from marker kwargs
+            if marker.kwargs:
+                loop_scope = marker.kwargs.get("loop_scope", "function")
+            break
+
+    return loop_scope, has_marker
+
+
 # =============================================================================
 # THREAD LEAK DETECTION (Task 3: 0.1.2)
 # =============================================================================
@@ -2026,20 +2177,31 @@ def run_test(
             func_to_check = original_obj.__func__
 
         if inspect.iscoroutinefunction(func_to_check):
+            # Use EventLoopManager for scoped loop management
+            loop_manager = EventLoopManager.get_instance()
 
-            def make_sync_wrapper(async_fn):
+            # Parse asyncio marker for loop_scope configuration
+            loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
+            loop_manager.configure(loop_scope=loop_scope)
+
+            scope_key = loop_manager.get_scope_key(target_item)
+
+            def make_sync_wrapper(async_fn, mgr, key):
                 def sync_wrapper(*args, **kwargs):
-                    loop = asyncio.new_event_loop()
+                    loop = mgr.get_loop(key)
+                    # Set as current event loop for this thread
                     asyncio.set_event_loop(loop)
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
-                        loop.close()
-                        asyncio.set_event_loop(None)
+                        # Only close function-scoped loops immediately
+                        if mgr.current_scope == "function":
+                            mgr.close_scope(key)
+                            asyncio.set_event_loop(None)
 
                 return sync_wrapper
 
-            target_item.obj = make_sync_wrapper(original_obj)
+            target_item.obj = make_sync_wrapper(original_obj, loop_manager, scope_key)
 
         # Django Database Isolation (v0.2.1)
         # Parse marker_info to get django_db settings and apply SAVEPOINT isolation
