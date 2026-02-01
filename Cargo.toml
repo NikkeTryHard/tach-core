@@ -104,7 +104,7 @@ tempfile = "3"
 bincode = { version = "2.0", features = ["serde"] }
 wait-timeout = "0.2"
 proptest = "1.4"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "hot_paths"
