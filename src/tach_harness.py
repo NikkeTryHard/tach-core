@@ -59,6 +59,9 @@ class EventLoopManager:
         self._current_scope: str = "function"
         self._auto_mode: bool = False
         self._policy: Optional[asyncio.AbstractEventLoopPolicy] = None
+        # Scope transition tracking (Issue #43)
+        self._previous_module: Optional[str] = None
+        self._previous_class: Optional[str] = None
 
     @classmethod
     def get_instance(cls) -> "EventLoopManager":
@@ -132,6 +135,32 @@ class EventLoopManager:
         """Close all managed event loops."""
         for scope_key in list(self._loops.keys()):
             self.close_scope(scope_key)
+
+    def on_scope_transition(
+        self,
+        current_module: Optional[str],
+        current_class: Optional[str]
+    ) -> None:
+        """Handle scope transitions and cleanup old scopes.
+
+        Called before each test to detect and handle scope boundaries.
+        Closes event loops when transitioning out of a class or module.
+        """
+        # Module transition: close previous module's loop if scope is module
+        if self._current_scope == "module":
+            if self._previous_module is not None and self._previous_module != current_module:
+                old_key = f"module:{self._previous_module}"
+                self.close_scope(old_key)
+
+        # Class transition: close previous class's loop if scope is class
+        if self._current_scope == "class":
+            if self._previous_class is not None and self._previous_class != current_class:
+                old_key = f"class:{self._previous_class}"
+                self.close_scope(old_key)
+
+        # Update tracking
+        self._previous_module = current_module
+        self._previous_class = current_class
 
     @property
     def auto_mode(self) -> bool:
@@ -2361,6 +2390,12 @@ def run_test(
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
             loop_manager.configure(loop_scope=loop_scope)
 
+            # Scope transition handling (Issue #43)
+            fspath = str(getattr(target_item, 'fspath', ''))
+            item_cls = getattr(target_item, 'cls', None)
+            class_name = f"{item_cls.__module__}.{item_cls.__name__}" if item_cls else None
+            loop_manager.on_scope_transition(fspath, class_name)
+
             scope_key = loop_manager.get_scope_key(target_item)
 
             def make_sync_wrapper(async_fn, mgr, key):
@@ -2461,6 +2496,9 @@ def reset_worker_state() -> bool:
     Returns True if reset succeeded, False otherwise.
     """
     try:
+        # Reset event loop manager to cleanup any lingering loops (Issue #43)
+        EventLoopManager.reset()
+
         import tach_rust
 
         tach_rust.reset_memory()
