@@ -20,18 +20,33 @@ _No changes yet._
 ### Added
 
 - **pytest-asyncio Support**: Full async test and fixture support
-  - `is_async` field tracking for fixtures throughout the pipeline (FixtureInfo, FixtureDefinition, ResolvedFixture)
-  - `LoopScope` enum for event loop scoping (function, class, module, session)
-  - `AsyncioSetup` HookEffect variant for loop configuration propagation
-  - `EventLoopManager` singleton class in Python harness for scoped event loop lifecycle
-  - Async fixture execution helpers (`run_async_fixture`, `teardown_async_fixture`)
-  - `@pytest.mark.asyncio(loop_scope="...")` marker parsing
-  - AsyncioSetup effect flow from Rust zygote to Python harness
-  - Integration tests for async fixtures and loop scopes
 
-### Changed
+---
 
-- Updated roadmap to mark 0.2.2 pytest-asyncio items as complete
+## [0.2.1] - 2026-01-30
+
+### Added
+
+- **pytest-django Support (Core Infrastructure)**: Foundation for Django test support
+  - Static parsing of `@pytest.mark.django_db` markers with argument extraction
+  - `MarkerInfo` structure for IPC propagation of marker arguments
+  - `DjangoDbSetup` HookEffect variant for database configuration
+  - SAVEPOINT-based transaction isolation in Python harness
+  - `_apply_django_db_isolation()` wraps tests in atomic savepoints
+  - `_cleanup_django_db_isolation()` ensures rollback on success or failure
+  - pytest-django registered as "Supported" plugin in registry
+  - Integration tests in `tests/gauntlet_django/` (marker isolation, parallel isolation, savepoint cleanup)
+
+### Not Yet Implemented
+
+The following features are tracked in GitHub issues and deferred to 0.3.x:
+
+- `transaction=True` argument (#40)
+- `reset_sequences=True` argument (#36)
+- Multi-database `databases=[...]` support (#38)
+- Django fixtures: `client`, `rf`, `admin_client`, `live_server` (#39)
+- `--reuse-db` and `--create-db` CLI flags (#37)
+- `@pytest.mark.urls` and `@pytest.mark.ignore_template_errors` markers (#35)
 
 ---
 

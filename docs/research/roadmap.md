@@ -537,7 +537,7 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 ### 0.2.1 - pytest-django Support
 
-**Status**: ✅ COMPLETE
+**Status**: ✅ COMPLETE (Core Infrastructure)
 
 **Target**: First-class Django test support.
 
@@ -545,17 +545,27 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 
 > **Note**: Marker detection (`django_db`, `urls`, etc.) is already implemented in core discovery. Tests marked with `@pytest.mark.django_db` are detected and the marker name is available in `TestCase.markers`. The items below are about _executing_ the marker behavior.
 
-#### Marker Support
+#### Implemented (v0.2.1)
 
-- [ ] `@pytest.mark.django_db` - Enable database access
-  > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
-  - [ ] `transaction=True` - Use real transactions
-  - [ ] `reset_sequences=True` - Reset auto-increment
-  - [ ] `databases=['default', 'secondary']` - Multi-db
-- [ ] `@pytest.mark.urls('myapp.test_urls')` - URL override
-- [ ] `@pytest.mark.ignore_template_errors` - Template error handling
+- [x] `@pytest.mark.django_db` - Basic marker detection and savepoint isolation
+- [x] `DjangoDbSetup` HookEffect for database configuration
+- [x] SAVEPOINT-based transaction rollback in harness
+- [x] pytest-django registered as "Supported" plugin
+- [x] Integration tests in `tests/gauntlet_django/`
 
-#### Django Fixtures
+#### Deferred to 0.3.x (Database Integration)
+
+See GitHub issues for tracking:
+
+- [ ] `transaction=True` - Use real transactions (#40)
+- [ ] `reset_sequences=True` - Reset auto-increment (#36)
+- [ ] `databases=['default', 'secondary']` - Multi-db (#38)
+- [ ] `@pytest.mark.urls('myapp.test_urls')` - URL override (#35)
+- [ ] `@pytest.mark.ignore_template_errors` - Template error handling (#35)
+
+#### Django Fixtures (Deferred to 0.3.x/0.4.x)
+
+See #39 for tracking:
 
 - [ ] `client` - Django test client
 - [ ] `rf` - Request factory
@@ -568,17 +578,15 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [ ] `db` - Database access fixture
 - [ ] `transactional_db` - Transactional database
 
-#### Database Handling
+#### Database Handling (Deferred to 0.3.x)
 
-- [ ] Hook into Django's transaction management
-  > **Ref**: "Regardless of success or failure, Tach injects ROLLBACK TO SAVEPOINT tach*test_start. This instantly reverts the database state to the snapshot taken, entirely in memory" — \_Rust-Python Test Isolation Blueprint*
+- [x] Hook into Django's transaction management (savepoint-based)
 - [ ] Preserve database connections across test resets
-  > **Ref**: "Ensure that any connection pool created in the parent is explicitly discarded in the child process immediately after startup" — _Fork Safety of Python C-Extensions_
 - [ ] Handle database migrations in test database
-- [ ] Support `--reuse-db` flag for faster test runs
-- [ ] Support `--create-db` flag for fresh database
-- [ ] Handle multi-database configurations
-- [ ] Support database aliases
+- [ ] Support `--reuse-db` flag for faster test runs (#37)
+- [ ] Support `--create-db` flag for fresh database (#37)
+- [ ] Handle multi-database configurations (#38)
+- [ ] Support database aliases (#38)
 
 ### 0.2.2 - pytest-asyncio Support
 
