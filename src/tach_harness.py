@@ -20,6 +20,7 @@ import warnings as warnings_module
 import _pytest.runner
 import _pytest.main
 import _pytest.config
+from contextlib import contextmanager
 from typing import Any, Optional, Set, Type, Tuple, Union
 
 # Status codes (must match protocol.rs)
@@ -213,6 +214,44 @@ def run_with_timeout(
         return result, False
     except asyncio.CancelledError:
         return None, True
+
+
+def is_loop_running() -> bool:
+    """Check if an event loop is currently running."""
+    try:
+        loop = asyncio.get_running_loop()
+        return loop.is_running()
+    except RuntimeError:
+        return False
+
+
+@contextmanager
+def ensure_no_running_loop():
+    """Context manager that ensures no event loop is set.
+
+    Used to allow asyncio.run() inside sync tests by temporarily
+    clearing the current event loop.
+    """
+    # Save current event loop if any
+    try:
+        old_loop = asyncio.get_event_loop_policy().get_event_loop()
+        had_loop = True
+    except RuntimeError:
+        old_loop = None
+        had_loop = False
+
+    # Clear the current event loop
+    asyncio.set_event_loop(None)
+
+    try:
+        yield
+    finally:
+        # Restore previous state
+        if had_loop and old_loop is not None:
+            try:
+                asyncio.set_event_loop(old_loop)
+            except RuntimeError:
+                pass  # Loop may have been closed
 
 
 def run_async_fixture(
