@@ -68,6 +68,8 @@ pub struct FixtureDefinition {
     pub class_scope: Option<String>,
     /// Whether this fixture runs automatically for all tests in scope
     pub autouse: bool,
+    /// Whether this fixture is async (async def)
+    pub is_async: bool,
 }
 
 /// Marker information including name and keyword arguments
@@ -752,6 +754,7 @@ fn analyze_function(
             params: extract_params_from_decorators(&func.decorator_list),
             class_scope: None, // Top-level fixture
             autouse: extract_autouse_from_decorators(&func.decorator_list),
+            is_async: false,
         });
     }
 }
@@ -835,6 +838,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                         params: extract_params_from_decorators(&func.decorator_list),
                         class_scope: None, // Top-level async fixture
                         autouse: extract_autouse_from_decorators(&func.decorator_list),
+                        is_async: true,
                     });
                 }
             }
@@ -854,6 +858,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     params: extract_params_from_decorators(&func.decorator_list),
                                     class_scope: Some(class_name.to_string()),
                                     autouse: extract_autouse_from_decorators(&func.decorator_list),
+                                    is_async: false,
                                 });
                             }
 
@@ -891,6 +896,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     params: extract_params_from_decorators(&func.decorator_list),
                                     class_scope: Some(class_name.to_string()),
                                     autouse: extract_autouse_from_decorators(&func.decorator_list),
+                                    is_async: true,
                                 });
                             }
 
@@ -1289,6 +1295,7 @@ async def test_async_with_marker():
                         params: None,
                         class_scope: None,
                         autouse: false,
+                        is_async: false,
                     }],
                     hooks: vec![],
                     is_toxic: false,

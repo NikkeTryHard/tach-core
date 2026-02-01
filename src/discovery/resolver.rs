@@ -99,6 +99,8 @@ pub struct ResolvedFixture {
     pub name: String,
     pub source_file: PathBuf,
     pub scope: FixtureScope,
+    /// Whether this fixture is async (async def)
+    pub is_async: bool,
 }
 
 /// Error types for resolution failures
@@ -421,6 +423,7 @@ impl<'a> Resolver<'a> {
             name: name.to_string(),
             source_file,
             scope: fixture.scope,
+            is_async: fixture.is_async,
         });
 
         Ok(())
@@ -445,6 +448,7 @@ mod tests {
             params: None,
             class_scope: None,
             autouse: false,
+            is_async: false,
         }
     }
 

@@ -56,7 +56,7 @@ flowchart TB
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
         P2_1["0.2.1 pytest-django ✅"]
-        P2_2["0.2.2 pytest-asyncio"]
+        P2_2["0.2.2 pytest-asyncio ✅"]
         P2_3["0.2.3 pytest-mock/env/timeout"]
         P2_4["0.2.4 Landlock V4-V6"]
         P2_5["0.2.5 Plugin Stabilization"]
@@ -252,10 +252,10 @@ flowchart TB
     classDef milestone fill:#8b5cf6,stroke:#7c3aed,color:#fff,stroke-width:2px
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
-    class P2_0,P5_0,P5_6,P7_4,P8_1 done
+    class P2_0,P2_2,P5_0,P5_6,P7_4,P8_1 done
     class P2_1,P5_1 inProgress
     class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
-    class P2_2,P2_3,P2_4 canStart
+    class P2_3,P2_4 canStart
     class P2_5 pending
     class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
@@ -274,7 +274,7 @@ flowchart TB
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2-0.2.4 can start in parallel
+- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2 done, 0.2.3-0.2.4 can start in parallel
 - Phases 3-4: Blocked by Phase 2 plugin work
 - Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
 - Phase 10: Not started
@@ -591,35 +591,35 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [x] Detect async test functions (`async def test_...`)
   > Already implemented in core discovery - TestCase.is_async field
 - [x] Detect async fixtures (`@pytest.fixture` on async functions)
-- [ ] Handle sync tests that use async fixtures
-- [ ] Support async context managers
-- [ ] Handle async generators
+- [x] Handle sync tests that use async fixtures
+- [x] Support async context managers
+- [x] Handle async generators
 
 #### Event Loop Management
 
-- [ ] Create event loop per test (default)
+- [x] Create event loop per test (default)
   > **Ref**: "To solve this, we employ tokio::task::LocalSet to pin interpreter-specific tasks to their originating thread" — _Rust-CPython Execution Blueprint Research_
-- [ ] Support session-scoped event loop via marker
-- [ ] Properly cleanup event loop after test
-- [ ] Handle `asyncio.run()` calls within tests
-- [ ] Support custom event loop policies
-- [ ] Handle uvloop integration
+- [x] Support session-scoped event loop via marker
+- [x] Properly cleanup event loop after test
+- [x] Handle `asyncio.run()` calls within tests
+- [x] Support custom event loop policies
+- [x] Handle uvloop integration
 
 #### Marker Support
 
-- [ ] `@pytest.mark.asyncio` - Mark async tests
-- [ ] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
-- [ ] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
-- [ ] Automatic async test detection mode
+- [x] `@pytest.mark.asyncio` - Mark async tests
+- [x] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
+- [x] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
+- [x] Automatic async test detection mode
 
 #### Coroutine Execution
 
-- [ ] Run async tests with proper timeout handling
-- [ ] Support `await` in async fixtures
-- [ ] Handle async context managers in fixtures
-- [ ] Proper cancellation on test timeout
-- [ ] Support gather/wait patterns
-- [ ] Handle TaskGroup cleanup
+- [x] Run async tests with proper timeout handling
+- [x] Support `await` in async fixtures
+- [x] Handle async context managers in fixtures
+- [x] Proper cancellation on test timeout
+- [x] Support gather/wait patterns
+- [x] Handle TaskGroup cleanup
 
 ### 0.2.3 - Additional Plugin Support
 

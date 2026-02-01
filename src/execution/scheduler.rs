@@ -435,7 +435,7 @@ impl Scheduler {
             fixtures: test
                 .fixtures
                 .iter()
-                .map(|f| FixtureInfo::from_scope(f.name.clone(), &f.scope))
+                .map(|f| FixtureInfo::from_scope(f.name.clone(), &f.scope, f.is_async))
                 .collect(),
             log_fd,
             debug_socket_path: self.debug_socket_path.to_string_lossy().to_string(),
@@ -1075,11 +1075,13 @@ mod tests {
                     name: "db".to_string(),
                     source_file: PathBuf::from("/tests/conftest.py"),
                     scope: crate::discovery::FixtureScope::Function,
+                    is_async: false,
                 },
                 ResolvedFixture {
                     name: "client".to_string(),
                     source_file: PathBuf::from("/tests/conftest.py"),
                     scope: crate::discovery::FixtureScope::Module,
+                    is_async: false,
                 },
             ],
             is_toxic: false,

@@ -40,8 +40,8 @@ pub use caller::HookCaller;
 pub use graph::HookDependencyGraph;
 pub use plugins::{PluginRegistry, PluginStatus};
 pub use registry::{
-    AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, HookSpec, SysPathAction,
-    aggregate_results, builtin_hook_specs, hook_names,
+    AggregationStrategy, Hook, HookEffect, HookRegistry, HookResult, HookSpec, LoopScope,
+    SysPathAction, aggregate_results, builtin_hook_specs, hook_names,
 };
 
 /// Sort hooks by source path depth (root conftest first, leaf last)

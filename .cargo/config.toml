@@ -1,26 +1,32 @@
-# Cargo configuration for memory-constrained systems (7.7GB RAM)
-# Prevents OOM crashes during PyO3 compilation and testing
+# Speed-optimized Cargo config
+# Uses mold linker + sccache for fast builds
 
 [build]
-# Limit to 1 parallel compilation job to minimize memory spikes
-# PyO3 + tokio + pyo3-macros can use 2-3GB per job
-jobs = 1
+# Use sccache for compilation caching
+rustc-wrapper = "sccache"
+# Parallel jobs (adjust based on RAM)
+jobs = 4
+
+[target.x86_64-unknown-linux-gnu]
+# Use mold linker (10x faster than default ld)
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [env]
-# Reduce codegen units for lower memory usage during linking
-CARGO_PROFILE_DEV_CODEGEN_UNITS = "1"
-# Limit test parallelism to prevent resource exhaustion on WSL2
-# Tests create kernel resources (userfaultfd, memfd, mmap, sockets, threads)
-# that can overwhelm WSL2 when run concurrently
-RUST_TEST_THREADS = "1"
+# Parallel test threads
+RUST_TEST_THREADS = "4"
 
-# Optimize test profile for lower memory usage
+[profile.dev]
+incremental = true
+codegen-units = 16
+
 [profile.test]
-# Fewer codegen units = less memory during compilation
-codegen-units = 1
-# No LTO in tests (LTO uses massive memory)
-lto = false
-# Keep some debug info but not full
+incremental = true
+codegen-units = 16
+opt-level = 0
 debug = 1
-# Optimize slightly to reduce binary size
-opt-level = 1
+lto = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

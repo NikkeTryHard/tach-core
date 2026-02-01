@@ -690,7 +690,12 @@ fn warn_if_blocking_patterns(cwd: &Path, is_empty: bool, is_json: bool) {
 }
 
 /// Handle the `list` subcommand
-fn handle_list_command(cwd: &Path, target_path: &str, is_json: bool, no_ignore: bool) -> Result<()> {
+fn handle_list_command(
+    cwd: &Path,
+    target_path: &str,
+    is_json: bool,
+    no_ignore: bool,
+) -> Result<()> {
     // Resolve target path (absolute or relative to cwd)
     let target = if std::path::Path::new(target_path).is_absolute() {
         std::path::PathBuf::from(target_path)

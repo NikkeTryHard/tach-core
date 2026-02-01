@@ -303,6 +303,7 @@ def test_network_stuff():
             .map(|f| FixtureInfo {
                 name: f.name.clone(),
                 scope: "function".to_string(),
+                is_async: false,
             })
             .collect(),
         log_fd: -1,

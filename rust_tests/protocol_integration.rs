@@ -16,6 +16,7 @@ fn test_serialize_test_payload() {
         fixtures: vec![FixtureInfo {
             name: "db".to_string(),
             scope: "module".to_string(),
+            is_async: false,
         }],
         log_fd: 5,
         debug_socket_path: String::new(),
@@ -89,10 +90,12 @@ fn test_roundtrip_test_payload() {
             FixtureInfo {
                 name: "fixture_a".to_string(),
                 scope: "function".to_string(),
+                is_async: false,
             },
             FixtureInfo {
                 name: "fixture_b".to_string(),
                 scope: "session".to_string(),
+                is_async: false,
             },
         ],
         log_fd: 10,
@@ -157,6 +160,7 @@ fn test_fixture_info_creation() {
     let info = FixtureInfo {
         name: "my_fixture".to_string(),
         scope: "module".to_string(),
+        is_async: false,
     };
 
     assert_eq!(info.name, "my_fixture");

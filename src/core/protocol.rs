@@ -66,10 +66,13 @@ pub struct TestPayload {
 pub struct FixtureInfo {
     pub name: String,
     pub scope: String,
+    /// Whether this fixture is async (async def)
+    #[serde(default)]
+    pub is_async: bool,
 }
 
 impl FixtureInfo {
-    pub fn from_scope(name: String, scope: &FixtureScope) -> Self {
+    pub fn from_scope(name: String, scope: &FixtureScope, is_async: bool) -> Self {
         Self {
             name,
             scope: match scope {
@@ -78,6 +81,7 @@ impl FixtureInfo {
                 FixtureScope::Module => "module".to_string(),
                 FixtureScope::Session => "session".to_string(),
             },
+            is_async,
         }
     }
 }
@@ -493,6 +497,7 @@ mod tests {
             fixtures: vec![FixtureInfo {
                 name: "db".to_string(),
                 scope: "module".to_string(),
+                is_async: false,
             }],
             log_fd: -1,
             debug_socket_path: String::new(),
@@ -537,19 +542,19 @@ mod tests {
     #[test]
     fn test_fixture_info_from_scope() {
         assert_eq!(
-            FixtureInfo::from_scope("db".into(), &FixtureScope::Function).scope,
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Function, false).scope,
             "function"
         );
         assert_eq!(
-            FixtureInfo::from_scope("db".into(), &FixtureScope::Class).scope,
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Class, false).scope,
             "class"
         );
         assert_eq!(
-            FixtureInfo::from_scope("db".into(), &FixtureScope::Module).scope,
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Module, false).scope,
             "module"
         );
         assert_eq!(
-            FixtureInfo::from_scope("db".into(), &FixtureScope::Session).scope,
+            FixtureInfo::from_scope("db".into(), &FixtureScope::Session, false).scope,
             "session"
         );
     }
@@ -721,10 +726,12 @@ mod tests {
                 FixtureInfo {
                     name: "db".to_string(),
                     scope: "module".to_string(),
+                    is_async: false,
                 },
                 FixtureInfo {
                     name: "client".to_string(),
                     scope: "function".to_string(),
+                    is_async: false,
                 },
             ],
             log_fd: 42,
