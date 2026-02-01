@@ -79,6 +79,7 @@ class EventLoopManager:
         """Get or create event loop for the given scope key."""
         if scope_key not in self._loops:
             loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             self._loops[scope_key] = loop
         return self._loops[scope_key]
 
@@ -87,14 +88,17 @@ class EventLoopManager:
         if self._current_scope == "session":
             return "session"
         elif self._current_scope == "module":
-            return f"module:{getattr(item, 'fspath', 'unknown')}"
+            fspath = getattr(item, 'fspath', None)
+            return f"module:{fspath}" if fspath else f"module:unknown:{id(item)}"
         elif self._current_scope == "class":
             cls = getattr(item, "cls", None)
             if cls:
                 return f"class:{cls.__module__}.{cls.__name__}"
-            return f"function:{getattr(item, 'nodeid', 'unknown')}"
+            nodeid = getattr(item, 'nodeid', None)
+            return f"function:{nodeid}" if nodeid else f"function:unknown:{id(item)}"
         else:  # function scope (default)
-            return f"function:{getattr(item, 'nodeid', 'unknown')}"
+            nodeid = getattr(item, 'nodeid', None)
+            return f"function:{nodeid}" if nodeid else f"function:unknown:{id(item)}"
 
     def close_scope(self, scope_key: str) -> None:
         """Close and remove the event loop for a scope."""
