@@ -393,6 +393,99 @@ where
     }
 }
 
+/// Apply Landlock network restrictions to the current process.
+///
+/// # Network Policy
+///
+/// - Blocks all TCP bind/connect operations by default
+/// - Allows specific ports configured in `NetworkConfig`
+/// - Allows localhost if `allow_localhost` is true (default)
+///
+/// # Kernel Requirements
+///
+/// - Linux 6.7+ (Landlock ABI V4) for full network support
+/// - Falls back to SeccompOnly on older kernels
+///
+/// # Arguments
+///
+/// * `config` - Network configuration with allowed ports/hosts
+///
+/// # Returns
+///
+/// * `Ok(NetworkIsolationStatus)` - The enforcement status
+/// * `Err(_)` - If Landlock setup failed critically
+pub fn apply_landlock_network(
+    config: &crate::core::config::NetworkConfig,
+) -> Result<NetworkIsolationStatus> {
+    use landlock::{
+        ABI, Access, AccessNet, NetPort, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    };
+
+    // Check if kernel supports Landlock network (ABI V4+)
+    if !supports_landlock_network() {
+        return Ok(NetworkIsolationStatus::SeccompOnly);
+    }
+
+    let abi = ABI::V4;
+
+    // Define network access rights we want to control
+    let net_access = AccessNet::from_all(abi);
+
+    // Create ruleset handling network access
+    let mut ruleset = Ruleset::default()
+        .handle_access(net_access)
+        .context("Failed to create Landlock network ruleset")?
+        .create()
+        .context("Failed to create Landlock network ruleset")?;
+
+    // Add rules for allowed bind ports
+    for &port in config.allowed_bind_ports() {
+        ruleset = ruleset
+            .add_rule(NetPort::new(port, AccessNet::BindTcp))
+            .with_context(|| format!("Failed to add bind rule for port {}", port))?;
+    }
+
+    // Add rules for allowed connect targets
+    // Note: Landlock V4 only supports port-based rules, not host-based
+    for target in config.allowed_connections() {
+        if let Some(port_str) = target.rsplit(':').next()
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            ruleset = ruleset
+                .add_rule(NetPort::new(port, AccessNet::ConnectTcp))
+                .with_context(|| format!("Failed to add connect rule for port {}", port))?;
+        }
+    }
+
+    // Allow localhost if configured (common ports for test servers)
+    if config.allow_localhost() {
+        // Port 0 = ephemeral ports (pytest-django live_server, etc.)
+        // Add all localhost ports as allowed for both bind and connect
+        for port in [0u16, 80, 443, 8000, 8080, 5000, 3000] {
+            ruleset = ruleset
+                .add_rule(NetPort::new(port, AccessNet::BindTcp))
+                .with_context(|| format!("Failed to add localhost bind rule for port {}", port))?;
+            ruleset = ruleset
+                .add_rule(NetPort::new(port, AccessNet::ConnectTcp))
+                .with_context(|| {
+                    format!("Failed to add localhost connect rule for port {}", port)
+                })?;
+        }
+    }
+
+    // Enforce the ruleset
+    let status = ruleset
+        .restrict_self()
+        .context("Failed to apply Landlock network restrictions")?;
+
+    match status.ruleset {
+        RulesetStatus::FullyEnforced | RulesetStatus::PartiallyEnforced => {
+            Ok(NetworkIsolationStatus::LandlockV4)
+        }
+        RulesetStatus::NotEnforced => Ok(NetworkIsolationStatus::SeccompOnly),
+    }
+}
+
 // ============================================================================
 // SECCOMP: Syscall Filtering
 // ============================================================================
@@ -646,6 +739,76 @@ pub fn apply_iron_dome(
     }
 
     Ok(landlock_status)
+}
+
+/// Apply the full Iron Dome sandbox with network isolation.
+///
+/// This is the main entry point for worker sandboxing with Landlock V4+
+/// network isolation support.
+pub fn apply_iron_dome_with_network(
+    project_root: &Path,
+    worker_id: u32,
+    is_toxic: bool,
+    network_config: Option<&crate::core::config::NetworkConfig>,
+) -> Result<(SandboxStatus, NetworkIsolationStatus)> {
+    // Step 1: Apply Landlock filesystem restrictions (always)
+    let landlock_status = match apply_landlock(project_root, worker_id) {
+        Ok(status) => {
+            match status {
+                SandboxStatus::FullyEnforced => {}
+                SandboxStatus::PartiallyEnforced => {
+                    eprintln!(
+                        "[worker:{}] Landlock partially enforced (some features unavailable)",
+                        worker_id
+                    );
+                }
+                SandboxStatus::NotEnforced => {
+                    eprintln!(
+                        "[worker:{}] WARNING: Landlock not enforced - kernel too old (< 5.13)",
+                        worker_id
+                    );
+                }
+            }
+            status
+        }
+        Err(e) => {
+            eprintln!(
+                "[worker:{}] WARNING: Landlock setup failed: {}",
+                worker_id, e
+            );
+            SandboxStatus::NotEnforced
+        }
+    };
+
+    // Step 2: Apply Landlock network restrictions (if configured and not toxic)
+    let network_status = if !is_toxic {
+        if let Some(config) = network_config {
+            match apply_landlock_network(config) {
+                Ok(status) => status,
+                Err(e) => {
+                    eprintln!(
+                        "[worker:{}] WARNING: Landlock network setup failed: {}",
+                        worker_id, e
+                    );
+                    NetworkIsolationStatus::SeccompOnly
+                }
+            }
+        } else {
+            NetworkIsolationStatus::SeccompOnly
+        }
+    } else {
+        NetworkIsolationStatus::None
+    };
+
+    // Step 3: Apply Seccomp syscall filtering (safe workers only)
+    if !is_toxic && let Err(e) = apply_seccomp() {
+        eprintln!(
+            "[worker:{}] WARNING: Seccomp setup failed: {}",
+            worker_id, e
+        );
+    }
+
+    Ok((landlock_status, network_status))
 }
 
 // ============================================================================
@@ -1301,5 +1464,96 @@ mod tests {
             Some(v) if v >= 4 => assert!(supports_network),
             _ => assert!(!supports_network),
         }
+    }
+
+    // =========================================================================
+    // LANDLOCK NETWORK ISOLATION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_apply_landlock_network_returns_status() {
+        use crate::core::config::NetworkConfig;
+
+        let config = NetworkConfig {
+            allow_localhost: Some(true),
+            allow_bind_ports: Some(vec![8080]),
+            allow_connect: Some(vec!["localhost:443".to_string()]),
+        };
+
+        let status = apply_landlock_network(&config);
+
+        // Should return Ok with some status (depends on kernel)
+        assert!(status.is_ok());
+    }
+
+    #[test]
+    fn test_apply_landlock_network_with_empty_config() {
+        use crate::core::config::NetworkConfig;
+
+        let config = NetworkConfig::default();
+        let status = apply_landlock_network(&config);
+        assert!(status.is_ok());
+    }
+
+    #[test]
+    fn test_apply_iron_dome_with_network_config() {
+        use crate::core::config::NetworkConfig;
+
+        let network_config = Some(NetworkConfig {
+            allow_localhost: Some(true),
+            allow_bind_ports: Some(vec![8080]),
+            allow_connect: None,
+        });
+
+        let nonexistent_path = Path::new("/nonexistent/project/root/tach_test");
+        let result =
+            apply_iron_dome_with_network(nonexistent_path, 999, false, network_config.as_ref());
+
+        // Should succeed with graceful degradation
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_apply_iron_dome_with_network_toxic_worker() {
+        use crate::core::config::NetworkConfig;
+
+        let network_config = Some(NetworkConfig {
+            allow_localhost: Some(true),
+            allow_bind_ports: Some(vec![8080]),
+            allow_connect: None,
+        });
+
+        let nonexistent_path = Path::new("/nonexistent/project/root/tach_toxic_test");
+        let result = apply_iron_dome_with_network(
+            nonexistent_path,
+            998,
+            true, // toxic worker
+            network_config.as_ref(),
+        );
+
+        // Should succeed with graceful degradation
+        assert!(result.is_ok());
+
+        let (_, network_status) = result.unwrap();
+        // Toxic workers should have no network isolation
+        assert_eq!(network_status, NetworkIsolationStatus::None);
+    }
+
+    #[test]
+    fn test_apply_iron_dome_with_network_no_config() {
+        let nonexistent_path = Path::new("/nonexistent/project/root/tach_no_net_test");
+        let result = apply_iron_dome_with_network(
+            nonexistent_path,
+            997,
+            false,
+            None, // no network config
+        );
+
+        // Should succeed with graceful degradation
+        assert!(result.is_ok());
+
+        let (_, network_status) = result.unwrap();
+        // Without config, should fall back to SeccompOnly
+        assert_eq!(network_status, NetworkIsolationStatus::SeccompOnly);
     }
 }
