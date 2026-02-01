@@ -21,6 +21,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         params: None,
                         class_scope: None,
                         autouse: false,
+                        is_async: false,
                     },
                     FixtureDefinition {
                         name: "redis_cache".to_string(),
@@ -29,6 +30,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         params: None,
                         class_scope: None,
                         autouse: false,
+                        is_async: false,
                     },
                     FixtureDefinition {
                         name: "client".to_string(),
@@ -37,6 +39,7 @@ fn create_test_discovery() -> DiscoveryResult {
                         params: None,
                         class_scope: None,
                         autouse: false,
+                        is_async: false,
                     },
                 ],
                 hooks: vec![],
@@ -198,6 +201,7 @@ fn test_cyclic_dependency_error() {
                     params: None,
                     class_scope: None,
                     autouse: false,
+                    is_async: false,
                 },
                 FixtureDefinition {
                     name: "fixture_b".to_string(),
@@ -206,6 +210,7 @@ fn test_cyclic_dependency_error() {
                     params: None,
                     class_scope: None,
                     autouse: false,
+                    is_async: false,
                 },
             ],
             hooks: vec![],
