@@ -11,7 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+
+- **AsyncioSetup effects dropped in IPC conversion** - Added match arm for AsyncioSetup
+  in `convert_py_effects_to_rust`, fixing silent effect drops during worker initialization (#46)
+- **Event loop resource leak for class/module/session scopes** - Added scope transition
+  tracking to EventLoopManager and cleanup in reset_worker_state (#43)
 
 ---
 
