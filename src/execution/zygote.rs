@@ -2280,10 +2280,12 @@ mod tests {
             FixtureInfo {
                 name: "fixture1".to_string(),
                 scope: "function".to_string(),
+                is_async: false,
             },
             FixtureInfo {
                 name: "fixture2".to_string(),
                 scope: "module".to_string(),
+                is_async: false,
             },
         ];
 
