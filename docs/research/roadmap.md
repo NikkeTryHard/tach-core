@@ -56,7 +56,7 @@ flowchart TB
         direction TB
         P2_0["0.2.0 Hook Framework ✅"]
         P2_1["0.2.1 pytest-django ✅"]
-        P2_2["0.2.2 pytest-asyncio"]
+        P2_2["0.2.2 pytest-asyncio ✅"]
         P2_3["0.2.3 pytest-mock/env/timeout"]
         P2_4["0.2.4 Landlock V4-V6"]
         P2_5["0.2.5 Plugin Stabilization"]
@@ -252,10 +252,10 @@ flowchart TB
     classDef milestone fill:#8b5cf6,stroke:#7c3aed,color:#fff,stroke-width:2px
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
-    class P2_0,P5_0,P5_6,P7_4,P8_1 done
+    class P2_0,P2_2,P5_0,P5_6,P7_4,P8_1 done
     class P2_1,P5_1 inProgress
     class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
-    class P2_2,P2_3,P2_4 canStart
+    class P2_3,P2_4 canStart
     class P2_5 pending
     class P3_0,P3_1,P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
@@ -274,7 +274,7 @@ flowchart TB
 **Current Status:**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2-0.2.4 can start in parallel
+- Phase 2 (0.2.x): In Progress - 0.2.0 done, 0.2.1 done, 0.2.2 done, 0.2.3-0.2.4 can start in parallel
 - Phases 3-4: Blocked by Phase 2 plugin work
 - Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
 - Phase 10: Not started
