@@ -7,6 +7,9 @@ This module verifies that:
 """
 import pytest
 
+# Skip entire module if tach_harness is not available
+tach_harness = pytest.importorskip("tach_harness")
+
 
 # This test verifies that loop_scope configured in conftest
 # is correctly applied to the EventLoopManager
@@ -22,9 +25,9 @@ async def test_asyncio_marker_detected():
 @pytest.mark.asyncio
 async def test_event_loop_manager_singleton():
     """Verify EventLoopManager singleton pattern works."""
-    tach_harness = pytest.importorskip("tach_harness")
-    manager1 = tach_harness.EventLoopManager.get_instance()
-    manager2 = tach_harness.EventLoopManager.get_instance()
+    from tach_harness import EventLoopManager
+    manager1 = EventLoopManager.get_instance()
+    manager2 = EventLoopManager.get_instance()
     assert manager1 is manager2
 
 
@@ -44,25 +47,23 @@ class TestClassScopedLoop:
 @pytest.mark.asyncio
 async def test_asyncio_effect_application():
     """Test that AsyncioSetup effect can be applied via apply_cached_effects."""
-    tach_harness = pytest.importorskip("tach_harness")
+    from tach_harness import apply_cached_effects, EventLoopManager, EFFECT_TYPE_ASYNCIO_SETUP
 
-    # This test verifies the effect application logic works
-    # In a real scenario, the effect would come from zygote via IPC
     # Simulate an asyncio setup effect
     effects = [
         {
-            "type": tach_harness.EFFECT_TYPE_ASYNCIO_SETUP,
+            "type": EFFECT_TYPE_ASYNCIO_SETUP,
             "loop_scope": "module",
             "auto_mode": True,
         }
     ]
 
     # Apply the effect
-    applied = tach_harness.apply_cached_effects(effects)
+    applied = apply_cached_effects(effects)
     assert applied == 1
 
-    # Verify EventLoopManager was configured (using public properties per #44)
-    manager = tach_harness.EventLoopManager.get_instance()
+    # Verify EventLoopManager was configured using public properties
+    manager = EventLoopManager.get_instance()
     assert manager.current_scope == "module"
     assert manager.auto_mode is True
 
