@@ -646,6 +646,50 @@ impl MergedConfig {
     }
 }
 
+/// Expands `{VAR}` patterns in a string using environment variables.
+/// Double braces `{{VAR}}` are escaped to literal `{VAR}`.
+fn expand_env_vars(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            if chars.peek() == Some(&'{') {
+                // Escaped brace: {{ -> {
+                chars.next();
+                result.push('{');
+            } else {
+                // Variable reference: {VAR}
+                let mut var_name = String::new();
+                for inner in chars.by_ref() {
+                    if inner == '}' {
+                        break;
+                    }
+                    var_name.push(inner);
+                }
+                // Look up in environment
+                match std::env::var(&var_name) {
+                    Ok(val) => result.push_str(&val),
+                    Err(_) => {
+                        // Keep original if not found
+                        result.push('{');
+                        result.push_str(&var_name);
+                        result.push('}');
+                    }
+                }
+            }
+        } else if c == '}' && chars.peek() == Some(&'}') {
+            // Escaped closing brace: }} -> }
+            chars.next();
+            result.push('}');
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
 /// Load environment variables from pyproject.toml and apply to current process.
 ///
 /// This function reads `[tool.pytest_env]` section from pyproject.toml and
@@ -722,8 +766,9 @@ pub fn load_env_from_pyproject(root: &Path) {
             // SAFETY: set_var is unsafe in Rust 2024 due to potential data races
             // in multi-threaded environments. This is called during config loading
             // which happens before any worker threads are spawned.
-            unsafe { std::env::set_var(&key, &value) };
-            eprintln!("[tach:config] Set env: {}={}", key, value);
+            let expanded_value = expand_env_vars(&value);
+            unsafe { std::env::set_var(&key, &expanded_value) };
+            eprintln!("[tach:config] Set env: {}={}", key, expanded_value);
         }
     }
 }
@@ -1080,5 +1125,43 @@ Ld_Library_Path = "/malicious/path"
 
         // Just verify the count matches what we expect
         assert_eq!(blocked_vars.len(), 11);
+    }
+
+    #[test]
+    fn test_load_env_from_pyproject_expands_variables() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+
+        // Set a base variable to expand
+        unsafe { std::env::set_var("TACH_TEST_BASE", "/base/path") };
+
+        std::fs::write(
+            &config_path,
+            r#"
+[tool.pytest_env]
+EXPANDED_VAR = "{TACH_TEST_BASE}/subdir"
+LITERAL_BRACES = "{{NOT_EXPANDED}}"
+"#,
+        )
+        .unwrap();
+
+        load_env_from_pyproject(temp_dir.path());
+
+        assert_eq!(
+            std::env::var("EXPANDED_VAR").unwrap(),
+            "/base/path/subdir"
+        );
+        // Double braces escape to literal braces
+        assert_eq!(
+            std::env::var("LITERAL_BRACES").unwrap(),
+            "{NOT_EXPANDED}"
+        );
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var("TACH_TEST_BASE");
+            std::env::remove_var("EXPANDED_VAR");
+            std::env::remove_var("LITERAL_BRACES");
+        }
     }
 }
