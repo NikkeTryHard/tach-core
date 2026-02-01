@@ -32,6 +32,10 @@ pub struct PluginRegistry {
     plugins: HashMap<String, PluginStatus>,
     disabled: HashSet<String>,
     priority: Vec<String>,
+    /// Tracks which plugin shims have been loaded
+    loaded_shims: HashSet<String>,
+    /// Tracks how many times each shim has been requested to load
+    shim_load_counts: HashMap<String, usize>,
 }
 
 impl PluginRegistry {
@@ -41,6 +45,8 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             disabled: HashSet::new(),
             priority: Vec::new(),
+            loaded_shims: HashSet::new(),
+            shim_load_counts: HashMap::new(),
         };
 
         registry.register_known_plugins();
@@ -206,6 +212,43 @@ impl PluginRegistry {
             })
             .collect()
     }
+
+    /// Check if a plugin shim has been loaded
+    pub fn is_shim_loaded(&self, plugin: &str) -> bool {
+        self.loaded_shims.contains(plugin)
+    }
+
+    /// Ensure a plugin shim is loaded, loading it if necessary
+    ///
+    /// This method implements lazy loading - shims are only initialized
+    /// when first accessed, not at registry creation time.
+    pub fn ensure_shim_loaded(&mut self, plugin: &str) {
+        // Increment the load request count
+        *self.shim_load_counts.entry(plugin.to_string()).or_insert(0) += 1;
+
+        // Only load if not already loaded
+        if !self.loaded_shims.contains(plugin) {
+            self.load_shim(plugin);
+        }
+    }
+
+    /// Get the number of times a shim load was requested
+    pub fn shim_load_count(&self, plugin: &str) -> usize {
+        self.shim_load_counts.get(plugin).copied().unwrap_or(0)
+    }
+
+    /// Private helper to actually load a plugin shim
+    fn load_shim(&mut self, plugin: &str) {
+        // Mark the shim as loaded
+        // In a real implementation, this would initialize the shim's
+        // Python bindings, hook registrations, etc.
+        self.loaded_shims.insert(plugin.to_string());
+    }
+
+    /// Get all currently loaded shims
+    pub fn loaded_shims(&self) -> Vec<&String> {
+        self.loaded_shims.iter().collect()
+    }
 }
 
 impl Default for PluginRegistry {
@@ -298,5 +341,53 @@ mod tests {
 
         assert!(registry.is_known("pytest-django"));
         assert!(!registry.is_known("pytest-unknown"));
+    }
+
+    #[test]
+    fn test_lazy_shim_loading() {
+        let mut registry = PluginRegistry::new();
+
+        // Initially, no shims should be loaded
+        assert!(!registry.is_shim_loaded("pytest-django"));
+        assert!(!registry.is_shim_loaded("pytest-mock"));
+        assert!(registry.loaded_shims().is_empty());
+
+        // Request to load a shim
+        registry.ensure_shim_loaded("pytest-django");
+
+        // Now only pytest-django should be loaded
+        assert!(registry.is_shim_loaded("pytest-django"));
+        assert!(!registry.is_shim_loaded("pytest-mock"));
+        assert_eq!(registry.loaded_shims().len(), 1);
+
+        // Load another shim
+        registry.ensure_shim_loaded("pytest-mock");
+        assert!(registry.is_shim_loaded("pytest-mock"));
+        assert_eq!(registry.loaded_shims().len(), 2);
+    }
+
+    #[test]
+    fn test_lazy_shim_only_loads_once() {
+        let mut registry = PluginRegistry::new();
+
+        // Load count should start at 0
+        assert_eq!(registry.shim_load_count("pytest-django"), 0);
+
+        // First load request
+        registry.ensure_shim_loaded("pytest-django");
+        assert!(registry.is_shim_loaded("pytest-django"));
+        assert_eq!(registry.shim_load_count("pytest-django"), 1);
+
+        // Second load request - should increment count but not reload
+        registry.ensure_shim_loaded("pytest-django");
+        assert!(registry.is_shim_loaded("pytest-django"));
+        assert_eq!(registry.shim_load_count("pytest-django"), 2);
+
+        // Third load request
+        registry.ensure_shim_loaded("pytest-django");
+        assert_eq!(registry.shim_load_count("pytest-django"), 3);
+
+        // Only one shim should be in the loaded set (not duplicated)
+        assert_eq!(registry.loaded_shims().len(), 1);
     }
 }
