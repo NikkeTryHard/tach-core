@@ -601,25 +601,25 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
   > **Ref**: "To solve this, we employ tokio::task::LocalSet to pin interpreter-specific tasks to their originating thread" — _Rust-CPython Execution Blueprint Research_
 - [x] Support session-scoped event loop via marker
 - [x] Properly cleanup event loop after test
-- [ ] Handle `asyncio.run()` calls within tests
-- [ ] Support custom event loop policies
-- [ ] Handle uvloop integration
+- [x] Handle `asyncio.run()` calls within tests
+- [x] Support custom event loop policies
+- [x] Handle uvloop integration
 
 #### Marker Support
 
 - [x] `@pytest.mark.asyncio` - Mark async tests
 - [x] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
 - [x] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
-- [ ] Automatic async test detection mode
+- [x] Automatic async test detection mode
 
 #### Coroutine Execution
 
-- [ ] Run async tests with proper timeout handling
-- [ ] Support `await` in async fixtures
-- [ ] Handle async context managers in fixtures
-- [ ] Proper cancellation on test timeout
-- [ ] Support gather/wait patterns
-- [ ] Handle TaskGroup cleanup
+- [x] Run async tests with proper timeout handling
+- [x] Support `await` in async fixtures
+- [x] Handle async context managers in fixtures
+- [x] Proper cancellation on test timeout
+- [x] Support gather/wait patterns
+- [x] Handle TaskGroup cleanup
 
 ### 0.2.3 - Additional Plugin Support
 
