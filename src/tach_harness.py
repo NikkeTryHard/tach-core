@@ -2176,6 +2176,7 @@ def _check_test_db_exists() -> bool:
     """Check if the test database already exists.
 
     Used by --reuse-db to skip database creation when possible.
+    Checks the actual test database name from Django's TEST settings.
 
     Returns:
         True if test database exists and is accessible, False otherwise.
@@ -2184,12 +2185,32 @@ def _check_test_db_exists() -> bool:
         return False
 
     try:
-        from django.db import connections
+        from django.db import connection
 
-        # Check the default database
+        # Get the test database name from settings
+        test_db_name = connection.creation._get_test_db_name()
+
+        # Try to connect to check if it exists
+        # We use a temporary connection to avoid side effects
+        from django.db import connections
         conn = connections['default']
-        conn.ensure_connection()
-        return True
+
+        # Save original database name
+        original_name = conn.settings_dict['NAME']
+
+        try:
+            # Temporarily point to test database
+            conn.settings_dict['NAME'] = test_db_name
+            conn.close()
+            conn.ensure_connection()
+            return True
+        except Exception:
+            return False
+        finally:
+            # Restore original database name
+            conn.settings_dict['NAME'] = original_name
+            conn.close()
+
     except Exception:
         return False
 
@@ -2197,7 +2218,8 @@ def _check_test_db_exists() -> bool:
 def _create_test_db(verbosity: int = 0) -> None:
     """Create the test database and run migrations.
 
-    Called when --create-db is set or database doesn't exist.
+    Uses Django's proper test database creation utilities to ensure
+    the test database is created correctly with proper isolation.
 
     Args:
         verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
@@ -2206,11 +2228,19 @@ def _create_test_db(verbosity: int = 0) -> None:
         return
 
     try:
-        from django.core.management import call_command
+        from django.db import connection
         from django.test.utils import setup_test_environment
 
-        setup_test_environment()
-        call_command('migrate', '--run-syncdb', verbosity=verbosity)
+        # Setup test environment first
+        try:
+            setup_test_environment()
+        except Exception:
+            pass  # May already be set up
+
+        # Use Django's test database creation
+        # keepdb=True to avoid destroying if it exists (--reuse-db behavior)
+        connection.creation.create_test_db(verbosity=verbosity, keepdb=True)
+
     except Exception as e:
         print(f"[tach:harness] WARN: Failed to create test database: {e}", file=sys.stderr)
 
@@ -2218,7 +2248,7 @@ def _create_test_db(verbosity: int = 0) -> None:
 def _destroy_test_db(verbosity: int = 0) -> None:
     """Destroy the test database.
 
-    Called when --create-db is set to force recreation.
+    Uses Django's proper test database destruction utilities.
 
     Args:
         verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
@@ -2227,12 +2257,22 @@ def _destroy_test_db(verbosity: int = 0) -> None:
         return
 
     try:
-        from django.db import connections
+        from django.db import connection, connections
         from django.test.utils import teardown_test_environment
 
         # Close all connections first
         connections.close_all()
-        teardown_test_environment()
+
+        # Destroy the test database using Django's utilities
+        # This actually drops the database
+        connection.creation.destroy_test_db(verbosity=verbosity)
+
+        # Teardown test environment
+        try:
+            teardown_test_environment()
+        except Exception:
+            pass  # May not be set up
+
     except Exception as e:
         print(f"[tach:harness] WARN: Failed to destroy test database: {e}", file=sys.stderr)
 
