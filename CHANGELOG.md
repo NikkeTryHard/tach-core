@@ -15,6 +15,26 @@ _No changes yet._
 
 ---
 
+## [0.2.2] - 2026-01-31
+
+### Added
+
+- **pytest-asyncio Support**: Full async test and fixture support
+  - `is_async` field tracking for fixtures throughout the pipeline (FixtureInfo, FixtureDefinition, ResolvedFixture)
+  - `LoopScope` enum for event loop scoping (function, class, module, session)
+  - `AsyncioSetup` HookEffect variant for loop configuration propagation
+  - `EventLoopManager` singleton class in Python harness for scoped event loop lifecycle
+  - Async fixture execution helpers (`run_async_fixture`, `teardown_async_fixture`)
+  - `@pytest.mark.asyncio(loop_scope="...")` marker parsing
+  - AsyncioSetup effect flow from Rust zygote to Python harness
+  - Integration tests for async fixtures and loop scopes
+
+### Changed
+
+- Updated roadmap to mark 0.2.2 pytest-asyncio items as complete
+
+---
+
 ## [0.2.0] - 2026-01-17
 
 ### Added

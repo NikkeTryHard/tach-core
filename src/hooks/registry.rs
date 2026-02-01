@@ -979,7 +979,10 @@ mod tests {
 
         let deserialized: HookEffect = serde_json::from_str(&json).unwrap();
         match deserialized {
-            HookEffect::AsyncioSetup { loop_scope, auto_mode } => {
+            HookEffect::AsyncioSetup {
+                loop_scope,
+                auto_mode,
+            } => {
                 assert_eq!(loop_scope, LoopScope::Session);
                 assert!(auto_mode);
             }
