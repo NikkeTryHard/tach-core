@@ -45,6 +45,32 @@ impl std::fmt::Display for SysPathAction {
     }
 }
 
+/// Event loop scope for pytest-asyncio
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LoopScope {
+    /// New event loop per test function (default, highest isolation)
+    #[default]
+    Function,
+    /// Shared event loop for all tests in a class
+    Class,
+    /// Shared event loop for all tests in a module
+    Module,
+    /// Single event loop for entire session
+    Session,
+}
+
+impl std::fmt::Display for LoopScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoopScope::Function => write!(f, "function"),
+            LoopScope::Class => write!(f, "class"),
+            LoopScope::Module => write!(f, "module"),
+            LoopScope::Session => write!(f, "session"),
+        }
+    }
+}
+
 /// Specification for a pytest hook
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookSpec {
@@ -210,6 +236,17 @@ pub enum HookEffect {
         reset_sequences: bool,
         /// List of database aliases to apply isolation to
         databases: Vec<String>,
+    },
+    /// pytest-asyncio event loop configuration
+    ///
+    /// Parsed from @pytest.mark.asyncio(loop_scope="module") or
+    /// asyncio_mode config in pytest.ini/pyproject.toml.
+    /// Controls event loop lifecycle for async tests.
+    AsyncioSetup {
+        /// Event loop scope (function, class, module, session)
+        loop_scope: LoopScope,
+        /// Whether auto mode is enabled (all async tests run without explicit marker)
+        auto_mode: bool,
     },
     /// Hook has no observable effects
     NoEffect,
@@ -910,5 +947,43 @@ mod tests {
             has_path_effect,
             "Should have ModifySysPath effect from pytest_configure"
         );
+    }
+
+    #[test]
+    fn test_loop_scope_serialization() {
+        let scope = LoopScope::Module;
+        let json = serde_json::to_string(&scope).unwrap();
+        assert_eq!(json, "\"module\"");
+
+        let deserialized: LoopScope = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, LoopScope::Module);
+    }
+
+    #[test]
+    fn test_loop_scope_default() {
+        let scope = LoopScope::default();
+        assert_eq!(scope, LoopScope::Function);
+    }
+
+    #[test]
+    fn test_asyncio_setup_effect_serialization() {
+        let effect = HookEffect::AsyncioSetup {
+            loop_scope: LoopScope::Session,
+            auto_mode: true,
+        };
+
+        let json = serde_json::to_string(&effect).unwrap();
+        assert!(json.contains("AsyncioSetup"));
+        assert!(json.contains("session"));
+        assert!(json.contains("true"));
+
+        let deserialized: HookEffect = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            HookEffect::AsyncioSetup { loop_scope, auto_mode } => {
+                assert_eq!(loop_scope, LoopScope::Session);
+                assert!(auto_mode);
+            }
+            _ => panic!("Wrong variant"),
+        }
     }
 }

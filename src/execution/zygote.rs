@@ -1125,6 +1125,12 @@ fn convert_cached_effects_to_py<'py>(
                 // Not converted to Python dict here - it's already in marker_info
                 continue;
             }
+            crate::hooks::HookEffect::AsyncioSetup { loop_scope, auto_mode } => {
+                // Convert loop_scope to lowercase string for Python harness
+                py_dict.set_item("type", "AsyncioSetup")?;
+                py_dict.set_item("loop_scope", loop_scope.to_string())?;
+                py_dict.set_item("auto_mode", *auto_mode)?;
+            }
         }
 
         py_list.append(py_dict)?;

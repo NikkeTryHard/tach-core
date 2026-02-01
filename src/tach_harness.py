@@ -37,6 +37,7 @@ EFFECT_TYPE_REMOVE_SYS_PATH = "RemoveSysPath"
 EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
 EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
 EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
+EFFECT_TYPE_ASYNCIO_SETUP = "AsyncioSetup"
 
 
 # =============================================================================
@@ -1795,6 +1796,13 @@ def apply_cached_effects(effects: list) -> int:
                     if path in sys.path:
                         sys.path.remove(path)
                         applied += 1
+
+        elif effect_type == EFFECT_TYPE_ASYNCIO_SETUP:
+            # Configure EventLoopManager from cached effect
+            loop_scope = effect.get("loop_scope", "function")
+            auto_mode = effect.get("auto_mode", False)
+            EventLoopManager.get_instance().configure(loop_scope, auto_mode)
+            applied += 1
 
     # Debug logging: show count of effects provided vs applied
     if provided > 0:
