@@ -1449,10 +1449,10 @@ mod tests {
     fn test_detect_landlock_abi_returns_valid_version() {
         let abi = detect_landlock_abi();
 
-        match abi {
-            Some(version) => assert!(version >= 1 && version <= 6),
-            None => {} // Kernel doesn't support Landlock - that's OK
+        if let Some(version) = abi {
+            assert!((1..=6).contains(&version));
         }
+        // None = Kernel doesn't support Landlock - that's OK
     }
 
     #[test]
