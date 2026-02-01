@@ -2172,6 +2172,106 @@ def _close_django_connections() -> None:
         pass
 
 
+def _check_test_db_exists() -> bool:
+    """Check if the test database already exists.
+
+    Used by --reuse-db to skip database creation when possible.
+
+    Returns:
+        True if test database exists and is accessible, False otherwise.
+    """
+    if not _is_django_available():
+        return False
+
+    try:
+        from django.db import connections
+
+        # Check the default database
+        conn = connections['default']
+        conn.ensure_connection()
+        return True
+    except Exception:
+        return False
+
+
+def _create_test_db(verbosity: int = 0) -> None:
+    """Create the test database and run migrations.
+
+    Called when --create-db is set or database doesn't exist.
+
+    Args:
+        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.core.management import call_command
+        from django.test.utils import setup_test_environment
+
+        setup_test_environment()
+        call_command('migrate', '--run-syncdb', verbosity=verbosity)
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to create test database: {e}", file=sys.stderr)
+
+
+def _destroy_test_db(verbosity: int = 0) -> None:
+    """Destroy the test database.
+
+    Called when --create-db is set to force recreation.
+
+    Args:
+        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.db import connections
+        from django.test.utils import teardown_test_environment
+
+        # Close all connections first
+        connections.close_all()
+        teardown_test_environment()
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to destroy test database: {e}", file=sys.stderr)
+
+
+def _handle_db_lifecycle(reuse_db: bool = False, create_db: bool = False) -> None:
+    """Handle database lifecycle based on CLI flags.
+
+    Implements --reuse-db and --create-db behavior:
+    - --reuse-db: Skip creation if database exists
+    - --create-db: Force recreation even if --reuse-db is set
+
+    Args:
+        reuse_db: Whether to reuse existing database
+        create_db: Whether to force database recreation
+    """
+    if not _is_django_available():
+        return
+
+    # --create-db takes precedence: destroy and recreate
+    if create_db:
+        print("[tach:harness] INFO: --create-db set, forcing database recreation", file=sys.stderr)
+        _destroy_test_db(verbosity=1)
+        _create_test_db(verbosity=1)
+        return
+
+    # --reuse-db: check if database exists
+    if reuse_db:
+        if _check_test_db_exists():
+            print("[tach:harness] INFO: --reuse-db set, reusing existing database", file=sys.stderr)
+            return
+        else:
+            print("[tach:harness] INFO: --reuse-db set but database doesn't exist, creating", file=sys.stderr)
+            _create_test_db(verbosity=1)
+            return
+
+    # Default: always create fresh database
+    _create_test_db(verbosity=0)
+
+
 def _apply_django_db_isolation(marker_args: dict[str, Any] | None) -> list[tuple[str, str]]:
     """Apply database isolation based on marker args.
 
