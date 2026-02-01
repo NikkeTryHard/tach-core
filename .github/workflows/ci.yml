@@ -74,4 +74,4 @@ jobs:
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
       - name: Run unit tests with nextest
-        run: cargo nextest run --lib --all-features --profile ci
+        run: cargo nextest run --all-features --profile ci

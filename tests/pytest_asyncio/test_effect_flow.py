@@ -22,13 +22,10 @@ async def test_asyncio_marker_detected():
 @pytest.mark.asyncio
 async def test_event_loop_manager_singleton():
     """Verify EventLoopManager singleton pattern works."""
-    import sys
-    # Import from the harness module path
-    if "tach_harness" in sys.modules:
-        from tach_harness import EventLoopManager
-        manager1 = EventLoopManager.get_instance()
-        manager2 = EventLoopManager.get_instance()
-        assert manager1 is manager2
+    tach_harness = pytest.importorskip("tach_harness")
+    manager1 = tach_harness.EventLoopManager.get_instance()
+    manager2 = tach_harness.EventLoopManager.get_instance()
+    assert manager1 is manager2
 
 
 @pytest.mark.asyncio(loop_scope="class")
@@ -47,30 +44,27 @@ class TestClassScopedLoop:
 @pytest.mark.asyncio
 async def test_asyncio_effect_application():
     """Test that AsyncioSetup effect can be applied via apply_cached_effects."""
-    import sys
+    tach_harness = pytest.importorskip("tach_harness")
 
     # This test verifies the effect application logic works
     # In a real scenario, the effect would come from zygote via IPC
-    if "tach_harness" in sys.modules:
-        from tach_harness import apply_cached_effects, EventLoopManager, EFFECT_TYPE_ASYNCIO_SETUP
+    # Simulate an asyncio setup effect
+    effects = [
+        {
+            "type": tach_harness.EFFECT_TYPE_ASYNCIO_SETUP,
+            "loop_scope": "module",
+            "auto_mode": True,
+        }
+    ]
 
-        # Simulate an asyncio setup effect
-        effects = [
-            {
-                "type": EFFECT_TYPE_ASYNCIO_SETUP,
-                "loop_scope": "module",
-                "auto_mode": True,
-            }
-        ]
+    # Apply the effect
+    applied = tach_harness.apply_cached_effects(effects)
+    assert applied == 1
 
-        # Apply the effect
-        applied = apply_cached_effects(effects)
-        assert applied == 1
+    # Verify EventLoopManager was configured (using public properties per #44)
+    manager = tach_harness.EventLoopManager.get_instance()
+    assert manager.current_scope == "module"
+    assert manager.auto_mode is True
 
-        # Verify EventLoopManager was configured
-        manager = EventLoopManager.get_instance()
-        assert manager._current_scope == "module"
-        assert manager._auto_mode is True
-
-        # Reset to default for other tests
-        manager.configure("function", False)
+    # Reset to default for other tests
+    manager.configure("function", False)

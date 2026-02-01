@@ -126,8 +126,9 @@ class EventLoopManager:
                     # Run until all tasks are cancelled
                     if pending:
                         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                except Exception:
-                    pass  # Ignore cleanup errors
+                except Exception as e:
+                    # Log but don't fail - cleanup is best-effort (Issue #45)
+                    print(f"[tach:harness] DEBUG: Loop cleanup error for {scope_key}: {e}", file=sys.stderr)
                 finally:
                     loop.close()
 
@@ -312,8 +313,9 @@ def cleanup_pending_tasks(loop: asyncio.AbstractEventLoop) -> int:
 
     try:
         loop.run_until_complete(wait_cancelled())
-    except Exception:
-        pass
+    except Exception as e:
+        # Log but don't fail - cleanup is best-effort (Issue #45)
+        print(f"[tach:harness] DEBUG: Task cleanup error: {e}", file=sys.stderr)
 
     return len(pending)
 
