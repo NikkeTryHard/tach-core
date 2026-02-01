@@ -18,3 +18,4 @@ docs/FULL_DOCUMENTATION.md
 
 # Test database files (generated during Django tests)
 tests/django_project/test_db.sqlite3
+.claude/
