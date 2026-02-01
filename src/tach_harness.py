@@ -177,6 +177,40 @@ def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
         return None
 
 
+def run_with_timeout(
+    loop: asyncio.AbstractEventLoop,
+    coro,
+    timeout: Optional[float] = None,
+) -> tuple[Any, bool]:
+    """Run a coroutine with optional timeout and proper cancellation.
+
+    Args:
+        loop: Event loop to run on
+        coro: Coroutine to execute
+        timeout: Timeout in seconds, None for no timeout
+
+    Returns:
+        Tuple of (result_or_none, timed_out)
+    """
+    if timeout is None:
+        result = loop.run_until_complete(coro)
+        return result, False
+
+    async def with_timeout():
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
+    try:
+        result = loop.run_until_complete(with_timeout())
+        if result is None:
+            return None, True
+        return result, False
+    except asyncio.CancelledError:
+        return None, True
+
+
 def run_async_fixture(
     fixture_func: Any,
     fixture_values: dict[str, Any],
