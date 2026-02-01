@@ -6,8 +6,10 @@
 //! - `loader`: Zero-copy module loading
 //! - `graph`: Dependency graph construction
 //! - `analysis`: Toxicity analysis and classification
+//! - `cache`: Disk-based conftest parsing cache
 
 pub mod analysis;
+pub mod cache;
 pub mod graph;
 pub mod loader;
 pub mod resolver;
