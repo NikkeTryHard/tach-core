@@ -110,6 +110,68 @@ pub enum SandboxStatus {
     NotEnforced,
 }
 
+/// Status of network isolation after applying restrictions.
+///
+/// Network isolation can be achieved through multiple mechanisms with
+/// different kernel requirements and capabilities:
+///
+/// - `LandlockV4`: Fine-grained TCP port control (kernel 6.7+)
+/// - `Namespace`: Full network stack isolation via CLONE_NEWNET (kernel 2.6.24+)
+/// - `SeccompOnly`: Syscall-level blocking only (no port granularity)
+/// - `None`: No network isolation (TACH_NO_ISOLATION=1 or unsupported)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkIsolationStatus {
+    /// Landlock ABI V4+ with TCP bind/connect restrictions
+    LandlockV4,
+
+    /// Network namespace isolation (CLONE_NEWNET)
+    Namespace,
+
+    /// Seccomp syscall blocking only (socket/bind/connect blocked)
+    SeccompOnly,
+
+    /// No network isolation active
+    None,
+}
+
+/// Detect the highest Landlock ABI version supported by the running kernel.
+///
+/// Returns `Some(version)` if Landlock is supported, `None` otherwise.
+pub fn detect_landlock_abi() -> Option<u8> {
+    use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr};
+
+    // Try each ABI version from highest to lowest
+    for version in (1..=6).rev() {
+        let abi = match version {
+            6 => ABI::V6,
+            5 => ABI::V5,
+            4 => ABI::V4,
+            3 => ABI::V3,
+            2 => ABI::V2,
+            1 => ABI::V1,
+            _ => continue,
+        };
+
+        // Check if this ABI version is supported by trying to create a ruleset.
+        // We must call .create() to actually probe the kernel - .handle_access()
+        // alone only validates that the crate can handle those flags.
+        if Ruleset::default()
+            .handle_access(AccessFs::from_all(abi))
+            .and_then(|r| r.create())
+            .is_ok()
+        {
+            return Some(version);
+        }
+    }
+
+    None
+}
+
+/// Check if the kernel supports Landlock network isolation (ABI V4+).
+pub fn supports_landlock_network() -> bool {
+    detect_landlock_abi().is_some_and(|v| v >= 4)
+}
+
 /// Apply Landlock filesystem restrictions to the current process.
 ///
 /// # Security Policy
@@ -1192,5 +1254,52 @@ mod tests {
         assert!(expected_message.contains("mips"));
         assert!(expected_message.contains("Unsupported architecture"));
         assert!(expected_message.contains("Seccomp"));
+    }
+
+    // =========================================================================
+    // NETWORK ISOLATION STATUS TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_network_isolation_status_enum() {
+        let status = NetworkIsolationStatus::LandlockV4;
+        assert_eq!(status, NetworkIsolationStatus::LandlockV4);
+
+        let status = NetworkIsolationStatus::Namespace;
+        assert_eq!(status, NetworkIsolationStatus::Namespace);
+
+        let status = NetworkIsolationStatus::SeccompOnly;
+        assert_eq!(status, NetworkIsolationStatus::SeccompOnly);
+
+        let status = NetworkIsolationStatus::None;
+        assert_eq!(status, NetworkIsolationStatus::None);
+    }
+
+    #[test]
+    fn test_network_isolation_status_debug() {
+        let status = NetworkIsolationStatus::LandlockV4;
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("LandlockV4"));
+    }
+
+    #[test]
+    fn test_detect_landlock_abi_returns_valid_version() {
+        let abi = detect_landlock_abi();
+
+        match abi {
+            Some(version) => assert!(version >= 1 && version <= 6),
+            None => {} // Kernel doesn't support Landlock - that's OK
+        }
+    }
+
+    #[test]
+    fn test_supports_landlock_network() {
+        let abi = detect_landlock_abi();
+        let supports_network = supports_landlock_network();
+
+        match abi {
+            Some(v) if v >= 4 => assert!(supports_network),
+            _ => assert!(!supports_network),
+        }
     }
 }
