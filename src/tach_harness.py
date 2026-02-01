@@ -140,6 +140,10 @@ def run_async_fixture(
 ) -> tuple[Any, Any]:
     """Execute an async fixture and return its value.
 
+    NOTE: This is scaffolding for future async fixture execution.
+    Currently, fixtures are resolved by pytest before reaching the harness.
+    This helper will be integrated when Tach implements native fixture resolution.
+
     Returns:
         Tuple of (value, generator_or_none)
     """
@@ -161,7 +165,12 @@ def teardown_async_fixture(
     gen: Any,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """Teardown an async generator fixture."""
+    """Teardown an async generator fixture.
+
+    NOTE: This is scaffolding for future async fixture execution.
+    Currently, fixtures are resolved by pytest before reaching the harness.
+    This helper will be integrated when Tach implements native fixture resolution.
+    """
     if gen is not None:
         async def cleanup():
             try:

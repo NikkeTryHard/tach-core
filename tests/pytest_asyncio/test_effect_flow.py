@@ -69,7 +69,7 @@ async def test_asyncio_effect_application():
 
         # Verify EventLoopManager was configured
         manager = EventLoopManager.get_instance()
-        assert manager._loop_scope == "module"
+        assert manager._current_scope == "module"
         assert manager._auto_mode is True
 
         # Reset to default for other tests
