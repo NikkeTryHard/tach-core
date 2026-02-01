@@ -591,25 +591,25 @@ The 0.2.x series introduces a plugin compatibility layer that intercepts common 
 - [x] Detect async test functions (`async def test_...`)
   > Already implemented in core discovery - TestCase.is_async field
 - [x] Detect async fixtures (`@pytest.fixture` on async functions)
-- [ ] Handle sync tests that use async fixtures
-- [ ] Support async context managers
-- [ ] Handle async generators
+- [x] Handle sync tests that use async fixtures
+- [x] Support async context managers
+- [x] Handle async generators
 
 #### Event Loop Management
 
-- [ ] Create event loop per test (default)
+- [x] Create event loop per test (default)
   > **Ref**: "To solve this, we employ tokio::task::LocalSet to pin interpreter-specific tasks to their originating thread" — _Rust-CPython Execution Blueprint Research_
-- [ ] Support session-scoped event loop via marker
-- [ ] Properly cleanup event loop after test
+- [x] Support session-scoped event loop via marker
+- [x] Properly cleanup event loop after test
 - [ ] Handle `asyncio.run()` calls within tests
 - [ ] Support custom event loop policies
 - [ ] Handle uvloop integration
 
 #### Marker Support
 
-- [ ] `@pytest.mark.asyncio` - Mark async tests
-- [ ] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
-- [ ] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
+- [x] `@pytest.mark.asyncio` - Mark async tests
+- [x] `@pytest.mark.asyncio(loop_scope="session")` - Shared loop
+- [x] `@pytest.mark.asyncio(loop_scope="module")` - Module loop
 - [ ] Automatic async test detection mode
 
 #### Coroutine Execution
