@@ -1431,6 +1431,27 @@ fn convert_py_effects_to_rust(py_list: &Bound<'_, PyList>) -> Vec<crate::hooks::
                 };
                 crate::hooks::HookEffect::ModifyItems { removed, reordered }
             }
+            "AsyncioSetup" => {
+                let loop_scope_str: String = match dict.get_item("loop_scope") {
+                    Ok(Some(v)) => v.extract().unwrap_or_else(|_| "function".to_string()),
+                    _ => "function".to_string(),
+                };
+                let loop_scope = match loop_scope_str.as_str() {
+                    "function" => crate::hooks::LoopScope::Function,
+                    "class" => crate::hooks::LoopScope::Class,
+                    "module" => crate::hooks::LoopScope::Module,
+                    "session" => crate::hooks::LoopScope::Session,
+                    _ => crate::hooks::LoopScope::Function,
+                };
+                let auto_mode: bool = match dict.get_item("auto_mode") {
+                    Ok(Some(v)) => v.extract().unwrap_or(false),
+                    _ => false,
+                };
+                crate::hooks::HookEffect::AsyncioSetup {
+                    loop_scope,
+                    auto_mode,
+                }
+            }
             unknown => {
                 eprintln!(
                     "[tach:zygote] DEBUG: Skipping effect[{}]: unknown type '{}'",
@@ -2434,5 +2455,92 @@ mod tests {
         // Both should have valid but different FDs (after dup)
         assert!(cloned_sock.as_raw_fd() >= 0);
         // Note: cloned FD may or may not equal original depending on system state
+    }
+
+    #[test]
+    fn test_convert_asyncio_setup_effect() {
+        use pyo3::types::{PyDict, PyList};
+
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("type", "AsyncioSetup").unwrap();
+            dict.set_item("loop_scope", "module").unwrap();
+            dict.set_item("auto_mode", true).unwrap();
+
+            let list = PyList::new(py, vec![dict]).unwrap();
+            let effects = convert_py_effects_to_rust(&list);
+
+            assert_eq!(effects.len(), 1);
+            match &effects[0] {
+                crate::hooks::HookEffect::AsyncioSetup {
+                    loop_scope,
+                    auto_mode,
+                } => {
+                    assert_eq!(loop_scope.to_string(), "module");
+                    assert!(*auto_mode);
+                }
+                other => panic!("Expected AsyncioSetup, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_convert_asyncio_setup_defaults() {
+        use pyo3::types::{PyDict, PyList};
+
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("type", "AsyncioSetup").unwrap();
+
+            let list = PyList::new(py, vec![dict]).unwrap();
+            let effects = convert_py_effects_to_rust(&list);
+
+            assert_eq!(effects.len(), 1);
+            match &effects[0] {
+                crate::hooks::HookEffect::AsyncioSetup {
+                    loop_scope,
+                    auto_mode,
+                } => {
+                    assert_eq!(loop_scope.to_string(), "function");
+                    assert!(!*auto_mode);
+                }
+                other => panic!("Expected AsyncioSetup, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_convert_asyncio_setup_all_scopes() {
+        use pyo3::types::{PyDict, PyList};
+
+        Python::attach(|py| {
+            for (scope_str, expected_str) in [
+                ("function", "function"),
+                ("class", "class"),
+                ("module", "module"),
+                ("session", "session"),
+                ("invalid", "function"),
+            ] {
+                let dict = PyDict::new(py);
+                dict.set_item("type", "AsyncioSetup").unwrap();
+                dict.set_item("loop_scope", scope_str).unwrap();
+                dict.set_item("auto_mode", false).unwrap();
+
+                let list = PyList::new(py, vec![dict]).unwrap();
+                let effects = convert_py_effects_to_rust(&list);
+
+                match &effects[0] {
+                    crate::hooks::HookEffect::AsyncioSetup { loop_scope, .. } => {
+                        assert_eq!(
+                            loop_scope.to_string(),
+                            expected_str,
+                            "Failed for input: {}",
+                            scope_str
+                        );
+                    }
+                    other => panic!("Expected AsyncioSetup, got {:?}", other),
+                }
+            }
+        });
     }
 }
