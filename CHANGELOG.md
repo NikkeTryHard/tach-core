@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `convert_py_effects_to_rust`, fixing silent effect drops during worker initialization (#46)
 - **Event loop resource leak for class/module/session scopes** - Added scope transition
   tracking to EventLoopManager and cleanup in reset_worker_state (#43)
+- CI now runs integration tests in addition to unit tests ([#41](https://github.com/NikkeTryHard/tach-core/issues/41))
+- Tests properly skip instead of silently passing when tach_harness unavailable ([#42](https://github.com/NikkeTryHard/tach-core/issues/42))
+- Tests use public properties instead of private attributes ([#44](https://github.com/NikkeTryHard/tach-core/issues/44))
+- Cleanup errors are now logged instead of silently swallowed ([#45](https://github.com/NikkeTryHard/tach-core/issues/45))
 
 ---
 
