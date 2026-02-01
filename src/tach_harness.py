@@ -2172,6 +2172,82 @@ def _close_django_connections() -> None:
         pass
 
 
+def _dispose_all_connections() -> int:
+    """Dispose all database connections before fork.
+
+    This is more aggressive than close_all() - it ensures connection pools
+    are completely reset so forked workers don't inherit stale FDs.
+
+    Called by Zygote before forking workers to ensure:
+    1. No file descriptors are shared between parent and child
+    2. SSL connections are cleanly terminated (prevents MAC errors)
+    3. Connection pools are empty so workers create fresh connections
+
+    Returns:
+        Number of connections disposed, or 0 if Django not available.
+    """
+    if not _is_django_available():
+        return 0
+
+    disposed = 0
+    try:
+        from django.db import connections
+
+        for alias in connections:
+            try:
+                conn = connections[alias]
+                # Close the connection if open
+                if conn.connection is not None:
+                    conn.close()
+                    disposed += 1
+                # Also close any pooled connections
+                if hasattr(conn, 'close_if_unusable_or_obsolete'):
+                    conn.close_if_unusable_or_obsolete()
+            except Exception as e:
+                print(f"[tach:harness] DEBUG: Error disposing connection '{alias}': {e}", file=sys.stderr)
+
+        # Final close_all to ensure everything is cleaned up
+        connections.close_all()
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to dispose connections: {e}", file=sys.stderr)
+
+    return disposed
+
+
+def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
+    """Get valid database aliases for iteration.
+
+    Filters requested aliases against actually configured databases.
+
+    Args:
+        requested: Specific aliases to use, or None for all configured.
+
+    Returns:
+        List of valid database aliases.
+    """
+    if not _is_django_available():
+        return []
+
+    try:
+        from django.db import connections
+
+        if requested is None:
+            return list(connections)
+
+        # Filter to only valid aliases
+        valid = []
+        for alias in requested:
+            if alias in connections:
+                valid.append(alias)
+            else:
+                print(f"[tach:harness] DEBUG: Skipping unknown database alias '{alias}'", file=sys.stderr)
+        return valid
+
+    except Exception:
+        return []
+
+
 def _check_test_db_exists() -> bool:
     """Check if the test database already exists.
 
