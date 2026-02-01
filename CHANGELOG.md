@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.4] - 2026-02-01
+
+### Added
+
+- **Landlock V4-V6 Network Isolation** (Issue #20): Fine-grained TCP network restrictions
+  - `detect_landlock_abi()` probes kernel for Landlock ABI versions 1-6
+  - `supports_landlock_network()` checks for ABI V4+ (kernel 6.7+)
+  - `apply_landlock_network()` restricts TCP bind/connect operations
+  - `NetworkIsolationStatus` enum for reporting isolation level (LandlockV4, Namespace, SeccompOnly, None)
+  - `apply_iron_dome_with_network()` combined sandbox entry point
+  - Graceful fallback to Seccomp on kernels < 6.7
+
+- **Network Configuration** (`[tool.tach.network]`):
+  - `allow_localhost` - permit loopback connections (default: true)
+  - `allow_connect` - whitelist of host:port targets
+  - `allow_bind_ports` - allowed TCP bind ports (0 = ephemeral)
+
 ### Fixed
 
 - **AsyncioSetup effects dropped in IPC conversion** - Added match arm for AsyncioSetup
