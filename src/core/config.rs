@@ -233,6 +233,24 @@ pub struct Cli {
     #[arg(long)]
     pub force_toxic: bool,
 
+    // =========================================================================
+    // Django Database Options (pytest-django compatible)
+    // =========================================================================
+    /// Reuse existing test database between runs.
+    ///
+    /// Skips database creation and migrations if the test database exists.
+    /// Speeds up repeated test runs. Use --create-db to force recreation
+    /// after schema changes.
+    #[arg(long)]
+    pub reuse_db: bool,
+
+    /// Force recreation of test database.
+    ///
+    /// Drops and recreates the test database even if --reuse-db is set.
+    /// Use this after schema changes or when the database is corrupted.
+    #[arg(long)]
+    pub create_db: bool,
+
     /// Ignore .gitignore and .ignore files during test discovery.
     ///
     /// Bypasses standard ignore files (like .gitignore, .ignore) when
@@ -647,6 +665,10 @@ pub struct MergedConfig {
     pub disabled_plugins: Vec<String>,
     /// Network isolation configuration
     pub network: Option<NetworkConfig>,
+    /// Reuse existing test database (Django)
+    pub reuse_db: bool,
+    /// Force recreation of test database (Django)
+    pub create_db: bool,
 }
 
 impl MergedConfig {
@@ -686,6 +708,8 @@ impl MergedConfig {
             coverage_format: cov_config.format.unwrap_or_else(|| "lcov".to_string()),
             disabled_plugins,
             network: file_config.network.clone(),
+            reuse_db: cli.reuse_db,
+            create_db: cli.create_db,
         }
     }
 }
@@ -1262,5 +1286,43 @@ LITERAL_BRACES = "{{NOT_EXPANDED}}"
             std::env::remove_var("EXPANDED_VAR");
             std::env::remove_var("LITERAL_BRACES");
         }
+    }
+
+    // =========================================================================
+    //  Django Database CLI Flag Tests
+    // =========================================================================
+
+    #[test]
+    fn test_reuse_db_flag_parsing() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--reuse-db", "."]);
+        assert!(cli.reuse_db);
+        assert!(!cli.create_db);
+    }
+
+    #[test]
+    fn test_create_db_flag_parsing() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--create-db", "."]);
+        assert!(cli.create_db);
+        assert!(!cli.reuse_db);
+    }
+
+    #[test]
+    fn test_create_db_overrides_reuse_db() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--reuse-db", "--create-db", "."]);
+        assert!(cli.create_db);
+        assert!(cli.reuse_db);
+    }
+
+    #[test]
+    fn test_merged_config_includes_db_flags() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--reuse-db", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.reuse_db);
+        assert!(!merged.create_db);
     }
 }

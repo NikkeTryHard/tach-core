@@ -59,6 +59,14 @@ pub struct TestPayload {
     /// Contains parsed marker arguments like @pytest.mark.django_db(transaction=True)
     #[serde(default)]
     pub marker_info: Vec<MarkerInfo>,
+
+    /// Whether to reuse existing test database (--reuse-db)
+    #[serde(default)]
+    pub reuse_db: bool,
+
+    /// Whether to force database recreation (--create-db)
+    #[serde(default)]
+    pub create_db: bool,
 }
 
 /// Fixture info for payload
@@ -507,6 +515,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -631,6 +641,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -660,6 +672,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
         let encoded = encode_with_length(&payload).unwrap();
 
@@ -742,6 +756,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -793,6 +809,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec!["django_db".to_string(), "slow".to_string()],
             marker_info: marker_info.clone(),
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -930,5 +948,61 @@ mod tests {
             matches!(result, Err(DecodeWithLimitError::InvalidMagic)),
             "Should reject invalid magic before checking length"
         );
+    }
+
+    // =========================================================================
+    // Database Lifecycle Tests
+    // =========================================================================
+
+    #[test]
+    fn test_payload_with_db_lifecycle() {
+        let payload = TestPayload {
+            test_id: 1,
+            file_path: "test.py".to_string(),
+            test_name: "test_db".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
+            marker_info: vec![],
+            reuse_db: true,
+            create_db: false,
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert!(decoded.reuse_db);
+        assert!(!decoded.create_db);
+    }
+
+    #[test]
+    fn test_payload_db_flags_default_false() {
+        let payload = TestPayload {
+            test_id: 1,
+            file_path: "test.py".to_string(),
+            test_name: "test".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
+            marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert!(!decoded.reuse_db);
+        assert!(!decoded.create_db);
     }
 }

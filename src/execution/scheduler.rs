@@ -445,6 +445,8 @@ impl Scheduler {
             cached_effects,
             markers: test.markers.clone(),
             marker_info: test.marker_info.clone(),
+            reuse_db: false,
+            create_db: false,
         };
 
         // Use encode_with_length which includes protocol header
