@@ -110,6 +110,10 @@ criterion = "0.5"
 name = "hot_paths"
 harness = false
 
+[[bench]]
+name = "plugin_overhead"
+harness = false
+
 # Integration tests
 [[test]]
 name = "discovery_integration"
