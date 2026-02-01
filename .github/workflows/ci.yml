@@ -73,5 +73,8 @@ jobs:
       - name: Set PYO3_PYTHON
         run: echo "PYO3_PYTHON=$(which python)" >> $GITHUB_ENV
 
+      - name: Install Python test dependencies
+        run: pip install pytest pytest-asyncio
+
       - name: Run unit tests with nextest
         run: cargo nextest run --all-features --profile ci
