@@ -2438,6 +2438,99 @@ def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
             print(f"[tach:harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
 
 
+def _flush_database(databases: list[str] | None = None) -> None:
+    """Flush (truncate) database tables after a transaction=True test.
+
+    This is the cleanup mechanism for tests that use real transactions.
+    Unlike savepoint rollback, this physically deletes data from tables.
+
+    Args:
+        databases: List of database aliases to flush, or None for all.
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.core.management import call_command
+        from django.db import connections
+
+        # Determine which databases to flush
+        if databases is None:
+            databases = list(connections)
+
+        for alias in databases:
+            if alias not in connections:
+                print(f"[tach:harness] WARN: Unknown database '{alias}' for flush", file=sys.stderr)
+                continue
+
+            try:
+                # Use Django's flush command which truncates all tables
+                call_command('flush', '--no-input', database=alias, verbosity=0)
+            except Exception as e:
+                print(f"[tach:harness] WARN: Failed to flush database '{alias}': {e}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Database flush failed: {e}", file=sys.stderr)
+
+
+def _apply_django_db_isolation_v2(marker_args: dict[str, Any] | None) -> dict[str, Any]:
+    """Apply database isolation based on marker args (v2 with transaction=True support).
+
+    Enhanced version that returns structured result including flush indicator.
+
+    Args:
+        marker_args: Parsed django_db marker arguments.
+
+    Returns:
+        Dict with keys:
+        - savepoints: List of (alias, sid) tuples for rollback
+        - needs_flush: True if transaction=True (needs flush after test)
+        - databases: List of database aliases involved
+    """
+    result = {
+        "savepoints": [],
+        "needs_flush": False,
+        "databases": [],
+    }
+
+    if not _is_django_available():
+        return result
+
+    # If no marker_args, apply default isolation
+    if marker_args is None:
+        marker_args = {"transaction": False, "reset_sequences": False, "databases": None}
+
+    # Determine databases
+    from django.db import connections
+    databases = marker_args.get("databases")
+    if databases is None:
+        databases = list(connections)
+    result["databases"] = databases
+
+    # If transaction=True, mark for flush instead of savepoint
+    if marker_args.get("transaction", False):
+        result["needs_flush"] = True
+        return result
+
+    # Otherwise, use savepoint isolation (existing logic)
+    result["savepoints"] = _apply_django_db_isolation(marker_args)
+    return result
+
+
+def _cleanup_django_db_isolation_v2(isolation_result: dict[str, Any]) -> None:
+    """Cleanup database isolation based on result from _apply_django_db_isolation_v2.
+
+    Handles both savepoint rollback and flush cleanup.
+
+    Args:
+        isolation_result: Result dict from _apply_django_db_isolation_v2.
+    """
+    if isolation_result.get("needs_flush"):
+        _flush_database(databases=isolation_result.get("databases"))
+    else:
+        _cleanup_django_db_isolation(isolation_result.get("savepoints", []))
+
+
 # =============================================================================
 # Django URL and Template Markers (v0.2.4 - Issue #35)
 # =============================================================================
