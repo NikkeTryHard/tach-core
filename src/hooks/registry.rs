@@ -327,6 +327,22 @@ impl HookRegistry {
         self.hooks.values().map(|v| v.len()).sum()
     }
 
+    /// Fast path check: returns true if any hooks are registered for this name.
+    ///
+    /// Use this to skip expensive Python bridge calls when no hooks are registered.
+    #[inline]
+    pub fn has_hooks_for(&self, hook_name: &str) -> bool {
+        self.hooks.get(hook_name).is_some_and(|v| !v.is_empty())
+    }
+
+    /// Returns true if the registry has no hooks at all.
+    ///
+    /// Use this to skip hook dispatch entirely when no hooks are registered.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.hooks.is_empty() || self.hooks.values().all(|v| v.is_empty())
+    }
+
     /// Check if a specific file contains any hooks that modify global state.
     ///
     /// This method handles path normalization to support both relative and absolute paths.
@@ -559,6 +575,83 @@ mod tests {
     fn test_registry_creation() {
         let registry = HookRegistry::new();
         assert_eq!(registry.hook_count(), 0);
+    }
+
+    #[test]
+    fn test_fast_path_is_empty() {
+        let mut registry = HookRegistry::new();
+
+        // Empty registry should return true
+        assert!(registry.is_empty());
+
+        // After registering a hook, should return false
+        let hook = Hook {
+            spec: HookSpec {
+                name: hook_names::PYTEST_CONFIGURE.to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: PathBuf::from("conftest.py"),
+            function_name: hook_names::PYTEST_CONFIGURE.to_string(),
+            line_number: 10,
+            is_wrapper: false,
+        };
+        registry.register(hook);
+
+        assert!(!registry.is_empty());
+    }
+
+    #[test]
+    fn test_fast_path_has_hooks_for() {
+        let mut registry = HookRegistry::new();
+
+        // No hooks registered yet
+        assert!(!registry.has_hooks_for(hook_names::PYTEST_CONFIGURE));
+        assert!(!registry.has_hooks_for(hook_names::PYTEST_RUNTEST_SETUP));
+
+        // Register a pytest_configure hook
+        let hook = Hook {
+            spec: HookSpec {
+                name: hook_names::PYTEST_CONFIGURE.to_string(),
+                modifies_global_state: true,
+                cacheable: true,
+            },
+            source: PathBuf::from("conftest.py"),
+            function_name: hook_names::PYTEST_CONFIGURE.to_string(),
+            line_number: 10,
+            is_wrapper: false,
+        };
+        registry.register(hook);
+
+        // Now should have hooks for pytest_configure but not for others
+        assert!(registry.has_hooks_for(hook_names::PYTEST_CONFIGURE));
+        assert!(!registry.has_hooks_for(hook_names::PYTEST_RUNTEST_SETUP));
+        assert!(!registry.has_hooks_for("nonexistent_hook"));
+    }
+
+    #[test]
+    fn test_fast_path_multiple_hooks_same_name() {
+        let mut registry = HookRegistry::new();
+
+        // Register multiple hooks for the same name
+        for i in 0..3 {
+            let hook = Hook {
+                spec: HookSpec {
+                    name: hook_names::PYTEST_CONFIGURE.to_string(),
+                    modifies_global_state: true,
+                    cacheable: true,
+                },
+                source: PathBuf::from(format!("conftest_{}.py", i)),
+                function_name: hook_names::PYTEST_CONFIGURE.to_string(),
+                line_number: i * 10,
+                is_wrapper: false,
+            };
+            registry.register(hook);
+        }
+
+        assert!(registry.has_hooks_for(hook_names::PYTEST_CONFIGURE));
+        assert!(!registry.is_empty());
+        assert_eq!(registry.hook_count(), 3);
     }
 
     #[test]

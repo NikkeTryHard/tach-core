@@ -7,7 +7,7 @@
 //!
 //! Run with: `cargo bench --bench plugin_overhead`
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::path::PathBuf;
 
 use tach_core::hooks::{Hook, HookEffect, HookRegistry, HookSpec, LoopScope, SysPathAction};
@@ -249,7 +249,8 @@ fn bench_effect_deserialization(c: &mut Criterion) {
 
     group.bench_function("deserialize_modify_sys_path", |b| {
         b.iter(|| {
-            let effect: HookEffect = serde_json::from_str(black_box(&modify_sys_path_json)).unwrap();
+            let effect: HookEffect =
+                serde_json::from_str(black_box(&modify_sys_path_json)).unwrap();
             black_box(effect)
         })
     });
