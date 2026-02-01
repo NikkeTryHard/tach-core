@@ -140,6 +140,24 @@ class EventLoopManager:
     def current_scope(self) -> str:
         return self._current_scope
 
+    def should_run_async(self, is_coro: bool, has_marker: bool) -> bool:
+        """Determine if a test should be run as async.
+
+        Args:
+            is_coro: Whether the test function is a coroutine
+            has_marker: Whether the test has @pytest.mark.asyncio
+
+        Returns:
+            True if test should be executed with event loop
+        """
+        if not is_coro:
+            return False
+        # With auto_mode, all coroutines run as async
+        if self._auto_mode:
+            return True
+        # Without auto_mode, need explicit marker
+        return has_marker
+
 
 def detect_uvloop() -> bool:
     """Detect if uvloop is available."""
