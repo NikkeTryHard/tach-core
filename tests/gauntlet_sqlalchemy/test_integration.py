@@ -56,6 +56,34 @@ def test_isolation_rollback_works(test_engine):
         assert result.scalar() == 0
 
 
+def test_multiple_commits_rollback(test_engine):
+    """Test that multiple commits within savepoint all rollback."""
+    from tach_harness import (
+        _apply_sqlalchemy_isolation,
+        _cleanup_sqlalchemy_isolation,
+    )
+
+    Session = sessionmaker(bind=test_engine)
+    context = _apply_sqlalchemy_isolation(test_engine, Session)
+    session = context['session']
+
+    # Multiple inserts and commits
+    session.execute(text("INSERT INTO users (id, name) VALUES (1, 'Alice')"))
+    session.commit()
+    session.execute(text("INSERT INTO users (id, name) VALUES (2, 'Bob')"))
+    session.commit()
+
+    result = session.execute(text("SELECT COUNT(*) FROM users"))
+    assert result.scalar() == 2
+
+    _cleanup_sqlalchemy_isolation(context)
+
+    # All should be rolled back
+    with test_engine.connect() as conn:
+        result = conn.execute(text("SELECT COUNT(*) FROM users"))
+        assert result.scalar() == 0
+
+
 def test_dispose_clears_registry():
     """Test that engine registry is cleared after disposal."""
     from tach_harness import (
@@ -72,3 +100,4 @@ def test_dispose_clears_registry():
     _dispose_sqlalchemy_engines()
 
     assert len(_sqlalchemy_engines) == 0
+    engine.dispose()
