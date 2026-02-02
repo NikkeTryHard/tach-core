@@ -210,6 +210,16 @@ fn main() -> Result<()> {
         );
     }
 
+    // Spawn shutdown watchdog to force exit if graceful shutdown hangs
+    if let Err(e) = signals::spawn_shutdown_watchdog()
+        && !is_json
+    {
+        eprintln!(
+            "[tach:supervisor] Warning: Failed to spawn shutdown watchdog: {}",
+            e
+        );
+    }
+
     let cwd = std::env::current_dir()?;
 
     // Handle subcommands

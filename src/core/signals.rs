@@ -12,8 +12,13 @@
 use crate::lifecycle::IS_DEBUGGING;
 use signal_hook::consts::{SIGINT, SIGQUIT, SIGTERM};
 use signal_hook::iterator::Signals;
+use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
+
+/// Maximum time to wait for graceful shutdown before force exit
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Global flag to signal shutdown was requested
 pub static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -59,6 +64,35 @@ pub fn install_signal_handlers() -> Result<(), Box<dyn std::error::Error>> {
 #[inline]
 pub fn shutdown_requested() -> bool {
     SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+}
+
+/// Spawn a watchdog thread that force-exits if shutdown takes too long.
+///
+/// This prevents the process from hanging indefinitely when graceful shutdown
+/// fails (e.g., blocked on socket read). After `SHUTDOWN_TIMEOUT` from when
+/// shutdown is requested, the watchdog forces process exit with code 130
+/// (128 + SIGINT).
+pub fn spawn_shutdown_watchdog() -> Result<thread::JoinHandle<()>, Box<dyn std::error::Error>> {
+    let handle = thread::spawn(move || {
+        // Wait until shutdown is requested
+        while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        // Give graceful shutdown a chance
+        thread::sleep(SHUTDOWN_TIMEOUT);
+
+        // If we're still here, graceful shutdown failed - force exit
+        if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+            eprintln!(
+                "\n[tach] Graceful shutdown timed out after {:?}, forcing exit",
+                SHUTDOWN_TIMEOUT
+            );
+            process::exit(130); // 128 + SIGINT (2)
+        }
+    });
+
+    Ok(handle)
 }
 
 // =============================================================================
