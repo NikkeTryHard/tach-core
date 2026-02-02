@@ -2864,11 +2864,58 @@ def _cleanup_rf_fixture() -> None:
     _DJANGO_FIXTURES.pop("rf", None)
 
 
+def _init_django_user_model_fixture() -> Any:
+    """Initialize the django_user_model fixture.
+
+    Returns the Django User model class (or custom user model).
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        _DJANGO_FIXTURES["django_user_model"] = User
+        return User
+    except ImportError:
+        return None
+
+
+def _cleanup_django_user_model_fixture() -> None:
+    """Cleanup the django_user_model fixture."""
+    _DJANGO_FIXTURES.pop("django_user_model", None)
+
+
+def _init_django_username_field_fixture() -> Any:
+    """Initialize the django_username_field fixture.
+
+    Returns the name of the username field on the User model.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        field_name = User.USERNAME_FIELD
+        _DJANGO_FIXTURES["django_username_field"] = field_name
+        return field_name
+    except (ImportError, AttributeError):
+        return "username"  # Default fallback
+
+
+def _cleanup_django_username_field_fixture() -> None:
+    """Cleanup the django_username_field fixture."""
+    _DJANGO_FIXTURES.pop("django_username_field", None)
+
+
 # Fixture registry mapping names to init/cleanup functions
 _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "db": (_init_db_fixture, _cleanup_db_fixture),
     "client": (_init_client_fixture, _cleanup_client_fixture),
     "rf": (_init_rf_fixture, _cleanup_rf_fixture),
+    "django_user_model": (_init_django_user_model_fixture, _cleanup_django_user_model_fixture),
+    "django_username_field": (_init_django_username_field_fixture, _cleanup_django_username_field_fixture),
 }
 
 

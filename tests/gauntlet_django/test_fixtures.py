@@ -192,3 +192,85 @@ class TestFixtureAvailability:
         _cleanup_db_fixture()
         _cleanup_client_fixture()
         _cleanup_rf_fixture()
+
+
+class TestDjangoUserModelFixture:
+    """Tests for the django_user_model fixture."""
+
+    def test_django_user_model_returns_user_class(self):
+        """django_user_model should return the User model class."""
+        from tach_harness import _init_django_user_model_fixture, _cleanup_django_user_model_fixture
+
+        User = _init_django_user_model_fixture()
+        try:
+            from django.contrib.auth import get_user_model
+
+            assert User == get_user_model()
+        finally:
+            _cleanup_django_user_model_fixture()
+
+    def test_django_user_model_stored_in_registry(self):
+        """django_user_model should be stored in _DJANGO_FIXTURES."""
+        from tach_harness import _init_django_user_model_fixture, _cleanup_django_user_model_fixture, _DJANGO_FIXTURES
+
+        User = _init_django_user_model_fixture()
+        try:
+            assert _DJANGO_FIXTURES.get("django_user_model") is User
+        finally:
+            _cleanup_django_user_model_fixture()
+            assert "django_user_model" not in _DJANGO_FIXTURES
+
+    @pytest.mark.django_db
+    def test_django_user_model_can_create_users(self, db_session):
+        """Should be able to create users with the model."""
+        from tach_harness import _init_django_user_model_fixture, _cleanup_django_user_model_fixture
+
+        User = _init_django_user_model_fixture()
+        try:
+            user = User.objects.create_user(
+                username="testuser_batch2",
+                password="testpass123"
+            )
+            assert user.pk is not None
+            assert user.username == "testuser_batch2"
+        finally:
+            _cleanup_django_user_model_fixture()
+
+
+class TestDjangoUsernameFieldFixture:
+    """Tests for the django_username_field fixture."""
+
+    def test_django_username_field_returns_field_name(self):
+        """django_username_field should return the username field name."""
+        from tach_harness import _init_django_username_field_fixture, _cleanup_django_username_field_fixture
+
+        field_name = _init_django_username_field_fixture()
+        try:
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            assert field_name == User.USERNAME_FIELD
+        finally:
+            _cleanup_django_username_field_fixture()
+
+    def test_django_username_field_is_string(self):
+        """Should return a string field name."""
+        from tach_harness import _init_django_username_field_fixture, _cleanup_django_username_field_fixture
+
+        field_name = _init_django_username_field_fixture()
+        try:
+            assert isinstance(field_name, str)
+            assert len(field_name) > 0
+        finally:
+            _cleanup_django_username_field_fixture()
+
+    def test_django_username_field_stored_in_registry(self):
+        """django_username_field should be stored in _DJANGO_FIXTURES."""
+        from tach_harness import _init_django_username_field_fixture, _cleanup_django_username_field_fixture, _DJANGO_FIXTURES
+
+        field_name = _init_django_username_field_fixture()
+        try:
+            assert _DJANGO_FIXTURES.get("django_username_field") == field_name
+        finally:
+            _cleanup_django_username_field_fixture()
+            assert "django_username_field" not in _DJANGO_FIXTURES
