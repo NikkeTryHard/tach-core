@@ -2771,6 +2771,99 @@ def _cleanup_ignore_template_errors(originals: dict[str, Any] | None) -> None:
         print(f"[tach:harness] WARN: Failed to restore template settings: {e}", file=sys.stderr)
 
 
+# =============================================================================
+# DJANGO FIXTURES (Issue #39)
+# =============================================================================
+
+_DJANGO_FIXTURES: dict[str, Any] = {}
+
+
+def _init_db_fixture() -> None:
+    """Initialize the db fixture.
+
+    The db fixture provides database access for tests. It signals that
+    the test requires database access and should have proper isolation.
+
+    This is a marker fixture - it doesn't return a value but enables
+    database operations within the test.
+    """
+    if not _is_django_available():
+        return
+    _DJANGO_FIXTURES["db"] = True
+
+
+def _cleanup_db_fixture() -> None:
+    """Cleanup the db fixture.
+
+    Removes the db marker from the fixture registry.
+    Actual database cleanup (rollback/flush) is handled by isolation functions.
+    """
+    _DJANGO_FIXTURES.pop("db", None)
+
+
+def _init_client_fixture() -> Any:
+    """Initialize the client fixture.
+
+    The client fixture provides a Django test client for making HTTP requests
+    to views without starting a real server.
+
+    Returns:
+        Django Test Client instance, or None if Django is not available.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.test import Client
+
+        client = Client()
+        _DJANGO_FIXTURES["client"] = client
+        return client
+    except ImportError:
+        return None
+
+
+def _cleanup_client_fixture() -> None:
+    """Cleanup the client fixture.
+
+    Logs out any authenticated session and removes the client from registry.
+    """
+    client = _DJANGO_FIXTURES.pop("client", None)
+    if client is not None:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def _init_rf_fixture() -> Any:
+    """Initialize the rf (RequestFactory) fixture.
+
+    The rf fixture provides a Django RequestFactory for creating mock
+    request objects without going through the URL routing.
+
+    Returns:
+        Django RequestFactory instance, or None if Django is not available.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.test import RequestFactory
+
+        rf = RequestFactory()
+        _DJANGO_FIXTURES["rf"] = rf
+        return rf
+    except ImportError:
+        return None
+
+
+def _cleanup_rf_fixture() -> None:
+    """Cleanup the rf fixture.
+
+    Removes the RequestFactory from the fixture registry.
+    """
+    _DJANGO_FIXTURES.pop("rf", None)
+
+
 def run_test(
     file_path: str,
     node_id: str,

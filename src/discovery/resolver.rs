@@ -140,6 +140,20 @@ const PYTEST_BUILTINS: &[&str] = &[
     "recwarn",
     // Pytestconfig
     "pytestconfig",
+    // pytest-django fixtures (Issue #39)
+    // Priority 1: Core
+    "db",
+    "client",
+    "rf",
+    // Priority 2: Admin/User
+    "admin_client",
+    "admin_user",
+    "django_user_model",
+    "django_username_field",
+    // Priority 3: Advanced
+    "settings",
+    "transactional_db",
+    "live_server",
 ];
 
 /// Check if a fixture name is a pytest builtin
@@ -592,7 +606,8 @@ mod tests {
 
     #[test]
     fn test_transitive_dependency_resolution() {
-        // Create a chain: test_foo -> db -> connection -> base
+        // Create a chain: test_foo -> database -> connection -> base
+        // Note: Using "database" instead of "db" since "db" is now a pytest-django builtin
         let discovery = DiscoveryResult {
             modules: vec![
                 TestModule {
@@ -601,14 +616,14 @@ mod tests {
                     fixtures: vec![
                         make_fixture("base", vec![]),
                         make_fixture("connection", vec!["base"]),
-                        make_fixture("db", vec!["connection"]),
+                        make_fixture("database", vec!["connection"]),
                     ],
                     hooks: vec![],
                     is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_chain.py"),
-                    tests: vec![make_test("test_foo", vec!["db"])],
+                    tests: vec![make_test("test_foo", vec!["database"])],
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
@@ -628,7 +643,7 @@ mod tests {
         assert_eq!(test.fixtures.len(), 3);
         assert_eq!(test.fixtures[0].name, "base");
         assert_eq!(test.fixtures[1].name, "connection");
-        assert_eq!(test.fixtures[2].name, "db");
+        assert_eq!(test.fixtures[2].name, "database");
     }
 
     // =========================================================================
@@ -655,8 +670,8 @@ mod tests {
     #[test]
     fn test_is_builtin_fixture_negative() {
         assert!(!is_builtin_fixture("my_custom_fixture"));
-        assert!(!is_builtin_fixture("db"));
         assert!(!is_builtin_fixture("mock_page"));
+        assert!(!is_builtin_fixture("unknown_fixture"));
     }
 
     #[test]
@@ -693,18 +708,19 @@ mod tests {
     #[test]
     fn test_mixed_builtin_and_user_fixtures() {
         // Test depends on both builtin and user-defined fixture
+        // Note: Using "database" instead of "db" since "db" is now a pytest-django builtin
         let discovery = DiscoveryResult {
             modules: vec![
                 TestModule {
                     path: PathBuf::from("conftest.py"),
                     tests: vec![],
-                    fixtures: vec![make_fixture("db", vec![])],
+                    fixtures: vec![make_fixture("database", vec![])],
                     hooks: vec![],
                     is_toxic: false,
                 },
                 TestModule {
                     path: PathBuf::from("test_mixed.py"),
-                    tests: vec![make_test("test_db_with_tmp", vec!["db", "tmp_path"])],
+                    tests: vec![make_test("test_db_with_tmp", vec!["database", "tmp_path"])],
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
@@ -720,7 +736,7 @@ mod tests {
         assert_eq!(runnable.len(), 1);
         // Only user fixture should be in resolved list (builtin is skipped)
         assert_eq!(runnable[0].fixtures.len(), 1);
-        assert_eq!(runnable[0].fixtures[0].name, "db");
+        assert_eq!(runnable[0].fixtures[0].name, "database");
     }
 
     // =========================================================================
@@ -807,34 +823,35 @@ mod tests {
     #[test]
     fn test_nested_conftest_override() {
         // Inner conftest.py should override fixtures with same name from outer conftest.py
-        let mut outer_db = make_fixture("db", vec!["connection"]);
-        let inner_db = make_fixture("db", vec![]); // Inner fixture has no deps
+        // Note: Using "database" instead of "db" since "db" is now a pytest-django builtin
+        let mut outer_database = make_fixture("database", vec!["connection"]);
+        let inner_database = make_fixture("database", vec![]); // Inner fixture has no deps
 
         // Need to distinguish them
-        outer_db.scope = FixtureScope::Session; // Outer has session scope
+        outer_database.scope = FixtureScope::Session; // Outer has session scope
 
         let discovery = DiscoveryResult {
             modules: vec![
-                // Outer conftest.py with db fixture (session scope, has deps)
+                // Outer conftest.py with database fixture (session scope, has deps)
                 TestModule {
                     path: PathBuf::from("conftest.py"),
                     tests: vec![],
-                    fixtures: vec![outer_db, make_fixture("connection", vec![])],
+                    fixtures: vec![outer_database, make_fixture("connection", vec![])],
                     hooks: vec![],
                     is_toxic: false,
                 },
-                // Inner conftest.py with db fixture (function scope, no deps)
+                // Inner conftest.py with database fixture (function scope, no deps)
                 TestModule {
                     path: PathBuf::from("tests/conftest.py"),
                     tests: vec![],
-                    fixtures: vec![inner_db],
+                    fixtures: vec![inner_database],
                     hooks: vec![],
                     is_toxic: false,
                 },
                 // Test in inner directory should use inner fixture
                 TestModule {
                     path: PathBuf::from("tests/test_override.py"),
-                    tests: vec![make_test("test_db", vec!["db"])],
+                    tests: vec![make_test("test_database", vec!["database"])],
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
@@ -848,13 +865,13 @@ mod tests {
 
         assert!(errors.is_empty());
         assert_eq!(runnable.len(), 1);
-        // Should only have 1 fixture (inner db, no transitive deps)
+        // Should only have 1 fixture (inner database, no transitive deps)
         assert_eq!(
             runnable[0].fixtures.len(),
             1,
             "Should use inner conftest fixture which has no dependencies"
         );
-        assert_eq!(runnable[0].fixtures[0].name, "db");
+        assert_eq!(runnable[0].fixtures[0].name, "database");
         // Inner fixture has function scope (default)
         assert_eq!(runnable[0].fixtures[0].scope, FixtureScope::Function);
     }
