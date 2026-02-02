@@ -115,27 +115,29 @@ fn test_watchdog_pattern_triggers_after_timeout() {
 #[test]
 fn test_watchdog_pattern_no_trigger_on_fast_shutdown() {
     let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let shutdown_complete = Arc::new(AtomicBool::new(false));
     let watchdog_checked = Arc::new(AtomicBool::new(false));
     let shutdown_timeout = Duration::from_millis(200);
 
-    let shutdown_clone = Arc::clone(&shutdown_requested);
+    let requested_clone = Arc::clone(&shutdown_requested);
+    let complete_clone = Arc::clone(&shutdown_complete);
     let checked_clone = Arc::clone(&watchdog_checked);
 
     // Simulate watchdog thread
     let watchdog = thread::spawn(move || {
         // Wait until shutdown is requested
-        while !shutdown_clone.load(Ordering::SeqCst) {
+        while !requested_clone.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(10));
         }
 
         // Give graceful shutdown a chance
         thread::sleep(shutdown_timeout);
 
-        // Record that we checked (but shutdown was cleared)
+        // Record that we checked
         checked_clone.store(true, Ordering::SeqCst);
 
-        // Return whether shutdown is still requested
-        shutdown_clone.load(Ordering::SeqCst)
+        // Return whether we would force exit: requested AND NOT complete
+        requested_clone.load(Ordering::SeqCst) && !complete_clone.load(Ordering::SeqCst)
     });
 
     // Request shutdown
@@ -143,7 +145,7 @@ fn test_watchdog_pattern_no_trigger_on_fast_shutdown() {
 
     // Simulate fast graceful shutdown completing
     thread::sleep(Duration::from_millis(50));
-    shutdown_requested.store(false, Ordering::SeqCst);
+    shutdown_complete.store(true, Ordering::SeqCst);
 
     // Wait for watchdog
     let would_force_exit = watchdog.join().expect("Watchdog thread should not panic");
