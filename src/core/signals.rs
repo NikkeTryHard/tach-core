@@ -180,7 +180,10 @@ mod tests {
         // The watchdog condition: requested && !complete
         let would_force_exit =
             SHUTDOWN_REQUESTED.load(Ordering::SeqCst) && !SHUTDOWN_COMPLETE.load(Ordering::SeqCst);
-        assert!(!would_force_exit, "Should NOT force exit when shutdown completed");
+        assert!(
+            !would_force_exit,
+            "Should NOT force exit when shutdown completed"
+        );
 
         // Cleanup
         SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);

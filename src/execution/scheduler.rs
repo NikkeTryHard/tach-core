@@ -35,9 +35,7 @@ use std::time::{Duration, Instant};
 /// - Payload exceeds MAX_PAYLOAD_SIZE (drains socket to restore sync)
 /// - Payload read fails
 /// - Decoding fails
-fn read_framed_message<T: serde::de::DeserializeOwned>(
-    socket: &mut UnixStream,
-) -> Option<T> {
+fn read_framed_message<T: serde::de::DeserializeOwned>(socket: &mut UnixStream) -> Option<T> {
     // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
     let mut header_buf = [0u8; HEADER_SIZE];
     if socket.read_exact(&mut header_buf).is_err() {
@@ -45,8 +43,8 @@ fn read_framed_message<T: serde::de::DeserializeOwned>(
     }
 
     // Extract length from bytes 4-7 (little-endian u32)
-    let len = u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
-        as usize;
+    let len =
+        u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]]) as usize;
 
     // OOM protection: Validate size BEFORE allocating
     // If payload exceeds limit, drain the remaining bytes to avoid protocol desync
@@ -494,8 +492,10 @@ impl Scheduler {
         let mut pid_buf = [0u8; 4];
         match self.cmd_socket.read_exact(&mut pid_buf) {
             Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut
-                   || e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock =>
+            {
                 return Err(anyhow::anyhow!(
                     "Zygote timeout: no response within 10s. Zygote may have crashed or deadlocked."
                 ));
