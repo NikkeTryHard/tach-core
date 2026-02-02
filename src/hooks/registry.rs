@@ -1101,9 +1101,7 @@ mod tests {
 
     #[test]
     fn test_sqlalchemy_db_setup_effect_none_databases() {
-        let effect = HookEffect::SqlAlchemyDbSetup {
-            databases: None,
-        };
+        let effect = HookEffect::SqlAlchemyDbSetup { databases: None };
         let json = serde_json::to_string(&effect).unwrap();
         assert!(json.contains("SqlAlchemyDbSetup"));
     }
