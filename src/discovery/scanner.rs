@@ -2743,6 +2743,11 @@ def test_errors(exc):
 
         assert_eq!(result.tests.len(), 2);
         assert!(result.tests.iter().any(|t| t.name == "test_errors[Error]"));
-        assert!(result.tests.iter().any(|t| t.name == "test_errors[TimeoutError]"));
+        assert!(
+            result
+                .tests
+                .iter()
+                .any(|t| t.name == "test_errors[TimeoutError]")
+        );
     }
 }
