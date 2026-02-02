@@ -2771,6 +2771,479 @@ def _cleanup_ignore_template_errors(originals: dict[str, Any] | None) -> None:
         print(f"[tach:harness] WARN: Failed to restore template settings: {e}", file=sys.stderr)
 
 
+# =============================================================================
+# DJANGO FIXTURES (Issue #39)
+# =============================================================================
+
+_DJANGO_FIXTURES: dict[str, Any] = {}
+
+
+def _init_db_fixture() -> None:
+    """Initialize the db fixture.
+
+    The db fixture provides database access for tests. It signals that
+    the test requires database access and should have proper isolation.
+
+    This is a marker fixture - it doesn't return a value but enables
+    database operations within the test.
+    """
+    if not _is_django_available():
+        return
+    _DJANGO_FIXTURES["db"] = True
+
+
+def _cleanup_db_fixture() -> None:
+    """Cleanup the db fixture.
+
+    Removes the db marker from the fixture registry.
+    Actual database cleanup (rollback/flush) is handled by isolation functions.
+    """
+    _DJANGO_FIXTURES.pop("db", None)
+
+
+def _init_client_fixture() -> Any:
+    """Initialize the client fixture.
+
+    The client fixture provides a Django test client for making HTTP requests
+    to views without starting a real server.
+
+    Returns:
+        Django Test Client instance, or None if Django is not available.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.test import Client
+
+        client = Client()
+        _DJANGO_FIXTURES["client"] = client
+        return client
+    except ImportError:
+        return None
+
+
+def _cleanup_client_fixture() -> None:
+    """Cleanup the client fixture.
+
+    Logs out any authenticated session and removes the client from registry.
+    """
+    client = _DJANGO_FIXTURES.pop("client", None)
+    if client is not None:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def _init_rf_fixture() -> Any:
+    """Initialize the rf (RequestFactory) fixture.
+
+    The rf fixture provides a Django RequestFactory for creating mock
+    request objects without going through the URL routing.
+
+    Returns:
+        Django RequestFactory instance, or None if Django is not available.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.test import RequestFactory
+
+        rf = RequestFactory()
+        _DJANGO_FIXTURES["rf"] = rf
+        return rf
+    except ImportError:
+        return None
+
+
+def _cleanup_rf_fixture() -> None:
+    """Cleanup the rf fixture.
+
+    Removes the RequestFactory from the fixture registry.
+    """
+    _DJANGO_FIXTURES.pop("rf", None)
+
+
+def _init_django_user_model_fixture() -> Any:
+    """Initialize the django_user_model fixture.
+
+    Returns the Django User model class (or custom user model).
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        _DJANGO_FIXTURES["django_user_model"] = User
+        return User
+    except ImportError:
+        return None
+
+
+def _cleanup_django_user_model_fixture() -> None:
+    """Cleanup the django_user_model fixture."""
+    _DJANGO_FIXTURES.pop("django_user_model", None)
+
+
+def _init_django_username_field_fixture() -> Any:
+    """Initialize the django_username_field fixture.
+
+    Returns the name of the username field on the User model.
+    """
+    if not _is_django_available():
+        return None
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        field_name = User.USERNAME_FIELD
+        _DJANGO_FIXTURES["django_username_field"] = field_name
+        return field_name
+    except (ImportError, AttributeError):
+        return "username"  # Default fallback
+
+
+def _cleanup_django_username_field_fixture() -> None:
+    """Cleanup the django_username_field fixture."""
+    _DJANGO_FIXTURES.pop("django_username_field", None)
+
+
+def _init_admin_user_fixture() -> Any:
+    """Initialize the admin_user fixture.
+
+    Creates and returns a superuser with known credentials.
+    Username: admin, Password: password
+    """
+    if not _is_django_available():
+        return None
+
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+
+        username_field = User.USERNAME_FIELD
+
+        # Create superuser with known credentials
+        user_data = {
+            username_field: "admin",
+            "email": "admin@example.com",
+            "password": "password",
+        }
+
+        # Check if user already exists
+        try:
+            admin_user = User.objects.get(**{username_field: "admin"})
+        except User.DoesNotExist:
+            admin_user = User.objects.create_superuser(**user_data)
+
+        _DJANGO_FIXTURES["admin_user"] = admin_user
+        return admin_user
+    except ImportError:
+        return None
+
+
+def _cleanup_admin_user_fixture() -> None:
+    """Cleanup the admin_user fixture."""
+    _DJANGO_FIXTURES.pop("admin_user", None)
+
+
+def _init_admin_client_fixture() -> Any:
+    """Initialize the admin_client fixture.
+
+    Returns a Django test client logged in as admin.
+    """
+    if not _is_django_available():
+        return None
+
+    try:
+        from django.test import Client
+
+        # Get or create admin user
+        admin_user = _DJANGO_FIXTURES.get("admin_user")
+        if admin_user is None:
+            admin_user = _init_admin_user_fixture()
+
+        # Create client and force login
+        client = Client()
+        client.force_login(admin_user)
+
+        _DJANGO_FIXTURES["admin_client"] = client
+        return client
+    except ImportError:
+        return None
+
+
+def _cleanup_admin_client_fixture() -> None:
+    """Cleanup the admin_client fixture."""
+    client = _DJANGO_FIXTURES.pop("admin_client", None)
+    if client is not None:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+class SettingsWrapper:
+    """Wrapper for Django settings that tracks and restores overrides.
+
+    Uses Django's override_settings internally to ensure proper signal
+    emission and cache invalidation.
+    """
+
+    def __init__(self):
+        self._overrides: list[Any] = []
+        self._original_values: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        from django.conf import settings
+
+        return getattr(settings, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            super().__setattr__(name, value)
+            return
+
+        from django.conf import settings
+        from django.test.utils import override_settings
+
+        # Store original if not already stored
+        if name not in self._original_values:
+            self._original_values[name] = getattr(settings, name, None)
+
+        # Create and enable override
+        override = override_settings(**{name: value})
+        override.enable()
+        self._overrides.append(override)
+
+    def finalize(self) -> None:
+        """Restore all overridden settings in reverse order."""
+        for override in reversed(self._overrides):
+            try:
+                override.disable()
+            except Exception:
+                pass
+        self._overrides.clear()
+        self._original_values.clear()
+
+
+def _init_settings_fixture() -> Any:
+    """Initialize the settings fixture.
+
+    Returns a SettingsWrapper for overriding Django settings.
+    """
+    if not _is_django_available():
+        return None
+
+    wrapper = SettingsWrapper()
+    _DJANGO_FIXTURES["settings"] = wrapper
+    return wrapper
+
+
+def _cleanup_settings_fixture() -> None:
+    """Cleanup the settings fixture."""
+    wrapper = _DJANGO_FIXTURES.pop("settings", None)
+    if wrapper is not None:
+        wrapper.finalize()
+
+
+def _init_transactional_db_fixture() -> Any:
+    """Initialize the transactional_db fixture.
+
+    Provides database access without savepoint wrapping.
+    Uses flush for cleanup instead of rollback.
+    """
+    if not _is_django_available():
+        return None
+
+    # Mark that we need flush cleanup, not savepoint rollback
+    _DJANGO_FIXTURES["transactional_db"] = True
+    _DJANGO_FIXTURES["_needs_flush"] = True
+    return True
+
+
+def _cleanup_transactional_db_fixture() -> None:
+    """Cleanup the transactional_db fixture."""
+    needs_flush = _DJANGO_FIXTURES.pop("_needs_flush", False)
+    _DJANGO_FIXTURES.pop("transactional_db", None)
+
+    if needs_flush and _is_django_available():
+        try:
+            from django.core.management import call_command
+            call_command("flush", "--no-input", verbosity=0)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Failed to flush database: {e}", file=sys.stderr)
+
+
+class LiveServer:
+    """Wrapper for Django's live server test case functionality."""
+
+    def __init__(self, host: str = "localhost", port: int = 0):
+        self._host = host
+        self._port = port
+        self._server_thread = None
+        self._url: Optional[str] = None
+
+    def start(self) -> None:
+        """Start the live server."""
+        if not _is_django_available():
+            return
+
+        try:
+            from django.test.testcases import LiveServerThread
+
+            # Find an available port
+            if self._port == 0:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('', 0))
+                    self._port = s.getsockname()[1]
+
+            # Start server thread
+            self._server_thread = LiveServerThread(self._host, [self._port])
+            self._server_thread.daemon = True
+            self._server_thread.start()
+            self._server_thread.is_ready.wait()
+
+            if self._server_thread.error:
+                raise self._server_thread.error
+
+            self._url = f"http://{self._host}:{self._port}"
+        except ImportError as e:
+            print(f"[tach:harness] WARN: LiveServerThread not available: {e}", file=sys.stderr)
+            self._url = f"http://{self._host}:8000"  # Fallback
+
+    def stop(self) -> None:
+        """Stop the live server."""
+        if self._server_thread is not None:
+            try:
+                self._server_thread.terminate()
+                self._server_thread.join(timeout=5)
+            except Exception:
+                pass
+            self._server_thread = None
+
+    @property
+    def url(self) -> str:
+        """Return the live server URL."""
+        return self._url or f"http://{self._host}:{self._port}"
+
+    def __str__(self) -> str:
+        return self.url
+
+
+def _init_live_server_fixture() -> Any:
+    """Initialize the live_server fixture."""
+    if not _is_django_available():
+        return None
+
+    server = LiveServer()
+    server.start()
+    _DJANGO_FIXTURES["live_server"] = server
+    return server
+
+
+def _cleanup_live_server_fixture() -> None:
+    """Cleanup the live_server fixture."""
+    server = _DJANGO_FIXTURES.pop("live_server", None)
+    if server is not None:
+        server.stop()
+
+
+# Fixture registry mapping names to init/cleanup functions
+_FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
+    "db": (_init_db_fixture, _cleanup_db_fixture),
+    "client": (_init_client_fixture, _cleanup_client_fixture),
+    "rf": (_init_rf_fixture, _cleanup_rf_fixture),
+    "django_user_model": (_init_django_user_model_fixture, _cleanup_django_user_model_fixture),
+    "django_username_field": (_init_django_username_field_fixture, _cleanup_django_username_field_fixture),
+    "admin_user": (_init_admin_user_fixture, _cleanup_admin_user_fixture),
+    "admin_client": (_init_admin_client_fixture, _cleanup_admin_client_fixture),
+    "settings": (_init_settings_fixture, _cleanup_settings_fixture),
+    "transactional_db": (_init_transactional_db_fixture, _cleanup_transactional_db_fixture),
+    "live_server": (_init_live_server_fixture, _cleanup_live_server_fixture),
+}
+
+
+def _setup_django_fixtures(fixture_names: list[str]) -> dict[str, Any]:
+    """Initialize Django fixtures requested by a test.
+
+    Takes a list of fixture names the test requests, calls the appropriate
+    init functions, and returns a dict of fixture name -> value.
+
+    Args:
+        fixture_names: List of fixture names (e.g., ["db", "client"])
+
+    Returns:
+        Dict mapping fixture name to its initialized value
+    """
+    fixture_values: dict[str, Any] = {}
+
+    for name in fixture_names:
+        if name in _FIXTURE_REGISTRY:
+            init_fn, _ = _FIXTURE_REGISTRY[name]
+            value = init_fn()
+            fixture_values[name] = value
+
+    return fixture_values
+
+
+def _teardown_django_fixtures() -> None:
+    """Cleanup all active Django fixtures.
+
+    Calls all cleanup functions in reverse order of the fixture registry
+    and clears the _DJANGO_FIXTURES registry.
+    """
+    # Get cleanup functions in reverse order for proper teardown
+    cleanup_order = list(reversed(_FIXTURE_REGISTRY.keys()))
+
+    for name in cleanup_order:
+        if name in _DJANGO_FIXTURES:
+            _, cleanup_fn = _FIXTURE_REGISTRY[name]
+            try:
+                cleanup_fn()
+            except Exception:
+                # Swallow cleanup errors to ensure all fixtures are cleaned
+                pass
+
+    # Ensure registry is cleared even if cleanup functions missed something
+    _DJANGO_FIXTURES.clear()
+
+
+def _get_fixture_names_from_item(item: Any) -> list[str]:
+    """Extract Django fixture names from a pytest test item.
+
+    Inspects the test function signature to find parameters that match
+    known Django fixture names.
+
+    Args:
+        item: Pytest test item
+
+    Returns:
+        List of fixture names the test requires
+    """
+    fixture_names: list[str] = []
+
+    try:
+        # Get the actual test function
+        func = item.obj
+        if hasattr(func, "__wrapped__"):
+            func = func.__wrapped__
+
+        # Inspect function signature for fixture parameters
+        import inspect
+        sig = inspect.signature(func)
+        for param_name in sig.parameters:
+            if param_name in _FIXTURE_REGISTRY:
+                fixture_names.append(param_name)
+    except Exception:
+        # If inspection fails, return empty list
+        pass
+
+    return fixture_names
+
+
 def run_test(
     file_path: str,
     node_id: str,
@@ -2895,6 +3368,11 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
+        # Django Fixtures (v0.3.0 - Issue #39)
+        # Setup fixtures after db isolation is applied
+        fixture_names = _get_fixture_names_from_item(target_item)
+        fixture_values = _setup_django_fixtures(fixture_names)
+
         # Django URL and Template Markers (v0.2.4 - Issue #35)
         urlconf = _parse_urls_marker(marker_info)
         original_urlconf = _apply_urls_override(urlconf)
@@ -2908,6 +3386,8 @@ def run_test(
             # Cleanup in reverse order of application
             _cleanup_ignore_template_errors(template_originals)
             _cleanup_urls_override(original_urlconf)
+            # Teardown Django fixtures before db isolation cleanup
+            _teardown_django_fixtures()
             # Rollback savepoints to restore database state
             _cleanup_django_db_isolation(django_savepoints)
 
