@@ -2320,6 +2320,92 @@ def _cleanup_sqlalchemy_isolation(isolation_context: dict[str, Any]) -> None:
             print(f"[tach:harness] WARN: Error closing SQLAlchemy connection: {e}", file=sys.stderr)
 
 
+async def _apply_sqlalchemy_isolation_async(
+    engine: Any,
+    session_factory: Any | None = None,
+    *,
+    use_savepoint: bool = True,
+) -> dict[str, Any]:
+    """Apply async SQLAlchemy transaction isolation for a test.
+
+    Creates an async connection, starts a transaction, and optionally
+    creates an AsyncSession bound to that connection.
+
+    Args:
+        engine: SQLAlchemy AsyncEngine instance.
+        session_factory: Optional async_sessionmaker.
+        use_savepoint: If True, use join_transaction_mode="create_savepoint".
+
+    Returns:
+        Dict with 'connection', 'transaction', and optionally 'session'.
+    """
+    try:
+        from sqlalchemy import __version__ as sa_version
+        sa_major = int(sa_version.split('.')[0])
+    except ImportError:
+        raise RuntimeError("SQLAlchemy is not installed")
+
+    # Dispose engine to clear inherited connections
+    await engine.dispose(close=False)
+
+    # Create async connection and start transaction
+    connection = await engine.connect()
+    transaction = await connection.begin()
+
+    result = {
+        'connection': connection,
+        'transaction': transaction,
+        'session': None,
+        'engine': engine,
+    }
+
+    if session_factory is not None:
+        if sa_major >= 2 and use_savepoint:
+            session = session_factory(
+                bind=connection,
+                join_transaction_mode="create_savepoint",
+            )
+        else:
+            session = session_factory(bind=connection)
+            await session.begin_nested()
+
+        result['session'] = session
+
+    return result
+
+
+async def _cleanup_sqlalchemy_isolation_async(isolation_context: dict[str, Any]) -> None:
+    """Clean up async SQLAlchemy transaction isolation after a test.
+
+    Rolls back the outer transaction and closes the connection.
+
+    Args:
+        isolation_context: Dict returned by _apply_sqlalchemy_isolation_async.
+    """
+    session = isolation_context.get('session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+
+    if session is not None:
+        try:
+            await session.rollback()
+            await session.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing async SQLAlchemy session: {e}", file=sys.stderr)
+
+    if transaction is not None:
+        try:
+            await transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back async SQLAlchemy transaction: {e}", file=sys.stderr)
+
+    if connection is not None:
+        try:
+            await connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing async SQLAlchemy connection: {e}", file=sys.stderr)
+
+
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
     """Get valid database aliases for iteration.
 
