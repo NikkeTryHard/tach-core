@@ -2248,6 +2248,7 @@ def _dispose_sqlalchemy_engines() -> list[str]:
         except Exception as e:
             print(f"[tach:harness] WARN: Failed to dispose engine: {e}", file=sys.stderr)
 
+    _sqlalchemy_engines.clear()
     return disposed
 
 
@@ -2301,6 +2302,7 @@ def _cleanup_sqlalchemy_isolation(isolation_context: dict[str, Any]) -> None:
 
     if session is not None:
         try:
+            session.rollback()
             session.close()
         except Exception as e:
             print(f"[tach:harness] WARN: Error closing SQLAlchemy session: {e}", file=sys.stderr)
