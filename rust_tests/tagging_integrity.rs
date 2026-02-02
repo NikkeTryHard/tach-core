@@ -178,6 +178,8 @@ fn test_toxicity_survives_serialization_roundtrip() {
         cached_effects: vec![],
         markers: vec![],
         marker_info: vec![],
+        reuse_db: false,
+        create_db: false,
     };
 
     // Create a safe TestPayload
@@ -195,6 +197,8 @@ fn test_toxicity_survives_serialization_roundtrip() {
         cached_effects: vec![],
         markers: vec![],
         marker_info: vec![],
+        reuse_db: false,
+        create_db: false,
     };
 
     // Serialize using bincode (same as scheduler.rs)
@@ -314,6 +318,8 @@ def test_network_stuff():
         cached_effects: vec![],
         markers: vec![],
         marker_info: vec![],
+        reuse_db: false,
+        create_db: false,
     };
 
     // Step 6: Serialize and deserialize (simulating IPC)

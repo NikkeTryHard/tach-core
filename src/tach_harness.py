@@ -39,6 +39,7 @@ EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
 EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
 EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
 EFFECT_TYPE_ASYNCIO_SETUP = "AsyncioSetup"
+EFFECT_TYPE_SQLALCHEMY_DB_SETUP = "SqlAlchemyDbSetup"
 
 
 # =============================================================================
@@ -2213,6 +2214,467 @@ def _dispose_all_connections() -> int:
         print(f"[tach:harness] WARN: Failed to dispose connections: {e}", file=sys.stderr)
 
     return disposed
+
+
+# =============================================================================
+# SQLALCHEMY ENGINE MANAGEMENT (fork-safe disposal)
+# =============================================================================
+
+
+def _detect_sqlalchemy() -> bool:
+    """Detect if SQLAlchemy is installed and importable.
+
+    Returns:
+        True if SQLAlchemy is available, False otherwise.
+    """
+    try:
+        import sqlalchemy
+        return True
+    except ImportError:
+        return False
+
+
+def _get_sqlalchemy_version() -> tuple[int, int, int] | None:
+    """Get the installed SQLAlchemy version.
+
+    Returns:
+        Tuple of (major, minor, patch) or None if not installed.
+    """
+    try:
+        from sqlalchemy import __version__
+        parts = __version__.split('.')
+        return (int(parts[0]), int(parts[1]), int(parts[2].split('+')[0].split('rc')[0]))
+    except (ImportError, IndexError, ValueError):
+        return None
+
+
+def _handle_sqlalchemy_marker(marker_args: dict[str, Any] | None) -> dict[str, Any]:
+    """Parse and validate SQLAlchemy marker arguments.
+
+    Supports:
+        @pytest.mark.sqlalchemy - Use all configured databases
+        @pytest.mark.sqlalchemy(databases=['default']) - Specific databases
+
+    Args:
+        marker_args: Dict of marker keyword arguments.
+
+    Returns:
+        Normalized configuration dict with 'databases' key.
+    """
+    if marker_args is None:
+        marker_args = {}
+
+    config = {
+        'databases': marker_args.get('databases', None),
+        'use_savepoint': marker_args.get('use_savepoint', True),
+    }
+
+    return config
+
+
+# SQLAlchemy engine registry for fork-safe disposal
+_sqlalchemy_engines: list[Any] = []
+
+
+def _register_sqlalchemy_engine(engine: Any) -> None:
+    """Register a SQLAlchemy engine for fork-safe disposal."""
+    global _sqlalchemy_engines
+    if engine not in _sqlalchemy_engines:
+        _sqlalchemy_engines.append(engine)
+
+
+def _dispose_sqlalchemy_engines() -> list[str]:
+    """Dispose all registered SQLAlchemy engines after fork.
+
+    Calls engine.dispose(close=False) to clear pool without
+    sending close to server.
+    """
+    global _sqlalchemy_engines
+    disposed = []
+
+    for engine in _sqlalchemy_engines:
+        try:
+            url = str(getattr(engine, 'url', 'unknown'))
+            engine.dispose(close=False)
+            disposed.append(url)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Failed to dispose engine: {e}", file=sys.stderr)
+
+    _sqlalchemy_engines.clear()
+    return disposed
+
+
+def _apply_sqlalchemy_isolation(
+    engine: Any,
+    session_factory: Any | None = None,
+    *,
+    use_savepoint: bool = True,
+) -> dict[str, Any]:
+    """Apply SQLAlchemy transaction isolation for a test."""
+    try:
+        from sqlalchemy import __version__ as sa_version
+        sa_major = int(sa_version.split('.')[0])
+    except ImportError:
+        raise RuntimeError("SQLAlchemy is not installed")
+
+    # Dispose engine to clear any inherited connections from fork
+    engine.dispose(close=False)
+
+    # Create a new connection and start the outer transaction
+    connection = engine.connect()
+    transaction = connection.begin()
+
+    result = {
+        'connection': connection,
+        'transaction': transaction,
+        'session': None,
+        'engine': engine,
+    }
+
+    if session_factory is not None:
+        if sa_major >= 2 and use_savepoint:
+            session = session_factory(
+                bind=connection,
+                join_transaction_mode="create_savepoint",
+            )
+        else:
+            session = session_factory(bind=connection)
+            session.begin_nested()
+
+        result['session'] = session
+
+    return result
+
+
+def _cleanup_sqlalchemy_isolation(isolation_context: dict[str, Any]) -> None:
+    """Clean up SQLAlchemy transaction isolation after a test."""
+    session = isolation_context.get('session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+
+    if session is not None:
+        try:
+            session.rollback()
+            session.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing SQLAlchemy session: {e}", file=sys.stderr)
+
+    if transaction is not None:
+        try:
+            transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back SQLAlchemy transaction: {e}", file=sys.stderr)
+
+    if connection is not None:
+        try:
+            connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing SQLAlchemy connection: {e}", file=sys.stderr)
+
+
+async def _apply_sqlalchemy_isolation_async(
+    engine: Any,
+    session_factory: Any | None = None,
+    *,
+    use_savepoint: bool = True,
+) -> dict[str, Any]:
+    """Apply async SQLAlchemy transaction isolation for a test.
+
+    Creates an async connection, starts a transaction, and optionally
+    creates an AsyncSession bound to that connection.
+
+    Args:
+        engine: SQLAlchemy AsyncEngine instance.
+        session_factory: Optional async_sessionmaker.
+        use_savepoint: If True, use join_transaction_mode="create_savepoint".
+
+    Returns:
+        Dict with 'connection', 'transaction', and optionally 'session'.
+    """
+    try:
+        from sqlalchemy import __version__ as sa_version
+        sa_major = int(sa_version.split('.')[0])
+    except ImportError:
+        raise RuntimeError("SQLAlchemy is not installed")
+
+    # Dispose engine to clear inherited connections
+    await engine.dispose(close=False)
+
+    # Create async connection and start transaction
+    connection = await engine.connect()
+    transaction = await connection.begin()
+
+    result = {
+        'connection': connection,
+        'transaction': transaction,
+        'session': None,
+        'engine': engine,
+    }
+
+    if session_factory is not None:
+        if sa_major >= 2 and use_savepoint:
+            session = session_factory(
+                bind=connection,
+                join_transaction_mode="create_savepoint",
+            )
+        else:
+            session = session_factory(bind=connection)
+            await session.begin_nested()
+
+        result['session'] = session
+
+    return result
+
+
+async def _cleanup_sqlalchemy_isolation_async(isolation_context: dict[str, Any]) -> None:
+    """Clean up async SQLAlchemy transaction isolation after a test.
+
+    Rolls back the outer transaction and closes the connection.
+
+    Args:
+        isolation_context: Dict returned by _apply_sqlalchemy_isolation_async.
+    """
+    session = isolation_context.get('session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+
+    if session is not None:
+        try:
+            await session.rollback()
+            await session.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing async SQLAlchemy session: {e}", file=sys.stderr)
+
+    if transaction is not None:
+        try:
+            await transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back async SQLAlchemy transaction: {e}", file=sys.stderr)
+
+    if connection is not None:
+        try:
+            await connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing async SQLAlchemy connection: {e}", file=sys.stderr)
+
+
+def _apply_sqlalchemy_isolation_scoped(
+    engine: Any,
+    scoped_session_instance: Any,
+) -> dict[str, Any]:
+    """Apply SQLAlchemy isolation for scoped_session patterns.
+
+    For applications using scoped_session (like Flask-SQLAlchemy),
+    this function reconfigures the scoped session to use a new
+    connection with transaction isolation.
+
+    Args:
+        engine: SQLAlchemy Engine instance.
+        scoped_session_instance: The scoped_session registry.
+
+    Returns:
+        Isolation context dict for cleanup.
+    """
+    # Dispose and get fresh connection
+    engine.dispose(close=False)
+    connection = engine.connect()
+    transaction = connection.begin()
+
+    # Remove any existing session from the registry
+    scoped_session_instance.remove()
+
+    # Reconfigure to use our isolated connection
+    scoped_session_instance.configure(bind=connection)
+
+    # Get the actual session and start nested transaction
+    session = scoped_session_instance()
+    session.begin_nested()
+
+    return {
+        'connection': connection,
+        'transaction': transaction,
+        'session': session,
+        'scoped_session': scoped_session_instance,
+        'engine': engine,
+    }
+
+
+def _cleanup_sqlalchemy_isolation_scoped(isolation_context: dict[str, Any]) -> None:
+    """Clean up scoped_session isolation.
+
+    Args:
+        isolation_context: Dict from _apply_sqlalchemy_isolation_scoped.
+    """
+    scoped_session = isolation_context.get('scoped_session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+    engine = isolation_context.get('engine')
+
+    # Remove the scoped session
+    if scoped_session is not None:
+        try:
+            scoped_session.remove()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error removing scoped session: {e}", file=sys.stderr)
+
+    # Rollback transaction
+    if transaction is not None:
+        try:
+            transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back: {e}", file=sys.stderr)
+
+    # Close connection
+    if connection is not None:
+        try:
+            connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing connection: {e}", file=sys.stderr)
+
+    # Reconfigure scoped session to use engine directly
+    if scoped_session is not None and engine is not None:
+        try:
+            scoped_session.configure(bind=engine)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error reconfiguring scoped session: {e}", file=sys.stderr)
+
+
+def _apply_sqlalchemy_isolation_multi(
+    engines: dict[str, Any],
+    session_factories: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Apply SQLAlchemy isolation for multiple engines.
+
+    For applications with multiple databases (e.g., read replicas,
+    sharded databases), this applies isolation to each engine.
+
+    Args:
+        engines: Dict mapping names to Engine instances.
+        session_factories: Optional dict mapping names to session factories.
+
+    Returns:
+        Dict mapping names to isolation contexts.
+    """
+    contexts = {}
+
+    if session_factories is None:
+        session_factories = {}
+
+    for name, engine in engines.items():
+        factory = session_factories.get(name)
+        contexts[name] = _apply_sqlalchemy_isolation(
+            engine,
+            factory,
+            use_savepoint=True,
+        )
+
+    return contexts
+
+
+def _cleanup_sqlalchemy_isolation_multi(contexts: dict[str, dict[str, Any]]) -> None:
+    """Clean up isolation for multiple engines.
+
+    Cleans up in reverse order to handle any cross-database dependencies.
+
+    Args:
+        contexts: Dict of isolation contexts from _apply_sqlalchemy_isolation_multi.
+    """
+    # Cleanup in reverse order
+    for name in reversed(list(contexts.keys())):
+        context = contexts[name]
+        try:
+            _cleanup_sqlalchemy_isolation(context)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error cleaning up engine '{name}': {e}", file=sys.stderr)
+
+
+# =============================================================================
+# ALEMBIC INTEGRATION (migration detection and verification)
+# =============================================================================
+
+
+def _detect_alembic() -> bool:
+    """Detect if Alembic is installed.
+
+    Returns:
+        True if Alembic is available, False otherwise.
+    """
+    try:
+        import alembic
+        return True
+    except ImportError:
+        return False
+
+
+def _get_alembic_config(config_path: str | None = None) -> Any | None:
+    """Get Alembic configuration.
+
+    Args:
+        config_path: Path to alembic.ini. If None, searches common locations.
+
+    Returns:
+        Alembic Config object or None if not found.
+    """
+    if not _detect_alembic():
+        return None
+
+    from pathlib import Path
+
+    # Search paths
+    search_paths = []
+    if config_path:
+        search_paths.append(Path(config_path))
+    else:
+        cwd = Path.cwd()
+        search_paths.extend([
+            cwd / 'alembic.ini',
+            cwd / 'migrations' / 'alembic.ini',
+            cwd / 'src' / 'alembic.ini',
+        ])
+
+    for path in search_paths:
+        if path.exists():
+            try:
+                from alembic.config import Config
+                return Config(str(path))
+            except Exception as e:
+                print(f"[tach:harness] WARN: Failed to load alembic config from {path}: {e}", file=sys.stderr)
+
+    return None
+
+
+def _verify_alembic_head(engine: Any, config: Any = None) -> tuple[bool, str]:
+    """Verify database is at Alembic head revision.
+
+    Args:
+        engine: SQLAlchemy Engine.
+        config: Optional Alembic Config.
+
+    Returns:
+        Tuple of (is_at_head, current_revision).
+    """
+    if config is None:
+        config = _get_alembic_config()
+
+    if config is None:
+        return True, "no_alembic"
+
+    try:
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        with engine.connect() as conn:
+            context = MigrationContext.configure(conn)
+            current = context.get_current_revision()
+
+        # Get head revision
+        script = ScriptDirectory.from_config(config)
+        head = script.get_current_head()
+
+        return current == head, current or "none"
+    except Exception as e:
+        print(f"[tach:harness] WARN: Error checking Alembic head: {e}", file=sys.stderr)
+        return True, "error"
 
 
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:

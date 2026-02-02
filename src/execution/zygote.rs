@@ -1125,6 +1125,11 @@ fn convert_cached_effects_to_py<'py>(
                 // Not converted to Python dict here - it's already in marker_info
                 continue;
             }
+            crate::hooks::HookEffect::SqlAlchemyDbSetup { .. } => {
+                // SqlAlchemyDbSetup is handled by Python harness via marker_info
+                // Not converted to Python dict here - it's already in marker_info
+                continue;
+            }
             crate::hooks::HookEffect::AsyncioSetup {
                 loop_scope,
                 auto_mode,
