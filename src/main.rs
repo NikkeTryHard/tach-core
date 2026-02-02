@@ -1231,6 +1231,9 @@ fn run_tests(
                 eprintln!("[tach:supervisor] Done.");
             }
 
+            // Mark shutdown as complete to prevent watchdog from force-exiting
+            signals::mark_shutdown_complete();
+
             // Return failure count for exit code
             Ok(failed_count)
         }

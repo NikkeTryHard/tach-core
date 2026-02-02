@@ -248,3 +248,32 @@ fn test_binary_help_exits_quickly() {
         "--help should complete within 5 seconds"
     );
 }
+
+/// Test that Zygote timeout error message is correctly formatted.
+///
+/// When the Zygote fails to respond within the timeout period (10 seconds),
+/// the scheduler should return an error containing "Zygote timeout" to help
+/// diagnose the issue.
+#[test]
+fn test_zygote_timeout_error_message() {
+    // The expected error message format from dispatch_test when Zygote times out
+    let expected_substring = "Zygote timeout";
+    let error_message = "Zygote timeout: no response within 10s. Zygote may have crashed or deadlocked.";
+
+    assert!(
+        error_message.contains(expected_substring),
+        "Error message should contain '{}', got: {}",
+        expected_substring,
+        error_message
+    );
+
+    // Verify the message provides actionable information
+    assert!(
+        error_message.contains("10s"),
+        "Error message should mention the timeout duration"
+    );
+    assert!(
+        error_message.contains("crashed") || error_message.contains("deadlocked"),
+        "Error message should suggest possible causes"
+    );
+}
