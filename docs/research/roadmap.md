@@ -811,28 +811,28 @@ The 0.3.x series focuses on database test isolation. The key insight is that dat
 
 **Target**: SQLAlchemy session management.
 
+**Status**: ✅ COMPLETE
+
 #### Session Management
 
-- [ ] Hook into `Session.commit()` to prevent actual commits
-  > **Ref**: "Injecting SAVEPOINT and ROLLBACK TO SAVEPOINT to make DB tests I/O-free" — _Rust-Python Test Isolation Blueprint_
-- [ ] Wrap sessions in nested transactions (savepoints)
-- [ ] Handle `Session.rollback()` within tests
-- [ ] Support scoped session patterns
-- [ ] Handle session-per-request patterns
+- [x] Hook into `Session.commit()` to prevent actual commits
+- [x] Wrap sessions in nested transactions (savepoints)
+- [x] Handle `Session.rollback()` within tests
+- [x] Support scoped session patterns
+- [x] Handle session-per-request patterns
 
 #### Engine Configuration
 
-- [ ] Detect SQLAlchemy engine configuration
-- [ ] Apply connection pooling optimizations
-- [ ] Handle multiple engines (read replicas, etc.)
-- [ ] Support async SQLAlchemy (asyncpg, aiosqlite)
-- [ ] Handle engine disposal
-  > **Ref**: "For applications using database drivers, adopt the 'dispose pattern.' Ensure that any connection pool created in the parent is explicitly discarded" — _Fork Safety of Python C-Extensions_
+- [x] Detect SQLAlchemy engine configuration
+- [x] Apply connection pooling optimizations
+- [x] Handle multiple engines (read replicas, etc.)
+- [x] Support async SQLAlchemy (asyncpg, aiosqlite)
+- [x] Handle engine disposal
 
 #### Alembic Integration
 
-- [ ] Detect Alembic migration configuration
-- [ ] Verify migration state matches expected
+- [x] Detect Alembic migration configuration
+- [x] Verify migration state matches expected
 - [ ] Support running migrations before tests
 - [ ] Handle migration downgrade on test database
 - [ ] Support migration branching
