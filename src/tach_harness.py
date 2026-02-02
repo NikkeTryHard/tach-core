@@ -2251,6 +2251,73 @@ def _dispose_sqlalchemy_engines() -> list[str]:
     return disposed
 
 
+def _apply_sqlalchemy_isolation(
+    engine: Any,
+    session_factory: Any | None = None,
+    *,
+    use_savepoint: bool = True,
+) -> dict[str, Any]:
+    """Apply SQLAlchemy transaction isolation for a test."""
+    try:
+        from sqlalchemy import __version__ as sa_version
+        sa_major = int(sa_version.split('.')[0])
+    except ImportError:
+        raise RuntimeError("SQLAlchemy is not installed")
+
+    # Dispose engine to clear any inherited connections from fork
+    engine.dispose(close=False)
+
+    # Create a new connection and start the outer transaction
+    connection = engine.connect()
+    transaction = connection.begin()
+
+    result = {
+        'connection': connection,
+        'transaction': transaction,
+        'session': None,
+        'engine': engine,
+    }
+
+    if session_factory is not None:
+        if sa_major >= 2 and use_savepoint:
+            session = session_factory(
+                bind=connection,
+                join_transaction_mode="create_savepoint",
+            )
+        else:
+            session = session_factory(bind=connection)
+            session.begin_nested()
+
+        result['session'] = session
+
+    return result
+
+
+def _cleanup_sqlalchemy_isolation(isolation_context: dict[str, Any]) -> None:
+    """Clean up SQLAlchemy transaction isolation after a test."""
+    session = isolation_context.get('session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+
+    if session is not None:
+        try:
+            session.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing SQLAlchemy session: {e}", file=sys.stderr)
+
+    if transaction is not None:
+        try:
+            transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back SQLAlchemy transaction: {e}", file=sys.stderr)
+
+    if connection is not None:
+        try:
+            connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing SQLAlchemy connection: {e}", file=sys.stderr)
+
+
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
     """Get valid database aliases for iteration.
 
