@@ -39,6 +39,7 @@ EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
 EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
 EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
 EFFECT_TYPE_ASYNCIO_SETUP = "AsyncioSetup"
+EFFECT_TYPE_SQLALCHEMY_DB_SETUP = "SqlAlchemyDbSetup"
 
 
 # =============================================================================
