@@ -125,6 +125,9 @@ impl Scheduler {
         // Set read timeout on result socket for crash detection
         result_socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
+        // Set read timeout on cmd socket to prevent indefinite hang if Zygote crashes
+        cmd_socket.set_read_timeout(Some(Duration::from_secs(10)))?;
+
         Ok(Self {
             cmd_socket,
             result_socket: Arc::new(Mutex::new(result_socket)),
@@ -457,7 +460,16 @@ impl Scheduler {
         self.cmd_socket.write_all(&encoded)?;
 
         let mut pid_buf = [0u8; 4];
-        self.cmd_socket.read_exact(&mut pid_buf)?;
+        match self.cmd_socket.read_exact(&mut pid_buf) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut
+                   || e.kind() == std::io::ErrorKind::WouldBlock => {
+                return Err(anyhow::anyhow!(
+                    "Zygote timeout: no response within 10s. Zygote may have crashed or deadlocked."
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        }
         let worker_pid = i32::from_le_bytes(pid_buf);
 
         // Determine effective timeout: per-test timeout or global timeout
