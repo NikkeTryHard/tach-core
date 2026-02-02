@@ -2286,6 +2286,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&original).expect("Serialization should succeed");
@@ -2333,6 +2335,8 @@ mod tests {
             cached_effects: vec![],
             markers: vec![],
             marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
         };
 
         let encoded = encode_with_length(&payload).unwrap();

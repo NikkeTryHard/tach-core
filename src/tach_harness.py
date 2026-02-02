@@ -2172,6 +2172,222 @@ def _close_django_connections() -> None:
         pass
 
 
+def _dispose_all_connections() -> int:
+    """Dispose all database connections before fork.
+
+    This is more aggressive than close_all() - it ensures connection pools
+    are completely reset so forked workers don't inherit stale FDs.
+
+    Called by Zygote before forking workers to ensure:
+    1. No file descriptors are shared between parent and child
+    2. SSL connections are cleanly terminated (prevents MAC errors)
+    3. Connection pools are empty so workers create fresh connections
+
+    Returns:
+        Number of connections disposed, or 0 if Django not available.
+    """
+    if not _is_django_available():
+        return 0
+
+    disposed = 0
+    try:
+        from django.db import connections
+
+        for alias in connections:
+            try:
+                conn = connections[alias]
+                # Close the connection if open
+                if conn.connection is not None:
+                    conn.close()
+                    disposed += 1
+                # Also close any pooled connections
+                if hasattr(conn, 'close_if_unusable_or_obsolete'):
+                    conn.close_if_unusable_or_obsolete()
+            except Exception as e:
+                print(f"[tach:harness] DEBUG: Error disposing connection '{alias}': {e}", file=sys.stderr)
+
+        # Final close_all to ensure everything is cleaned up
+        connections.close_all()
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to dispose connections: {e}", file=sys.stderr)
+
+    return disposed
+
+
+def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
+    """Get valid database aliases for iteration.
+
+    Filters requested aliases against actually configured databases.
+
+    Args:
+        requested: Specific aliases to use, or None for all configured.
+
+    Returns:
+        List of valid database aliases.
+    """
+    if not _is_django_available():
+        return []
+
+    try:
+        from django.db import connections
+
+        if requested is None:
+            return list(connections)
+
+        # Filter to only valid aliases
+        valid = []
+        for alias in requested:
+            if alias in connections:
+                valid.append(alias)
+            else:
+                print(f"[tach:harness] DEBUG: Skipping unknown database alias '{alias}'", file=sys.stderr)
+        return valid
+
+    except Exception:
+        return []
+
+
+def _check_test_db_exists() -> bool:
+    """Check if the test database already exists.
+
+    Used by --reuse-db to skip database creation when possible.
+    Checks the actual test database name from Django's TEST settings.
+
+    Returns:
+        True if test database exists and is accessible, False otherwise.
+    """
+    if not _is_django_available():
+        return False
+
+    try:
+        from django.db import connection
+
+        # Get the test database name from settings
+        test_db_name = connection.creation._get_test_db_name()
+
+        # Try to connect to check if it exists
+        # We use a temporary connection to avoid side effects
+        from django.db import connections
+        conn = connections['default']
+
+        # Save original database name
+        original_name = conn.settings_dict['NAME']
+
+        try:
+            # Temporarily point to test database
+            conn.settings_dict['NAME'] = test_db_name
+            conn.close()
+            conn.ensure_connection()
+            return True
+        except Exception:
+            return False
+        finally:
+            # Restore original database name
+            conn.settings_dict['NAME'] = original_name
+            conn.close()
+
+    except Exception:
+        return False
+
+
+def _create_test_db(verbosity: int = 0) -> None:
+    """Create the test database and run migrations.
+
+    Uses Django's proper test database creation utilities to ensure
+    the test database is created correctly with proper isolation.
+
+    Args:
+        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.db import connection
+        from django.test.utils import setup_test_environment
+
+        # Setup test environment first
+        try:
+            setup_test_environment()
+        except Exception:
+            pass  # May already be set up
+
+        # Use Django's test database creation
+        # keepdb=True to avoid destroying if it exists (--reuse-db behavior)
+        connection.creation.create_test_db(verbosity=verbosity, keepdb=True)
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to create test database: {e}", file=sys.stderr)
+
+
+def _destroy_test_db(verbosity: int = 0) -> None:
+    """Destroy the test database.
+
+    Uses Django's proper test database destruction utilities.
+
+    Args:
+        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.db import connection, connections
+        from django.test.utils import teardown_test_environment
+
+        # Close all connections first
+        connections.close_all()
+
+        # Destroy the test database using Django's utilities
+        # This actually drops the database
+        connection.creation.destroy_test_db(verbosity=verbosity)
+
+        # Teardown test environment
+        try:
+            teardown_test_environment()
+        except Exception:
+            pass  # May not be set up
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Failed to destroy test database: {e}", file=sys.stderr)
+
+
+def _handle_db_lifecycle(reuse_db: bool = False, create_db: bool = False) -> None:
+    """Handle database lifecycle based on CLI flags.
+
+    Implements --reuse-db and --create-db behavior:
+    - --reuse-db: Skip creation if database exists
+    - --create-db: Force recreation even if --reuse-db is set
+
+    Args:
+        reuse_db: Whether to reuse existing database
+        create_db: Whether to force database recreation
+    """
+    if not _is_django_available():
+        return
+
+    # --create-db takes precedence: destroy and recreate
+    if create_db:
+        print("[tach:harness] INFO: --create-db set, forcing database recreation", file=sys.stderr)
+        _destroy_test_db(verbosity=1)
+        _create_test_db(verbosity=1)
+        return
+
+    # --reuse-db: check if database exists
+    if reuse_db:
+        if _check_test_db_exists():
+            print("[tach:harness] INFO: --reuse-db set, reusing existing database", file=sys.stderr)
+            return
+        else:
+            print("[tach:harness] INFO: --reuse-db set but database doesn't exist, creating", file=sys.stderr)
+            _create_test_db(verbosity=1)
+            return
+
+    # Default: always create fresh database
+    _create_test_db(verbosity=0)
+
+
 def _apply_django_db_isolation(marker_args: dict[str, Any] | None) -> list[tuple[str, str]]:
     """Apply database isolation based on marker args.
 
@@ -2296,6 +2512,99 @@ def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
             print(f"[tach:harness] WARN: Database error rolling back savepoint for '{alias}': {e}", file=sys.stderr)
         except Exception as e:
             print(f"[tach:harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
+
+
+def _flush_database(databases: list[str] | None = None) -> None:
+    """Flush (truncate) database tables after a transaction=True test.
+
+    This is the cleanup mechanism for tests that use real transactions.
+    Unlike savepoint rollback, this physically deletes data from tables.
+
+    Args:
+        databases: List of database aliases to flush, or None for all.
+    """
+    if not _is_django_available():
+        return
+
+    try:
+        from django.core.management import call_command
+        from django.db import connections
+
+        # Determine which databases to flush
+        if databases is None:
+            databases = list(connections)
+
+        for alias in databases:
+            if alias not in connections:
+                print(f"[tach:harness] WARN: Unknown database '{alias}' for flush", file=sys.stderr)
+                continue
+
+            try:
+                # Use Django's flush command which truncates all tables
+                call_command('flush', '--no-input', database=alias, verbosity=0)
+            except Exception as e:
+                print(f"[tach:harness] WARN: Failed to flush database '{alias}': {e}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"[tach:harness] WARN: Database flush failed: {e}", file=sys.stderr)
+
+
+def _apply_django_db_isolation_v2(marker_args: dict[str, Any] | None) -> dict[str, Any]:
+    """Apply database isolation based on marker args (v2 with transaction=True support).
+
+    Enhanced version that returns structured result including flush indicator.
+
+    Args:
+        marker_args: Parsed django_db marker arguments.
+
+    Returns:
+        Dict with keys:
+        - savepoints: List of (alias, sid) tuples for rollback
+        - needs_flush: True if transaction=True (needs flush after test)
+        - databases: List of database aliases involved
+    """
+    result = {
+        "savepoints": [],
+        "needs_flush": False,
+        "databases": [],
+    }
+
+    if not _is_django_available():
+        return result
+
+    # If no marker_args, apply default isolation
+    if marker_args is None:
+        marker_args = {"transaction": False, "reset_sequences": False, "databases": None}
+
+    # Determine databases
+    from django.db import connections
+    databases = marker_args.get("databases")
+    if databases is None:
+        databases = list(connections)
+    result["databases"] = databases
+
+    # If transaction=True, mark for flush instead of savepoint
+    if marker_args.get("transaction", False):
+        result["needs_flush"] = True
+        return result
+
+    # Otherwise, use savepoint isolation (existing logic)
+    result["savepoints"] = _apply_django_db_isolation(marker_args)
+    return result
+
+
+def _cleanup_django_db_isolation_v2(isolation_result: dict[str, Any]) -> None:
+    """Cleanup database isolation based on result from _apply_django_db_isolation_v2.
+
+    Handles both savepoint rollback and flush cleanup.
+
+    Args:
+        isolation_result: Result dict from _apply_django_db_isolation_v2.
+    """
+    if isolation_result.get("needs_flush"):
+        _flush_database(databases=isolation_result.get("databases"))
+    else:
+        _cleanup_django_db_isolation(isolation_result.get("savepoints", []))
 
 
 # =============================================================================
