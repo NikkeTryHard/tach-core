@@ -2220,6 +2220,58 @@ def _dispose_all_connections() -> int:
 # SQLALCHEMY ENGINE MANAGEMENT (fork-safe disposal)
 # =============================================================================
 
+
+def _detect_sqlalchemy() -> bool:
+    """Detect if SQLAlchemy is installed and importable.
+
+    Returns:
+        True if SQLAlchemy is available, False otherwise.
+    """
+    try:
+        import sqlalchemy
+        return True
+    except ImportError:
+        return False
+
+
+def _get_sqlalchemy_version() -> tuple[int, int, int] | None:
+    """Get the installed SQLAlchemy version.
+
+    Returns:
+        Tuple of (major, minor, patch) or None if not installed.
+    """
+    try:
+        from sqlalchemy import __version__
+        parts = __version__.split('.')
+        return (int(parts[0]), int(parts[1]), int(parts[2].split('+')[0].split('rc')[0]))
+    except (ImportError, IndexError, ValueError):
+        return None
+
+
+def _handle_sqlalchemy_marker(marker_args: dict[str, Any] | None) -> dict[str, Any]:
+    """Parse and validate SQLAlchemy marker arguments.
+
+    Supports:
+        @pytest.mark.sqlalchemy - Use all configured databases
+        @pytest.mark.sqlalchemy(databases=['default']) - Specific databases
+
+    Args:
+        marker_args: Dict of marker keyword arguments.
+
+    Returns:
+        Normalized configuration dict with 'databases' key.
+    """
+    if marker_args is None:
+        marker_args = {}
+
+    config = {
+        'databases': marker_args.get('databases', None),
+        'use_savepoint': marker_args.get('use_savepoint', True),
+    }
+
+    return config
+
+
 # SQLAlchemy engine registry for fork-safe disposal
 _sqlalchemy_engines: list[Any] = []
 
