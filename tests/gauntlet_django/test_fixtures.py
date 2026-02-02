@@ -338,3 +338,43 @@ class TestAdminClientFixture:
             assert admin_user.is_superuser
         finally:
             _cleanup_admin_client_fixture()
+
+
+class TestSettingsFixture:
+    """Tests for the settings fixture."""
+
+    def test_settings_can_read_values(self):
+        """settings fixture should expose Django settings."""
+        from tach_harness import _init_settings_fixture, _cleanup_settings_fixture
+        settings = _init_settings_fixture()
+        try:
+            from django.conf import settings as django_settings
+            assert settings.DEBUG == django_settings.DEBUG
+        finally:
+            _cleanup_settings_fixture()
+
+    def test_settings_can_override_values(self):
+        """settings fixture should allow overriding values."""
+        from tach_harness import _init_settings_fixture, _cleanup_settings_fixture
+        settings_wrapper = _init_settings_fixture()
+        try:
+            from django.conf import settings as django_settings
+            original = django_settings.DEBUG
+            settings_wrapper.DEBUG = not original
+            assert django_settings.DEBUG == (not original)
+        finally:
+            _cleanup_settings_fixture()
+
+    def test_settings_restores_on_cleanup(self):
+        """Overridden settings should be restored after cleanup."""
+        from tach_harness import _init_settings_fixture, _cleanup_settings_fixture
+        from django.conf import settings as django_settings
+
+        original_debug = django_settings.DEBUG
+
+        settings_wrapper = _init_settings_fixture()
+        settings_wrapper.DEBUG = not original_debug
+        assert django_settings.DEBUG == (not original_debug)
+
+        _cleanup_settings_fixture()
+        assert django_settings.DEBUG == original_debug

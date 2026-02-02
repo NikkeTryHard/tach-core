@@ -2985,6 +2985,70 @@ def _cleanup_admin_client_fixture() -> None:
             pass
 
 
+class SettingsWrapper:
+    """Wrapper for Django settings that tracks and restores overrides.
+
+    Uses Django's override_settings internally to ensure proper signal
+    emission and cache invalidation.
+    """
+
+    def __init__(self):
+        self._overrides: list[Any] = []
+        self._original_values: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        from django.conf import settings
+
+        return getattr(settings, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            super().__setattr__(name, value)
+            return
+
+        from django.conf import settings
+        from django.test.utils import override_settings
+
+        # Store original if not already stored
+        if name not in self._original_values:
+            self._original_values[name] = getattr(settings, name, None)
+
+        # Create and enable override
+        override = override_settings(**{name: value})
+        override.enable()
+        self._overrides.append(override)
+
+    def finalize(self) -> None:
+        """Restore all overridden settings in reverse order."""
+        for override in reversed(self._overrides):
+            try:
+                override.disable()
+            except Exception:
+                pass
+        self._overrides.clear()
+        self._original_values.clear()
+
+
+def _init_settings_fixture() -> Any:
+    """Initialize the settings fixture.
+
+    Returns a SettingsWrapper for overriding Django settings.
+    """
+    if not _is_django_available():
+        return None
+
+    wrapper = SettingsWrapper()
+    _DJANGO_FIXTURES["settings"] = wrapper
+    return wrapper
+
+
+def _cleanup_settings_fixture() -> None:
+    """Cleanup the settings fixture."""
+    wrapper = _DJANGO_FIXTURES.pop("settings", None)
+    if wrapper is not None:
+        wrapper.finalize()
+
+
 # Fixture registry mapping names to init/cleanup functions
 _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "db": (_init_db_fixture, _cleanup_db_fixture),
@@ -2994,6 +3058,7 @@ _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "django_username_field": (_init_django_username_field_fixture, _cleanup_django_username_field_fixture),
     "admin_user": (_init_admin_user_fixture, _cleanup_admin_user_fixture),
     "admin_client": (_init_admin_client_fixture, _cleanup_admin_client_fixture),
+    "settings": (_init_settings_fixture, _cleanup_settings_fixture),
 }
 
 
