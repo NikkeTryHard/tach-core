@@ -2458,6 +2458,136 @@ async def _cleanup_sqlalchemy_isolation_async(isolation_context: dict[str, Any])
             print(f"[tach:harness] WARN: Error closing async SQLAlchemy connection: {e}", file=sys.stderr)
 
 
+def _apply_sqlalchemy_isolation_scoped(
+    engine: Any,
+    scoped_session_instance: Any,
+) -> dict[str, Any]:
+    """Apply SQLAlchemy isolation for scoped_session patterns.
+
+    For applications using scoped_session (like Flask-SQLAlchemy),
+    this function reconfigures the scoped session to use a new
+    connection with transaction isolation.
+
+    Args:
+        engine: SQLAlchemy Engine instance.
+        scoped_session_instance: The scoped_session registry.
+
+    Returns:
+        Isolation context dict for cleanup.
+    """
+    # Dispose and get fresh connection
+    engine.dispose(close=False)
+    connection = engine.connect()
+    transaction = connection.begin()
+
+    # Remove any existing session from the registry
+    scoped_session_instance.remove()
+
+    # Reconfigure to use our isolated connection
+    scoped_session_instance.configure(bind=connection)
+
+    # Get the actual session and start nested transaction
+    session = scoped_session_instance()
+    session.begin_nested()
+
+    return {
+        'connection': connection,
+        'transaction': transaction,
+        'session': session,
+        'scoped_session': scoped_session_instance,
+        'engine': engine,
+    }
+
+
+def _cleanup_sqlalchemy_isolation_scoped(isolation_context: dict[str, Any]) -> None:
+    """Clean up scoped_session isolation.
+
+    Args:
+        isolation_context: Dict from _apply_sqlalchemy_isolation_scoped.
+    """
+    scoped_session = isolation_context.get('scoped_session')
+    transaction = isolation_context.get('transaction')
+    connection = isolation_context.get('connection')
+    engine = isolation_context.get('engine')
+
+    # Remove the scoped session
+    if scoped_session is not None:
+        try:
+            scoped_session.remove()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error removing scoped session: {e}", file=sys.stderr)
+
+    # Rollback transaction
+    if transaction is not None:
+        try:
+            transaction.rollback()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error rolling back: {e}", file=sys.stderr)
+
+    # Close connection
+    if connection is not None:
+        try:
+            connection.close()
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error closing connection: {e}", file=sys.stderr)
+
+    # Reconfigure scoped session to use engine directly
+    if scoped_session is not None and engine is not None:
+        try:
+            scoped_session.configure(bind=engine)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error reconfiguring scoped session: {e}", file=sys.stderr)
+
+
+def _apply_sqlalchemy_isolation_multi(
+    engines: dict[str, Any],
+    session_factories: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Apply SQLAlchemy isolation for multiple engines.
+
+    For applications with multiple databases (e.g., read replicas,
+    sharded databases), this applies isolation to each engine.
+
+    Args:
+        engines: Dict mapping names to Engine instances.
+        session_factories: Optional dict mapping names to session factories.
+
+    Returns:
+        Dict mapping names to isolation contexts.
+    """
+    contexts = {}
+
+    if session_factories is None:
+        session_factories = {}
+
+    for name, engine in engines.items():
+        factory = session_factories.get(name)
+        contexts[name] = _apply_sqlalchemy_isolation(
+            engine,
+            factory,
+            use_savepoint=True,
+        )
+
+    return contexts
+
+
+def _cleanup_sqlalchemy_isolation_multi(contexts: dict[str, dict[str, Any]]) -> None:
+    """Clean up isolation for multiple engines.
+
+    Cleans up in reverse order to handle any cross-database dependencies.
+
+    Args:
+        contexts: Dict of isolation contexts from _apply_sqlalchemy_isolation_multi.
+    """
+    # Cleanup in reverse order
+    for name in reversed(list(contexts.keys())):
+        context = contexts[name]
+        try:
+            _cleanup_sqlalchemy_isolation(context)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Error cleaning up engine '{name}': {e}", file=sys.stderr)
+
+
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
     """Get valid database aliases for iteration.
 
