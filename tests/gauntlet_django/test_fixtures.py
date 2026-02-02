@@ -378,3 +378,49 @@ class TestSettingsFixture:
 
         _cleanup_settings_fixture()
         assert django_settings.DEBUG == original_debug
+
+
+class TestTransactionalDbFixture:
+    """Tests for the transactional_db fixture."""
+
+    def test_transactional_db_returns_true(self):
+        """transactional_db fixture should return True."""
+        from tach_harness import _init_transactional_db_fixture, _cleanup_transactional_db_fixture, _DJANGO_FIXTURES
+        result = _init_transactional_db_fixture()
+        try:
+            assert result is True
+            assert _DJANGO_FIXTURES.get("_needs_flush") is True
+        finally:
+            _cleanup_transactional_db_fixture()
+
+    def test_transactional_db_cleanup_clears_flag(self):
+        """Cleanup should clear the _needs_flush flag."""
+        from tach_harness import _init_transactional_db_fixture, _cleanup_transactional_db_fixture, _DJANGO_FIXTURES
+        _init_transactional_db_fixture()
+        _cleanup_transactional_db_fixture()
+        assert "_needs_flush" not in _DJANGO_FIXTURES
+        assert "transactional_db" not in _DJANGO_FIXTURES
+
+
+class TestLiveServerFixture:
+    """Tests for the live_server fixture."""
+
+    def test_live_server_returns_url(self):
+        """live_server should provide a URL."""
+        from tach_harness import _init_live_server_fixture, _cleanup_live_server_fixture
+        server = _init_live_server_fixture()
+        try:
+            assert server is not None
+            assert isinstance(server.url, str)
+            assert server.url.startswith("http://")
+        finally:
+            _cleanup_live_server_fixture()
+
+    def test_live_server_str_returns_url(self):
+        """live_server str() should return URL."""
+        from tach_harness import _init_live_server_fixture, _cleanup_live_server_fixture
+        server = _init_live_server_fixture()
+        try:
+            assert str(server) == server.url
+        finally:
+            _cleanup_live_server_fixture()

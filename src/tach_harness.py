@@ -3049,6 +3049,108 @@ def _cleanup_settings_fixture() -> None:
         wrapper.finalize()
 
 
+def _init_transactional_db_fixture() -> Any:
+    """Initialize the transactional_db fixture.
+
+    Provides database access without savepoint wrapping.
+    Uses flush for cleanup instead of rollback.
+    """
+    if not _is_django_available():
+        return None
+
+    # Mark that we need flush cleanup, not savepoint rollback
+    _DJANGO_FIXTURES["transactional_db"] = True
+    _DJANGO_FIXTURES["_needs_flush"] = True
+    return True
+
+
+def _cleanup_transactional_db_fixture() -> None:
+    """Cleanup the transactional_db fixture."""
+    needs_flush = _DJANGO_FIXTURES.pop("_needs_flush", False)
+    _DJANGO_FIXTURES.pop("transactional_db", None)
+
+    if needs_flush and _is_django_available():
+        try:
+            from django.core.management import call_command
+            call_command("flush", "--no-input", verbosity=0)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Failed to flush database: {e}", file=sys.stderr)
+
+
+class LiveServer:
+    """Wrapper for Django's live server test case functionality."""
+
+    def __init__(self, host: str = "localhost", port: int = 0):
+        self._host = host
+        self._port = port
+        self._server_thread = None
+        self._url: Optional[str] = None
+
+    def start(self) -> None:
+        """Start the live server."""
+        if not _is_django_available():
+            return
+
+        try:
+            from django.test.testcases import LiveServerThread
+
+            # Find an available port
+            if self._port == 0:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('', 0))
+                    self._port = s.getsockname()[1]
+
+            # Start server thread
+            self._server_thread = LiveServerThread(self._host, [self._port])
+            self._server_thread.daemon = True
+            self._server_thread.start()
+            self._server_thread.is_ready.wait()
+
+            if self._server_thread.error:
+                raise self._server_thread.error
+
+            self._url = f"http://{self._host}:{self._port}"
+        except ImportError as e:
+            print(f"[tach:harness] WARN: LiveServerThread not available: {e}", file=sys.stderr)
+            self._url = f"http://{self._host}:8000"  # Fallback
+
+    def stop(self) -> None:
+        """Stop the live server."""
+        if self._server_thread is not None:
+            try:
+                self._server_thread.terminate()
+                self._server_thread.join(timeout=5)
+            except Exception:
+                pass
+            self._server_thread = None
+
+    @property
+    def url(self) -> str:
+        """Return the live server URL."""
+        return self._url or f"http://{self._host}:{self._port}"
+
+    def __str__(self) -> str:
+        return self.url
+
+
+def _init_live_server_fixture() -> Any:
+    """Initialize the live_server fixture."""
+    if not _is_django_available():
+        return None
+
+    server = LiveServer()
+    server.start()
+    _DJANGO_FIXTURES["live_server"] = server
+    return server
+
+
+def _cleanup_live_server_fixture() -> None:
+    """Cleanup the live_server fixture."""
+    server = _DJANGO_FIXTURES.pop("live_server", None)
+    if server is not None:
+        server.stop()
+
+
 # Fixture registry mapping names to init/cleanup functions
 _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "db": (_init_db_fixture, _cleanup_db_fixture),
@@ -3059,6 +3161,8 @@ _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "admin_user": (_init_admin_user_fixture, _cleanup_admin_user_fixture),
     "admin_client": (_init_admin_client_fixture, _cleanup_admin_client_fixture),
     "settings": (_init_settings_fixture, _cleanup_settings_fixture),
+    "transactional_db": (_init_transactional_db_fixture, _cleanup_transactional_db_fixture),
+    "live_server": (_init_live_server_fixture, _cleanup_live_server_fixture),
 }
 
 
