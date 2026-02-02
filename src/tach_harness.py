@@ -2588,6 +2588,95 @@ def _cleanup_sqlalchemy_isolation_multi(contexts: dict[str, dict[str, Any]]) -> 
             print(f"[tach:harness] WARN: Error cleaning up engine '{name}': {e}", file=sys.stderr)
 
 
+# =============================================================================
+# ALEMBIC INTEGRATION (migration detection and verification)
+# =============================================================================
+
+
+def _detect_alembic() -> bool:
+    """Detect if Alembic is installed.
+
+    Returns:
+        True if Alembic is available, False otherwise.
+    """
+    try:
+        import alembic
+        return True
+    except ImportError:
+        return False
+
+
+def _get_alembic_config(config_path: str | None = None) -> Any | None:
+    """Get Alembic configuration.
+
+    Args:
+        config_path: Path to alembic.ini. If None, searches common locations.
+
+    Returns:
+        Alembic Config object or None if not found.
+    """
+    if not _detect_alembic():
+        return None
+
+    from pathlib import Path
+
+    # Search paths
+    search_paths = []
+    if config_path:
+        search_paths.append(Path(config_path))
+    else:
+        cwd = Path.cwd()
+        search_paths.extend([
+            cwd / 'alembic.ini',
+            cwd / 'migrations' / 'alembic.ini',
+            cwd / 'src' / 'alembic.ini',
+        ])
+
+    for path in search_paths:
+        if path.exists():
+            try:
+                from alembic.config import Config
+                return Config(str(path))
+            except Exception as e:
+                print(f"[tach:harness] WARN: Failed to load alembic config from {path}: {e}", file=sys.stderr)
+
+    return None
+
+
+def _verify_alembic_head(engine: Any, config: Any = None) -> tuple[bool, str]:
+    """Verify database is at Alembic head revision.
+
+    Args:
+        engine: SQLAlchemy Engine.
+        config: Optional Alembic Config.
+
+    Returns:
+        Tuple of (is_at_head, current_revision).
+    """
+    if config is None:
+        config = _get_alembic_config()
+
+    if config is None:
+        return True, "no_alembic"
+
+    try:
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        with engine.connect() as conn:
+            context = MigrationContext.configure(conn)
+            current = context.get_current_revision()
+
+        # Get head revision
+        script = ScriptDirectory.from_config(config)
+        head = script.get_current_head()
+
+        return current == head, current or "none"
+    except Exception as e:
+        print(f"[tach:harness] WARN: Error checking Alembic head: {e}", file=sys.stderr)
+        return True, "error"
+
+
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
     """Get valid database aliases for iteration.
 
