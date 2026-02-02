@@ -237,6 +237,12 @@ pub enum HookEffect {
         /// List of database aliases to apply isolation to
         databases: Vec<String>,
     },
+    /// SQLAlchemy database setup effect.
+    /// Signals that a test requires SQLAlchemy session isolation.
+    SqlAlchemyDbSetup {
+        /// List of database bind keys to isolate (None = all binds).
+        databases: Option<Vec<String>>,
+    },
     /// pytest-asyncio event loop configuration
     ///
     /// Parsed from @pytest.mark.asyncio(loop_scope="module") or
@@ -1081,5 +1087,24 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_sqlalchemy_db_setup_effect_serializes() {
+        let effect = HookEffect::SqlAlchemyDbSetup {
+            databases: Some(vec!["default".to_string()]),
+        };
+        let json = serde_json::to_string(&effect).unwrap();
+        assert!(json.contains("SqlAlchemyDbSetup"));
+        assert!(json.contains("default"));
+    }
+
+    #[test]
+    fn test_sqlalchemy_db_setup_effect_none_databases() {
+        let effect = HookEffect::SqlAlchemyDbSetup {
+            databases: None,
+        };
+        let json = serde_json::to_string(&effect).unwrap();
+        assert!(json.contains("SqlAlchemyDbSetup"));
     }
 }
