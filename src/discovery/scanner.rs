@@ -426,7 +426,7 @@ struct ParametrizeInfo {
 /// For simple values: returns the string representation
 /// For tuples: joins elements with "-"
 /// For pytest.param with id=: uses the explicit id
-fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
+fn expr_to_pytest_id(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Option<String> {
     match expr {
         // Simple literals
         ast::Expr::Constant(c) => match &c.value {
@@ -438,12 +438,20 @@ fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
             _ => None,
         },
         // Name expressions (like exception classes: ValueError, TypeError)
-        ast::Expr::Name(n) => Some(n.id.to_string()),
+        // Resolve alias if exists, otherwise use original name
+        ast::Expr::Name(n) => {
+            let name = n.id.to_string();
+            Some(aliases.get(&name).cloned().unwrap_or(name))
+        }
         // Attribute expressions (like asyncio.TimeoutError) - pytest uses just the attr name
         ast::Expr::Attribute(attr) => Some(attr.attr.to_string()),
         // Tuple: join elements with "-"
         ast::Expr::Tuple(tuple) => {
-            let parts: Vec<String> = tuple.elts.iter().filter_map(expr_to_pytest_id).collect();
+            let parts: Vec<String> = tuple
+                .elts
+                .iter()
+                .filter_map(|e| expr_to_pytest_id(e, aliases))
+                .collect();
             if parts.is_empty() {
                 None
             } else {
@@ -452,7 +460,11 @@ fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
         }
         // List treated same as tuple for ID generation
         ast::Expr::List(list) => {
-            let parts: Vec<String> = list.elts.iter().filter_map(expr_to_pytest_id).collect();
+            let parts: Vec<String> = list
+                .elts
+                .iter()
+                .filter_map(|e| expr_to_pytest_id(e, aliases))
+                .collect();
             if parts.is_empty() {
                 None
             } else {
@@ -481,11 +493,14 @@ fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
                 }
                 // No explicit id - generate from first positional arg or tuple of args
                 if call.args.len() == 1 {
-                    expr_to_pytest_id(&call.args[0])
+                    expr_to_pytest_id(&call.args[0], aliases)
                 } else if !call.args.is_empty() {
                     // Multiple positional args treated as a tuple
-                    let parts: Vec<String> =
-                        call.args.iter().filter_map(expr_to_pytest_id).collect();
+                    let parts: Vec<String> = call
+                        .args
+                        .iter()
+                        .filter_map(|e| expr_to_pytest_id(e, aliases))
+                        .collect();
                     if parts.is_empty() {
                         None
                     } else {
@@ -505,7 +520,10 @@ fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
 /// Extract parametrize information from a single decorator
 ///
 /// Returns None if not a parametrize decorator or if values are dynamic
-fn extract_parametrize_info(decorator: &ast::Expr) -> Option<ParametrizeInfo> {
+fn extract_parametrize_info(
+    decorator: &ast::Expr,
+    aliases: &HashMap<String, String>,
+) -> Option<ParametrizeInfo> {
     if !is_parametrize_decorator(decorator) {
         return None;
     }
@@ -602,7 +620,7 @@ fn extract_parametrize_info(decorator: &ast::Expr) -> Option<ParametrizeInfo> {
                 return ParametrizeValue { id: id.clone() };
             }
             // Otherwise generate from expression, with index fallback for complex types
-            let id = expr_to_pytest_id(expr).unwrap_or_else(|| {
+            let id = expr_to_pytest_id(expr, aliases).unwrap_or_else(|| {
                 // Pytest uses {first_arg_name}{index} for complex values
                 format!("{}{}", arg_names.first().unwrap_or(&"param".to_string()), i)
             });
@@ -617,12 +635,15 @@ fn extract_parametrize_info(decorator: &ast::Expr) -> Option<ParametrizeInfo> {
 ///
 /// Returns a list of ParametrizeInfo for each @pytest.mark.parametrize decorator.
 /// Returns None if any parametrize decorator has dynamic values.
-fn extract_all_parametrize_info(decorators: &[ast::Expr]) -> Option<Vec<ParametrizeInfo>> {
+fn extract_all_parametrize_info(
+    decorators: &[ast::Expr],
+    aliases: &HashMap<String, String>,
+) -> Option<Vec<ParametrizeInfo>> {
     let mut infos = Vec::new();
 
     for decorator in decorators {
         if is_parametrize_decorator(decorator) {
-            match extract_parametrize_info(decorator) {
+            match extract_parametrize_info(decorator, aliases) {
                 Some(info) => infos.push(info),
                 None => return None, // Dynamic values - bail out entirely
             }
@@ -993,6 +1014,7 @@ fn analyze_function(
     tests: &mut Vec<TestCase>,
     fixtures: &mut Vec<FixtureDefinition>,
     is_async: bool,
+    aliases: &HashMap<String, String>,
 ) {
     let name = func.name.as_str();
 
@@ -1007,7 +1029,7 @@ fn analyze_function(
         let dependencies = extract_args_from_arguments(&func.args);
 
         // Try to extract parametrize info and expand tests
-        if let Some(param_infos) = extract_all_parametrize_info(&func.decorator_list) {
+        if let Some(param_infos) = extract_all_parametrize_info(&func.decorator_list, aliases) {
             if !param_infos.is_empty() {
                 let param_ids = generate_param_combinations(&param_infos);
                 for param_id in param_ids {
@@ -1089,6 +1111,30 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
     let mut fixtures = vec![];
     let mut hooks = vec![];
 
+    // Build import alias map: alias -> original name
+    // Handles: from X import Y as Z (Z -> Y)
+    // Handles: import X as Y (Y -> X)
+    let mut import_aliases: HashMap<String, String> = HashMap::new();
+    for stmt in &suite {
+        match stmt {
+            ast::Stmt::ImportFrom(import_from) => {
+                for alias in &import_from.names {
+                    if let Some(ref asname) = alias.asname {
+                        import_aliases.insert(asname.to_string(), alias.name.to_string());
+                    }
+                }
+            }
+            ast::Stmt::Import(import) => {
+                for alias in &import.names {
+                    if let Some(ref asname) = alias.asname {
+                        import_aliases.insert(asname.to_string(), alias.name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Only detect hooks in conftest.py files (pytest only processes hooks from conftest.py)
     let is_conftest = abs_path
         .file_name()
@@ -1108,7 +1154,14 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                         line_number,
                     });
                 }
-                analyze_function(&func, &source, &mut tests, &mut fixtures, false);
+                analyze_function(
+                    &func,
+                    &source,
+                    &mut tests,
+                    &mut fixtures,
+                    false,
+                    &import_aliases,
+                );
             }
             ast::Stmt::AsyncFunctionDef(func) => {
                 let name = func.name.as_str();
@@ -1132,7 +1185,9 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                     let dependencies = extract_args_from_arguments(&func.args);
 
                     // Try to extract parametrize info and expand tests
-                    if let Some(param_infos) = extract_all_parametrize_info(&func.decorator_list) {
+                    if let Some(param_infos) =
+                        extract_all_parametrize_info(&func.decorator_list, &import_aliases)
+                    {
                         if !param_infos.is_empty() {
                             let param_ids = generate_param_combinations(&param_infos);
                             for param_id in param_ids {
@@ -1223,9 +1278,10 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                 let base_name = format!("{}::{}", class_name, method_name);
 
                                 // Try to extract parametrize info and expand tests
-                                if let Some(param_infos) =
-                                    extract_all_parametrize_info(&func.decorator_list)
-                                {
+                                if let Some(param_infos) = extract_all_parametrize_info(
+                                    &func.decorator_list,
+                                    &import_aliases,
+                                ) {
                                     if !param_infos.is_empty() {
                                         let param_ids = generate_param_combinations(&param_infos);
                                         for param_id in param_ids {
@@ -1300,9 +1356,10 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                 let base_name = format!("{}::{}", class_name, method_name);
 
                                 // Try to extract parametrize info and expand tests
-                                if let Some(param_infos) =
-                                    extract_all_parametrize_info(&func.decorator_list)
-                                {
+                                if let Some(param_infos) = extract_all_parametrize_info(
+                                    &func.decorator_list,
+                                    &import_aliases,
+                                ) {
                                     if !param_infos.is_empty() {
                                         let param_ids = generate_param_combinations(&param_infos);
                                         for param_id in param_ids {
@@ -2604,5 +2661,88 @@ def test_various_params_caches(cache_value):
         assert!(test_names.contains(&"test_various_params_caches[cache_value0]"));
         assert!(test_names.contains(&"test_various_params_caches[cache_value1]"));
         assert!(test_names.contains(&"test_various_params_caches[cache_value2]"));
+    }
+
+    // =========================================================================
+    // Import Alias Resolution Tests (Batch 1)
+    // =========================================================================
+
+    #[test]
+    fn test_parametrize_with_aliased_import() {
+        let source = r#"
+from playwright.async_api import Error as PlaywrightAsyncError
+
+import pytest
+
+@pytest.mark.parametrize("exc", [PlaywrightAsyncError])
+def test_errors(exc):
+    pass
+"#;
+        let module = parse_source(source);
+
+        // Should use the original name "Error", not the alias
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test_errors[Error]");
+    }
+
+    #[test]
+    fn test_parametrize_resolves_alias_in_tuple() {
+        let source = r#"
+from asyncio import TimeoutError as AsyncTimeout
+
+import pytest
+
+@pytest.mark.parametrize("exc,msg", [
+    (AsyncTimeout, "timeout"),
+])
+def test_timeouts(exc, msg):
+    pass
+"#;
+        let module = parse_source(source);
+
+        // Tuple should resolve alias to original name
+        assert_eq!(module.tests.len(), 1);
+        assert!(module.tests[0].name.contains("TimeoutError"));
+    }
+
+    // =========================================================================
+    // Import Alias Resolution Tests (Batch 2: Edge Cases)
+    // =========================================================================
+
+    #[test]
+    fn test_parametrize_non_aliased_import_unchanged() {
+        let code = r#"
+from asyncio import TimeoutError
+
+import pytest
+
+@pytest.mark.parametrize("exc", [TimeoutError])
+def test_timeouts(exc):
+    pass
+"#;
+        let result = parse_source(code);
+
+        // Non-aliased import should keep original name
+        assert_eq!(result.tests.len(), 1);
+        assert_eq!(result.tests[0].name, "test_timeouts[TimeoutError]");
+    }
+
+    #[test]
+    fn test_parametrize_multiple_aliases() {
+        let code = r#"
+from playwright.async_api import Error as PlaywrightError
+from asyncio import TimeoutError as AsyncTimeout
+
+import pytest
+
+@pytest.mark.parametrize("exc", [PlaywrightError, AsyncTimeout])
+def test_errors(exc):
+    pass
+"#;
+        let result = parse_source(code);
+
+        assert_eq!(result.tests.len(), 2);
+        assert!(result.tests.iter().any(|t| t.name == "test_errors[Error]"));
+        assert!(result.tests.iter().any(|t| t.name == "test_errors[TimeoutError]"));
     }
 }
