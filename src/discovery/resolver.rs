@@ -477,6 +477,7 @@ mod tests {
             timeout_secs: None,
             markers: vec![],
             marker_info: vec![],
+            param_id: None,
         }
     }
 

@@ -105,6 +105,9 @@ pub struct TestCase {
     /// Full marker information including keyword arguments
     /// Used for pytest-django support (transaction=True, databases=[...])
     pub marker_info: Vec<MarkerInfo>,
+    /// Parametrize ID suffix (e.g., "alice" for test_foo[alice])
+    /// None for non-parametrized tests
+    pub param_id: Option<String>,
 }
 
 /// A Python test module (.py file)
@@ -398,6 +401,261 @@ fn extract_autouse_from_decorators(decorators: &[ast::Expr]) -> bool {
         }
     }
     false
+}
+
+/// A single parameter set from @pytest.mark.parametrize
+/// Contains the values and optionally an explicit ID
+#[derive(Debug, Clone)]
+struct ParametrizeValue {
+    /// The pytest-compatible ID for this parameter set
+    id: String,
+}
+
+/// Information about a parametrize decorator
+#[derive(Debug, Clone)]
+struct ParametrizeInfo {
+    /// Argument names (e.g., ["x", "y"] from "x,y")
+    #[allow(dead_code)]
+    arg_names: Vec<String>,
+    /// Parameter values with their IDs
+    values: Vec<ParametrizeValue>,
+}
+
+/// Generate a pytest-compatible ID from an AST expression
+///
+/// For simple values: returns the string representation
+/// For tuples: joins elements with "-"
+/// For pytest.param with id=: uses the explicit id
+fn expr_to_pytest_id(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        // Simple literals
+        ast::Expr::Constant(c) => match &c.value {
+            ast::Constant::Int(i) => Some(i.to_string()),
+            ast::Constant::Str(s) => Some(s.to_string()),
+            ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
+            ast::Constant::None => Some("None".to_string()),
+            ast::Constant::Float(f) => Some(f.to_string()),
+            _ => None,
+        },
+        // Name expressions (like exception classes: ValueError, TypeError)
+        ast::Expr::Name(n) => Some(n.id.to_string()),
+        // Attribute expressions (like asyncio.TimeoutError) - pytest uses just the attr name
+        ast::Expr::Attribute(attr) => Some(attr.attr.to_string()),
+        // Tuple: join elements with "-"
+        ast::Expr::Tuple(tuple) => {
+            let parts: Vec<String> = tuple.elts.iter().filter_map(expr_to_pytest_id).collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("-"))
+            }
+        }
+        // List treated same as tuple for ID generation
+        ast::Expr::List(list) => {
+            let parts: Vec<String> = list.elts.iter().filter_map(expr_to_pytest_id).collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("-"))
+            }
+        }
+        // pytest.param(value, id="name") - extract the explicit id
+        ast::Expr::Call(call) => {
+            // Check if this is pytest.param
+            let is_pytest_param = match &*call.func {
+                ast::Expr::Attribute(attr) => attr.attr.as_str() == "param",
+                ast::Expr::Name(name) => name.id.as_str() == "param",
+                _ => false,
+            };
+
+            if is_pytest_param {
+                // Look for id= keyword argument
+                for keyword in &call.keywords {
+                    if let Some(ref arg) = keyword.arg
+                        && arg.as_str() == "id"
+                        && let ast::Expr::Constant(c) = &keyword.value
+                        && let ast::Constant::Str(s) = &c.value
+                    {
+                        return Some(s.to_string());
+                    }
+                }
+                // No explicit id - generate from first positional arg or tuple of args
+                if call.args.len() == 1 {
+                    expr_to_pytest_id(&call.args[0])
+                } else if !call.args.is_empty() {
+                    // Multiple positional args treated as a tuple
+                    let parts: Vec<String> =
+                        call.args.iter().filter_map(expr_to_pytest_id).collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join("-"))
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract parametrize information from a single decorator
+///
+/// Returns None if not a parametrize decorator or if values are dynamic
+fn extract_parametrize_info(decorator: &ast::Expr) -> Option<ParametrizeInfo> {
+    if !is_parametrize_decorator(decorator) {
+        return None;
+    }
+
+    let call = match decorator {
+        ast::Expr::Call(call) => call,
+        _ => return None,
+    };
+
+    // Extract argument names from first argument
+    let arg_names: Vec<String> = match call.args.first() {
+        Some(ast::Expr::Constant(c)) => {
+            if let ast::Constant::Str(s) = &c.value {
+                s.as_str()
+                    .split(',')
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .collect()
+            } else {
+                return None;
+            }
+        }
+        Some(ast::Expr::List(list)) => list
+            .elts
+            .iter()
+            .filter_map(|elt| {
+                if let ast::Expr::Constant(c) = elt
+                    && let ast::Constant::Str(s) = &c.value
+                {
+                    return Some(s.to_string());
+                }
+                None
+            })
+            .collect(),
+        Some(ast::Expr::Tuple(tuple)) => tuple
+            .elts
+            .iter()
+            .filter_map(|elt| {
+                if let ast::Expr::Constant(c) = elt
+                    && let ast::Constant::Str(s) = &c.value
+                {
+                    return Some(s.to_string());
+                }
+                None
+            })
+            .collect(),
+        _ => return None,
+    };
+
+    // Extract values from second argument (must be a list or tuple)
+    let values_expr = call.args.get(1)?;
+    let value_elements = match values_expr {
+        ast::Expr::List(list) => &list.elts,
+        ast::Expr::Tuple(tuple) => &tuple.elts,
+        _ => return None, // Dynamic values - bail out
+    };
+
+    // Check for ids= keyword argument
+    let explicit_ids: Option<Vec<String>> = call.keywords.iter().find_map(|kw| {
+        if let Some(ref arg) = kw.arg
+            && arg.as_str() == "ids"
+            && let ast::Expr::List(list) = &kw.value
+        {
+            let ids: Vec<String> = list
+                .elts
+                .iter()
+                .filter_map(|elt| {
+                    if let ast::Expr::Constant(c) = elt
+                        && let ast::Constant::Str(s) = &c.value
+                    {
+                        return Some(s.to_string());
+                    }
+                    None
+                })
+                .collect();
+            if ids.len() == list.elts.len() {
+                return Some(ids);
+            }
+        }
+        None
+    });
+
+    // Generate IDs for each value
+    // For complex types (dicts, etc.) that can't be stringified, use pytest's
+    // index-based fallback: {arg_name}{index} (e.g., cache_value0, cache_value1)
+    let values: Vec<ParametrizeValue> = value_elements
+        .iter()
+        .enumerate()
+        .map(|(i, expr)| {
+            // Use explicit id if available
+            if let Some(ref ids) = explicit_ids
+                && let Some(id) = ids.get(i)
+            {
+                return ParametrizeValue { id: id.clone() };
+            }
+            // Otherwise generate from expression, with index fallback for complex types
+            let id = expr_to_pytest_id(expr).unwrap_or_else(|| {
+                // Pytest uses {first_arg_name}{index} for complex values
+                format!("{}{}", arg_names.first().unwrap_or(&"param".to_string()), i)
+            });
+            ParametrizeValue { id }
+        })
+        .collect();
+
+    Some(ParametrizeInfo { arg_names, values })
+}
+
+/// Extract all parametrize decorators from a function
+///
+/// Returns a list of ParametrizeInfo for each @pytest.mark.parametrize decorator.
+/// Returns None if any parametrize decorator has dynamic values.
+fn extract_all_parametrize_info(decorators: &[ast::Expr]) -> Option<Vec<ParametrizeInfo>> {
+    let mut infos = Vec::new();
+
+    for decorator in decorators {
+        if is_parametrize_decorator(decorator) {
+            match extract_parametrize_info(decorator) {
+                Some(info) => infos.push(info),
+                None => return None, // Dynamic values - bail out entirely
+            }
+        }
+    }
+
+    Some(infos)
+}
+
+/// Generate all combinations of parameter IDs for multiple parametrize decorators
+///
+/// For a single decorator with values [a, b], returns ["a", "b"]
+/// For two decorators with [a, b] and [1, 2], returns ["a-1", "a-2", "b-1", "b-2"]
+fn generate_param_combinations(infos: &[ParametrizeInfo]) -> Vec<String> {
+    if infos.is_empty() {
+        return vec![];
+    }
+
+    // Start with first decorator's values
+    let mut result: Vec<String> = infos[0].values.iter().map(|v| v.id.clone()).collect();
+
+    // Cross-product with remaining decorators
+    for info in &infos[1..] {
+        let mut new_result = Vec::new();
+        for existing in &result {
+            for value in &info.values {
+                new_result.push(format!("{}-{}", existing, value.id));
+            }
+        }
+        result = new_result;
+    }
+
+    result
 }
 
 /// Extract argument names from @pytest.mark.parametrize decorators
@@ -741,19 +999,59 @@ fn analyze_function(
     if name.starts_with("test_") {
         let line_number = get_line_number(source, func.range.start().to_usize());
         let (markers, marker_info) = extract_markers_from_decorators(&func.decorator_list);
-        tests.push(TestCase {
-            name: name.to_string(),
-            dependencies: extract_args_from_arguments(&func.args),
-            is_async,
-            line_number,
-            parametrized_args: extract_injected_args(
-                &func.decorator_list,
-                &extract_args_from_arguments(&func.args),
-            ),
-            timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
-            markers,
-            marker_info,
-        });
+        let parametrized_args = extract_injected_args(
+            &func.decorator_list,
+            &extract_args_from_arguments(&func.args),
+        );
+        let timeout_secs = extract_timeout_from_decorators(&func.decorator_list);
+        let dependencies = extract_args_from_arguments(&func.args);
+
+        // Try to extract parametrize info and expand tests
+        if let Some(param_infos) = extract_all_parametrize_info(&func.decorator_list) {
+            if !param_infos.is_empty() {
+                let param_ids = generate_param_combinations(&param_infos);
+                for param_id in param_ids {
+                    tests.push(TestCase {
+                        name: format!("{}[{}]", name, param_id),
+                        dependencies: dependencies.clone(),
+                        is_async,
+                        line_number,
+                        parametrized_args: parametrized_args.clone(),
+                        timeout_secs,
+                        markers: markers.clone(),
+                        marker_info: marker_info.clone(),
+                        param_id: Some(param_id),
+                    });
+                }
+                // Skip adding the base test - we've expanded it
+            } else {
+                // No parametrize decorators
+                tests.push(TestCase {
+                    name: name.to_string(),
+                    dependencies,
+                    is_async,
+                    line_number,
+                    parametrized_args,
+                    timeout_secs,
+                    markers,
+                    marker_info,
+                    param_id: None,
+                });
+            }
+        } else {
+            // Dynamic parametrize values - add base test only
+            tests.push(TestCase {
+                name: name.to_string(),
+                dependencies,
+                is_async,
+                line_number,
+                parametrized_args,
+                timeout_secs,
+                markers,
+                marker_info,
+                param_id: None,
+            });
+        }
     }
 
     if has_fixture_decorator(&func.decorator_list) {
@@ -826,19 +1124,56 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                     let line_number = get_line_number(&source, func.range.start().to_usize());
                     let (markers, marker_info) =
                         extract_markers_from_decorators(&func.decorator_list);
-                    tests.push(TestCase {
-                        name: name.to_string(),
-                        dependencies: extract_args_from_arguments(&func.args),
-                        is_async: true,
-                        line_number,
-                        parametrized_args: extract_injected_args(
-                            &func.decorator_list,
-                            &extract_args_from_arguments(&func.args),
-                        ),
-                        timeout_secs: extract_timeout_from_decorators(&func.decorator_list),
-                        markers,
-                        marker_info,
-                    });
+                    let parametrized_args = extract_injected_args(
+                        &func.decorator_list,
+                        &extract_args_from_arguments(&func.args),
+                    );
+                    let timeout_secs = extract_timeout_from_decorators(&func.decorator_list);
+                    let dependencies = extract_args_from_arguments(&func.args);
+
+                    // Try to extract parametrize info and expand tests
+                    if let Some(param_infos) = extract_all_parametrize_info(&func.decorator_list) {
+                        if !param_infos.is_empty() {
+                            let param_ids = generate_param_combinations(&param_infos);
+                            for param_id in param_ids {
+                                tests.push(TestCase {
+                                    name: format!("{}[{}]", name, param_id),
+                                    dependencies: dependencies.clone(),
+                                    is_async: true,
+                                    line_number,
+                                    parametrized_args: parametrized_args.clone(),
+                                    timeout_secs,
+                                    markers: markers.clone(),
+                                    marker_info: marker_info.clone(),
+                                    param_id: Some(param_id),
+                                });
+                            }
+                        } else {
+                            tests.push(TestCase {
+                                name: name.to_string(),
+                                dependencies,
+                                is_async: true,
+                                line_number,
+                                parametrized_args,
+                                timeout_secs,
+                                markers,
+                                marker_info,
+                                param_id: None,
+                            });
+                        }
+                    } else {
+                        tests.push(TestCase {
+                            name: name.to_string(),
+                            dependencies,
+                            is_async: true,
+                            line_number,
+                            parametrized_args,
+                            timeout_secs,
+                            markers,
+                            marker_info,
+                            param_id: None,
+                        });
+                    }
                 }
                 if has_fixture_decorator(&func.decorator_list) {
                     fixtures.push(FixtureDefinition {
@@ -878,21 +1213,60 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     get_line_number(&source, func.range.start().to_usize());
                                 let (markers, marker_info) =
                                     extract_markers_from_decorators(&func.decorator_list);
-                                tests.push(TestCase {
-                                    name: format!("{}::{}", class_name, method_name),
-                                    dependencies: extract_args_from_arguments(&func.args),
-                                    is_async: false,
-                                    line_number,
-                                    parametrized_args: extract_injected_args(
-                                        &func.decorator_list,
-                                        &extract_args_from_arguments(&func.args),
-                                    ),
-                                    timeout_secs: extract_timeout_from_decorators(
-                                        &func.decorator_list,
-                                    ),
-                                    markers,
-                                    marker_info,
-                                });
+                                let parametrized_args = extract_injected_args(
+                                    &func.decorator_list,
+                                    &extract_args_from_arguments(&func.args),
+                                );
+                                let timeout_secs =
+                                    extract_timeout_from_decorators(&func.decorator_list);
+                                let dependencies = extract_args_from_arguments(&func.args);
+                                let base_name = format!("{}::{}", class_name, method_name);
+
+                                // Try to extract parametrize info and expand tests
+                                if let Some(param_infos) =
+                                    extract_all_parametrize_info(&func.decorator_list)
+                                {
+                                    if !param_infos.is_empty() {
+                                        let param_ids = generate_param_combinations(&param_infos);
+                                        for param_id in param_ids {
+                                            tests.push(TestCase {
+                                                name: format!("{}[{}]", base_name, param_id),
+                                                dependencies: dependencies.clone(),
+                                                is_async: false,
+                                                line_number,
+                                                parametrized_args: parametrized_args.clone(),
+                                                timeout_secs,
+                                                markers: markers.clone(),
+                                                marker_info: marker_info.clone(),
+                                                param_id: Some(param_id),
+                                            });
+                                        }
+                                    } else {
+                                        tests.push(TestCase {
+                                            name: base_name,
+                                            dependencies,
+                                            is_async: false,
+                                            line_number,
+                                            parametrized_args,
+                                            timeout_secs,
+                                            markers,
+                                            marker_info,
+                                            param_id: None,
+                                        });
+                                    }
+                                } else {
+                                    tests.push(TestCase {
+                                        name: base_name,
+                                        dependencies,
+                                        is_async: false,
+                                        line_number,
+                                        parametrized_args,
+                                        timeout_secs,
+                                        markers,
+                                        marker_info,
+                                        param_id: None,
+                                    });
+                                }
                             }
                         } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
@@ -916,21 +1290,60 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                     get_line_number(&source, func.range.start().to_usize());
                                 let (markers, marker_info) =
                                     extract_markers_from_decorators(&func.decorator_list);
-                                tests.push(TestCase {
-                                    name: format!("{}::{}", class_name, method_name),
-                                    dependencies: extract_args_from_arguments(&func.args),
-                                    is_async: true,
-                                    line_number,
-                                    parametrized_args: extract_injected_args(
-                                        &func.decorator_list,
-                                        &extract_args_from_arguments(&func.args),
-                                    ),
-                                    timeout_secs: extract_timeout_from_decorators(
-                                        &func.decorator_list,
-                                    ),
-                                    markers,
-                                    marker_info,
-                                });
+                                let parametrized_args = extract_injected_args(
+                                    &func.decorator_list,
+                                    &extract_args_from_arguments(&func.args),
+                                );
+                                let timeout_secs =
+                                    extract_timeout_from_decorators(&func.decorator_list);
+                                let dependencies = extract_args_from_arguments(&func.args);
+                                let base_name = format!("{}::{}", class_name, method_name);
+
+                                // Try to extract parametrize info and expand tests
+                                if let Some(param_infos) =
+                                    extract_all_parametrize_info(&func.decorator_list)
+                                {
+                                    if !param_infos.is_empty() {
+                                        let param_ids = generate_param_combinations(&param_infos);
+                                        for param_id in param_ids {
+                                            tests.push(TestCase {
+                                                name: format!("{}[{}]", base_name, param_id),
+                                                dependencies: dependencies.clone(),
+                                                is_async: true,
+                                                line_number,
+                                                parametrized_args: parametrized_args.clone(),
+                                                timeout_secs,
+                                                markers: markers.clone(),
+                                                marker_info: marker_info.clone(),
+                                                param_id: Some(param_id),
+                                            });
+                                        }
+                                    } else {
+                                        tests.push(TestCase {
+                                            name: base_name,
+                                            dependencies,
+                                            is_async: true,
+                                            line_number,
+                                            parametrized_args,
+                                            timeout_secs,
+                                            markers,
+                                            marker_info,
+                                            param_id: None,
+                                        });
+                                    }
+                                } else {
+                                    tests.push(TestCase {
+                                        name: base_name,
+                                        dependencies,
+                                        is_async: true,
+                                        line_number,
+                                        parametrized_args,
+                                        timeout_secs,
+                                        markers,
+                                        marker_info,
+                                        param_id: None,
+                                    });
+                                }
                             }
                         }
                     }
@@ -1286,6 +1699,7 @@ async def test_async_with_marker():
                             timeout_secs: None,
                             markers: vec![],
                             marker_info: vec![],
+                            param_id: None,
                         },
                         TestCase {
                             name: "test_2".into(),
@@ -1296,6 +1710,7 @@ async def test_async_with_marker():
                             timeout_secs: None,
                             markers: vec![],
                             marker_info: vec![],
+                            param_id: None,
                         },
                     ],
                     fixtures: vec![FixtureDefinition {
@@ -1321,6 +1736,7 @@ async def test_async_with_marker():
                         timeout_secs: None,
                         markers: vec![],
                         marker_info: vec![],
+                        param_id: None,
                     }],
                     fixtures: vec![],
                     hooks: vec![],
@@ -1669,15 +2085,18 @@ class TestDecorated:
         pass
 "#;
         let module = parse_source(source);
+        // With parametrize expansion: 1 slow test + 3 parametrized variants = 4 tests
         assert_eq!(
             module.tests.len(),
-            2,
-            "Should find both decorated class methods"
+            4,
+            "Should find slow method + 3 parametrized variants"
         );
 
         let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
         assert!(test_names.contains(&"TestDecorated::test_slow_method"));
-        assert!(test_names.contains(&"TestDecorated::test_parametrized"));
+        assert!(test_names.contains(&"TestDecorated::test_parametrized[1]"));
+        assert!(test_names.contains(&"TestDecorated::test_parametrized[2]"));
+        assert!(test_names.contains(&"TestDecorated::test_parametrized[3]"));
     }
 
     // =========================================================================
@@ -1919,5 +2338,271 @@ def test_with_zero_keyword_timeout():
             would_visit(std::path::Path::new("/some/path"), &visited),
             "Should visit unvisited path"
         );
+    }
+
+    // =========================================================================
+    // Parametrize ID Extraction Tests (parametrize discovery fix)
+    // =========================================================================
+
+    #[test]
+    fn test_parametrize_simple_values() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("name", ["alice", "bob", "charlie"])
+def test_greeting(name):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 3);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_greeting[alice]"));
+        assert!(test_names.contains(&"test_greeting[bob]"));
+        assert!(test_names.contains(&"test_greeting[charlie]"));
+    }
+
+    #[test]
+    fn test_parametrize_integer_values() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", [1, 2, 3])
+def test_numbers(x):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 3);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_numbers[1]"));
+        assert!(test_names.contains(&"test_numbers[2]"));
+        assert!(test_names.contains(&"test_numbers[3]"));
+    }
+
+    #[test]
+    fn test_parametrize_tuple_values() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("exc,msg", [(ValueError, "bad value"), (TypeError, "wrong type")])
+def test_exceptions(exc, msg):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_exceptions[ValueError-bad value]"));
+        assert!(test_names.contains(&"test_exceptions[TypeError-wrong type]"));
+    }
+
+    #[test]
+    fn test_parametrize_with_explicit_ids() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", [1, 2], ids=["one", "two"])
+def test_with_ids(x):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_with_ids[one]"));
+        assert!(test_names.contains(&"test_with_ids[two]"));
+    }
+
+    #[test]
+    fn test_parametrize_pytest_param_with_id() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", [
+    pytest.param(1, id="first"),
+    pytest.param(2, id="second"),
+])
+def test_pytest_param(x):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_pytest_param[first]"));
+        assert!(test_names.contains(&"test_pytest_param[second]"));
+    }
+
+    #[test]
+    fn test_parametrize_multiple_decorators() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", [1, 2])
+@pytest.mark.parametrize("y", ["a", "b"])
+def test_matrix(x, y):
+    pass
+"#;
+        let module = parse_source(source);
+        // 2 x 2 = 4 combinations
+        assert_eq!(module.tests.len(), 4);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_matrix[1-a]"));
+        assert!(test_names.contains(&"test_matrix[1-b]"));
+        assert!(test_names.contains(&"test_matrix[2-a]"));
+        assert!(test_names.contains(&"test_matrix[2-b]"));
+    }
+
+    #[test]
+    fn test_parametrize_bool_values() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_bool(flag):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_bool[True]"));
+        assert!(test_names.contains(&"test_bool[False]"));
+    }
+
+    #[test]
+    fn test_parametrize_none_value() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("val", [None, "something"])
+def test_none(val):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_none[None]"));
+        assert!(test_names.contains(&"test_none[something]"));
+    }
+
+    #[test]
+    fn test_parametrize_in_class() {
+        let source = r#"
+import pytest
+
+class TestClass:
+    @pytest.mark.parametrize("x", [1, 2])
+    def test_method(self, x):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"TestClass::test_method[1]"));
+        assert!(test_names.contains(&"TestClass::test_method[2]"));
+    }
+
+    #[test]
+    fn test_parametrize_async_function() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", ["a", "b"])
+async def test_async_param(x):
+    await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        let test_names: Vec<_> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_async_param[a]"));
+        assert!(test_names.contains(&"test_async_param[b]"));
+
+        // All should be async
+        assert!(module.tests.iter().all(|t| t.is_async));
+    }
+
+    #[test]
+    fn test_parametrize_param_id_field() {
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", ["val1", "val2"])
+def test_param_id(x):
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+
+        // Check that param_id is set correctly
+        let test1 = module
+            .tests
+            .iter()
+            .find(|t| t.name.contains("val1"))
+            .unwrap();
+        assert_eq!(test1.param_id, Some("val1".to_string()));
+
+        let test2 = module
+            .tests
+            .iter()
+            .find(|t| t.name.contains("val2"))
+            .unwrap();
+        assert_eq!(test2.param_id, Some("val2".to_string()));
+    }
+
+    #[test]
+    fn test_non_parametrized_has_no_param_id() {
+        let source = r#"
+def test_simple():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].param_id, None);
+    }
+
+    #[test]
+    fn test_parametrize_dynamic_values_fallback() {
+        // Dynamic values (function calls) should fall back to base test name
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("x", get_values())
+def test_dynamic(x):
+    pass
+"#;
+        let module = parse_source(source);
+        // Should have 1 test with base name (can't expand dynamic values)
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test_dynamic");
+        assert_eq!(module.tests[0].param_id, None);
+    }
+
+    #[test]
+    fn test_parametrize_dict_values_use_index_fallback() {
+        // Dict values can't be stringified, so pytest uses {arg_name}{index} format
+        let source = r#"
+import pytest
+
+@pytest.mark.parametrize("cache_value", [
+    {},
+    {"temperature": 0.7},
+    {"max_tokens": 1024},
+])
+def test_various_params_caches(cache_value):
+    pass
+"#;
+        let module = parse_source(source);
+        // Should have 3 tests with index-based IDs matching pytest's format
+        assert_eq!(module.tests.len(), 3);
+        let test_names: Vec<&str> = module.tests.iter().map(|t| t.name.as_str()).collect();
+        assert!(test_names.contains(&"test_various_params_caches[cache_value0]"));
+        assert!(test_names.contains(&"test_various_params_caches[cache_value1]"));
+        assert!(test_names.contains(&"test_various_params_caches[cache_value2]"));
     }
 }
