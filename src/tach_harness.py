@@ -2864,6 +2864,92 @@ def _cleanup_rf_fixture() -> None:
     _DJANGO_FIXTURES.pop("rf", None)
 
 
+# Fixture registry mapping names to init/cleanup functions
+_FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
+    "db": (_init_db_fixture, _cleanup_db_fixture),
+    "client": (_init_client_fixture, _cleanup_client_fixture),
+    "rf": (_init_rf_fixture, _cleanup_rf_fixture),
+}
+
+
+def _setup_django_fixtures(fixture_names: list[str]) -> dict[str, Any]:
+    """Initialize Django fixtures requested by a test.
+
+    Takes a list of fixture names the test requests, calls the appropriate
+    init functions, and returns a dict of fixture name -> value.
+
+    Args:
+        fixture_names: List of fixture names (e.g., ["db", "client"])
+
+    Returns:
+        Dict mapping fixture name to its initialized value
+    """
+    fixture_values: dict[str, Any] = {}
+
+    for name in fixture_names:
+        if name in _FIXTURE_REGISTRY:
+            init_fn, _ = _FIXTURE_REGISTRY[name]
+            value = init_fn()
+            fixture_values[name] = value
+
+    return fixture_values
+
+
+def _teardown_django_fixtures() -> None:
+    """Cleanup all active Django fixtures.
+
+    Calls all cleanup functions in reverse order of the fixture registry
+    and clears the _DJANGO_FIXTURES registry.
+    """
+    # Get cleanup functions in reverse order for proper teardown
+    cleanup_order = list(reversed(_FIXTURE_REGISTRY.keys()))
+
+    for name in cleanup_order:
+        if name in _DJANGO_FIXTURES:
+            _, cleanup_fn = _FIXTURE_REGISTRY[name]
+            try:
+                cleanup_fn()
+            except Exception:
+                # Swallow cleanup errors to ensure all fixtures are cleaned
+                pass
+
+    # Ensure registry is cleared even if cleanup functions missed something
+    _DJANGO_FIXTURES.clear()
+
+
+def _get_fixture_names_from_item(item: Any) -> list[str]:
+    """Extract Django fixture names from a pytest test item.
+
+    Inspects the test function signature to find parameters that match
+    known Django fixture names.
+
+    Args:
+        item: Pytest test item
+
+    Returns:
+        List of fixture names the test requires
+    """
+    fixture_names: list[str] = []
+
+    try:
+        # Get the actual test function
+        func = item.obj
+        if hasattr(func, "__wrapped__"):
+            func = func.__wrapped__
+
+        # Inspect function signature for fixture parameters
+        import inspect
+        sig = inspect.signature(func)
+        for param_name in sig.parameters:
+            if param_name in _FIXTURE_REGISTRY:
+                fixture_names.append(param_name)
+    except Exception:
+        # If inspection fails, return empty list
+        pass
+
+    return fixture_names
+
+
 def run_test(
     file_path: str,
     node_id: str,
@@ -2988,6 +3074,11 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
+        # Django Fixtures (v0.3.0 - Issue #39)
+        # Setup fixtures after db isolation is applied
+        fixture_names = _get_fixture_names_from_item(target_item)
+        fixture_values = _setup_django_fixtures(fixture_names)
+
         # Django URL and Template Markers (v0.2.4 - Issue #35)
         urlconf = _parse_urls_marker(marker_info)
         original_urlconf = _apply_urls_override(urlconf)
@@ -3001,6 +3092,8 @@ def run_test(
             # Cleanup in reverse order of application
             _cleanup_ignore_template_errors(template_originals)
             _cleanup_urls_override(original_urlconf)
+            # Teardown Django fixtures before db isolation cleanup
+            _teardown_django_fixtures()
             # Rollback savepoints to restore database state
             _cleanup_django_db_isolation(django_savepoints)
 
