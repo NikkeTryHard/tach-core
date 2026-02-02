@@ -2216,6 +2216,41 @@ def _dispose_all_connections() -> int:
     return disposed
 
 
+# =============================================================================
+# SQLALCHEMY ENGINE MANAGEMENT (fork-safe disposal)
+# =============================================================================
+
+# SQLAlchemy engine registry for fork-safe disposal
+_sqlalchemy_engines: list[Any] = []
+
+
+def _register_sqlalchemy_engine(engine: Any) -> None:
+    """Register a SQLAlchemy engine for fork-safe disposal."""
+    global _sqlalchemy_engines
+    if engine not in _sqlalchemy_engines:
+        _sqlalchemy_engines.append(engine)
+
+
+def _dispose_sqlalchemy_engines() -> list[str]:
+    """Dispose all registered SQLAlchemy engines after fork.
+
+    Calls engine.dispose(close=False) to clear pool without
+    sending close to server.
+    """
+    global _sqlalchemy_engines
+    disposed = []
+
+    for engine in _sqlalchemy_engines:
+        try:
+            url = str(getattr(engine, 'url', 'unknown'))
+            engine.dispose(close=False)
+            disposed.append(url)
+        except Exception as e:
+            print(f"[tach:harness] WARN: Failed to dispose engine: {e}", file=sys.stderr)
+
+    return disposed
+
+
 def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
     """Get valid database aliases for iteration.
 
