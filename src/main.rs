@@ -210,6 +210,16 @@ fn main() -> Result<()> {
         );
     }
 
+    // Spawn shutdown watchdog to force exit if graceful shutdown hangs
+    if let Err(e) = signals::spawn_shutdown_watchdog()
+        && !is_json
+    {
+        eprintln!(
+            "[tach:supervisor] Warning: Failed to spawn shutdown watchdog: {}",
+            e
+        );
+    }
+
     let cwd = std::env::current_dir()?;
 
     // Handle subcommands
@@ -1220,6 +1230,9 @@ fn run_tests(
             if !is_json {
                 eprintln!("[tach:supervisor] Done.");
             }
+
+            // Mark shutdown as complete to prevent watchdog from force-exiting
+            signals::mark_shutdown_complete();
 
             // Return failure count for exit code
             Ok(failed_count)

@@ -24,6 +24,61 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Read and decode a framed message from a socket.
+///
+/// Handles the protocol header reading, size validation, oversized payload draining,
+/// and decoding. This is the shared implementation used by both `try_collect_result`
+/// and `try_collect_result_for_reporter`.
+///
+/// Returns `None` if:
+/// - Header read fails (timeout, closed socket, etc.)
+/// - Payload exceeds MAX_PAYLOAD_SIZE (drains socket to restore sync)
+/// - Payload read fails
+/// - Decoding fails
+fn read_framed_message<T: serde::de::DeserializeOwned>(
+    socket: &mut UnixStream,
+) -> Option<T> {
+    // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+    let mut header_buf = [0u8; HEADER_SIZE];
+    if socket.read_exact(&mut header_buf).is_err() {
+        return None;
+    }
+
+    // Extract length from bytes 4-7 (little-endian u32)
+    let len = u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+        as usize;
+
+    // OOM protection: Validate size BEFORE allocating
+    // If payload exceeds limit, drain the remaining bytes to avoid protocol desync
+    if len > MAX_PAYLOAD_SIZE {
+        eprintln!(
+            "[tach:scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Draining socket.",
+            len, MAX_PAYLOAD_SIZE
+        );
+        // Drain the oversized payload to restore socket synchronization
+        let mut drain_buf = vec![0u8; 4096];
+        let mut remaining = len;
+        while remaining > 0 {
+            let to_read = remaining.min(drain_buf.len());
+            if socket.read_exact(&mut drain_buf[..to_read]).is_err() {
+                break; // Socket error, give up
+            }
+            remaining -= to_read;
+        }
+        return None;
+    }
+
+    // Allocate buffer for header + payload
+    let mut full_buf = vec![0u8; HEADER_SIZE + len];
+    full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+
+    if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_err() {
+        return None;
+    }
+
+    decode_with_limit::<T>(&full_buf, MAX_PAYLOAD_SIZE).ok()
+}
+
 /// Active worker tracking
 struct ActiveWorker {
     test_name: String,
@@ -37,6 +92,10 @@ struct ActiveWorker {
     /// When true, this worker's timeout has already been claimed/handled.
     /// Uses compare_exchange to ensure exactly one caller handles the timeout.
     timeout_handled: Arc<AtomicBool>,
+    /// Atomic flag to prevent race condition in crash handling.
+    /// When true, this worker's crash has already been claimed/handled.
+    /// Uses compare_exchange to ensure exactly one caller handles the crash.
+    crash_handled: Arc<AtomicBool>,
 }
 
 /// Scheduler with crash detection and dual-path execution
@@ -124,6 +183,9 @@ impl Scheduler {
 
         // Set read timeout on result socket for crash detection
         result_socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+        // Set read timeout on cmd socket to prevent indefinite hang if Zygote crashes
+        cmd_socket.set_read_timeout(Some(Duration::from_secs(10)))?;
 
         Ok(Self {
             cmd_socket,
@@ -293,8 +355,8 @@ impl Scheduler {
                 // Check for workers that exceeded their per-test timeout
                 let timed_out = self.get_timed_out_workers();
                 for (test_id, test_name, slot, worker_pid, timeout_secs) in timed_out {
-                    // Gracefully kill worker: SIGTERM first, then SIGKILL after 100ms
-                    let _ = graceful_kill_worker(worker_pid, Duration::from_millis(100));
+                    // Gracefully kill worker: SIGTERM first, then SIGKILL after 500ms
+                    let _ = graceful_kill_worker(worker_pid, Duration::from_millis(500));
 
                     // Invoke timeout hook if configured
                     if let Some(ref hook_spec) = self.timeout_hook {
@@ -345,69 +407,42 @@ impl Scheduler {
     ) -> Option<(String, &'static str, u64, Option<String>, Option<u64>)> {
         let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
-        let mut header_buf = [0u8; HEADER_SIZE];
-        if socket.read_exact(&mut header_buf).is_ok() {
-            // Extract length from bytes 4-7 (little-endian u32)
-            let len =
-                u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
-                    as usize;
+        // Use shared helper for protocol handling
+        let result: TestResult = read_framed_message(&mut socket)?;
 
-            // OOM protection: Validate size BEFORE allocating
-            // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
-            // This is a protocol violation from the Zygote - should never happen in normal operation.
-            if len > MAX_PAYLOAD_SIZE {
-                eprintln!(
-                    "[tach:scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
-                    len, MAX_PAYLOAD_SIZE
-                );
-                // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
-                return None;
+        // Get and remove worker
+        let (test_name, slot) = {
+            let mut workers = self
+                .active_workers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match workers.remove(&result.test_id) {
+                Some(w) => (w.test_name, w.slot),
+                None => (format!("test_{}", result.test_id), 0),
             }
+        };
 
-            // Allocate buffer for header + payload
-            let mut full_buf = vec![0u8; HEADER_SIZE + len];
-            full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+        // Read and discard logs (they went to memfd)
+        let _ = self
+            .log_capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_and_clear(slot);
 
-            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok()
-                && let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE)
-            {
-                // Get and remove worker
-                let (test_name, slot) = {
-                    let mut workers = self
-                        .active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    match workers.remove(&result.test_id) {
-                        Some(w) => (w.test_name, w.slot),
-                        None => (format!("test_{}", result.test_id), 0),
-                    }
-                };
+        // Format for reporter
+        let status = if result.status == STATUS_PASS {
+            "pass"
+        } else {
+            "fail"
+        };
+        let duration_ms = result.duration_ns / 1_000_000;
+        let msg = if result.message.is_empty() {
+            None
+        } else {
+            Some(result.message)
+        };
 
-                // Read and discard logs (they went to memfd)
-                let _ = self
-                    .log_capture
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .read_and_clear(slot);
-
-                // Format for reporter
-                let status = if result.status == STATUS_PASS {
-                    "pass"
-                } else {
-                    "fail"
-                };
-                let duration_ms = result.duration_ns / 1_000_000;
-                let msg = if result.message.is_empty() {
-                    None
-                } else {
-                    Some(result.message)
-                };
-
-                return Some((test_name, status, duration_ms, msg, result.memory_rss_bytes));
-            }
-        }
-        None
+        Some((test_name, status, duration_ms, msg, result.memory_rss_bytes))
     }
 
     fn dispatch_test(&mut self, test: &RunnableTest, test_id: u32, slot: usize) -> Result<()> {
@@ -457,7 +492,16 @@ impl Scheduler {
         self.cmd_socket.write_all(&encoded)?;
 
         let mut pid_buf = [0u8; 4];
-        self.cmd_socket.read_exact(&mut pid_buf)?;
+        match self.cmd_socket.read_exact(&mut pid_buf) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut
+                   || e.kind() == std::io::ErrorKind::WouldBlock => {
+                return Err(anyhow::anyhow!(
+                    "Zygote timeout: no response within 10s. Zygote may have crashed or deadlocked."
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        }
         let worker_pid = i32::from_le_bytes(pid_buf);
 
         // Determine effective timeout: per-test timeout or global timeout
@@ -479,6 +523,7 @@ impl Scheduler {
                         None
                     },
                     timeout_handled: Arc::new(AtomicBool::new(false)),
+                    crash_handled: Arc::new(AtomicBool::new(false)),
                 },
             );
 
@@ -489,77 +534,50 @@ impl Scheduler {
     fn try_collect_result(&self) -> Option<TestResult> {
         let mut socket = self.result_socket.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Read full header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
-        let mut header_buf = [0u8; HEADER_SIZE];
-        if socket.read_exact(&mut header_buf).is_ok() {
-            // Extract length from bytes 4-7 (little-endian u32)
-            let len =
-                u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
-                    as usize;
+        // Use shared helper for protocol handling
+        let result: TestResult = read_framed_message(&mut socket)?;
 
-            // OOM protection: Validate size BEFORE allocating
-            // WARNING: If rejected, the socket is now desynchronized. Subsequent reads will fail.
-            // This is a protocol violation from the Zygote - should never happen in normal operation.
-            if len > MAX_PAYLOAD_SIZE {
-                eprintln!(
-                    "[tach:scheduler] FATAL: Rejecting oversized payload: {} bytes > {} limit. Socket desync.",
-                    len, MAX_PAYLOAD_SIZE
-                );
-                // NOTE: Socket is now corrupt. Caller should detect via timeout/crash detection.
-                return None;
+        // Get and remove worker
+        let (test_name, slot) = {
+            let mut workers = self
+                .active_workers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match workers.remove(&result.test_id) {
+                Some(w) => (w.test_name, w.slot),
+                None => (format!("test_{}", result.test_id), 0),
             }
+        };
 
-            // Allocate buffer for header + payload
-            let mut full_buf = vec![0u8; HEADER_SIZE + len];
-            full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+        // Read logs
+        let logs = self
+            .log_capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_and_clear(slot)
+            .unwrap_or_default();
 
-            if socket.read_exact(&mut full_buf[HEADER_SIZE..]).is_ok()
-                && let Ok(result) = decode_with_limit::<TestResult>(&full_buf, MAX_PAYLOAD_SIZE)
-            {
-                // Get and remove worker
-                let (test_name, slot) = {
-                    let mut workers = self
-                        .active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    match workers.remove(&result.test_id) {
-                        Some(w) => (w.test_name, w.slot),
-                        None => (format!("test_{}", result.test_id), 0),
-                    }
-                };
+        // Print result
+        let duration_ms = result.duration_ns as f64 / 1_000_000.0;
+        println!(
+            "  {} {} ({:.2}ms)",
+            result.status_icon(),
+            test_name,
+            duration_ms
+        );
 
-                // Read logs
-                let logs = self
-                    .log_capture
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .read_and_clear(slot)
-                    .unwrap_or_default();
-
-                // Print result
-                let duration_ms = result.duration_ns as f64 / 1_000_000.0;
-                println!(
-                    "  {} {} ({:.2}ms)",
-                    result.status_icon(),
-                    test_name,
-                    duration_ms
-                );
-
-                // Print logs
-                if !logs.is_empty() {
-                    for line in logs.lines().take(3) {
-                        println!("    │ {}", &line[..line.len().min(80)]);
-                    }
-                }
-
-                if !result.message.is_empty() {
-                    println!("    └─ {}", result.message);
-                }
-
-                return Some(result);
+        // Print logs
+        if !logs.is_empty() {
+            for line in logs.lines().take(3) {
+                println!("    │ {}", &line[..line.len().min(80)]);
             }
         }
-        None
+
+        if !result.message.is_empty() {
+            println!("    └─ {}", result.message);
+        }
+
+        Some(result)
     }
 
     /// Get workers that have exceeded their per-test timeout
@@ -656,7 +674,11 @@ pub fn graceful_kill_worker(pid: Option<i32>, grace_period: Duration) -> Result<
 ///
 /// The hook is specified as "module.path:function_name".
 /// The function is called with (test_id: str, test_name: str, timeout_seconds: int).
-/// Hook execution is limited to 5 seconds.
+///
+/// **LIMITATION**: The Python call itself runs synchronously and cannot be interrupted.
+/// If the hook hangs, this function will block indefinitely. The 5-second "timeout"
+/// only logs a warning after the fact - it does not actually kill the hook.
+/// A true timeout would require running the hook in a separate process.
 ///
 /// # Arguments
 /// * `hook_spec` - Hook specification in format "module.path:function_name"
@@ -679,6 +701,7 @@ pub fn invoke_timeout_hook(hook_spec: &str, test_id: u32, test_name: &str, timeo
     let (module_path, func_name) = (parts[0], parts[1]);
 
     // Run hook with timeout (5 seconds max)
+    // NOTE: This is a soft timeout - we log a warning but cannot interrupt the Python call
     let hook_timeout = Duration::from_secs(5);
     let start = std::time::Instant::now();
 
@@ -722,6 +745,9 @@ impl Scheduler {
     ///
     /// Uses kill(pid, 0) to check if the process still exists.
     /// Returns (test_id, test_name, slot) for each crashed worker.
+    ///
+    /// Uses atomic compare_exchange to ensure each crash is handled exactly once,
+    /// preventing race conditions when multiple threads call this method concurrently.
     fn detect_crashed_workers(&self) -> Vec<(u32, String, usize)> {
         let workers = self
             .active_workers
@@ -733,7 +759,14 @@ impl Scheduler {
                 if let Some(pid) = w.worker_pid {
                     // Check if process is still alive using kill(pid, 0)
                     // Returns Err if process doesn't exist
-                    kill(Pid::from_raw(pid), None).is_err()
+                    let is_crashed = kill(Pid::from_raw(pid), None).is_err();
+                    // Atomically claim this crash - only succeed if we're the first
+                    // This prevents race conditions where multiple callers try to handle
+                    // the same crashed worker
+                    is_crashed
+                        && w.crash_handled
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
                 } else {
                     false
                 }
@@ -1111,6 +1144,7 @@ mod tests {
             timeout_secs: 60,
             worker_pid: Some(12345),
             timeout_handled: Arc::new(AtomicBool::new(false)),
+            crash_handled: Arc::new(AtomicBool::new(false)),
         };
 
         assert_eq!(worker.test_name, "test_example");
@@ -1121,6 +1155,8 @@ mod tests {
         assert!(worker.start_time.elapsed() < Duration::from_secs(1));
         // timeout_handled should start as false
         assert!(!worker.timeout_handled.load(Ordering::SeqCst));
+        // crash_handled should start as false
+        assert!(!worker.crash_handled.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -1271,6 +1307,7 @@ mod tests {
             timeout_secs: 60,
             worker_pid: Some(12345),
             timeout_handled: Arc::new(AtomicBool::new(false)),
+            crash_handled: Arc::new(AtomicBool::new(false)),
         };
 
         // Verify the flag starts as false
