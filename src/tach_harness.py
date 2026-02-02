@@ -2909,6 +2909,82 @@ def _cleanup_django_username_field_fixture() -> None:
     _DJANGO_FIXTURES.pop("django_username_field", None)
 
 
+def _init_admin_user_fixture() -> Any:
+    """Initialize the admin_user fixture.
+
+    Creates and returns a superuser with known credentials.
+    Username: admin, Password: password
+    """
+    if not _is_django_available():
+        return None
+
+    try:
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+
+        username_field = User.USERNAME_FIELD
+
+        # Create superuser with known credentials
+        user_data = {
+            username_field: "admin",
+            "email": "admin@example.com",
+            "password": "password",
+        }
+
+        # Check if user already exists
+        try:
+            admin_user = User.objects.get(**{username_field: "admin"})
+        except User.DoesNotExist:
+            admin_user = User.objects.create_superuser(**user_data)
+
+        _DJANGO_FIXTURES["admin_user"] = admin_user
+        return admin_user
+    except ImportError:
+        return None
+
+
+def _cleanup_admin_user_fixture() -> None:
+    """Cleanup the admin_user fixture."""
+    _DJANGO_FIXTURES.pop("admin_user", None)
+
+
+def _init_admin_client_fixture() -> Any:
+    """Initialize the admin_client fixture.
+
+    Returns a Django test client logged in as admin.
+    """
+    if not _is_django_available():
+        return None
+
+    try:
+        from django.test import Client
+
+        # Get or create admin user
+        admin_user = _DJANGO_FIXTURES.get("admin_user")
+        if admin_user is None:
+            admin_user = _init_admin_user_fixture()
+
+        # Create client and force login
+        client = Client()
+        client.force_login(admin_user)
+
+        _DJANGO_FIXTURES["admin_client"] = client
+        return client
+    except ImportError:
+        return None
+
+
+def _cleanup_admin_client_fixture() -> None:
+    """Cleanup the admin_client fixture."""
+    client = _DJANGO_FIXTURES.pop("admin_client", None)
+    if client is not None:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 # Fixture registry mapping names to init/cleanup functions
 _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "db": (_init_db_fixture, _cleanup_db_fixture),
@@ -2916,6 +2992,8 @@ _FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "rf": (_init_rf_fixture, _cleanup_rf_fixture),
     "django_user_model": (_init_django_user_model_fixture, _cleanup_django_user_model_fixture),
     "django_username_field": (_init_django_username_field_fixture, _cleanup_django_username_field_fixture),
+    "admin_user": (_init_admin_user_fixture, _cleanup_admin_user_fixture),
+    "admin_client": (_init_admin_client_fixture, _cleanup_admin_client_fixture),
 }
 
 

@@ -274,3 +274,67 @@ class TestDjangoUsernameFieldFixture:
         finally:
             _cleanup_django_username_field_fixture()
             assert "django_username_field" not in _DJANGO_FIXTURES
+
+
+class TestAdminUserFixture:
+    """Tests for the admin_user fixture."""
+
+    @pytest.mark.django_db
+    def test_admin_user_is_superuser(self, db_session):
+        """admin_user should be a superuser."""
+        from tach_harness import _init_admin_user_fixture, _cleanup_admin_user_fixture
+        admin_user = _init_admin_user_fixture()
+        try:
+            assert admin_user.is_superuser
+            assert admin_user.is_staff
+            assert admin_user.is_active
+        finally:
+            _cleanup_admin_user_fixture()
+
+    @pytest.mark.django_db
+    def test_admin_user_has_credentials(self, db_session):
+        """admin_user should have known credentials."""
+        from tach_harness import _init_admin_user_fixture, _cleanup_admin_user_fixture
+        admin_user = _init_admin_user_fixture()
+        try:
+            assert admin_user.check_password("password")
+        finally:
+            _cleanup_admin_user_fixture()
+
+    @pytest.mark.django_db
+    def test_admin_user_is_saved(self, db_session):
+        """admin_user should be persisted to database."""
+        from tach_harness import _init_admin_user_fixture, _cleanup_admin_user_fixture
+        admin_user = _init_admin_user_fixture()
+        try:
+            assert admin_user.pk is not None
+        finally:
+            _cleanup_admin_user_fixture()
+
+
+class TestAdminClientFixture:
+    """Tests for the admin_client fixture."""
+
+    @pytest.mark.django_db
+    def test_admin_client_is_django_client(self, db_session):
+        """admin_client should be a Django test client."""
+        from tach_harness import _init_admin_client_fixture, _cleanup_admin_client_fixture
+        admin_client = _init_admin_client_fixture()
+        try:
+            from django.test import Client
+            assert isinstance(admin_client, Client)
+        finally:
+            _cleanup_admin_client_fixture()
+
+    @pytest.mark.django_db
+    def test_admin_client_is_logged_in(self, db_session):
+        """admin_client should be logged in as admin."""
+        from tach_harness import _init_admin_client_fixture, _cleanup_admin_client_fixture, _DJANGO_FIXTURES
+        admin_client = _init_admin_client_fixture()
+        try:
+            # Verify admin_user was created as dependency
+            assert "admin_user" in _DJANGO_FIXTURES
+            admin_user = _DJANGO_FIXTURES["admin_user"]
+            assert admin_user.is_superuser
+        finally:
+            _cleanup_admin_client_fixture()
