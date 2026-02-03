@@ -48,3 +48,39 @@ def test_async_fixture_teardown_runs(tracked_teardown_fixture):
     assert tracked_teardown_fixture == "tracked"
     assert "setup" in _teardown_tracker
     # Teardown runs after test completes via AsyncFixtureWrapper.teardown_all()
+
+
+# =============================================================================
+# Batch 2: Edge Cases & Robustness
+# =============================================================================
+
+
+@pytest.fixture
+async def base_value():
+    """Base async fixture that returns a value."""
+    await asyncio.sleep(0)
+    return 10
+
+
+@pytest.fixture
+async def derived_value(base_value):
+    """Async fixture that depends on another async fixture."""
+    await asyncio.sleep(0)
+    return base_value * 2
+
+
+def test_nested_async_fixtures(derived_value):
+    """Test that nested async fixtures are resolved correctly."""
+    assert derived_value == 20
+
+
+@pytest.fixture
+async def failing_async_fixture():
+    """Async fixture that raises an exception during setup."""
+    await asyncio.sleep(0)
+    raise ValueError("Fixture setup failed")
+
+
+def test_fixture_error_is_reported(failing_async_fixture):
+    """Test that async fixture errors are properly reported."""
+    pass  # Should never reach here - fixture fails during setup
