@@ -17,6 +17,7 @@ import pdb
 import re
 import math
 import warnings as warnings_module
+import pytest
 import _pytest.runner
 import _pytest.main
 import _pytest.config
