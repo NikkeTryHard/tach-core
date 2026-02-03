@@ -24,12 +24,14 @@ import _pytest.config
 from contextlib import contextmanager
 from typing import Any, Optional, Set, Type, Tuple, Union
 
-# Status codes (must match protocol.rs)
+# Status codes (must match src/core/protocol.rs exactly)
 STATUS_PASS = 0
 STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
-STATUS_HARNESS_ERROR = 4
+STATUS_ERROR = 4
+STATUS_HARNESS_ERROR = 5
+STATUS_TIMEOUT = 6
 
 # Effect type constants (must match HookEffect variants in hooks.rs)
 EFFECT_TYPE_SET_ENV = "SetEnv"
@@ -4319,6 +4321,14 @@ def run_test(
             elif report.skipped:
                 skipped_report = report
 
+        # Check for teardown errors (Batch 4 - Fix Teardown Error Handling)
+        teardown_errors: list[Exception] = EventLoopManager.get_teardown_errors()
+        teardown_msg: str | None = None
+        if teardown_errors:
+            # Format teardown error messages
+            error_msgs = [f"Teardown Error ({type(e).__name__}): {str(e)}" for e in teardown_errors]
+            teardown_msg = "\n".join(error_msgs)
+
         if failed_report:
             longrepr = failed_report.longrepr
             msg = str(longrepr) if longrepr else "Test failed (no traceback)"
@@ -4338,11 +4348,25 @@ def run_test(
                 # Debug logging for troubleshooting enhancement failures
                 print(f"[tach:harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
+            # Teardown errors take precedence - upgrade to STATUS_ERROR
+            if teardown_msg:
+                msg = f"{msg}\n\n{teardown_msg}"
+                return (STATUS_ERROR, duration, msg, _thread_leak_detected)
             return (STATUS_FAIL, duration, msg, _thread_leak_detected)
 
         if skipped_report:
             skip_reason = str(skipped_report.longrepr) if skipped_report.longrepr else ""
-            return (STATUS_SKIP, duration, f"Skipped: {skip_reason}", _thread_leak_detected)
+            skip_msg = f"Skipped: {skip_reason}"
+            # Teardown errors take precedence - upgrade to STATUS_ERROR
+            if teardown_msg:
+                skip_msg = f"{skip_msg}\n\n{teardown_msg}"
+                return (STATUS_ERROR, duration, skip_msg, _thread_leak_detected)
+            return (STATUS_SKIP, duration, skip_msg, _thread_leak_detected)
+
+        # Test passed - but check for teardown errors
+        if teardown_msg:
+            # Upgrade status to ERROR if test passed but teardown failed
+            return (STATUS_ERROR, duration, teardown_msg, _thread_leak_detected)
 
         return (STATUS_PASS, duration, "", _thread_leak_detected)
 
