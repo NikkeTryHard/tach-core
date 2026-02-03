@@ -601,22 +601,22 @@ class AsyncFixtureWrapper:
             scope: The scope to teardown (session/module/class/function)
         """
         generators = cls._generators_by_scope.get(scope, {})
-        if not generators:
-            return
-
-        loop = cls.get_loop()
         errors: list[tuple[str, Exception]] = []
 
-        for name, gen in list(generators.items()):
-            try:
-                async def cleanup():
-                    await gen.aclose()
-                loop.run_until_complete(cleanup())
-            except Exception as e:
-                errors.append((name, e))
-                print(f"[tach:harness] WARN: Async fixture '{name}' ({scope}) teardown failed: {e}", file=sys.stderr)
+        # Only run generator cleanup if there are generators
+        if generators:
+            loop = cls.get_loop()
 
-        # Clear this scope's state
+            for name, gen in list(generators.items()):
+                try:
+                    async def cleanup():
+                        await gen.aclose()
+                    loop.run_until_complete(cleanup())
+                except Exception as e:
+                    errors.append((name, e))
+                    print(f"[tach:harness] WARN: Async fixture '{name}' ({scope}) teardown failed: {e}", file=sys.stderr)
+
+        # Always clear this scope's state (even if no generators)
         cls._generators_by_scope[scope].clear()
         cls._consumed_by_scope[scope].clear()
         cls._values_by_scope[scope].clear()
@@ -1661,16 +1661,29 @@ def post_fork_init() -> bool:
     # 1. Post-fork hygiene
     inject_entropy()
 
-    # 2. Install import hook for zero-copy module loading
+    # 2. CRITICAL: Reset event loop manager to clear stale Zygote state
+    # Workers forked from Zygote may inherit loops with invalid file descriptors
+    try:
+        EventLoopManager.reset()
+    except Exception as e:
+        print(f"[tach:harness] WARN: EventLoopManager reset failed: {e}", file=sys.stderr)
+
+    # 3. Reset async fixture wrapper to clear inherited fixture state
+    try:
+        AsyncFixtureWrapper.reset()
+    except Exception as e:
+        print(f"[tach:harness] WARN: AsyncFixtureWrapper reset failed: {e}", file=sys.stderr)
+
+    # 4. Install import hook for zero-copy module loading
     # This must be done BEFORE snapshot to be part of the golden state
     install_tach_import_hook()
 
-    # 3. Capture baseline sys.modules for hot reloading
+    # 5. Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
     print(f"[tach:harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
 
-    # 4. Check if snapshot mode is enabled
+    # 6. Check if snapshot mode is enabled
     import os
 
     supervisor_sock = os.environ.get("TACH_SUPERVISOR_SOCK")
@@ -1678,7 +1691,7 @@ def post_fork_init() -> bool:
         # No snapshot mode - standard fork-server behavior
         return False
 
-    # 5. Initialize snapshot mode via Rust FFI
+    # 7. Initialize snapshot mode via Rust FFI
     try:
         import tach_rust
 
