@@ -599,6 +599,56 @@ class AsyncFixtureWrapper:
         return errors
 
 
+# =============================================================================
+# PYTEST HOOK: pytest_fixture_setup (Batch 2 - Indirect Async Dependencies)
+# =============================================================================
+
+
+class TachFixturePlugin:
+    """Pytest plugin that intercepts async fixtures at resolution time.
+
+    This hook solves the indirect dependency problem where a sync fixture
+    depends on an async fixture. Without this hook, pytest would pass the
+    raw coroutine/async generator to the sync fixture instead of the resolved value.
+
+    The hook uses hookwrapper=True to intercept AFTER pytest resolves the fixture,
+    then consumes any async value and replaces the outcome with the resolved value.
+    """
+
+    @staticmethod
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_fixture_setup(fixturedef, request):
+        """Intercept fixture setup to consume async fixtures.
+
+        This hook runs for ALL fixtures, not just direct dependencies.
+        It allows sync fixtures to depend on async fixtures by consuming
+        the coroutine/async generator at resolution time.
+
+        Args:
+            fixturedef: The fixture definition being set up
+            request: The fixture request object
+        """
+        outcome = yield
+        try:
+            result = outcome.get_result()
+        except Exception:
+            # Fixture setup failed - let pytest handle it
+            return
+
+        # Check if the result is an async value that needs to be consumed
+        if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+            scope = getattr(fixturedef, 'scope', 'function')
+            fixture_name = fixturedef.argname
+            consumed_value = AsyncFixtureWrapper.consume_async_fixture(
+                fixture_name, result, scope
+            )
+            outcome.force_result(consumed_value)
+
+
+# Global instance of the plugin (registered in init_session)
+_TACH_FIXTURE_PLUGIN: Optional[TachFixturePlugin] = None
+
+
 def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
     """Parse @pytest.mark.asyncio marker from test item.
 
@@ -2262,8 +2312,12 @@ def init_session(root_dir: str):
 
     Plugin Detection (v0.2.0):
     We detect installed pytest plugins and warn about unsupported ones.
+
+    Async Fixture Hook (v0.3.1 - Batch 2):
+    We register TachFixturePlugin to intercept async fixtures at resolution time,
+    solving the indirect dependency problem (sync fixtures depending on async fixtures).
     """
-    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS, _TACH_FIXTURE_PLUGIN
 
     os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
 
@@ -2299,6 +2353,13 @@ def init_session(root_dir: str):
 
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
+
+    # ASYNC FIXTURE HOOK (v0.3.1 - Batch 2):
+    # Register TachFixturePlugin to intercept async fixtures at resolution time.
+    # This solves the indirect dependency problem where sync fixtures depend on async fixtures.
+    if not cfg.pluginmanager.has_plugin("tach_fixture_plugin"):
+        _TACH_FIXTURE_PLUGIN = TachFixturePlugin()
+        cfg.pluginmanager.register(_TACH_FIXTURE_PLUGIN, "tach_fixture_plugin")
 
     # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
     # At this point, pytest_configure hooks have run via cfg._do_configure()
@@ -4171,42 +4232,10 @@ def run_test(
         item_cls_for_fixture = getattr(target_item, 'cls', None)
         class_name_for_fixture = f"{item_cls_for_fixture.__module__}.{item_cls_for_fixture.__name__}" if item_cls_for_fixture else None
         AsyncFixtureWrapper.on_test_start(fspath_for_fixture, class_name_for_fixture)
-
-        # Install a hook to intercept fixture values
-        original_fillfixtures = target_item._request._fillfixtures
-
-        def patched_fillfixtures():
-            """Patched fillfixtures that consumes async fixtures with scope awareness."""
-            # Suppress pytest 9.x warning about sync tests with async fixtures
-            # We handle this ourselves by consuming the async fixtures
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*requested an async fixture.*",
-                )
-                original_fillfixtures()
-            # After pytest fills fixtures, consume any async ones
-            if hasattr(target_item, 'funcargs'):
-                # Get fixture definitions to extract scope
-                fixturedefs = {}
-                if hasattr(target_item, '_request') and hasattr(target_item._request, '_arg2fixturedefs'):
-                    fixturedefs = target_item._request._arg2fixturedefs or {}
-
-                for name, value in list(target_item.funcargs.items()):
-                    if inspect.isasyncgen(value) or asyncio.iscoroutine(value):
-                        # Extract fixture scope from fixturedefs
-                        scope = "function"  # default
-                        if name in fixturedefs:
-                            fixture_def_list = fixturedefs[name]
-                            if fixture_def_list and len(fixture_def_list) > 0:
-                                # fixturedefs[name] is a list of FixtureDef objects
-                                fixture_def = fixture_def_list[-1]  # Use the last (most specific) one
-                                if hasattr(fixture_def, 'scope'):
-                                    scope = fixture_def.scope
-                        target_item.funcargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, value, scope)
-
-        target_item._request._fillfixtures = patched_fillfixtures
+        # NOTE: Async fixture interception is now handled by TachFixturePlugin.pytest_fixture_setup
+        # hook registered in init_session(). This solves the indirect dependency problem where
+        # sync fixtures depend on async fixtures. The hook intercepts ALL fixtures at resolution
+        # time, not just direct dependencies visible in target_item.funcargs.
         # === END ASYNC FIXTURE HANDLING ===
 
         try:
