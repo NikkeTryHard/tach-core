@@ -113,6 +113,29 @@ const TOXIC_EXTERNAL_MODULES: &[&str] = &[
     "cffi",
 ];
 
+/// Modules that are safe despite being on general blocklists or having similar names.
+///
+/// These modules are commonly used in test code and do not create fork-unsafe
+/// resources. They are explicitly allowlisted to reduce false positive toxicity:
+/// - `asyncio`: Standard async - safe if not using subprocesses
+/// - `unittest.mock`: Mocking is safe (no threads or native code)
+/// - `unittest`: Standard testing framework
+/// - `pytest`: Testing framework
+/// - `pytest_mock`: pytest-mock plugin is safe
+/// - `pytest_asyncio`: Async test support
+/// - `aiohttp`: Async HTTP client - generally safe
+/// - `httpx`: HTTP client - safe
+const SAFE_TEST_MODULES: &[&str] = &[
+    "asyncio",
+    "unittest.mock",
+    "unittest",
+    "pytest",
+    "pytest_mock",
+    "pytest_asyncio",
+    "aiohttp",
+    "httpx",
+];
+
 // =============================================================================
 // Data Structures
 // =============================================================================
@@ -542,6 +565,11 @@ fn check_expr_toxicity(
 
 /// Check if a module name is in the toxic blocklists
 fn is_toxic_module(name: &str) -> bool {
+    // Check allowlist first - these are explicitly safe
+    if is_safe_test_module(name) {
+        return false;
+    }
+
     // Check exact match
     if TOXIC_STD_LIB.contains(&name) || TOXIC_EXTERNAL_MODULES.contains(&name) {
         return true;
@@ -550,6 +578,23 @@ fn is_toxic_module(name: &str) -> bool {
     // Check prefix match for submodules (e.g., "concurrent.futures.thread")
     for toxic in TOXIC_STD_LIB.iter().chain(TOXIC_EXTERNAL_MODULES.iter()) {
         if name.starts_with(&format!("{}.", toxic)) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a module is in the safe test modules allowlist
+fn is_safe_test_module(name: &str) -> bool {
+    // Check exact match
+    if SAFE_TEST_MODULES.contains(&name) {
+        return true;
+    }
+
+    // Check prefix match for submodules (e.g., "asyncio.tasks")
+    for safe in SAFE_TEST_MODULES.iter() {
+        if name.starts_with(&format!("{}.", safe)) {
             return true;
         }
     }
@@ -1218,5 +1263,64 @@ if True:
 "#;
         let report = analyze(source);
         assert!(report.is_toxic, "regular if blocks should be analyzed");
+    }
+
+    // =========================================================================
+    // Safe Test Module Allowlist Tests
+    // =========================================================================
+
+    #[test]
+    fn test_asyncio_is_safe() {
+        assert!(!is_toxic_module("asyncio"));
+        assert!(!is_toxic_module("asyncio.tasks"));
+        assert!(!is_toxic_module("asyncio.streams"));
+    }
+
+    #[test]
+    fn test_unittest_mock_is_safe() {
+        assert!(!is_toxic_module("unittest.mock"));
+        assert!(!is_toxic_module("unittest"));
+        assert!(!is_toxic_module("unittest.case"));
+    }
+
+    #[test]
+    fn test_pytest_modules_are_safe() {
+        assert!(!is_toxic_module("pytest"));
+        assert!(!is_toxic_module("pytest_mock"));
+        assert!(!is_toxic_module("pytest_asyncio"));
+        assert!(!is_toxic_module("pytest.fixtures"));
+    }
+
+    #[test]
+    fn test_http_clients_are_safe() {
+        assert!(!is_toxic_module("aiohttp"));
+        assert!(!is_toxic_module("aiohttp.client"));
+        assert!(!is_toxic_module("httpx"));
+        assert!(!is_toxic_module("httpx.AsyncClient"));
+    }
+
+    #[test]
+    fn test_asyncio_import_not_toxic() {
+        let source = "import asyncio";
+        let report = analyze(source);
+        assert!(!report.is_toxic, "asyncio should be safe");
+    }
+
+    #[test]
+    fn test_unittest_mock_import_not_toxic() {
+        let source = "from unittest.mock import Mock, patch";
+        let report = analyze(source);
+        assert!(!report.is_toxic, "unittest.mock should be safe");
+    }
+
+    #[test]
+    fn test_pytest_import_not_toxic() {
+        let source = r#"
+import pytest
+import pytest_asyncio
+from pytest_mock import mocker
+"#;
+        let report = analyze(source);
+        assert!(!report.is_toxic, "pytest modules should be safe");
     }
 }
