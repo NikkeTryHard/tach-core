@@ -285,7 +285,74 @@ impl Scheduler {
                         memory_usage.push((test_name, rss));
                     }
                     collected += 1;
+                    continue;
                 }
+
+                // Check for crashed workers while waiting for capacity
+                let crashed = self.detect_crashed_workers();
+                for (test_id, test_name, slot) in crashed {
+                    // Determine crash phase for better error messages
+                    let crash_phase = {
+                        let workers = self
+                            .active_workers
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if let Some(w) = workers.get(&test_id) {
+                            if w.start_time.elapsed() < Duration::from_secs(1) {
+                                "Worker crashed during fixture setup"
+                            } else {
+                                "Worker crashed during test execution"
+                            }
+                        } else {
+                            "Worker crashed unexpectedly"
+                        }
+                    };
+                    reporter.on_test_finished(&test_name, "crash", 0, Some(crash_phase));
+                    let _ = self
+                        .log_capture
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .read_and_clear(slot);
+                    self.active_workers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&test_id);
+                    failed += 1;
+                    collected += 1;
+                }
+
+                // Check for workers that exceeded their per-test timeout
+                let timed_out = self.get_timed_out_workers();
+                for (test_id, test_name, slot, worker_pid, timeout_secs) in timed_out {
+                    // Gracefully kill worker: SIGTERM first, then SIGKILL after 500ms
+                    let _ = graceful_kill_worker(worker_pid, Duration::from_millis(500));
+
+                    // Invoke timeout hook if configured
+                    if let Some(ref hook_spec) = self.timeout_hook {
+                        invoke_timeout_hook(hook_spec, test_id, &test_name, timeout_secs);
+                    }
+
+                    reporter.on_test_finished(
+                        &test_name,
+                        "timeout",
+                        0,
+                        Some("Test exceeded timeout limit"),
+                    );
+                    let _ = self
+                        .log_capture
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .read_and_clear(slot);
+                    self.active_workers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&test_id);
+                    failed += 1;
+                    collected += 1;
+                }
+
+                // Small sleep to prevent busy-wait when no progress
+                std::thread::sleep(Duration::from_millis(50));
             }
 
             // Emit test_start event
