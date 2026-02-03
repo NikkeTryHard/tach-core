@@ -24,12 +24,14 @@ import _pytest.config
 from contextlib import contextmanager
 from typing import Any, Optional, Set, Type, Tuple, Union
 
-# Status codes (must match protocol.rs)
+# Status codes (must match src/core/protocol.rs exactly)
 STATUS_PASS = 0
 STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
-STATUS_HARNESS_ERROR = 4
+STATUS_ERROR = 4
+STATUS_HARNESS_ERROR = 5
+STATUS_TIMEOUT = 6
 
 # Effect type constants (must match HookEffect variants in hooks.rs)
 EFFECT_TYPE_SET_ENV = "SetEnv"
