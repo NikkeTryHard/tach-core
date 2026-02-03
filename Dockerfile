@@ -55,9 +55,16 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Create workspace directory
 WORKDIR /workspace
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Environment variables for tach-core
 ENV PYO3_PYTHON=/workspace/.venv/bin/python
 ENV CARGO_TARGET_DIR=/workspace/target
+
+# Entrypoint ensures deps are installed on first run
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default command
 CMD ["bash"]

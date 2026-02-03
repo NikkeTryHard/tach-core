@@ -6,12 +6,47 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use rustpython_ast as ast;
 use rustpython_parser::Parse;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::hooks::{Hook, HookRegistry, builtin_hook_specs};
+
+// =============================================================================
+// Serde Helper for bincode compatibility
+// =============================================================================
+
+/// Custom serde module for HashMap<String, serde_json::Value> that works with bincode.
+/// bincode doesn't support serde_json::Value directly (requires deserialize_any),
+/// so we serialize the HashMap to a JSON string first.
+mod json_string_args {
+    use super::*;
+
+    pub fn serialize<S>(
+        args: &HashMap<String, serde_json::Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let json_str = serde_json::to_string(args).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&json_str)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<String, serde_json::Value>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let json_str: String = Deserialize::deserialize(deserializer)?;
+        if json_str.is_empty() {
+            return Ok(HashMap::new());
+        }
+        serde_json::from_str(&json_str).map_err(serde::de::Error::custom)
+    }
+}
 
 // =============================================================================
 // Type Definitions
@@ -82,7 +117,8 @@ pub struct MarkerInfo {
     pub name: String,
     /// Keyword arguments as JSON values
     /// Examples: {"transaction": true}, {"databases": ["default", "secondary"]}
-    #[serde(default)]
+    /// Note: Uses custom serde for bincode compatibility (bincode doesn't support serde_json::Value)
+    #[serde(default, with = "json_string_args")]
     pub args: HashMap<String, serde_json::Value>,
 }
 
