@@ -237,7 +237,13 @@ impl Reporter for JunitReporter {
         });
     }
 
-    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+    fn on_run_finished(
+        &mut self,
+        _passed: usize,
+        _failed: usize,
+        _skipped: usize,
+        duration_ms: u64,
+    ) {
         // Calculate errors and failures from buffered cases for accurate counts
         let errors = self.cases.iter().filter(|c| c.error.is_some()).count();
         let failures = self.cases.iter().filter(|c| c.failure.is_some()).count();
