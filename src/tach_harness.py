@@ -440,10 +440,7 @@ class AsyncFixtureWrapper:
         for name, gen in list(cls._active_generators.items()):
             try:
                 async def cleanup():
-                    try:
-                        await gen.__anext__()
-                    except StopAsyncIteration:
-                        pass
+                    await gen.aclose()
                 loop.run_until_complete(cleanup())
             except Exception as e:
                 print(f"[tach:harness] WARN: Async fixture '{name}' teardown failed: {e}", file=sys.stderr)
@@ -454,6 +451,7 @@ class AsyncFixtureWrapper:
     def reset(cls) -> None:
         """Reset state between tests."""
         cls.teardown_all()
+        cls._loop = None
 
 
 def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
