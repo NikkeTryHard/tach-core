@@ -84,3 +84,89 @@ async def failing_async_fixture():
 def test_fixture_error_is_reported(failing_async_fixture):
     """Test that async fixture errors are properly reported."""
     pass  # Should never reach here - fixture fails during setup
+
+
+# =============================================================================
+# Batch 1: Scope-Aware Fixture Tracking Tests
+# =============================================================================
+
+_scope_tracker = {"setup": 0, "teardown": 0}
+
+
+@pytest.fixture(scope="module")
+async def module_scoped_fixture():
+    """Module-scoped async fixture that tracks setup/teardown."""
+    _scope_tracker["setup"] += 1
+    yield f"module_value_{_scope_tracker['setup']}"
+    _scope_tracker["teardown"] += 1
+
+
+def test_module_scope_first(module_scoped_fixture):
+    """First test using module-scoped fixture - should trigger setup."""
+    assert module_scoped_fixture == "module_value_1"
+    assert _scope_tracker["setup"] == 1
+    assert _scope_tracker["teardown"] == 0
+
+
+def test_module_scope_second(module_scoped_fixture):
+    """Second test using same module-scoped fixture - should reuse value."""
+    assert module_scoped_fixture == "module_value_1"
+    assert _scope_tracker["setup"] == 1
+    assert _scope_tracker["teardown"] == 0
+
+
+# Session-scoped fixture tracking
+_session_tracker = {"setup": 0, "teardown": 0}
+
+
+@pytest.fixture(scope="session")
+async def session_scoped_fixture():
+    """Session-scoped async fixture that tracks setup/teardown."""
+    _session_tracker["setup"] += 1
+    yield f"session_value_{_session_tracker['setup']}"
+    _session_tracker["teardown"] += 1
+
+
+def test_session_scope_first(session_scoped_fixture):
+    """First test using session-scoped fixture."""
+    assert session_scoped_fixture == "session_value_1"
+    assert _session_tracker["setup"] == 1
+    assert _session_tracker["teardown"] == 0
+
+
+def test_session_scope_second(session_scoped_fixture):
+    """Second test using same session-scoped fixture - should reuse."""
+    assert session_scoped_fixture == "session_value_1"
+    assert _session_tracker["setup"] == 1
+    assert _session_tracker["teardown"] == 0
+
+
+# Function-scoped fixture tracking (should teardown after each test)
+# NOTE: In tach's parallel execution model, each test runs in an isolated
+# forked process, so state tracking between tests doesn't work. We verify
+# function-scoped fixtures work correctly within a single test.
+_function_tracker = {"setup": 0, "teardown": 0}
+
+
+@pytest.fixture(scope="function")
+async def function_scoped_fixture():
+    """Function-scoped async fixture that tracks setup/teardown."""
+    _function_tracker["setup"] += 1
+    yield f"function_value_{_function_tracker['setup']}"
+    _function_tracker["teardown"] += 1
+
+
+def test_function_scope_first(function_scoped_fixture):
+    """First test using function-scoped fixture."""
+    assert function_scoped_fixture == "function_value_1"
+    assert _function_tracker["setup"] == 1
+    # Teardown happens after test, so count is 0 during test
+    assert _function_tracker["teardown"] == 0
+
+
+def test_function_scope_second(function_scoped_fixture):
+    """Second test - each test gets fresh fixture in tach's fork model."""
+    # In tach, each test runs in isolated process, so fixture is fresh
+    assert function_scoped_fixture == "function_value_1"
+    assert _function_tracker["setup"] == 1
+    assert _function_tracker["teardown"] == 0
