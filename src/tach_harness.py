@@ -3706,6 +3706,48 @@ def _get_fixture_names_from_item(item: Any) -> list[str]:
     return fixture_names
 
 
+def _construct_nodeid(file_path: str, test_name: str) -> str:
+    """
+    Construct a pytest nodeid relative to the session's rootdir.
+
+    This ensures the nodeid matches _ITEMS_MAP keys regardless of:
+    - Where tach was invoked from (parent dir, project root, etc.)
+    - Nested pyproject.toml/pytest.ini files affecting rootdir
+
+    Args:
+        file_path: Absolute or relative path to the test file
+        test_name: Test identifier (e.g., "TestClass::test_method" or "test_func")
+
+    Returns:
+        Nodeid string matching pytest's format (e.g., "tests/foo.py::test_bar")
+    """
+    global _SESSION
+
+    if _SESSION is None:
+        # Fallback if session not initialized
+        return f"{file_path}::{test_name}"
+
+    # Get pytest's rootdir from the session config
+    rootdir = _SESSION.config.rootdir
+
+    # Convert file_path to absolute, then make relative to rootdir
+    abs_path = os.path.abspath(file_path)
+    try:
+        rel_path = os.path.relpath(abs_path, start=str(rootdir))
+    except ValueError:
+        # On Windows, relpath fails if paths are on different drives
+        rel_path = file_path
+
+    # Normalize path separators to forward slashes (pytest convention)
+    rel_path = rel_path.replace(os.sep, "/")
+
+    # Debug logging if enabled
+    if os.environ.get("TACH_DEBUG_NODEID"):
+        os.write(2, f"[tach:harness] nodeid: {file_path} + {test_name} -> {rel_path}::{test_name}\n".encode())
+
+    return f"{rel_path}::{test_name}"
+
+
 def run_test(
     file_path: str,
     node_id: str,
@@ -3771,15 +3813,29 @@ def run_test(
     initial_thread_count = threading.active_count()
 
     try:
+        # Construct nodeid relative to pytest's rootdir for reliable lookup
+        # The node_id parameter contains test_name (e.g., "TestClass::test_method")
+        # We combine it with file_path to build the correct nodeid
+        constructed_nodeid = _construct_nodeid(file_path, node_id)
+
         # O(1) lookup from pre-collected items
-        target_item = _ITEMS_MAP.get(node_id)
+        target_item = _ITEMS_MAP.get(constructed_nodeid)
+
+        # Fallback: try the original node_id in case it's already correct
+        if not target_item:
+            target_item = _ITEMS_MAP.get(node_id)
 
         if not target_item:
             duration = time.perf_counter() - start
+            # Include both attempted nodeids in error for debugging
             return (
                 STATUS_HARNESS_ERROR,
                 duration,
-                f"Test not found in Zygote session: {node_id}\nAvailable: {len(_ITEMS_MAP)} items",
+                f"Test not found in Zygote session.\n"
+                f"  Constructed: {constructed_nodeid}\n"
+                f"  Original: {node_id}\n"
+                f"  Available: {len(_ITEMS_MAP)} items\n"
+                f"  Sample keys: {list(_ITEMS_MAP.keys())[:3]}",
                 False,  # No thread leak detection for failed lookup
             )
 
