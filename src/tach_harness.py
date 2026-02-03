@@ -4203,9 +4203,13 @@ def run_test(
         if hasattr(original_obj, "__func__"):
             func_to_check = original_obj.__func__
 
-        if inspect.iscoroutinefunction(func_to_check):
-            # Use EventLoopManager for scoped loop management
-            loop_manager = EventLoopManager.get_instance()
+        # Use EventLoopManager for scoped loop management (both async tests and fixture resolution)
+        loop_manager = EventLoopManager.get_instance()
+
+        # Cache async check to avoid duplicate inspect.iscoroutinefunction() calls
+        is_async_test = inspect.iscoroutinefunction(func_to_check)
+
+        if is_async_test:
 
             # Parse asyncio marker for loop_scope configuration
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
@@ -4243,16 +4247,21 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
-        # Event Loop Setup: ensure a loop exists for fixtures
-        # Check if loop already exists to avoid orphaning
-        try:
-            _fixture_loop = asyncio.get_event_loop()
-            if _fixture_loop.is_closed():
-                _fixture_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(_fixture_loop)
-        except RuntimeError:
-            _fixture_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(_fixture_loop)
+        # === SCOPED LOOP SETUP (Batch 1 Fix) ===
+        # Get the scoped loop BEFORE runtestprotocol() so fixtures resolve with correct loop
+        # This fixes the issue where AsyncFixtureWrapper.set_loop() was called with a generic
+        # loop, but the test's scoped loop was only set inside sync_wrapper (too late for fixtures)
+        if is_async_test:
+            # Async test: use the already-computed scope_key from above
+            fixture_loop = loop_manager.get_loop(scope_key)
+        else:
+            # Non-async test: use function scope for async fixture consumption
+            fixture_scope_key = f"function:{target_item.nodeid}"
+            fixture_loop = loop_manager.get_loop(fixture_scope_key)
+
+        # Set the scoped loop as current BEFORE fixtures are resolved
+        asyncio.set_event_loop(fixture_loop)
+        # === END SCOPED LOOP SETUP ===
 
         # Django Fixtures (v0.3.0 - Issue #39)
         # Setup fixtures after db isolation is applied
@@ -4267,8 +4276,9 @@ def run_test(
         template_originals = _apply_ignore_template_errors(ignore_templates)
 
         # === ASYNC FIXTURE HANDLING ===
-        # Set up the event loop for async fixtures BEFORE pytest runs
-        AsyncFixtureWrapper.set_loop(_fixture_loop)
+        # Set up the scoped event loop for async fixtures BEFORE pytest runs
+        # (fixture_loop is already the correct scoped loop from above)
+        AsyncFixtureWrapper.set_loop(fixture_loop)
 
         # Scope transition handling for fixtures (Batch 1)
         fspath_for_fixture = str(getattr(target_item, 'fspath', ''))
