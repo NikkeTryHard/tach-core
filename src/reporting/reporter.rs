@@ -56,6 +56,16 @@ const ANSI_RESET: &str = "\x1b[0m";
 // Helper Functions
 // =============================================================================
 
+/// Check if a status string represents a passing test
+fn is_pass(status: &str) -> bool {
+    status.eq_ignore_ascii_case("pass")
+}
+
+/// Check if a status string represents a skipped test
+fn is_skip(status: &str) -> bool {
+    status.eq_ignore_ascii_case("skip")
+}
+
 /// Check if stdout/stderr is connected to a terminal that supports colors.
 fn supports_colors() -> bool {
     std::io::stderr().is_terminal() && std::env::var("NO_COLOR").is_err()
@@ -482,14 +492,17 @@ impl Reporter for HumanReporter {
         message: Option<&str>,
     ) {
         let use_colors = supports_colors();
-        if status.eq_ignore_ascii_case("pass") {
+        if is_pass(status) {
             eprintln!("ok ({}ms)", duration_ms);
-        } else if status.eq_ignore_ascii_case("skip") {
+        } else if is_skip(status) {
             eprintln!("skipped");
         } else {
             // Catch ALL failures: fail, crash, timeout, error, harness_error
             if use_colors {
-                eprintln!("{}FAILED [{}]{} ({}ms)", ANSI_RED, status, ANSI_RESET, duration_ms);
+                eprintln!(
+                    "{}FAILED [{}]{} ({}ms)",
+                    ANSI_RED, status, ANSI_RESET, duration_ms
+                );
             } else {
                 eprintln!("FAILED [{}] ({}ms)", status, duration_ms);
             }
@@ -697,9 +710,9 @@ impl Reporter for ProgressReporter {
         _duration_ms: u64,
         message: Option<&str>,
     ) {
-        if status.eq_ignore_ascii_case("pass") {
+        if is_pass(status) {
             self.passed += 1;
-        } else if status.eq_ignore_ascii_case("skip") {
+        } else if is_skip(status) {
             self.skipped += 1;
         } else {
             // Catch ALL failures: fail, crash, timeout, error, harness_error
@@ -879,10 +892,10 @@ impl Reporter for DotsReporter {
         _duration_ms: u64,
         message: Option<&str>,
     ) {
-        if status.eq_ignore_ascii_case("pass") {
+        if is_pass(status) {
             self.passed += 1;
             self.print_char('.');
-        } else if status.eq_ignore_ascii_case("skip") {
+        } else if is_skip(status) {
             self.skipped += 1;
             self.print_char('s');
         } else {
@@ -1505,7 +1518,10 @@ AssertionError"#;
         reporter.on_run_start(1);
         reporter.on_test_finished("test1", "harness_error", 100, Some("harness crash"));
 
-        assert_eq!(reporter.failed, 1, "harness_error should be counted as failure");
+        assert_eq!(
+            reporter.failed, 1,
+            "harness_error should be counted as failure"
+        );
         assert_eq!(reporter.failures.len(), 1);
     }
 
@@ -1546,7 +1562,10 @@ AssertionError"#;
         reporter.on_test_finished("t4", "error", 100, None);
         reporter.on_test_finished("t5", "harness_error", 100, None);
 
-        assert_eq!(reporter.failed, 5, "all non-pass/skip statuses should be failures");
+        assert_eq!(
+            reporter.failed, 5,
+            "all non-pass/skip statuses should be failures"
+        );
         assert_eq!(reporter.failures.len(), 5);
     }
 }
