@@ -674,8 +674,12 @@ class TachFixturePlugin:
             # Fixture setup failed - let pytest handle it
             return
 
+        fixture_name = fixturedef.argname
+        is_async = inspect.isasyncgen(result) or asyncio.iscoroutine(result)
+        print(f"[tach:fixture-hook] {fixture_name}: is_async={is_async}, type={type(result).__name__}", file=sys.stderr)
+
         # Check if the result is an async value that needs to be consumed
-        if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+        if is_async:
             scope = getattr(fixturedef, 'scope', 'function')
             fixture_name = fixturedef.argname
             try:
@@ -4287,15 +4291,40 @@ def run_test(
         item_cls_for_fixture = getattr(target_item, 'cls', None)
         class_name_for_fixture = f"{item_cls_for_fixture.__module__}.{item_cls_for_fixture.__name__}" if item_cls_for_fixture else None
         AsyncFixtureWrapper.on_test_start(fspath_for_fixture, class_name_for_fixture)
-        # NOTE: Async fixture interception is now handled by TachFixturePlugin.pytest_fixture_setup
-        # hook registered in init_session(). This solves the indirect dependency problem where
-        # sync fixtures depend on async fixtures. The hook intercepts ALL fixtures at resolution
-        # time, not just direct dependencies visible in target_item.funcargs.
+
+        # Invalidate stale async fixture caches inherited from Zygote parent
+        # Fixtures are cached in parent process before fork - workers inherit raw coroutines
+        # Clear these so pytest calls FixtureDef.execute() again (cache miss)
+        from _pytest.fixtures import FixtureDef
+        fixture_info = getattr(target_item, "_fixtureinfo", None)
+        if fixture_info and hasattr(fixture_info, 'name2fixturedefs'):
+            for fixturedefs in fixture_info.name2fixturedefs.values():
+                for fixturedef in fixturedefs:
+                    cached = getattr(fixturedef, "cached_result", None)
+                    if cached is not None and isinstance(cached, tuple) and len(cached) > 0:
+                        val = cached[0]
+                        if asyncio.iscoroutine(val) or inspect.isasyncgen(val):
+                            fixturedef.cached_result = None
+
+        # Patch FixtureDef.execute to consume async fixtures at resolution time
+        _original_execute = FixtureDef.execute
+
+        def _patched_execute(self, request):
+            result = _original_execute(self, request)
+            # If the fixture returns an async generator or coroutine, consume it
+            if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+                scope = getattr(self, 'scope', 'function')
+                result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
+            return result
+
+        FixtureDef.execute = _patched_execute
         # === END ASYNC FIXTURE HANDLING ===
 
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
+            # Restore original execute
+            FixtureDef.execute = _original_execute
             # Cleanup in reverse order of application
             # Only teardown function-scoped fixtures after each test
             # Module/class/session scoped fixtures persist until scope transition
@@ -4322,7 +4351,7 @@ def run_test(
                 skipped_report = report
 
         # Check for teardown errors (Batch 4 - Fix Teardown Error Handling)
-        teardown_errors: list[Exception] = EventLoopManager.get_teardown_errors()
+        teardown_errors: list[Exception] = AsyncFixtureWrapper.get_teardown_errors()
         teardown_msg: str | None = None
         if teardown_errors:
             # Format teardown error messages
