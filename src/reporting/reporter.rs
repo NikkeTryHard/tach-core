@@ -484,11 +484,14 @@ impl Reporter for HumanReporter {
         let use_colors = supports_colors();
         if status.eq_ignore_ascii_case("pass") {
             eprintln!("ok ({}ms)", duration_ms);
-        } else if status.eq_ignore_ascii_case("fail") {
+        } else if status.eq_ignore_ascii_case("skip") {
+            eprintln!("skipped");
+        } else {
+            // Catch ALL failures: fail, crash, timeout, error, harness_error
             if use_colors {
-                eprintln!("{}FAILED{} ({}ms)", ANSI_RED, ANSI_RESET, duration_ms);
+                eprintln!("{}FAILED [{}]{} ({}ms)", ANSI_RED, status, ANSI_RESET, duration_ms);
             } else {
-                eprintln!("FAILED ({}ms)", duration_ms);
+                eprintln!("FAILED [{}] ({}ms)", status, duration_ms);
             }
             if let Some(msg) = message {
                 // Format traceback according to style
@@ -502,10 +505,6 @@ impl Reporter for HumanReporter {
                     }
                 }
             }
-        } else if status.eq_ignore_ascii_case("skip") {
-            eprintln!("skipped");
-        } else {
-            eprintln!("{}", status);
         }
     }
 
@@ -700,7 +699,10 @@ impl Reporter for ProgressReporter {
     ) {
         if status.eq_ignore_ascii_case("pass") {
             self.passed += 1;
-        } else if status.eq_ignore_ascii_case("fail") {
+        } else if status.eq_ignore_ascii_case("skip") {
+            self.skipped += 1;
+        } else {
+            // Catch ALL failures: fail, crash, timeout, error, harness_error
             self.failed += 1;
             // Format and buffer failure for summary with colorization
             let use_colors = supports_colors();
@@ -714,8 +716,6 @@ impl Reporter for ProgressReporter {
                 id: id.to_string(),
                 message: formatted_msg,
             });
-        } else if status.eq_ignore_ascii_case("skip") {
-            self.skipped += 1;
         }
 
         self.bar.inc(1);
@@ -882,7 +882,11 @@ impl Reporter for DotsReporter {
         if status.eq_ignore_ascii_case("pass") {
             self.passed += 1;
             self.print_char('.');
-        } else if status.eq_ignore_ascii_case("fail") {
+        } else if status.eq_ignore_ascii_case("skip") {
+            self.skipped += 1;
+            self.print_char('s');
+        } else {
+            // Catch ALL failures: fail, crash, timeout, error, harness_error
             self.failed += 1;
             self.print_char('F');
             // Format and buffer failure for summary with colorization
@@ -897,11 +901,6 @@ impl Reporter for DotsReporter {
                 id: id.to_string(),
                 message: formatted_msg,
             });
-        } else if status.eq_ignore_ascii_case("skip") {
-            self.skipped += 1;
-            self.print_char('s');
-        } else {
-            self.print_char('?');
         }
     }
 
@@ -1456,5 +1455,98 @@ AssertionError"#;
         let traceback = "Source context:\n>>>   10 | assert x == y\nAssertionError";
         let result = colorize_traceback(traceback, false);
         assert_eq!(result, traceback, "No colors when disabled");
+    }
+
+    // =========================================================================
+    //  Non-standard Status Handling Tests (Batch 3: crash/timeout/error)
+    // =========================================================================
+
+    #[test]
+    fn test_progress_reporter_counts_crash_as_failure() {
+        let mut reporter = ProgressReporter::new();
+        reporter.on_run_start(3);
+        reporter.on_test_finished("test1", "pass", 100, None);
+        reporter.on_test_finished("test2", "crash", 100, Some("segfault"));
+        reporter.on_test_finished("test3", "skip", 100, None);
+
+        assert_eq!(reporter.passed, 1);
+        assert_eq!(reporter.failed, 1, "crash should be counted as failure");
+        assert_eq!(reporter.skipped, 1);
+        assert_eq!(reporter.failures.len(), 1);
+        assert_eq!(reporter.failures[0].id, "test2");
+    }
+
+    #[test]
+    fn test_progress_reporter_counts_timeout_as_failure() {
+        let mut reporter = ProgressReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_finished("test1", "timeout", 5000, Some("exceeded 5s limit"));
+        reporter.on_test_finished("test2", "pass", 100, None);
+
+        assert_eq!(reporter.passed, 1);
+        assert_eq!(reporter.failed, 1, "timeout should be counted as failure");
+        assert_eq!(reporter.failures.len(), 1);
+        assert_eq!(reporter.failures[0].id, "test1");
+    }
+
+    #[test]
+    fn test_progress_reporter_counts_error_as_failure() {
+        let mut reporter = ProgressReporter::new();
+        reporter.on_run_start(1);
+        reporter.on_test_finished("test1", "error", 100, Some("import error"));
+
+        assert_eq!(reporter.failed, 1, "error should be counted as failure");
+        assert_eq!(reporter.failures.len(), 1);
+    }
+
+    #[test]
+    fn test_progress_reporter_counts_harness_error_as_failure() {
+        let mut reporter = ProgressReporter::new();
+        reporter.on_run_start(1);
+        reporter.on_test_finished("test1", "harness_error", 100, Some("harness crash"));
+
+        assert_eq!(reporter.failed, 1, "harness_error should be counted as failure");
+        assert_eq!(reporter.failures.len(), 1);
+    }
+
+    #[test]
+    fn test_dots_reporter_counts_crash_as_failure() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_run_start(3);
+        reporter.on_test_finished("test1", "pass", 100, None);
+        reporter.on_test_finished("test2", "crash", 100, Some("segfault"));
+        reporter.on_test_finished("test3", "skip", 100, None);
+
+        assert_eq!(reporter.passed, 1);
+        assert_eq!(reporter.failed, 1, "crash should be counted as failure");
+        assert_eq!(reporter.skipped, 1);
+        assert_eq!(reporter.failures.len(), 1);
+        assert_eq!(reporter.failures[0].id, "test2");
+    }
+
+    #[test]
+    fn test_dots_reporter_counts_timeout_as_failure() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_finished("test1", "timeout", 5000, Some("exceeded limit"));
+        reporter.on_test_finished("test2", "pass", 100, None);
+
+        assert_eq!(reporter.passed, 1);
+        assert_eq!(reporter.failed, 1, "timeout should be counted as failure");
+        assert_eq!(reporter.failures.len(), 1);
+    }
+
+    #[test]
+    fn test_dots_reporter_counts_all_non_pass_skip_as_failure() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_run_start(5);
+        reporter.on_test_finished("t1", "fail", 100, None);
+        reporter.on_test_finished("t2", "crash", 100, None);
+        reporter.on_test_finished("t3", "timeout", 100, None);
+        reporter.on_test_finished("t4", "error", 100, None);
+        reporter.on_test_finished("t5", "harness_error", 100, None);
+
+        assert_eq!(reporter.failed, 5, "all non-pass/skip statuses should be failures");
+        assert_eq!(reporter.failures.len(), 5);
     }
 }
