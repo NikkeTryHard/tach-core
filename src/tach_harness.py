@@ -78,6 +78,20 @@ class EventLoopManager:
             cls._instance.close_all()
             cls._instance = None
 
+    @classmethod
+    def get_current_loop(cls) -> Optional[asyncio.AbstractEventLoop]:
+        """Get the most recently created valid loop, or None.
+
+        This provides encapsulated access to the managed loops without
+        exposing internal _loops dictionary.
+        """
+        instance = cls.get_instance()
+        for key in reversed(list(instance._loops.keys())):
+            loop = instance._loops[key]
+            if loop and not loop.is_closed():
+                return loop
+        return None
+
     def configure(self, loop_scope: str = "function", auto_mode: bool = False) -> None:
         """Configure loop scope and auto mode."""
         self._current_scope = loop_scope
@@ -434,14 +448,10 @@ class AsyncFixtureWrapper:
 
         # Try to get loop from EventLoopManager for consistency
         try:
-            mgr = EventLoopManager.get_instance()
-            if mgr._loops:
-                # Prefer the most recently added loop (likely the current scope)
-                for key in reversed(list(mgr._loops.keys())):
-                    loop = mgr._loops[key]
-                    if loop and not loop.is_closed():
-                        cls._loop = loop
-                        return cls._loop
+            loop = EventLoopManager.get_current_loop()
+            if loop:
+                cls._loop = loop
+                return cls._loop
         except Exception:
             pass
 
@@ -573,8 +583,14 @@ class AsyncFixtureWrapper:
 
     @classmethod
     def teardown_module_scope(cls) -> None:
-        """Teardown module-scoped fixtures (called on module transition)."""
+        """Teardown module-scoped fixtures (called on module transition).
+
+        Also tears down class-scoped fixtures since class scope is nested
+        inside module scope.
+        """
+        cls._teardown_scope("class")  # Class is inside module
         cls._teardown_scope("module")
+        cls._current_class = None
 
     @classmethod
     def teardown_session_scope(cls) -> None:
@@ -660,10 +676,14 @@ class TachFixturePlugin:
         if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
             scope = getattr(fixturedef, 'scope', 'function')
             fixture_name = fixturedef.argname
-            consumed_value = AsyncFixtureWrapper.consume_async_fixture(
-                fixture_name, result, scope
-            )
-            outcome.force_result(consumed_value)
+            try:
+                consumed_value = AsyncFixtureWrapper.consume_async_fixture(
+                    fixture_name, result, scope
+                )
+                outcome.force_result(consumed_value)
+            except Exception as e:
+                print(f"[tach:harness] ERROR: Failed to consume async fixture '{fixture_name}': {e}", file=sys.stderr)
+                raise
 
 
 # Global instance of the plugin (registered in init_session)
@@ -4347,6 +4367,9 @@ def reset_worker_state() -> bool:
     try:
         # Reset event loop manager to cleanup any lingering loops (Issue #43)
         EventLoopManager.reset()
+
+        # Reset async fixture wrapper state (Issue #43 audit)
+        AsyncFixtureWrapper.reset()
 
         import tach_rust
 

@@ -170,3 +170,35 @@ def test_function_scope_second(function_scoped_fixture):
     assert function_scoped_fixture == "function_value_1"
     assert _function_tracker["setup"] == 1
     assert _function_tracker["teardown"] == 0
+
+
+# =============================================================================
+# Batch 2: Indirect Async Dependency Tests (pytest_fixture_setup hook)
+# =============================================================================
+
+
+@pytest.fixture
+async def base_async():
+    """Base async fixture that returns a dict value."""
+    await asyncio.sleep(0)
+    return {"key": "base_value"}
+
+
+@pytest.fixture
+def sync_uses_async(base_async):
+    """Sync fixture that depends on an async fixture.
+
+    This tests the indirect dependency problem: pytest resolves base_async
+    and passes it to this sync fixture. Without the pytest_fixture_setup hook,
+    base_async would be a raw coroutine instead of the resolved value.
+    """
+    return f"got_{base_async['key']}"
+
+
+def test_indirect_async_dependency(sync_uses_async):
+    """Test that sync fixtures can depend on async fixtures.
+
+    This verifies the pytest_fixture_setup hook intercepts async fixtures
+    at resolution time, not just when they're direct dependencies.
+    """
+    assert sync_uses_async == "got_base_value"
