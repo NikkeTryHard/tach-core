@@ -4203,9 +4203,10 @@ def run_test(
         if hasattr(original_obj, "__func__"):
             func_to_check = original_obj.__func__
 
+        # Use EventLoopManager for scoped loop management (both async tests and fixture resolution)
+        loop_manager = EventLoopManager.get_instance()
+
         if inspect.iscoroutinefunction(func_to_check):
-            # Use EventLoopManager for scoped loop management
-            loop_manager = EventLoopManager.get_instance()
 
             # Parse asyncio marker for loop_scope configuration
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
@@ -4247,15 +4248,13 @@ def run_test(
         # Get the scoped loop BEFORE runtestprotocol() so fixtures resolve with correct loop
         # This fixes the issue where AsyncFixtureWrapper.set_loop() was called with a generic
         # loop, but the test's scoped loop was only set inside sync_wrapper (too late for fixtures)
-        loop_manager_for_fixtures = EventLoopManager.get_instance()
-
         if inspect.iscoroutinefunction(func_to_check):
             # Async test: use the already-computed scope_key from above
-            fixture_loop = loop_manager_for_fixtures.get_loop(scope_key)
+            fixture_loop = loop_manager.get_loop(scope_key)
         else:
             # Non-async test: use function scope for async fixture consumption
             fixture_scope_key = f"function:{target_item.nodeid}"
-            fixture_loop = loop_manager_for_fixtures.get_loop(fixture_scope_key)
+            fixture_loop = loop_manager.get_loop(fixture_scope_key)
 
         # Set the scoped loop as current BEFORE fixtures are resolved
         asyncio.set_event_loop(fixture_loop)
