@@ -1077,6 +1077,38 @@ fn run_tests(
                 }
             }
 
+            // --- ASYNCIO CONFIG ---
+            // Parse asyncio configuration from pyproject.toml and add as session effect
+            // This enables pytest-asyncio auto mode and loop_scope settings
+            if let Ok(asyncio_config) = tach_core::discovery::parse_asyncio_config(&project_root) {
+                // Only add effect if auto_mode is enabled or non-default loop_scope
+                if asyncio_config.auto_mode || asyncio_config.loop_scope != "function" {
+                    let loop_scope = match asyncio_config.loop_scope.as_str() {
+                        "session" => tach_core::hooks::LoopScope::Session,
+                        "module" => tach_core::hooks::LoopScope::Module,
+                        "class" => tach_core::hooks::LoopScope::Class,
+                        _ => tach_core::hooks::LoopScope::Function,
+                    };
+                    let asyncio_effect = tach_core::hooks::HookEffect::AsyncioSetup {
+                        loop_scope,
+                        auto_mode: asyncio_config.auto_mode,
+                    };
+                    hook_registry.record_effect("pytest_configure", asyncio_effect);
+
+                    if !is_json {
+                        eprintln!(
+                            "[tach:supervisor] Asyncio config: mode={}, loop_scope={}",
+                            if asyncio_config.auto_mode {
+                                "auto"
+                            } else {
+                                "strict"
+                            },
+                            asyncio_config.loop_scope
+                        );
+                    }
+                }
+            }
+
             // --- SCHEDULER ---
             // Use with_config to pass timeout_hook from pyproject.toml
             let global_timeout = tach_config.timeout();
