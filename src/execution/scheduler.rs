@@ -24,6 +24,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Polling interval when waiting for worker capacity
+const CAPACITY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Read and decode a framed message from a socket.
 ///
 /// Handles the protocol header reading, size validation, oversized payload draining,
@@ -290,33 +293,16 @@ impl Scheduler {
 
                 // Check for crashed workers while waiting for capacity
                 let crashed = self.detect_crashed_workers();
-                for (test_id, test_name, slot) in crashed {
-                    // Determine crash phase for better error messages
-                    let crash_phase = {
-                        let workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        if let Some(w) = workers.get(&test_id) {
-                            if w.start_time.elapsed() < Duration::from_secs(1) {
-                                "Worker crashed during fixture setup"
-                            } else {
-                                "Worker crashed during test execution"
-                            }
-                        } else {
-                            "Worker crashed unexpectedly"
-                        }
+                for (test_id, test_name, slot, start_time) in crashed {
+                    // Determine crash phase from start_time (no re-locking needed)
+                    let crash_phase = if start_time.elapsed() < Duration::from_secs(1) {
+                        "Worker crashed during fixture setup"
+                    } else {
+                        "Worker crashed during test execution"
                     };
-                    reporter.on_test_finished(&test_name, "crash", 0, Some(crash_phase));
-                    let _ = self
-                        .log_capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
-                    self.active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&test_id);
+                    self.finalize_crashed_worker(
+                        test_id, &test_name, slot, "crash", crash_phase, reporter,
+                    );
                     failed += 1;
                     collected += 1;
                 }
@@ -332,27 +318,15 @@ impl Scheduler {
                         invoke_timeout_hook(hook_spec, test_id, &test_name, timeout_secs);
                     }
 
-                    reporter.on_test_finished(
-                        &test_name,
-                        "timeout",
-                        0,
-                        Some("Test exceeded timeout limit"),
+                    self.finalize_crashed_worker(
+                        test_id, &test_name, slot, "timeout", "Test exceeded timeout limit", reporter,
                     );
-                    let _ = self
-                        .log_capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
-                    self.active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&test_id);
                     failed += 1;
                     collected += 1;
                 }
 
                 // Small sleep to prevent busy-wait when no progress
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(CAPACITY_POLL_INTERVAL);
             }
 
             // Emit test_start event
@@ -386,33 +360,16 @@ impl Scheduler {
             } else {
                 // Check for crashed workers (process died unexpectedly)
                 let crashed = self.detect_crashed_workers();
-                for (test_id, test_name, slot) in crashed {
-                    // Determine crash phase for better error messages
-                    let crash_phase = {
-                        let workers = self
-                            .active_workers
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        if let Some(w) = workers.get(&test_id) {
-                            if w.start_time.elapsed() < Duration::from_secs(1) {
-                                "Worker crashed during fixture setup"
-                            } else {
-                                "Worker crashed during test execution"
-                            }
-                        } else {
-                            "Worker crashed unexpectedly"
-                        }
+                for (test_id, test_name, slot, start_time) in crashed {
+                    // Determine crash phase from start_time (no re-locking needed)
+                    let crash_phase = if start_time.elapsed() < Duration::from_secs(1) {
+                        "Worker crashed during fixture setup"
+                    } else {
+                        "Worker crashed during test execution"
                     };
-                    reporter.on_test_finished(&test_name, "crash", 0, Some(crash_phase));
-                    let _ = self
-                        .log_capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
-                    self.active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&test_id);
+                    self.finalize_crashed_worker(
+                        test_id, &test_name, slot, "crash", crash_phase, reporter,
+                    );
                     failed += 1;
                     collected += 1;
                 }
@@ -428,21 +385,9 @@ impl Scheduler {
                         invoke_timeout_hook(hook_spec, test_id, &test_name, timeout_secs);
                     }
 
-                    reporter.on_test_finished(
-                        &test_name,
-                        "timeout",
-                        0,
-                        Some("Test exceeded timeout limit"),
+                    self.finalize_crashed_worker(
+                        test_id, &test_name, slot, "timeout", "Test exceeded timeout limit", reporter,
                     );
-                    let _ = self
-                        .log_capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .read_and_clear(slot);
-                    self.active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&test_id);
                     failed += 1;
                     collected += 1;
                 }
@@ -811,11 +756,12 @@ impl Scheduler {
     /// Detect workers whose processes have crashed (died unexpectedly).
     ///
     /// Uses kill(pid, 0) to check if the process still exists.
-    /// Returns (test_id, test_name, slot) for each crashed worker.
+    /// Returns (test_id, test_name, slot, start_time) for each crashed worker.
+    /// The start_time is included to avoid re-locking when determining crash phase.
     ///
     /// Uses atomic compare_exchange to ensure each crash is handled exactly once,
     /// preventing race conditions when multiple threads call this method concurrently.
-    fn detect_crashed_workers(&self) -> Vec<(u32, String, usize)> {
+    fn detect_crashed_workers(&self) -> Vec<(u32, String, usize, Instant)> {
         let workers = self
             .active_workers
             .lock()
@@ -838,8 +784,37 @@ impl Scheduler {
                     false
                 }
             })
-            .map(|(id, w)| (*id, w.test_name.clone(), w.slot))
+            .map(|(id, w)| (*id, w.test_name.clone(), w.slot, w.start_time))
             .collect()
+    }
+
+    /// Finalize a crashed or timed-out worker.
+    ///
+    /// Handles the common cleanup logic:
+    /// - Reports test result to reporter
+    /// - Clears log capture for the slot
+    /// - Removes worker from active_workers
+    ///
+    /// Returns (failed_increment, collected_increment) - always (1, 1).
+    fn finalize_crashed_worker(
+        &self,
+        test_id: u32,
+        test_name: &str,
+        slot: usize,
+        status: &str,
+        message: &str,
+        reporter: &mut dyn Reporter,
+    ) {
+        reporter.on_test_finished(test_name, status, 0, Some(message));
+        let _ = self
+            .log_capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_and_clear(slot);
+        self.active_workers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&test_id);
     }
 
     /// Check health of active workers and report any crashes.
@@ -852,23 +827,13 @@ impl Scheduler {
         let crashed = self.detect_crashed_workers();
         crashed
             .into_iter()
-            .map(|(id, name, slot)| {
-                // Determine the crash phase based on elapsed time
+            .map(|(id, name, slot, start_time)| {
+                // Determine the crash phase based on elapsed time (no re-locking needed)
                 // If very early (< 1s), likely fixture setup; otherwise test execution
-                let phase = {
-                    let workers = self
-                        .active_workers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    if let Some(w) = workers.get(&id) {
-                        if w.start_time.elapsed() < Duration::from_secs(1) {
-                            "fixture setup"
-                        } else {
-                            "test execution"
-                        }
-                    } else {
-                        "unknown phase"
-                    }
+                let phase = if start_time.elapsed() < Duration::from_secs(1) {
+                    "fixture setup"
+                } else {
+                    "test execution"
                 };
                 (id, name, slot, phase)
             })
