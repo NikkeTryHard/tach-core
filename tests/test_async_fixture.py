@@ -202,3 +202,25 @@ def test_indirect_async_dependency(sync_uses_async):
     at resolution time, not just when they're direct dependencies.
     """
     assert sync_uses_async == "got_base_value"
+
+
+# =============================================================================
+# Batch 4: Teardown Error Handling Tests
+# =============================================================================
+
+
+@pytest.fixture
+async def failing_teardown_fixture():
+    """Async fixture with teardown that raises an exception."""
+    yield "value_before_teardown"
+    raise RuntimeError("Teardown failed intentionally")
+
+
+def test_teardown_error_is_captured(failing_teardown_fixture):
+    """Test that passes but has a failing teardown.
+
+    The test itself should pass, but the teardown error should be captured
+    and reported via EventLoopManager.get_teardown_errors().
+    This verifies Batch 4 implementation: teardown errors upgrade STATUS_PASS to STATUS_ERROR.
+    """
+    assert failing_teardown_fixture == "value_before_teardown"

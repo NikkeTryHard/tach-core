@@ -87,6 +87,8 @@ struct TestCase {
     #[serde(skip_serializing_if = "Option::is_none")]
     failure: Option<Failure>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<Error>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     skipped: Option<Skipped>,
 }
 
@@ -98,9 +100,21 @@ struct Failure {
     body: String,
 }
 
-/// Empty struct that serializes to <skipped/> element
+/// Error struct for error/crash/timeout/harness_error statuses
 #[derive(Serialize)]
-struct Skipped {}
+struct Error {
+    #[serde(rename = "@message")]
+    message: String,
+    #[serde(rename = "$text")]
+    body: String,
+}
+
+/// Skipped struct with optional message for xfail differentiation
+#[derive(Serialize)]
+struct Skipped {
+    #[serde(rename = "@message", skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
 
 // =============================================================================
 // JunitReporter
@@ -152,40 +166,70 @@ impl Reporter for JunitReporter {
             .replace(".py", "");
         let name = parts.get(1).unwrap_or(&id).to_string();
 
-        // Determine failure and skipped based on status
-        let (failure, skipped) = match status {
-            "pass" => (None, None),
-            "skip" => (None, Some(Skipped {})),
+        // Determine failure, error, and skipped based on status
+        let mut failure = None;
+        let mut error = None;
+        let mut skipped = None;
+
+        match status {
+            "pass" => {}
+            "skip" => {
+                skipped = Some(Skipped { message: None });
+            }
+            "xfail" => {
+                skipped = Some(Skipped {
+                    message: Some("Expected Failure (xfail)".to_string()),
+                });
+            }
+            "xpass" => {
+                let raw_msg = message.unwrap_or("Test passed unexpectedly");
+                let clean_msg = strip_ansi_codes(raw_msg);
+                failure = Some(Failure {
+                    message: "Unexpected Pass (xpass)".to_string(),
+                    body: clean_msg,
+                });
+            }
+            "error" | "crash" | "timeout" | "harness_error" => {
+                let raw_msg = message.unwrap_or("Test error");
+                let clean_msg = strip_ansi_codes(raw_msg);
+                error = Some(Error {
+                    message: format!("Test {}", status),
+                    body: clean_msg,
+                });
+            }
             _ => {
                 // "fail" or any other status is treated as failure
                 let raw_msg = message.unwrap_or("Test failed");
                 let clean_msg = strip_ansi_codes(raw_msg);
-                (
-                    Some(Failure {
-                        message: "Test failed".to_string(),
-                        body: clean_msg,
-                    }),
-                    None,
-                )
+                failure = Some(Failure {
+                    message: "Test failed".to_string(),
+                    body: clean_msg,
+                });
             }
-        };
+        }
 
         self.cases.push(TestCase {
             name,
             classname,
             time: duration_ms as f64 / 1000.0,
             failure,
+            error,
             skipped,
         });
     }
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+        // Calculate errors and failures from buffered cases for accurate counts
+        let errors = self.cases.iter().filter(|c| c.error.is_some()).count();
+        let failures = self.cases.iter().filter(|c| c.failure.is_some()).count();
+        let skipped_count = self.cases.iter().filter(|c| c.skipped.is_some()).count();
+
         let suite = TestSuite {
             name: "tach".to_string(),
-            tests: passed + failed + skipped,
-            failures: failed,
-            errors: 0,
-            skipped,
+            tests: self.cases.len(),
+            failures,
+            errors,
+            skipped: skipped_count,
             time: duration_ms as f64 / 1000.0,
             cases: std::mem::take(&mut self.cases),
         };
@@ -376,17 +420,150 @@ mod tests {
 
         assert_eq!(reporter.cases.len(), 3);
 
-        // Pass: no failure, no skipped
+        // Pass: no failure, no error, no skipped
         assert!(reporter.cases[0].failure.is_none());
+        assert!(reporter.cases[0].error.is_none());
         assert!(reporter.cases[0].skipped.is_none());
 
-        // Fail: failure present, no skipped
+        // Fail: failure present, no error, no skipped
         assert!(reporter.cases[1].failure.is_some());
+        assert!(reporter.cases[1].error.is_none());
         assert!(reporter.cases[1].skipped.is_none());
 
-        // Skip: no failure, skipped present
+        // Skip: no failure, no error, skipped present (no message)
         assert!(reporter.cases[2].failure.is_none());
+        assert!(reporter.cases[2].error.is_none());
         assert!(reporter.cases[2].skipped.is_some());
+        assert!(
+            reporter.cases[2]
+                .skipped
+                .as_ref()
+                .unwrap()
+                .message
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_junit_xfail_status() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished("test.py::test_xfail", "xfail", 10, None);
+
+        assert_eq!(reporter.cases.len(), 1);
+        assert!(reporter.cases[0].failure.is_none());
+        assert!(reporter.cases[0].error.is_none());
+        assert!(reporter.cases[0].skipped.is_some());
+
+        let skipped = reporter.cases[0].skipped.as_ref().unwrap();
+        assert_eq!(
+            skipped.message,
+            Some("Expected Failure (xfail)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_junit_xpass_status() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(1);
+        reporter.on_test_finished(
+            "test.py::test_xpass",
+            "xpass",
+            10,
+            Some("Test passed unexpectedly"),
+        );
+
+        assert_eq!(reporter.cases.len(), 1);
+        assert!(reporter.cases[0].skipped.is_none());
+        assert!(reporter.cases[0].error.is_none());
+        assert!(reporter.cases[0].failure.is_some());
+
+        let failure = reporter.cases[0].failure.as_ref().unwrap();
+        assert_eq!(failure.message, "Unexpected Pass (xpass)");
+        assert_eq!(failure.body, "Test passed unexpectedly");
+    }
+
+    #[test]
+    fn test_junit_error_statuses() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(4);
+        reporter.on_test_finished("test.py::test_error", "error", 10, Some("RuntimeError"));
+        reporter.on_test_finished("test.py::test_crash", "crash", 20, Some("Segfault"));
+        reporter.on_test_finished("test.py::test_timeout", "timeout", 30000, Some("Timed out"));
+        reporter.on_test_finished(
+            "test.py::test_harness",
+            "harness_error",
+            5,
+            Some("Harness failed"),
+        );
+
+        assert_eq!(reporter.cases.len(), 4);
+
+        // All should have error, no failure, no skipped
+        for case in &reporter.cases {
+            assert!(case.failure.is_none());
+            assert!(case.skipped.is_none());
+            assert!(case.error.is_some());
+        }
+
+        // Verify error messages
+        assert_eq!(
+            reporter.cases[0].error.as_ref().unwrap().message,
+            "Test error"
+        );
+        assert_eq!(
+            reporter.cases[0].error.as_ref().unwrap().body,
+            "RuntimeError"
+        );
+
+        assert_eq!(
+            reporter.cases[1].error.as_ref().unwrap().message,
+            "Test crash"
+        );
+        assert_eq!(reporter.cases[1].error.as_ref().unwrap().body, "Segfault");
+
+        assert_eq!(
+            reporter.cases[2].error.as_ref().unwrap().message,
+            "Test timeout"
+        );
+        assert_eq!(reporter.cases[2].error.as_ref().unwrap().body, "Timed out");
+
+        assert_eq!(
+            reporter.cases[3].error.as_ref().unwrap().message,
+            "Test harness_error"
+        );
+        assert_eq!(
+            reporter.cases[3].error.as_ref().unwrap().body,
+            "Harness failed"
+        );
+    }
+
+    #[test]
+    fn test_junit_error_count_calculation() {
+        let mut reporter = JunitReporter::new(PathBuf::from("/tmp/test.xml"));
+        reporter.on_run_start(5);
+        reporter.on_test_finished("test.py::test_pass", "pass", 10, None);
+        reporter.on_test_finished("test.py::test_fail", "fail", 20, Some("failed"));
+        reporter.on_test_finished("test.py::test_error", "error", 30, Some("error"));
+        reporter.on_test_finished("test.py::test_timeout", "timeout", 40, Some("timeout"));
+        reporter.on_test_finished("test.py::test_skip", "skip", 5, None);
+
+        // Verify counts from buffered cases
+        let errors = reporter.cases.iter().filter(|c| c.error.is_some()).count();
+        let failures = reporter
+            .cases
+            .iter()
+            .filter(|c| c.failure.is_some())
+            .count();
+        let skipped = reporter
+            .cases
+            .iter()
+            .filter(|c| c.skipped.is_some())
+            .count();
+
+        assert_eq!(errors, 2); // error + timeout
+        assert_eq!(failures, 1); // fail
+        assert_eq!(skipped, 1); // skip
     }
 
     // =========================================================================
