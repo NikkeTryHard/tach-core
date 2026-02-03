@@ -3706,17 +3706,16 @@ def _get_fixture_names_from_item(item: Any) -> list[str]:
     return fixture_names
 
 
-def _construct_nodeid(file_path: str, test_name: str) -> str:
+def _construct_nodeid(file_path: str, node_id: str) -> str:
     """
-    Construct a pytest nodeid relative to the session's rootdir.
+    Transform a nodeid to be relative to pytest's rootdir.
 
-    This ensures the nodeid matches _ITEMS_MAP keys regardless of:
-    - Where tach was invoked from (parent dir, project root, etc.)
-    - Nested pyproject.toml/pytest.ini files affecting rootdir
+    The node_id from Rust may have a different path prefix than pytest expects.
+    We extract the test identifier and reconstruct it relative to rootdir.
 
     Args:
-        file_path: Absolute or relative path to the test file
-        test_name: Test identifier (e.g., "TestClass::test_method" or "test_func")
+        file_path: Absolute or relative path to the test file (fallback)
+        node_id: Full nodeid from Rust (e.g., "test-aistudio/tests/foo.py::TestClass::test_method")
 
     Returns:
         Nodeid string matching pytest's format (e.g., "tests/foo.py::test_bar")
@@ -3724,28 +3723,40 @@ def _construct_nodeid(file_path: str, test_name: str) -> str:
     global _SESSION
 
     if _SESSION is None:
-        # Fallback if session not initialized
-        return f"{file_path}::{test_name}"
+        return node_id  # Can't transform without session
 
-    # Get pytest's rootdir from the session config
+    # Get pytest's rootdir
     rootdir = _SESSION.config.rootdir
 
-    # Convert file_path to absolute, then make relative to rootdir
-    abs_path = os.path.abspath(file_path)
+    # Split nodeid into path and test parts
+    # e.g., "test-aistudio/tests/foo.py::TestClass::test_method"
+    # -> path = "test-aistudio/tests/foo.py", test_part = "TestClass::test_method"
+    if "::" in node_id:
+        parts = node_id.split("::", 1)
+        path_part = parts[0]
+        test_part = parts[1] if len(parts) > 1 else ""
+    else:
+        # No :: means it's just a path, use file_path instead
+        path_part = file_path
+        test_part = node_id
+
+    # Convert path to be relative to rootdir
+    abs_path = os.path.abspath(path_part)
     try:
         rel_path = os.path.relpath(abs_path, start=str(rootdir))
     except ValueError:
-        # On Windows, relpath fails if paths are on different drives
-        rel_path = file_path
+        rel_path = path_part
 
-    # Normalize path separators to forward slashes (pytest convention)
+    # Normalize to forward slashes
     rel_path = rel_path.replace(os.sep, "/")
 
-    # Debug logging if enabled
-    if os.environ.get("TACH_DEBUG_NODEID"):
-        os.write(2, f"[tach:harness] nodeid: {file_path} + {test_name} -> {rel_path}::{test_name}\n".encode())
+    # Reconstruct nodeid
+    constructed = f"{rel_path}::{test_part}" if test_part else rel_path
 
-    return f"{rel_path}::{test_name}"
+    if os.environ.get("TACH_DEBUG_NODEID"):
+        os.write(2, f"[tach:harness] nodeid: {node_id} -> {constructed}\n".encode())
+
+    return constructed
 
 
 def run_test(
