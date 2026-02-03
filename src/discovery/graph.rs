@@ -207,10 +207,19 @@ impl ToxicityGraph {
 
     /// Check if a module (by path) is toxic
     pub fn is_toxic(&self, path: &Path) -> bool {
-        self.path_to_node
-            .get(path)
-            .map(|&idx| self.graph[idx].is_toxic)
-            .unwrap_or(false)
+        // Try direct lookup first
+        if let Some(&idx) = self.path_to_node.get(path) {
+            return self.graph[idx].is_toxic;
+        }
+
+        // Try canonicalized path lookup
+        if let Ok(canonical) = path.canonicalize()
+            && let Some(&idx) = self.path_to_node.get(&canonical)
+        {
+            return self.graph[idx].is_toxic;
+        }
+
+        false
     }
 
     /// Check if a module (by name) is toxic
@@ -223,10 +232,21 @@ impl ToxicityGraph {
 
     /// Get the toxicity report for a module (by path)
     pub fn get_report(&self, path: &Path) -> Option<(bool, Vec<String>)> {
-        self.path_to_node.get(path).map(|&idx| {
+        // Try direct lookup first
+        if let Some(&idx) = self.path_to_node.get(path) {
             let node = &self.graph[idx];
-            (node.is_toxic, node.reasons.clone())
-        })
+            return Some((node.is_toxic, node.reasons.clone()));
+        }
+
+        // Try canonicalized path lookup
+        if let Ok(canonical) = path.canonicalize()
+            && let Some(&idx) = self.path_to_node.get(&canonical)
+        {
+            let node = &self.graph[idx];
+            return Some((node.is_toxic, node.reasons.clone()));
+        }
+
+        None
     }
 
     /// Get the toxicity report for a module (by name)
@@ -749,6 +769,32 @@ mod tests {
         assert!(
             !graph.is_toxic(&test_path),
             "test_example.py should be safe (no toxic imports or hooks)"
+        );
+    }
+
+    #[test]
+    fn test_is_toxic_with_absolute_path() {
+        let temp = TempDir::new().unwrap();
+        let toxic_file = temp.path().join("toxic.py");
+        fs::write(&toxic_file, "import threading\ndef test_x(): pass").unwrap();
+
+        let graph = ToxicityGraph::build(
+            std::slice::from_ref(&toxic_file),
+            temp.path(),
+            &empty_registry(),
+        );
+
+        // Query with canonicalized absolute path
+        let canonical = toxic_file.canonicalize().unwrap();
+        assert!(
+            graph.is_toxic(&canonical),
+            "Should find toxic status using absolute path"
+        );
+
+        // Query with the original path
+        assert!(
+            graph.is_toxic(&toxic_file),
+            "Should find toxic status using original path"
         );
     }
 
