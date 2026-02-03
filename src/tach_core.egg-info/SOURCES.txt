@@ -1,9 +1,0 @@
-LICENSE
-README.md
-pyproject.toml
-src/tach_harness.py
-src/tach_core.egg-info/PKG-INFO
-src/tach_core.egg-info/SOURCES.txt
-src/tach_core.egg-info/dependency_links.txt
-src/tach_core.egg-info/requires.txt
-src/tach_core.egg-info/top_level.txt
