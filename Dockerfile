@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     cmake \
+    mold \
     # Python 3.12
     python3.12 \
     python3.12-venv \
