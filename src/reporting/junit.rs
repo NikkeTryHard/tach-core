@@ -14,6 +14,7 @@ use std::time::Instant;
 /// This function removes ANSI escape sequences (like color codes) from strings
 /// to produce clean output for XML reports. It handles:
 /// - CSI sequences: `\x1b[...m` (colors, formatting)
+/// - OSC sequences: `\x1b]...BEL` or `\x1b]...\x1b\\` (hyperlinks, window titles)
 /// - Null bytes: stripped to avoid XML issues
 ///
 /// # Arguments
@@ -30,6 +31,7 @@ pub fn strip_ansi_codes(s: &str) -> String {
         if c == '\x1b' {
             // Skip escape sequence
             if chars.peek() == Some(&'[') {
+                // CSI sequence: \x1b[...letter
                 chars.next(); // consume '['
                 // Skip until we hit a letter
                 while let Some(&next) = chars.peek() {
@@ -38,7 +40,24 @@ pub fn strip_ansi_codes(s: &str) -> String {
                         break;
                     }
                 }
+            } else if chars.peek() == Some(&']') {
+                // OSC sequence: \x1b]...BEL or \x1b]...\x1b\\
+                chars.next(); // consume ']'
+                // Skip until BEL (\x07) or ST (\x1b\\)
+                while let Some(next) = chars.next() {
+                    if next == '\x07' {
+                        // BEL terminates OSC
+                        break;
+                    } else if next == '\x1b' {
+                        // Check for ST (\x1b\\)
+                        if chars.peek() == Some(&'\\') {
+                            chars.next(); // consume '\\'
+                            break;
+                        }
+                    }
+                }
             }
+            // For other escape sequences (like \x1b= or \x1b>), just skip the ESC byte
         } else if c != '\0' {
             // Skip null bytes
             result.push(c);
@@ -630,27 +649,38 @@ mod tests {
     #[test]
     fn test_strip_ansi_osc_sequences() {
         // OSC (Operating System Command) sequences use \x1b] instead of \x1b[
-        // Current implementation only handles CSI (\x1b[), so OSC opener is stripped
-        // but the rest of the sequence may remain
+        // These are used for terminal hyperlinks, window titles, etc.
 
-        // Lone escape without [ - should just strip the escape
+        // Lone escape without [ or ] - should just strip the escape
         let input = "\x1bhello";
         let output = strip_ansi_codes(input);
-        // The \x1b is stripped, 'h' is NOT consumed because peek != '['
         assert_eq!(
             output, "hello",
-            "Non-CSI escape should strip only the ESC byte"
+            "Non-CSI/OSC escape should strip only the ESC byte"
         );
 
-        // OSC sequence: \x1b]...BEL or \x1b]...\x1b\\
-        // The implementation strips \x1b but leaves ] and content
+        // OSC sequence terminated by BEL (\x07)
         let input = "\x1b]0;window title\x07normal";
         let output = strip_ansi_codes(input);
-        // This is current behavior - OSC content is NOT fully stripped
-        // The output will contain "]0;window title\x07normal" after stripping \x1b
-        assert!(
-            !output.contains('\x1b'),
-            "ESC byte should be stripped from OSC sequence"
+        assert_eq!(
+            output, "normal",
+            "OSC sequence with BEL terminator should be fully stripped"
+        );
+
+        // OSC sequence terminated by ST (\x1b\\)
+        let input = "\x1b]0;window title\x1b\\normal";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "normal",
+            "OSC sequence with ST terminator should be fully stripped"
+        );
+
+        // Terminal hyperlink (OSC 8)
+        let input = "\x1b]8;;https://example.com\x07Click here\x1b]8;;\x07";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "Click here",
+            "Terminal hyperlink OSC sequences should be stripped"
         );
 
         // Multiple non-CSI escapes
@@ -659,6 +689,22 @@ mod tests {
         assert_eq!(
             output, "=>",
             "Non-CSI escapes strip only ESC, leave next char"
+        );
+
+        // OSC mixed with CSI
+        let input = "\x1b]0;title\x07\x1b[31mRed\x1b[0m text";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "Red text",
+            "Mixed OSC and CSI sequences should both be stripped"
+        );
+
+        // Incomplete OSC (no terminator) - consumes to end of string
+        let input = "before\x1b]0;incomplete";
+        let output = strip_ansi_codes(input);
+        assert_eq!(
+            output, "before",
+            "Incomplete OSC sequence should be stripped to end"
         );
     }
 
