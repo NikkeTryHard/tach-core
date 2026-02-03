@@ -2444,6 +2444,10 @@ def init_session(root_dir: str):
         "-p",
         "no:sugar",
         "-p",
+        "no:asyncio",
+        "-p",
+        "no:trio",
+        "-p",
         "no:django",
     ]
 
