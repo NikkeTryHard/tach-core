@@ -4348,17 +4348,19 @@ def run_test(
                 # Debug logging for troubleshooting enhancement failures
                 print(f"[tach:harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
-            # Append teardown errors to failed test message if any
+            # Teardown errors take precedence - upgrade to STATUS_ERROR
             if teardown_msg:
                 msg = f"{msg}\n\n{teardown_msg}"
+                return (STATUS_ERROR, duration, msg, _thread_leak_detected)
             return (STATUS_FAIL, duration, msg, _thread_leak_detected)
 
         if skipped_report:
             skip_reason = str(skipped_report.longrepr) if skipped_report.longrepr else ""
             skip_msg = f"Skipped: {skip_reason}"
-            # Append teardown errors to skipped test message if any
+            # Teardown errors take precedence - upgrade to STATUS_ERROR
             if teardown_msg:
                 skip_msg = f"{skip_msg}\n\n{teardown_msg}"
+                return (STATUS_ERROR, duration, skip_msg, _thread_leak_detected)
             return (STATUS_SKIP, duration, skip_msg, _thread_leak_detected)
 
         # Test passed - but check for teardown errors
