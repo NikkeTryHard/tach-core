@@ -17,6 +17,7 @@ import pdb
 import re
 import math
 import warnings as warnings_module
+import pytest
 import _pytest.runner
 import _pytest.main
 import _pytest.config
@@ -76,6 +77,20 @@ class EventLoopManager:
         if cls._instance is not None:
             cls._instance.close_all()
             cls._instance = None
+
+    @classmethod
+    def get_current_loop(cls) -> Optional[asyncio.AbstractEventLoop]:
+        """Get the most recently created valid loop, or None.
+
+        This provides encapsulated access to the managed loops without
+        exposing internal _loops dictionary.
+        """
+        instance = cls.get_instance()
+        for key in reversed(list(instance._loops.keys())):
+            loop = instance._loops[key]
+            if loop and not loop.is_closed():
+                return loop
+        return None
 
     def configure(self, loop_scope: str = "function", auto_mode: bool = False) -> None:
         """Configure loop scope and auto mode."""
@@ -372,23 +387,49 @@ def teardown_async_fixture(
 
 
 class AsyncFixtureWrapper:
-    """Wrapper that tracks async fixtures for proper teardown.
+    """Wrapper that tracks async fixtures for proper teardown by scope.
 
     When pytest resolves an async fixture, we intercept it, consume the
     coroutine/generator, store the value, and return that to the test.
-    The generator is stored for teardown after the test completes.
+    The generator is stored for teardown based on its scope.
+
+    Scope Hierarchy:
+    - session: Torn down at end of test session
+    - module: Torn down when transitioning to a different module
+    - class: Torn down when transitioning to a different class
+    - function: Torn down after each test
 
     NOTE: This class uses class-level state and assumes single-threaded execution
     per worker process (consistent with tach's Zygote forking model).
-
-    TODO: Consider integrating with EventLoopManager for loop_scope-aware
-    event loop sharing in a future release.
     """
 
-    _active_generators: dict[str, Any] = {}
+    # Scope-nested storage: {scope: {fixture_name: generator}}
+    _generators_by_scope: dict[str, dict[str, Any]] = {
+        "session": {},
+        "module": {},
+        "class": {},
+        "function": {},
+    }
+    # Scope-nested consumed tracking: {scope: {fixture_name}}
+    _consumed_by_scope: dict[str, set[str]] = {
+        "session": set(),
+        "module": set(),
+        "class": set(),
+        "function": set(),
+    }
+    # Cached fixture values by scope: {scope: {fixture_name: value}}
+    _values_by_scope: dict[str, dict[str, Any]] = {
+        "session": {},
+        "module": {},
+        "class": {},
+        "function": {},
+    }
     _loop: Optional[asyncio.AbstractEventLoop] = None
-    _consumed: set[str] = set()  # Track consumed fixtures for idempotency
     _teardown_errors: list[Exception] = []  # Collect errors for reporting
+
+    # Scope transition tracking
+    _current_module: Optional[str] = None
+    _current_class: Optional[str] = None
 
     @classmethod
     def set_loop(cls, loop: asyncio.AbstractEventLoop) -> None:
@@ -397,26 +438,75 @@ class AsyncFixtureWrapper:
 
     @classmethod
     def get_loop(cls) -> asyncio.AbstractEventLoop:
-        """Get or create event loop for fixtures."""
-        if cls._loop is None or cls._loop.is_closed():
-            cls._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(cls._loop)
+        """Get event loop, preferring EventLoopManager's loop if available.
+
+        This ensures fixtures use the same loop as test execution, preventing
+        'Task attached to different loop' errors.
+        """
+        if cls._loop is not None and not cls._loop.is_closed():
+            return cls._loop
+
+        # Try to get loop from EventLoopManager for consistency
+        try:
+            loop = EventLoopManager.get_current_loop()
+            if loop:
+                cls._loop = loop
+                return cls._loop
+        except Exception:
+            pass
+
+        # Create new loop as fallback
+        cls._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(cls._loop)
         return cls._loop
 
     @classmethod
-    def consume_async_fixture(cls, fixture_name: str, fixture_value: Any) -> Any:
+    def on_test_start(cls, module_path: Optional[str], class_name: Optional[str]) -> None:
+        """Handle scope transitions before a test starts.
+
+        Called before each test to detect module/class boundaries and
+        teardown fixtures from scopes that have ended.
+
+        Args:
+            module_path: Path to the current test module
+            class_name: Name of the current test class (or None)
+        """
+        # Module transition: teardown previous module's fixtures
+        if cls._current_module is not None and cls._current_module != module_path:
+            cls.teardown_module_scope()
+
+        # Class transition: teardown previous class's fixtures
+        if cls._current_class is not None and cls._current_class != class_name:
+            cls.teardown_class_scope()
+
+        # Update tracking
+        cls._current_module = module_path
+        cls._current_class = class_name
+
+    @classmethod
+    def consume_async_fixture(
+        cls,
+        fixture_name: str,
+        fixture_value: Any,
+        scope: str = "function"
+    ) -> Any:
         """Consume an async fixture value and return the actual result.
 
         Args:
             fixture_name: Name of the fixture (for tracking generators)
             fixture_value: The raw value from pytest (may be coroutine/generator)
+            scope: Fixture scope (session/module/class/function)
 
         Returns:
             The actual fixture value after awaiting
         """
-        # Idempotency check - skip if already consumed
-        if fixture_name in cls._consumed:
-            return fixture_value
+        # Normalize scope
+        if scope not in cls._consumed_by_scope:
+            scope = "function"
+
+        # Idempotency check - return cached value if already consumed
+        if fixture_name in cls._consumed_by_scope[scope]:
+            return cls._values_by_scope[scope].get(fixture_name, fixture_value)
 
         loop = cls.get_loop()
 
@@ -428,14 +518,16 @@ class AsyncFixtureWrapper:
                     return value
 
                 result = loop.run_until_complete(consume_gen())
-                cls._active_generators[fixture_name] = fixture_value
-                cls._consumed.add(fixture_name)
+                cls._generators_by_scope[scope][fixture_name] = fixture_value
+                cls._consumed_by_scope[scope].add(fixture_name)
+                cls._values_by_scope[scope][fixture_name] = result
                 return result
 
             # Case 2: Coroutine (async def without yield)
             if asyncio.iscoroutine(fixture_value):
                 result = loop.run_until_complete(fixture_value)
-                cls._consumed.add(fixture_name)
+                cls._consumed_by_scope[scope].add(fixture_name)
+                cls._values_by_scope[scope][fixture_name] = result
                 return result
 
             # Case 3: Already a regular value
@@ -447,39 +539,85 @@ class AsyncFixtureWrapper:
             raise
 
     @classmethod
-    def teardown_all(cls) -> None:
-        """Teardown all active async generator fixtures.
+    def _teardown_scope(cls, scope: str) -> None:
+        """Teardown all fixtures in a specific scope.
 
-        Collects errors and raises after all teardowns complete so all
-        fixtures get cleaned up even if some fail.
+        Args:
+            scope: The scope to teardown (session/module/class/function)
         """
-        if not cls._active_generators:
+        generators = cls._generators_by_scope.get(scope, {})
+        if not generators:
             return
 
         loop = cls.get_loop()
         errors: list[tuple[str, Exception]] = []
 
-        for name, gen in list(cls._active_generators.items()):
+        for name, gen in list(generators.items()):
             try:
                 async def cleanup():
                     await gen.aclose()
                 loop.run_until_complete(cleanup())
             except Exception as e:
                 errors.append((name, e))
-                print(f"[tach:harness] WARN: Async fixture '{name}' teardown failed: {e}", file=sys.stderr)
+                print(f"[tach:harness] WARN: Async fixture '{name}' ({scope}) teardown failed: {e}", file=sys.stderr)
 
-        cls._active_generators.clear()
+        # Clear this scope's state
+        cls._generators_by_scope[scope].clear()
+        cls._consumed_by_scope[scope].clear()
+        cls._values_by_scope[scope].clear()
 
-        # Collect errors for later retrieval instead of masking them
+        # Collect errors for later retrieval
         if errors:
             error_msg = "; ".join(f"{name}: {e}" for name, e in errors)
-            cls._teardown_errors.append(RuntimeError(f"Fixture teardown failures: {error_msg}"))
+            cls._teardown_errors.append(RuntimeError(f"Fixture teardown failures ({scope}): {error_msg}"))
+
+    @classmethod
+    def teardown_function_scope(cls) -> None:
+        """Teardown only function-scoped fixtures (called after each test)."""
+        cls._teardown_scope("function")
+
+    @classmethod
+    def teardown_class_scope(cls) -> None:
+        """Teardown class-scoped fixtures (called on class transition)."""
+        cls._teardown_scope("class")
+
+    @classmethod
+    def teardown_module_scope(cls) -> None:
+        """Teardown module-scoped fixtures (called on module transition).
+
+        Also tears down class-scoped fixtures since class scope is nested
+        inside module scope.
+        """
+        cls._teardown_scope("class")  # Class is inside module
+        cls._teardown_scope("module")
+        cls._current_class = None
+
+    @classmethod
+    def teardown_session_scope(cls) -> None:
+        """Teardown session-scoped fixtures (called at end of session)."""
+        cls._teardown_scope("session")
+
+    @classmethod
+    def teardown_all(cls) -> None:
+        """Teardown all active async generator fixtures across all scopes.
+
+        Collects errors and raises after all teardowns complete so all
+        fixtures get cleaned up even if some fail.
+        """
+        # Teardown in reverse order of scope hierarchy
+        cls.teardown_function_scope()
+        cls.teardown_class_scope()
+        cls.teardown_module_scope()
+        cls.teardown_session_scope()
 
     @classmethod
     def reset(cls) -> None:
         """Reset state between tests."""
         cls.teardown_all()
-        cls._consumed.clear()
+
+        # Reset scope tracking
+        cls._current_module = None
+        cls._current_class = None
 
         # Close the loop if it exists and is not running
         if cls._loop is not None:
@@ -496,6 +634,60 @@ class AsyncFixtureWrapper:
         errors = cls._teardown_errors.copy()
         cls._teardown_errors.clear()
         return errors
+
+
+# =============================================================================
+# PYTEST HOOK: pytest_fixture_setup (Batch 2 - Indirect Async Dependencies)
+# =============================================================================
+
+
+class TachFixturePlugin:
+    """Pytest plugin that intercepts async fixtures at resolution time.
+
+    This hook solves the indirect dependency problem where a sync fixture
+    depends on an async fixture. Without this hook, pytest would pass the
+    raw coroutine/async generator to the sync fixture instead of the resolved value.
+
+    The hook uses hookwrapper=True to intercept AFTER pytest resolves the fixture,
+    then consumes any async value and replaces the outcome with the resolved value.
+    """
+
+    @staticmethod
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_fixture_setup(fixturedef, request):
+        """Intercept fixture setup to consume async fixtures.
+
+        This hook runs for ALL fixtures, not just direct dependencies.
+        It allows sync fixtures to depend on async fixtures by consuming
+        the coroutine/async generator at resolution time.
+
+        Args:
+            fixturedef: The fixture definition being set up
+            request: The fixture request object
+        """
+        outcome = yield
+        try:
+            result = outcome.get_result()
+        except Exception:
+            # Fixture setup failed - let pytest handle it
+            return
+
+        # Check if the result is an async value that needs to be consumed
+        if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+            scope = getattr(fixturedef, 'scope', 'function')
+            fixture_name = fixturedef.argname
+            try:
+                consumed_value = AsyncFixtureWrapper.consume_async_fixture(
+                    fixture_name, result, scope
+                )
+                outcome.force_result(consumed_value)
+            except Exception as e:
+                print(f"[tach:harness] ERROR: Failed to consume async fixture '{fixture_name}': {e}", file=sys.stderr)
+                raise
+
+
+# Global instance of the plugin (registered in init_session)
+_TACH_FIXTURE_PLUGIN: Optional[TachFixturePlugin] = None
 
 
 def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
@@ -2161,8 +2353,12 @@ def init_session(root_dir: str):
 
     Plugin Detection (v0.2.0):
     We detect installed pytest plugins and warn about unsupported ones.
+
+    Async Fixture Hook (v0.3.1 - Batch 2):
+    We register TachFixturePlugin to intercept async fixtures at resolution time,
+    solving the indirect dependency problem (sync fixtures depending on async fixtures).
     """
-    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS, _TACH_FIXTURE_PLUGIN
 
     os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
 
@@ -2198,6 +2394,13 @@ def init_session(root_dir: str):
 
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
+
+    # ASYNC FIXTURE HOOK (v0.3.1 - Batch 2):
+    # Register TachFixturePlugin to intercept async fixtures at resolution time.
+    # This solves the indirect dependency problem where sync fixtures depend on async fixtures.
+    if not cfg.pluginmanager.has_plugin("tach_fixture_plugin"):
+        _TACH_FIXTURE_PLUGIN = TachFixturePlugin()
+        cfg.pluginmanager.register(_TACH_FIXTURE_PLUGIN, "tach_fixture_plugin")
 
     # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
     # At this point, pytest_configure hooks have run via cfg._do_configure()
@@ -4021,6 +4224,8 @@ def run_test(
                     loop = mgr.get_loop(key)
                     # Set as current event loop for this thread
                     asyncio.set_event_loop(loop)
+                    # Share loop with AsyncFixtureWrapper for consistency
+                    AsyncFixtureWrapper.set_loop(loop)
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
@@ -4065,34 +4270,24 @@ def run_test(
         # Set up the event loop for async fixtures BEFORE pytest runs
         AsyncFixtureWrapper.set_loop(_fixture_loop)
 
-        # Install a hook to intercept fixture values
-        original_fillfixtures = target_item._request._fillfixtures
-
-        def patched_fillfixtures():
-            """Patched fillfixtures that consumes async fixtures."""
-            # Suppress pytest 9.x warning about sync tests with async fixtures
-            # We handle this ourselves by consuming the async fixtures
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*requested an async fixture.*",
-                )
-                original_fillfixtures()
-            # After pytest fills fixtures, consume any async ones
-            if hasattr(target_item, 'funcargs'):
-                for name, value in list(target_item.funcargs.items()):
-                    if inspect.isasyncgen(value) or asyncio.iscoroutine(value):
-                        target_item.funcargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, value)
-
-        target_item._request._fillfixtures = patched_fillfixtures
+        # Scope transition handling for fixtures (Batch 1)
+        fspath_for_fixture = str(getattr(target_item, 'fspath', ''))
+        item_cls_for_fixture = getattr(target_item, 'cls', None)
+        class_name_for_fixture = f"{item_cls_for_fixture.__module__}.{item_cls_for_fixture.__name__}" if item_cls_for_fixture else None
+        AsyncFixtureWrapper.on_test_start(fspath_for_fixture, class_name_for_fixture)
+        # NOTE: Async fixture interception is now handled by TachFixturePlugin.pytest_fixture_setup
+        # hook registered in init_session(). This solves the indirect dependency problem where
+        # sync fixtures depend on async fixtures. The hook intercepts ALL fixtures at resolution
+        # time, not just direct dependencies visible in target_item.funcargs.
         # === END ASYNC FIXTURE HANDLING ===
 
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
             # Cleanup in reverse order of application
-            AsyncFixtureWrapper.teardown_all()  # Teardown async fixtures first
+            # Only teardown function-scoped fixtures after each test
+            # Module/class/session scoped fixtures persist until scope transition
+            AsyncFixtureWrapper.teardown_function_scope()
             _cleanup_ignore_template_errors(template_originals)
             _cleanup_urls_override(original_urlconf)
             # Teardown Django fixtures before db isolation cleanup
@@ -4172,6 +4367,9 @@ def reset_worker_state() -> bool:
     try:
         # Reset event loop manager to cleanup any lingering loops (Issue #43)
         EventLoopManager.reset()
+
+        # Reset async fixture wrapper state (Issue #43 audit)
+        AsyncFixtureWrapper.reset()
 
         import tach_rust
 
