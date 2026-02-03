@@ -371,6 +371,133 @@ def teardown_async_fixture(
             pass  # Ignore cleanup errors
 
 
+class AsyncFixtureWrapper:
+    """Wrapper that tracks async fixtures for proper teardown.
+
+    When pytest resolves an async fixture, we intercept it, consume the
+    coroutine/generator, store the value, and return that to the test.
+    The generator is stored for teardown after the test completes.
+
+    NOTE: This class uses class-level state and assumes single-threaded execution
+    per worker process (consistent with tach's Zygote forking model).
+
+    TODO: Consider integrating with EventLoopManager for loop_scope-aware
+    event loop sharing in a future release.
+    """
+
+    _active_generators: dict[str, Any] = {}
+    _loop: Optional[asyncio.AbstractEventLoop] = None
+    _consumed: set[str] = set()  # Track consumed fixtures for idempotency
+    _teardown_errors: list[Exception] = []  # Collect errors for reporting
+
+    @classmethod
+    def set_loop(cls, loop: asyncio.AbstractEventLoop) -> None:
+        """Set the event loop for async fixture execution."""
+        cls._loop = loop
+
+    @classmethod
+    def get_loop(cls) -> asyncio.AbstractEventLoop:
+        """Get or create event loop for fixtures."""
+        if cls._loop is None or cls._loop.is_closed():
+            cls._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cls._loop)
+        return cls._loop
+
+    @classmethod
+    def consume_async_fixture(cls, fixture_name: str, fixture_value: Any) -> Any:
+        """Consume an async fixture value and return the actual result.
+
+        Args:
+            fixture_name: Name of the fixture (for tracking generators)
+            fixture_value: The raw value from pytest (may be coroutine/generator)
+
+        Returns:
+            The actual fixture value after awaiting
+        """
+        # Idempotency check - skip if already consumed
+        if fixture_name in cls._consumed:
+            return fixture_value
+
+        loop = cls.get_loop()
+
+        try:
+            # Case 1: Async generator (async def with yield)
+            if inspect.isasyncgen(fixture_value):
+                async def consume_gen():
+                    value = await fixture_value.__anext__()
+                    return value
+
+                result = loop.run_until_complete(consume_gen())
+                cls._active_generators[fixture_name] = fixture_value
+                cls._consumed.add(fixture_name)
+                return result
+
+            # Case 2: Coroutine (async def without yield)
+            if asyncio.iscoroutine(fixture_value):
+                result = loop.run_until_complete(fixture_value)
+                cls._consumed.add(fixture_name)
+                return result
+
+            # Case 3: Already a regular value
+            return fixture_value
+
+        except Exception as e:
+            # Log but re-raise to let pytest handle the error
+            print(f"[tach:harness] ERROR: Async fixture '{fixture_name}' failed: {e}", file=sys.stderr)
+            raise
+
+    @classmethod
+    def teardown_all(cls) -> None:
+        """Teardown all active async generator fixtures.
+
+        Collects errors and raises after all teardowns complete so all
+        fixtures get cleaned up even if some fail.
+        """
+        if not cls._active_generators:
+            return
+
+        loop = cls.get_loop()
+        errors: list[tuple[str, Exception]] = []
+
+        for name, gen in list(cls._active_generators.items()):
+            try:
+                async def cleanup():
+                    await gen.aclose()
+                loop.run_until_complete(cleanup())
+            except Exception as e:
+                errors.append((name, e))
+                print(f"[tach:harness] WARN: Async fixture '{name}' teardown failed: {e}", file=sys.stderr)
+
+        cls._active_generators.clear()
+
+        # Collect errors for later retrieval instead of masking them
+        if errors:
+            error_msg = "; ".join(f"{name}: {e}" for name, e in errors)
+            cls._teardown_errors.append(RuntimeError(f"Fixture teardown failures: {error_msg}"))
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset state between tests."""
+        cls.teardown_all()
+        cls._consumed.clear()
+
+        # Close the loop if it exists and is not running
+        if cls._loop is not None:
+            if not cls._loop.is_running() and not cls._loop.is_closed():
+                try:
+                    cls._loop.close()
+                except Exception:
+                    pass  # Ignore close errors
+        cls._loop = None
+
+    @classmethod
+    def get_teardown_errors(cls) -> list[Exception]:
+        """Get and clear collected teardown errors."""
+        errors = cls._teardown_errors.copy()
+        cls._teardown_errors.clear()
+        return errors
+
+
 def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
     """Parse @pytest.mark.asyncio marker from test item.
 
@@ -3934,10 +4061,38 @@ def run_test(
         ignore_templates = _parse_ignore_template_errors_marker(marker_info)
         template_originals = _apply_ignore_template_errors(ignore_templates)
 
+        # === ASYNC FIXTURE HANDLING ===
+        # Set up the event loop for async fixtures BEFORE pytest runs
+        AsyncFixtureWrapper.set_loop(_fixture_loop)
+
+        # Install a hook to intercept fixture values
+        original_fillfixtures = target_item._request._fillfixtures
+
+        def patched_fillfixtures():
+            """Patched fillfixtures that consumes async fixtures."""
+            # Suppress pytest 9.x warning about sync tests with async fixtures
+            # We handle this ourselves by consuming the async fixtures
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*requested an async fixture.*",
+                )
+                original_fillfixtures()
+            # After pytest fills fixtures, consume any async ones
+            if hasattr(target_item, 'funcargs'):
+                for name, value in list(target_item.funcargs.items()):
+                    if inspect.isasyncgen(value) or asyncio.iscoroutine(value):
+                        target_item.funcargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, value)
+
+        target_item._request._fillfixtures = patched_fillfixtures
+        # === END ASYNC FIXTURE HANDLING ===
+
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
             # Cleanup in reverse order of application
+            AsyncFixtureWrapper.teardown_all()  # Teardown async fixtures first
             _cleanup_ignore_template_errors(template_originals)
             _cleanup_urls_override(original_urlconf)
             # Teardown Django fixtures before db isolation cleanup
