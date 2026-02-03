@@ -7,8 +7,8 @@
 use crate::hooks::HookRegistry;
 use crate::logcapture::LogCapture;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, TestPayload,
-    TestResult, decode_with_limit, encode_with_length,
+    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
+    TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
@@ -246,6 +246,7 @@ impl Scheduler {
         let total = tests.len();
         let mut passed = 0usize;
         let mut failed = 0usize;
+        let mut skipped = 0usize;
         let mut collected = 0usize;
         let mut memory_usage: Vec<(String, u64)> = Vec::new();
 
@@ -280,6 +281,8 @@ impl Scheduler {
                     reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
                     if status == "pass" {
                         passed += 1;
+                    } else if status == "skip" {
+                        skipped += 1;
                     } else {
                         failed += 1;
                     }
@@ -359,6 +362,8 @@ impl Scheduler {
                 reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
                 if status == "pass" {
                     passed += 1;
+                } else if status == "skip" {
+                    skipped += 1;
                 } else {
                     failed += 1;
                 }
@@ -418,12 +423,13 @@ impl Scheduler {
         let duration_ms = elapsed.as_millis() as u64;
 
         // Emit run_finished event
-        reporter.on_run_finished(passed, failed, 0, duration_ms);
+        reporter.on_run_finished(passed, failed, skipped, duration_ms);
 
         Ok(SchedulerStats {
             total,
             passed,
             failed,
+            skipped,
             duration_ms,
             memory_usage,
         })
@@ -462,6 +468,8 @@ impl Scheduler {
         // Format for reporter
         let status = if result.status == STATUS_PASS {
             "pass"
+        } else if result.status == STATUS_SKIP {
+            "skip"
         } else {
             "fail"
         };
@@ -884,6 +892,7 @@ pub struct SchedulerStats {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    pub skipped: usize,
     pub duration_ms: u64,
     /// Memory usage per test (test_name, memory_bytes) - only populated if memory tracking is enabled
     pub memory_usage: Vec<(String, u64)>,
@@ -937,6 +946,7 @@ mod tests {
             total: 10,
             passed: 8,
             failed: 2,
+            skipped: 0,
             duration_ms: 1234,
             memory_usage: vec![],
         };
@@ -954,6 +964,7 @@ mod tests {
             total: 100,
             passed: 95,
             failed: 5,
+            skipped: 0,
             duration_ms: 5000,
             memory_usage: vec![("test_a".to_string(), 1024 * 1024)],
         };
