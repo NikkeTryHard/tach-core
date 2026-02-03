@@ -3836,6 +3836,20 @@ def run_test(
         if not target_item:
             target_item = _ITEMS_MAP.get(node_id)
 
+        # Fallback for Unicode nodeids (Issue #XX): pytest may escape Unicode chars
+        # differently than Rust discovery. Try matching by file basename + test name.
+        if not target_item:
+            # Match by file basename + test part to avoid false positives
+            constructed_file: str = constructed_nodeid.split("::")[0] if "::" in constructed_nodeid else ""
+            constructed_test: str = constructed_nodeid.split("::")[-1] if "::" in constructed_nodeid else constructed_nodeid
+            for key, item in _ITEMS_MAP.items():
+                key_file: str = key.split("::")[0] if "::" in key else ""
+                key_test: str = key.split("::")[-1] if "::" in key else key
+                # Match if file basenames match AND test parts match
+                if os.path.basename(key_file) == os.path.basename(constructed_file) and key_test == constructed_test:
+                    target_item = item
+                    break
+
         if not target_item:
             duration = time.perf_counter() - start
             # Include both attempted nodeids in error for debugging
@@ -3896,6 +3910,17 @@ def run_test(
         # Parse marker_info to get django_db settings and apply SAVEPOINT isolation
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
+
+        # Event Loop Setup: ensure a loop exists for fixtures
+        # Check if loop already exists to avoid orphaning
+        try:
+            _fixture_loop = asyncio.get_event_loop()
+            if _fixture_loop.is_closed():
+                _fixture_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(_fixture_loop)
+        except RuntimeError:
+            _fixture_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_fixture_loop)
 
         # Django Fixtures (v0.3.0 - Issue #39)
         # Setup fixtures after db isolation is applied

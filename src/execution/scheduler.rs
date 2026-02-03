@@ -301,7 +301,12 @@ impl Scheduler {
                         "Worker crashed during test execution"
                     };
                     self.finalize_crashed_worker(
-                        test_id, &test_name, slot, "crash", crash_phase, reporter,
+                        test_id,
+                        &test_name,
+                        slot,
+                        "crash",
+                        crash_phase,
+                        reporter,
                     );
                     failed += 1;
                     collected += 1;
@@ -319,7 +324,12 @@ impl Scheduler {
                     }
 
                     self.finalize_crashed_worker(
-                        test_id, &test_name, slot, "timeout", "Test exceeded timeout limit", reporter,
+                        test_id,
+                        &test_name,
+                        slot,
+                        "timeout",
+                        "Test exceeded timeout limit",
+                        reporter,
                     );
                     failed += 1;
                     collected += 1;
@@ -368,7 +378,12 @@ impl Scheduler {
                         "Worker crashed during test execution"
                     };
                     self.finalize_crashed_worker(
-                        test_id, &test_name, slot, "crash", crash_phase, reporter,
+                        test_id,
+                        &test_name,
+                        slot,
+                        "crash",
+                        crash_phase,
+                        reporter,
                     );
                     failed += 1;
                     collected += 1;
@@ -386,7 +401,12 @@ impl Scheduler {
                     }
 
                     self.finalize_crashed_worker(
-                        test_id, &test_name, slot, "timeout", "Test exceeded timeout limit", reporter,
+                        test_id,
+                        &test_name,
+                        slot,
+                        "timeout",
+                        "Test exceeded timeout limit",
+                        reporter,
                     );
                     failed += 1;
                     collected += 1;

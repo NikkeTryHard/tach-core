@@ -482,29 +482,30 @@ impl Reporter for HumanReporter {
         message: Option<&str>,
     ) {
         let use_colors = supports_colors();
-        match status {
-            "pass" => eprintln!("ok ({}ms)", duration_ms),
-            "fail" => {
-                if use_colors {
-                    eprintln!("{}FAILED{} ({}ms)", ANSI_RED, ANSI_RESET, duration_ms);
-                } else {
-                    eprintln!("FAILED ({}ms)", duration_ms);
-                }
-                if let Some(msg) = message {
-                    // Format traceback according to style
-                    let formatted = format_traceback(msg, id, self.traceback_style);
-                    if !formatted.is_empty() {
-                        // Apply colorization if terminal supports it
-                        let colorized = colorize_traceback(&formatted, use_colors);
-                        // Indent failure message
-                        for line in colorized.lines().take(20) {
-                            eprintln!("    {}", line);
-                        }
+        if status.eq_ignore_ascii_case("pass") {
+            eprintln!("ok ({}ms)", duration_ms);
+        } else if status.eq_ignore_ascii_case("fail") {
+            if use_colors {
+                eprintln!("{}FAILED{} ({}ms)", ANSI_RED, ANSI_RESET, duration_ms);
+            } else {
+                eprintln!("FAILED ({}ms)", duration_ms);
+            }
+            if let Some(msg) = message {
+                // Format traceback according to style
+                let formatted = format_traceback(msg, id, self.traceback_style);
+                if !formatted.is_empty() {
+                    // Apply colorization if terminal supports it
+                    let colorized = colorize_traceback(&formatted, use_colors);
+                    // Indent failure message
+                    for line in colorized.lines().take(20) {
+                        eprintln!("    {}", line);
                     }
                 }
             }
-            "skip" => eprintln!("skipped"),
-            _ => eprintln!("{}", status),
+        } else if status.eq_ignore_ascii_case("skip") {
+            eprintln!("skipped");
+        } else {
+            eprintln!("{}", status);
         }
     }
 
@@ -697,25 +698,24 @@ impl Reporter for ProgressReporter {
         _duration_ms: u64,
         message: Option<&str>,
     ) {
-        match status {
-            "pass" => self.passed += 1,
-            "fail" => {
-                self.failed += 1;
-                // Format and buffer failure for summary with colorization
-                let use_colors = supports_colors();
-                let formatted_msg = message
-                    .map(|m| {
-                        let formatted = format_traceback(m, id, self.traceback_style);
-                        colorize_traceback(&formatted, use_colors)
-                    })
-                    .unwrap_or_default();
-                self.failures.push(FailureRecord {
-                    id: id.to_string(),
-                    message: formatted_msg,
-                });
-            }
-            "skip" => self.skipped += 1,
-            _ => {}
+        if status.eq_ignore_ascii_case("pass") {
+            self.passed += 1;
+        } else if status.eq_ignore_ascii_case("fail") {
+            self.failed += 1;
+            // Format and buffer failure for summary with colorization
+            let use_colors = supports_colors();
+            let formatted_msg = message
+                .map(|m| {
+                    let formatted = format_traceback(m, id, self.traceback_style);
+                    colorize_traceback(&formatted, use_colors)
+                })
+                .unwrap_or_default();
+            self.failures.push(FailureRecord {
+                id: id.to_string(),
+                message: formatted_msg,
+            });
+        } else if status.eq_ignore_ascii_case("skip") {
+            self.skipped += 1;
         }
 
         self.bar.inc(1);
@@ -879,34 +879,29 @@ impl Reporter for DotsReporter {
         _duration_ms: u64,
         message: Option<&str>,
     ) {
-        match status {
-            "pass" => {
-                self.passed += 1;
-                self.print_char('.');
-            }
-            "fail" => {
-                self.failed += 1;
-                self.print_char('F');
-                // Format and buffer failure for summary with colorization
-                let use_colors = supports_colors();
-                let formatted_msg = message
-                    .map(|m| {
-                        let formatted = format_traceback(m, id, self.traceback_style);
-                        colorize_traceback(&formatted, use_colors)
-                    })
-                    .unwrap_or_default();
-                self.failures.push(FailureRecord {
-                    id: id.to_string(),
-                    message: formatted_msg,
-                });
-            }
-            "skip" => {
-                self.skipped += 1;
-                self.print_char('s');
-            }
-            _ => {
-                self.print_char('?');
-            }
+        if status.eq_ignore_ascii_case("pass") {
+            self.passed += 1;
+            self.print_char('.');
+        } else if status.eq_ignore_ascii_case("fail") {
+            self.failed += 1;
+            self.print_char('F');
+            // Format and buffer failure for summary with colorization
+            let use_colors = supports_colors();
+            let formatted_msg = message
+                .map(|m| {
+                    let formatted = format_traceback(m, id, self.traceback_style);
+                    colorize_traceback(&formatted, use_colors)
+                })
+                .unwrap_or_default();
+            self.failures.push(FailureRecord {
+                id: id.to_string(),
+                message: formatted_msg,
+            });
+        } else if status.eq_ignore_ascii_case("skip") {
+            self.skipped += 1;
+            self.print_char('s');
+        } else {
+            self.print_char('?');
         }
     }
 
