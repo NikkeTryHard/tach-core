@@ -46,6 +46,59 @@ EFFECT_TYPE_SQLALCHEMY_DB_SETUP = "SqlAlchemyDbSetup"
 
 
 # =============================================================================
+# DISCOVERY RECONCILIATION (Rust AST vs pytest collection)
+# =============================================================================
+
+
+def _fuzzy_match_test(requested_nodeid: str, items_map: dict) -> Optional[str]:
+    """
+    Fuzzy match a nodeid when exact match fails.
+    Matches by test name and parameters, with file basename disambiguation.
+    """
+    import os
+
+    # Extract file and test parts from requested nodeid
+    if "::" in requested_nodeid:
+        parts = requested_nodeid.split("::")
+        requested_file = os.path.basename(parts[0]) if parts[0] else ""
+        test_part = parts[-1]
+    else:
+        requested_file = ""
+        test_part = requested_nodeid
+
+    candidates = []
+
+    # Search for matching test name in available items
+    for nodeid in items_map.keys():
+        if "::" in nodeid:
+            node_parts = nodeid.split("::")
+            item_file = os.path.basename(node_parts[0]) if node_parts[0] else ""
+            item_test_part = node_parts[-1]
+
+            if item_test_part == test_part:
+                # Prefer matches with same file basename
+                if requested_file and item_file == requested_file:
+                    return nodeid  # Exact file + test match
+                candidates.append(nodeid)
+
+    # Return first candidate if any (with warning if multiple)
+    if candidates:
+        if len(candidates) > 1:
+            print(f"[tach:harness] Warning: Multiple fuzzy matches for {requested_nodeid}: {candidates[:3]}...", file=sys.stderr)
+        return candidates[0]
+
+    # Fallback: Try partial match on test function name (without params)
+    base_name = test_part.split("[")[0] if "[" in test_part else test_part
+    for nodeid in items_map.keys():
+        if "::" in nodeid:
+            item_base = nodeid.split("::")[-1].split("[")[0]
+            if item_base == base_name:
+                return nodeid
+
+    return None
+
+
+# =============================================================================
 # EVENT LOOP MANAGEMENT (pytest-asyncio support)
 # =============================================================================
 
@@ -4181,6 +4234,13 @@ def run_test(
                 if os.path.basename(key_file) == os.path.basename(constructed_file) and key_test == constructed_test:
                     target_item = item
                     break
+
+        # Fallback: fuzzy match by test name only (discovery reconciliation)
+        if not target_item:
+            fuzzy_match = _fuzzy_match_test(node_id, _ITEMS_MAP)
+            if fuzzy_match:
+                target_item = _ITEMS_MAP.get(fuzzy_match)
+                print(f"[tach:harness] Fuzzy matched {node_id} -> {fuzzy_match}", file=sys.stderr)
 
         if not target_item:
             duration = time.perf_counter() - start

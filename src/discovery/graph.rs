@@ -82,8 +82,8 @@ impl ToxicityGraph {
             let module_name = path_to_module_name(path, project_root);
 
             // Read and analyze file
-            let source = match fs::read_to_string(path) {
-                Ok(s) => s,
+            let source = match fs::read(path) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(_) => continue, // Skip unreadable files
             };
 

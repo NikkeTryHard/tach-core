@@ -1127,7 +1127,8 @@ fn analyze_function(
 
 /// Parse a module from an absolute path but store the relative path
 fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<TestModule> {
-    let source = fs::read_to_string(abs_path)?;
+    let bytes = fs::read(abs_path)?;
+    let source = String::from_utf8_lossy(&bytes).into_owned();
     let path_str = rel_path.to_string_lossy();
 
     let suite = match ast::Suite::parse(&source, &path_str) {
