@@ -4322,8 +4322,8 @@ def run_test(
                 skipped_report = report
 
         # Check for teardown errors (Batch 4 - Fix Teardown Error Handling)
-        teardown_errors = EventLoopManager.get_teardown_errors()
-        teardown_msg = None
+        teardown_errors: list[Exception] = EventLoopManager.get_teardown_errors()
+        teardown_msg: str | None = None
         if teardown_errors:
             # Format teardown error messages
             error_msgs = [f"Teardown Error ({type(e).__name__}): {str(e)}" for e in teardown_errors]
