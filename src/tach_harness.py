@@ -3706,6 +3706,59 @@ def _get_fixture_names_from_item(item: Any) -> list[str]:
     return fixture_names
 
 
+def _construct_nodeid(file_path: str, node_id: str) -> str:
+    """
+    Transform a nodeid to be relative to pytest's rootdir.
+
+    The node_id from Rust may have a different path prefix than pytest expects.
+    We extract the test identifier and reconstruct it relative to rootdir.
+
+    Args:
+        file_path: Absolute or relative path to the test file (fallback)
+        node_id: Full nodeid from Rust (e.g., "test-aistudio/tests/foo.py::TestClass::test_method")
+
+    Returns:
+        Nodeid string matching pytest's format (e.g., "tests/foo.py::test_bar")
+    """
+    global _SESSION
+
+    if _SESSION is None:
+        return node_id  # Can't transform without session
+
+    # Get pytest's rootdir
+    rootdir = _SESSION.config.rootdir
+
+    # Split nodeid into path and test parts
+    # e.g., "test-aistudio/tests/foo.py::TestClass::test_method"
+    # -> path = "test-aistudio/tests/foo.py", test_part = "TestClass::test_method"
+    if "::" in node_id:
+        parts = node_id.split("::", 1)
+        path_part = parts[0]
+        test_part = parts[1] if len(parts) > 1 else ""
+    else:
+        # No :: means it's just a path, use file_path instead
+        path_part = file_path
+        test_part = node_id
+
+    # Convert path to be relative to rootdir
+    abs_path = os.path.abspath(path_part)
+    try:
+        rel_path = os.path.relpath(abs_path, start=str(rootdir))
+    except ValueError:
+        rel_path = path_part
+
+    # Normalize to forward slashes
+    rel_path = rel_path.replace(os.sep, "/")
+
+    # Reconstruct nodeid
+    constructed = f"{rel_path}::{test_part}" if test_part else rel_path
+
+    if os.environ.get("TACH_DEBUG_NODEID"):
+        os.write(2, f"[tach:harness] nodeid: {node_id} -> {constructed}\n".encode())
+
+    return constructed
+
+
 def run_test(
     file_path: str,
     node_id: str,
@@ -3771,15 +3824,29 @@ def run_test(
     initial_thread_count = threading.active_count()
 
     try:
+        # Construct nodeid relative to pytest's rootdir for reliable lookup
+        # The node_id parameter contains test_name (e.g., "TestClass::test_method")
+        # We combine it with file_path to build the correct nodeid
+        constructed_nodeid = _construct_nodeid(file_path, node_id)
+
         # O(1) lookup from pre-collected items
-        target_item = _ITEMS_MAP.get(node_id)
+        target_item = _ITEMS_MAP.get(constructed_nodeid)
+
+        # Fallback: try the original node_id in case it's already correct
+        if not target_item:
+            target_item = _ITEMS_MAP.get(node_id)
 
         if not target_item:
             duration = time.perf_counter() - start
+            # Include both attempted nodeids in error for debugging
             return (
                 STATUS_HARNESS_ERROR,
                 duration,
-                f"Test not found in Zygote session: {node_id}\nAvailable: {len(_ITEMS_MAP)} items",
+                f"Test not found in Zygote session.\n"
+                f"  Constructed: {constructed_nodeid}\n"
+                f"  Original: {node_id}\n"
+                f"  Available: {len(_ITEMS_MAP)} items\n"
+                f"  Sample keys: {list(_ITEMS_MAP.keys())[:3]}",
                 False,  # No thread leak detection for failed lookup
             )
 
