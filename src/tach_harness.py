@@ -423,10 +423,30 @@ class AsyncFixtureWrapper:
 
     @classmethod
     def get_loop(cls) -> asyncio.AbstractEventLoop:
-        """Get or create event loop for fixtures."""
-        if cls._loop is None or cls._loop.is_closed():
-            cls._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(cls._loop)
+        """Get event loop, preferring EventLoopManager's loop if available.
+
+        This ensures fixtures use the same loop as test execution, preventing
+        'Task attached to different loop' errors.
+        """
+        if cls._loop is not None and not cls._loop.is_closed():
+            return cls._loop
+
+        # Try to get loop from EventLoopManager for consistency
+        try:
+            mgr = EventLoopManager.get_instance()
+            if mgr._loops:
+                # Prefer the most recently added loop (likely the current scope)
+                for key in reversed(list(mgr._loops.keys())):
+                    loop = mgr._loops[key]
+                    if loop and not loop.is_closed():
+                        cls._loop = loop
+                        return cls._loop
+        except Exception:
+            pass
+
+        # Create new loop as fallback
+        cls._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(cls._loop)
         return cls._loop
 
     @classmethod
@@ -4183,6 +4203,8 @@ def run_test(
                     loop = mgr.get_loop(key)
                     # Set as current event loop for this thread
                     asyncio.set_event_loop(loop)
+                    # Share loop with AsyncFixtureWrapper for consistency
+                    AsyncFixtureWrapper.set_loop(loop)
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
