@@ -16,22 +16,23 @@ import os
 import pdb
 import re
 import math
+import logging
 import warnings as warnings_module
-import pytest
 import _pytest.runner
 import _pytest.main
 import _pytest.config
 from contextlib import contextmanager
 from typing import Any, Optional, Set, Type, Tuple, Union
 
-# Status codes (must match src/core/protocol.rs exactly)
+# Module logger for cleanup and error reporting
+_logger = logging.getLogger("tach.harness")
+
+# Status codes (must match protocol.rs)
 STATUS_PASS = 0
 STATUS_FAIL = 1
 STATUS_SKIP = 2
 STATUS_CRASH = 3
-STATUS_ERROR = 4
-STATUS_HARNESS_ERROR = 5
-STATUS_TIMEOUT = 6
+STATUS_HARNESS_ERROR = 4
 
 # Effect type constants (must match HookEffect variants in hooks.rs)
 EFFECT_TYPE_SET_ENV = "SetEnv"
@@ -42,60 +43,6 @@ EFFECT_TYPE_REGISTER_MARKER = "RegisterMarker"
 EFFECT_TYPE_DJANGO_DB_SETUP = "DjangoDbSetup"
 EFFECT_TYPE_MODIFY_SYS_PATH = "ModifySysPath"
 EFFECT_TYPE_ASYNCIO_SETUP = "AsyncioSetup"
-EFFECT_TYPE_SQLALCHEMY_DB_SETUP = "SqlAlchemyDbSetup"
-
-
-# =============================================================================
-# DISCOVERY RECONCILIATION (Rust AST vs pytest collection)
-# =============================================================================
-
-
-def _fuzzy_match_test(requested_nodeid: str, items_map: dict) -> Optional[str]:
-    """
-    Fuzzy match a nodeid when exact match fails.
-    Matches by test name and parameters, with file basename disambiguation.
-    """
-    import os
-
-    # Extract file and test parts from requested nodeid
-    if "::" in requested_nodeid:
-        parts = requested_nodeid.split("::")
-        requested_file = os.path.basename(parts[0]) if parts[0] else ""
-        test_part = parts[-1]
-    else:
-        requested_file = ""
-        test_part = requested_nodeid
-
-    candidates = []
-
-    # Search for matching test name in available items
-    for nodeid in items_map.keys():
-        if "::" in nodeid:
-            node_parts = nodeid.split("::")
-            item_file = os.path.basename(node_parts[0]) if node_parts[0] else ""
-            item_test_part = node_parts[-1]
-
-            if item_test_part == test_part:
-                # Prefer matches with same file basename
-                if requested_file and item_file == requested_file:
-                    return nodeid  # Exact file + test match
-                candidates.append(nodeid)
-
-    # Return first candidate if any (with warning if multiple)
-    if candidates:
-        if len(candidates) > 1:
-            print(f"[tach:harness] Warning: Multiple fuzzy matches for {requested_nodeid}: {candidates[:3]}...", file=sys.stderr)
-        return candidates[0]
-
-    # Fallback: Try partial match on test function name (without params)
-    base_name = test_part.split("[")[0] if "[" in test_part else test_part
-    for nodeid in items_map.keys():
-        if "::" in nodeid:
-            item_base = nodeid.split("::")[-1].split("[")[0]
-            if item_base == base_name:
-                return nodeid
-
-    return None
 
 
 # =============================================================================
@@ -132,20 +79,6 @@ class EventLoopManager:
         if cls._instance is not None:
             cls._instance.close_all()
             cls._instance = None
-
-    @classmethod
-    def get_current_loop(cls) -> Optional[asyncio.AbstractEventLoop]:
-        """Get the most recently created valid loop, or None.
-
-        This provides encapsulated access to the managed loops without
-        exposing internal _loops dictionary.
-        """
-        instance = cls.get_instance()
-        for key in reversed(list(instance._loops.keys())):
-            loop = instance._loops[key]
-            if loop and not loop.is_closed():
-                return loop
-        return None
 
     def configure(self, loop_scope: str = "function", auto_mode: bool = False) -> None:
         """Configure loop scope and auto mode."""
@@ -198,8 +131,7 @@ class EventLoopManager:
                     if pending:
                         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                 except Exception as e:
-                    # Log but don't fail - cleanup is best-effort (Issue #45)
-                    print(f"[tach:harness] DEBUG: Loop cleanup error for {scope_key}: {e}", file=sys.stderr)
+                    _logger.debug("Cleanup error in close_scope: %s", e)
                 finally:
                     loop.close()
 
@@ -279,68 +211,6 @@ def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
         return None
 
 
-def _configure_asyncio_from_pyproject(root_dir: str) -> None:
-    """Parse asyncio_mode from pyproject.toml and configure EventLoopManager.
-
-    This enables pytest-asyncio auto mode support without needing the plugin.
-    When asyncio_mode=auto, all coroutine tests are treated as async tests
-    even without @pytest.mark.asyncio decorator.
-
-    Args:
-        root_dir: Project root directory containing pyproject.toml
-
-    Note:
-        This duplicates logic in src/discovery/config.rs::parse_asyncio_config().
-        Both are needed: Python runs in Zygote before Rust effects are wired up.
-    """
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            # Neither available - skip config parsing
-            return
-
-    from pathlib import Path
-
-    # Walk up from root_dir to find pyproject.toml (may be in parent)
-    search_path = Path(root_dir).resolve()
-    pyproject_path = None
-    for _ in range(5):  # Max 5 levels up
-        candidate = search_path / "pyproject.toml"
-        if candidate.exists():
-            pyproject_path = candidate
-            break
-        if search_path.parent == search_path:
-            break
-        search_path = search_path.parent
-
-    if pyproject_path is None:
-        return
-
-    try:
-        with open(pyproject_path, "rb") as f:
-            data = tomllib.load(f)
-
-        # Look for [tool.pytest.ini_options] section
-        pytest_opts = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
-        asyncio_mode = pytest_opts.get("asyncio_mode", "strict")
-        loop_scope = pytest_opts.get("asyncio_default_fixture_loop_scope", "function")
-
-        auto_mode = asyncio_mode == "auto"
-
-        if auto_mode or loop_scope != "function":
-            EventLoopManager.get_instance().configure(loop_scope=loop_scope, auto_mode=auto_mode)
-            os.write(
-                2,
-                f"[tach:harness] Asyncio config: mode={asyncio_mode}, loop_scope={loop_scope}\n".encode()
-            )
-    except Exception as e:
-        # Don't fail on config parse errors, just log and continue
-        os.write(2, f"[tach:harness] WARN: Failed to parse asyncio config: {e}\n".encode())
-
-
 # Sentinel value to distinguish timeout from legitimate None return
 _TIMEOUT_SENTINEL = object()
 
@@ -413,8 +283,8 @@ def ensure_no_running_loop():
         if had_loop and old_loop is not None:
             try:
                 asyncio.set_event_loop(old_loop)
-            except RuntimeError:
-                pass  # Loop may have been closed
+            except RuntimeError as e:
+                _logger.debug("Loop restoration skipped (may be closed): %s", e)
 
 
 def cleanup_pending_tasks(loop: asyncio.AbstractEventLoop) -> int:
@@ -447,8 +317,7 @@ def cleanup_pending_tasks(loop: asyncio.AbstractEventLoop) -> int:
     try:
         loop.run_until_complete(wait_cancelled())
     except Exception as e:
-        # Log but don't fail - cleanup is best-effort (Issue #45)
-        print(f"[tach:harness] DEBUG: Task cleanup error: {e}", file=sys.stderr)
+        _logger.debug("Exception during cleanup: %s", e)
 
     return len(pending)
 
@@ -499,316 +368,8 @@ def teardown_async_fixture(
                 pass
         try:
             loop.run_until_complete(cleanup())
-        except Exception:
-            pass  # Ignore cleanup errors
-
-
-class AsyncFixtureWrapper:
-    """Wrapper that tracks async fixtures for proper teardown by scope.
-
-    When pytest resolves an async fixture, we intercept it, consume the
-    coroutine/generator, store the value, and return that to the test.
-    The generator is stored for teardown based on its scope.
-
-    Scope Hierarchy:
-    - session: Torn down at end of test session
-    - module: Torn down when transitioning to a different module
-    - class: Torn down when transitioning to a different class
-    - function: Torn down after each test
-
-    NOTE: This class uses class-level state and assumes single-threaded execution
-    per worker process (consistent with tach's Zygote forking model).
-    """
-
-    # Scope-nested storage: {scope: {fixture_name: generator}}
-    _generators_by_scope: dict[str, dict[str, Any]] = {
-        "session": {},
-        "module": {},
-        "class": {},
-        "function": {},
-    }
-    # Scope-nested consumed tracking: {scope: {fixture_name}}
-    _consumed_by_scope: dict[str, set[str]] = {
-        "session": set(),
-        "module": set(),
-        "class": set(),
-        "function": set(),
-    }
-    # Cached fixture values by scope: {scope: {fixture_name: value}}
-    _values_by_scope: dict[str, dict[str, Any]] = {
-        "session": {},
-        "module": {},
-        "class": {},
-        "function": {},
-    }
-    _loop: Optional[asyncio.AbstractEventLoop] = None
-    _teardown_errors: list[Exception] = []  # Collect errors for reporting
-
-    # Scope transition tracking
-    _current_module: Optional[str] = None
-    _current_class: Optional[str] = None
-
-    @classmethod
-    def set_loop(cls, loop: asyncio.AbstractEventLoop) -> None:
-        """Set the event loop for async fixture execution."""
-        cls._loop = loop
-
-    @classmethod
-    def get_loop(cls) -> asyncio.AbstractEventLoop:
-        """Get event loop, preferring EventLoopManager's loop if available.
-
-        This ensures fixtures use the same loop as test execution, preventing
-        'Task attached to different loop' errors.
-        """
-        if cls._loop is not None and not cls._loop.is_closed():
-            return cls._loop
-
-        # Try to get loop from EventLoopManager for consistency
-        try:
-            loop = EventLoopManager.get_current_loop()
-            if loop:
-                cls._loop = loop
-                return cls._loop
-        except Exception:
-            pass
-
-        # Create new loop as fallback
-        cls._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(cls._loop)
-        return cls._loop
-
-    @classmethod
-    def on_test_start(cls, module_path: Optional[str], class_name: Optional[str]) -> None:
-        """Handle scope transitions before a test starts.
-
-        Called before each test to detect module/class boundaries and
-        teardown fixtures from scopes that have ended.
-
-        Args:
-            module_path: Path to the current test module
-            class_name: Name of the current test class (or None)
-        """
-        # Module transition: teardown previous module's fixtures
-        if cls._current_module is not None and cls._current_module != module_path:
-            cls.teardown_module_scope()
-
-        # Class transition: teardown previous class's fixtures
-        if cls._current_class is not None and cls._current_class != class_name:
-            cls.teardown_class_scope()
-
-        # Update tracking
-        cls._current_module = module_path
-        cls._current_class = class_name
-
-    @classmethod
-    def consume_async_fixture(
-        cls,
-        fixture_name: str,
-        fixture_value: Any,
-        scope: str = "function"
-    ) -> Any:
-        """Consume an async fixture value and return the actual result.
-
-        Args:
-            fixture_name: Name of the fixture (for tracking generators)
-            fixture_value: The raw value from pytest (may be coroutine/generator)
-            scope: Fixture scope (session/module/class/function)
-
-        Returns:
-            The actual fixture value after awaiting
-        """
-        # Normalize scope
-        if scope not in cls._consumed_by_scope:
-            scope = "function"
-
-        # Idempotency check - return cached value if already consumed
-        if fixture_name in cls._consumed_by_scope[scope]:
-            return cls._values_by_scope[scope].get(fixture_name, fixture_value)
-
-        loop = cls.get_loop()
-
-        try:
-            # Case 1: Async generator (async def with yield)
-            if inspect.isasyncgen(fixture_value):
-                async def consume_gen():
-                    value = await fixture_value.__anext__()
-                    return value
-
-                result = loop.run_until_complete(consume_gen())
-                cls._generators_by_scope[scope][fixture_name] = fixture_value
-                cls._consumed_by_scope[scope].add(fixture_name)
-                cls._values_by_scope[scope][fixture_name] = result
-                return result
-
-            # Case 2: Coroutine (async def without yield)
-            if asyncio.iscoroutine(fixture_value):
-                result = loop.run_until_complete(fixture_value)
-                cls._consumed_by_scope[scope].add(fixture_name)
-                cls._values_by_scope[scope][fixture_name] = result
-                return result
-
-            # Case 3: Already a regular value
-            return fixture_value
-
         except Exception as e:
-            # Log but re-raise to let pytest handle the error
-            print(f"[tach:harness] ERROR: Async fixture '{fixture_name}' failed: {e}", file=sys.stderr)
-            raise
-
-    @classmethod
-    def _teardown_scope(cls, scope: str) -> None:
-        """Teardown all fixtures in a specific scope.
-
-        Args:
-            scope: The scope to teardown (session/module/class/function)
-        """
-        generators = cls._generators_by_scope.get(scope, {})
-        errors: list[tuple[str, Exception]] = []
-
-        # Only run generator cleanup if there are generators
-        if generators:
-            loop = cls.get_loop()
-
-            for name, gen in list(generators.items()):
-                try:
-                    async def cleanup():
-                        await gen.aclose()
-                    loop.run_until_complete(cleanup())
-                except Exception as e:
-                    errors.append((name, e))
-                    print(f"[tach:harness] WARN: Async fixture '{name}' ({scope}) teardown failed: {e}", file=sys.stderr)
-
-        # Always clear this scope's state (even if no generators)
-        cls._generators_by_scope[scope].clear()
-        cls._consumed_by_scope[scope].clear()
-        cls._values_by_scope[scope].clear()
-
-        # Collect errors for later retrieval
-        if errors:
-            error_msg = "; ".join(f"{name}: {e}" for name, e in errors)
-            cls._teardown_errors.append(RuntimeError(f"Fixture teardown failures ({scope}): {error_msg}"))
-
-    @classmethod
-    def teardown_function_scope(cls) -> None:
-        """Teardown only function-scoped fixtures (called after each test)."""
-        cls._teardown_scope("function")
-
-    @classmethod
-    def teardown_class_scope(cls) -> None:
-        """Teardown class-scoped fixtures (called on class transition)."""
-        cls._teardown_scope("class")
-
-    @classmethod
-    def teardown_module_scope(cls) -> None:
-        """Teardown module-scoped fixtures (called on module transition).
-
-        Also tears down class-scoped fixtures since class scope is nested
-        inside module scope.
-        """
-        cls._teardown_scope("class")  # Class is inside module
-        cls._teardown_scope("module")
-        cls._current_class = None
-
-    @classmethod
-    def teardown_session_scope(cls) -> None:
-        """Teardown session-scoped fixtures (called at end of session)."""
-        cls._teardown_scope("session")
-
-    @classmethod
-    def teardown_all(cls) -> None:
-        """Teardown all active async generator fixtures across all scopes.
-
-        Collects errors and raises after all teardowns complete so all
-        fixtures get cleaned up even if some fail.
-        """
-        # Teardown in reverse order of scope hierarchy
-        cls.teardown_function_scope()
-        cls.teardown_class_scope()
-        cls.teardown_module_scope()
-        cls.teardown_session_scope()
-
-    @classmethod
-    def reset(cls) -> None:
-        """Reset state between tests."""
-        cls.teardown_all()
-
-        # Reset scope tracking
-        cls._current_module = None
-        cls._current_class = None
-
-        # Close the loop if it exists and is not running
-        if cls._loop is not None:
-            if not cls._loop.is_running() and not cls._loop.is_closed():
-                try:
-                    cls._loop.close()
-                except Exception:
-                    pass  # Ignore close errors
-        cls._loop = None
-
-    @classmethod
-    def get_teardown_errors(cls) -> list[Exception]:
-        """Get and clear collected teardown errors."""
-        errors = cls._teardown_errors.copy()
-        cls._teardown_errors.clear()
-        return errors
-
-
-# =============================================================================
-# PYTEST HOOK: pytest_fixture_setup (Batch 2 - Indirect Async Dependencies)
-# =============================================================================
-
-
-class TachFixturePlugin:
-    """Pytest plugin that intercepts async fixtures at resolution time.
-
-    This hook solves the indirect dependency problem where a sync fixture
-    depends on an async fixture. Without this hook, pytest would pass the
-    raw coroutine/async generator to the sync fixture instead of the resolved value.
-
-    The hook uses hookwrapper=True to intercept AFTER pytest resolves the fixture,
-    then consumes any async value and replaces the outcome with the resolved value.
-    """
-
-    @staticmethod
-    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
-    def pytest_fixture_setup(fixturedef, request):
-        """Intercept fixture setup to consume async fixtures.
-
-        This hook runs for ALL fixtures, not just direct dependencies.
-        It allows sync fixtures to depend on async fixtures by consuming
-        the coroutine/async generator at resolution time.
-
-        Args:
-            fixturedef: The fixture definition being set up
-            request: The fixture request object
-        """
-        outcome = yield
-        try:
-            result = outcome.get_result()
-        except Exception:
-            # Fixture setup failed - let pytest handle it
-            return
-
-        fixture_name = fixturedef.argname
-        is_async = inspect.isasyncgen(result) or asyncio.iscoroutine(result)
-        print(f"[tach:fixture-hook] {fixture_name}: is_async={is_async}, type={type(result).__name__}", file=sys.stderr)
-
-        # Check if the result is an async value that needs to be consumed
-        if is_async:
-            scope = getattr(fixturedef, 'scope', 'function')
-            fixture_name = fixturedef.argname
-            try:
-                consumed_value = AsyncFixtureWrapper.consume_async_fixture(
-                    fixture_name, result, scope
-                )
-                outcome.force_result(consumed_value)
-            except Exception as e:
-                print(f"[tach:harness] ERROR: Failed to consume async fixture '{fixture_name}': {e}", file=sys.stderr)
-                raise
-
-
-# Global instance of the plugin (registered in init_session)
-_TACH_FIXTURE_PLUGIN: Optional[TachFixturePlugin] = None
+            _logger.debug("Cleanup error in async fixture teardown: %s", e)
 
 
 def parse_asyncio_marker(item: Any) -> tuple[str, bool]:
@@ -863,8 +424,8 @@ def _has_allow_threads_marker(item) -> bool:
         for marker in own_markers:
             if marker.name == "allow_threads":
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.debug("Exception checking allow_threads marker: %s", e)
     return False
 
 
@@ -1430,13 +991,13 @@ def tach_breakpointhook(*args, **kwargs):
         if sock_file is not None:
             try:
                 sock_file.close()
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.debug("Socket file close error: %s", e)
         if sock is not None:
             try:
                 sock.close()
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.debug("Socket close error: %s", e)
 
 
 sys.breakpointhook = tach_breakpointhook
@@ -1463,8 +1024,8 @@ def inject_entropy():
                 ssl_lib.RAND_add.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
                 entropy_bytes = os.urandom(32)
                 ssl_lib.RAND_add(entropy_bytes, 32, 32.0)
-    except Exception:
-        pass  # Best effort - OpenSSL may not be loaded
+    except Exception as e:
+        _logger.debug("OpenSSL workaround skipped: %s", e)
 
     # CRITICAL: Reset logging module locks after fork
     # The logging module uses RLocks that become corrupted after fork()
@@ -1483,20 +1044,20 @@ def inject_entropy():
         # Reset the logger dict to force fresh loggers
         if hasattr(logging.Logger, "manager") and logging.Logger.manager:
             logging.Logger.manager.loggerDict = {}
-    except Exception:
-        pass  # Best effort
+    except Exception as e:
+        _logger.debug("Logging lock reset error: %s", e)
 
     if "numpy" in sys.modules:
         try:
             sys.modules["numpy"].random.seed(seed)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("Numpy seed error: %s", e)
 
     if "torch" in sys.modules:
         try:
             sys.modules["torch"].manual_seed(seed)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("Torch seed error: %s", e)
 
 
 # =============================================================================
@@ -1723,49 +1284,16 @@ def post_fork_init() -> bool:
     # 1. Post-fork hygiene
     inject_entropy()
 
-    # 2. CRITICAL: Reset event loop manager to clear stale Zygote state
-    # Workers forked from Zygote may inherit loops with invalid file descriptors
-    try:
-        EventLoopManager.reset()
-    except Exception as e:
-        print(f"[tach:harness] WARN: EventLoopManager reset failed: {e}", file=sys.stderr)
-
-    # 3. Reset async fixture wrapper to clear inherited fixture state
-    try:
-        AsyncFixtureWrapper.reset()
-    except Exception as e:
-        print(f"[tach:harness] WARN: AsyncFixtureWrapper reset failed: {e}", file=sys.stderr)
-
-    # 4. Patch FixtureDef.execute to consume async fixtures at resolution time
-    # NOTE: This duplicates init_session() but is needed for snapshot mode workers
-    # that may not inherit the Zygote's patched state (see src/tach_harness.py:2544)
-    try:
-        from _pytest.fixtures import FixtureDef
-        if not hasattr(FixtureDef.execute, '_tach_patched'):
-            _original_execute = FixtureDef.execute
-
-            def _patched_execute(self, request):
-                result = _original_execute(self, request)
-                if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
-                    scope = getattr(self, 'scope', 'function')
-                    result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
-                return result
-
-            _patched_execute._tach_patched = True
-            FixtureDef.execute = _patched_execute
-    except Exception as e:
-        print(f"[tach:harness] WARN: FixtureDef patch failed: {e}", file=sys.stderr)
-
-    # 5. Install import hook for zero-copy module loading
+    # 2. Install import hook for zero-copy module loading
     # This must be done BEFORE snapshot to be part of the golden state
     install_tach_import_hook()
 
-    # 5. Capture baseline sys.modules for hot reloading
+    # 3. Capture baseline sys.modules for hot reloading
     # This snapshot defines what modules are "framework" vs "test-imported"
     _INITIAL_MODULES = set(sys.modules.keys())
     print(f"[tach:harness] Captured {len(_INITIAL_MODULES)} baseline modules", file=sys.stderr)
 
-    # 6. Check if snapshot mode is enabled
+    # 4. Check if snapshot mode is enabled
     import os
 
     supervisor_sock = os.environ.get("TACH_SUPERVISOR_SOCK")
@@ -1773,7 +1301,7 @@ def post_fork_init() -> bool:
         # No snapshot mode - standard fork-server behavior
         return False
 
-    # 7. Initialize snapshot mode via Rust FFI
+    # 5. Initialize snapshot mode via Rust FFI
     try:
         import tach_rust
 
@@ -2507,12 +2035,8 @@ def init_session(root_dir: str):
 
     Plugin Detection (v0.2.0):
     We detect installed pytest plugins and warn about unsupported ones.
-
-    Async Fixture Hook (v0.3.1 - Batch 2):
-    We register TachFixturePlugin to intercept async fixtures at resolution time,
-    solving the indirect dependency problem (sync fixtures depending on async fixtures).
     """
-    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS, _TACH_FIXTURE_PLUGIN
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
 
     os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
 
@@ -2549,32 +2073,6 @@ def init_session(root_dir: str):
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
-    # CRITICAL: Patch FixtureDef.execute to consume async fixtures at resolution time
-    # This MUST be in init_session() so workers inherit the patch via fork
-    from _pytest.fixtures import FixtureDef
-    _original_execute = FixtureDef.execute
-
-    def _patched_execute(self, request):
-        os.write(2, f"[tach:patch] execute called for: {self.argname}\n".encode())
-        result = _original_execute(self, request)
-        is_async = inspect.isasyncgen(result) or asyncio.iscoroutine(result)
-        os.write(2, f"[tach:patch] {self.argname} -> is_async={is_async}, type={type(result).__name__}\n".encode())
-        # If the fixture returns an async generator or coroutine, consume it
-        if is_async:
-            scope = getattr(self, 'scope', 'function')
-            result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
-        return result
-
-    FixtureDef.execute = _patched_execute
-    os.write(2, b"[tach:harness] FixtureDef.execute patched for async fixtures\n")
-
-    # ASYNC FIXTURE HOOK (v0.3.1 - Batch 2):
-    # Register TachFixturePlugin to intercept async fixtures at resolution time.
-    # This solves the indirect dependency problem where sync fixtures depend on async fixtures.
-    if not cfg.pluginmanager.has_plugin("tach_fixture_plugin"):
-        _TACH_FIXTURE_PLUGIN = TachFixturePlugin()
-        cfg.pluginmanager.register(_TACH_FIXTURE_PLUGIN, "tach_fixture_plugin")
-
     # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
     # At this point, pytest_configure hooks have run via cfg._do_configure()
     env_after = dict(os.environ)
@@ -2594,12 +2092,6 @@ def init_session(root_dir: str):
 
     _SESSION = _pytest.main.Session.from_config(cfg)
     cfg.hook.pytest_sessionstart(session=_SESSION)
-
-    # ASYNCIO AUTO MODE (v0.3.2 - Fix #70):
-    # Parse asyncio_mode from pyproject.toml and configure EventLoopManager.
-    # This is done directly in the Zygote since the Rust-side AsyncioSetup effect
-    # is added to hook_registry AFTER session effects are collected from Zygote.
-    _configure_asyncio_from_pyproject(root_dir)
 
     _SESSION.perform_collect()
 
@@ -2678,685 +2170,8 @@ def _close_django_connections() -> None:
         connections.close_all()
     except DatabaseError as e:
         print(f"[tach:harness] WARN: Database error closing connections: {e}", file=sys.stderr)
-    except Exception:
-        pass
-
-
-def _dispose_all_connections() -> int:
-    """Dispose all database connections before fork.
-
-    This is more aggressive than close_all() - it ensures connection pools
-    are completely reset so forked workers don't inherit stale FDs.
-
-    Called by Zygote before forking workers to ensure:
-    1. No file descriptors are shared between parent and child
-    2. SSL connections are cleanly terminated (prevents MAC errors)
-    3. Connection pools are empty so workers create fresh connections
-
-    Returns:
-        Number of connections disposed, or 0 if Django not available.
-    """
-    if not _is_django_available():
-        return 0
-
-    disposed = 0
-    try:
-        from django.db import connections
-
-        for alias in connections:
-            try:
-                conn = connections[alias]
-                # Close the connection if open
-                if conn.connection is not None:
-                    conn.close()
-                    disposed += 1
-                # Also close any pooled connections
-                if hasattr(conn, 'close_if_unusable_or_obsolete'):
-                    conn.close_if_unusable_or_obsolete()
-            except Exception as e:
-                print(f"[tach:harness] DEBUG: Error disposing connection '{alias}': {e}", file=sys.stderr)
-
-        # Final close_all to ensure everything is cleaned up
-        connections.close_all()
-
     except Exception as e:
-        print(f"[tach:harness] WARN: Failed to dispose connections: {e}", file=sys.stderr)
-
-    return disposed
-
-
-# =============================================================================
-# SQLALCHEMY ENGINE MANAGEMENT (fork-safe disposal)
-# =============================================================================
-
-
-def _detect_sqlalchemy() -> bool:
-    """Detect if SQLAlchemy is installed and importable.
-
-    Returns:
-        True if SQLAlchemy is available, False otherwise.
-    """
-    try:
-        import sqlalchemy
-        return True
-    except ImportError:
-        return False
-
-
-def _get_sqlalchemy_version() -> tuple[int, int, int] | None:
-    """Get the installed SQLAlchemy version.
-
-    Returns:
-        Tuple of (major, minor, patch) or None if not installed.
-    """
-    try:
-        from sqlalchemy import __version__
-        parts = __version__.split('.')
-        return (int(parts[0]), int(parts[1]), int(parts[2].split('+')[0].split('rc')[0]))
-    except (ImportError, IndexError, ValueError):
-        return None
-
-
-def _handle_sqlalchemy_marker(marker_args: dict[str, Any] | None) -> dict[str, Any]:
-    """Parse and validate SQLAlchemy marker arguments.
-
-    Supports:
-        @pytest.mark.sqlalchemy - Use all configured databases
-        @pytest.mark.sqlalchemy(databases=['default']) - Specific databases
-
-    Args:
-        marker_args: Dict of marker keyword arguments.
-
-    Returns:
-        Normalized configuration dict with 'databases' key.
-    """
-    if marker_args is None:
-        marker_args = {}
-
-    config = {
-        'databases': marker_args.get('databases', None),
-        'use_savepoint': marker_args.get('use_savepoint', True),
-    }
-
-    return config
-
-
-# SQLAlchemy engine registry for fork-safe disposal
-_sqlalchemy_engines: list[Any] = []
-
-
-def _register_sqlalchemy_engine(engine: Any) -> None:
-    """Register a SQLAlchemy engine for fork-safe disposal."""
-    global _sqlalchemy_engines
-    if engine not in _sqlalchemy_engines:
-        _sqlalchemy_engines.append(engine)
-
-
-def _dispose_sqlalchemy_engines() -> list[str]:
-    """Dispose all registered SQLAlchemy engines after fork.
-
-    Calls engine.dispose(close=False) to clear pool without
-    sending close to server.
-    """
-    global _sqlalchemy_engines
-    disposed = []
-
-    for engine in _sqlalchemy_engines:
-        try:
-            url = str(getattr(engine, 'url', 'unknown'))
-            engine.dispose(close=False)
-            disposed.append(url)
-        except Exception as e:
-            print(f"[tach:harness] WARN: Failed to dispose engine: {e}", file=sys.stderr)
-
-    _sqlalchemy_engines.clear()
-    return disposed
-
-
-def _apply_sqlalchemy_isolation(
-    engine: Any,
-    session_factory: Any | None = None,
-    *,
-    use_savepoint: bool = True,
-) -> dict[str, Any]:
-    """Apply SQLAlchemy transaction isolation for a test."""
-    try:
-        from sqlalchemy import __version__ as sa_version
-        sa_major = int(sa_version.split('.')[0])
-    except ImportError:
-        raise RuntimeError("SQLAlchemy is not installed")
-
-    # Dispose engine to clear any inherited connections from fork
-    engine.dispose(close=False)
-
-    # Create a new connection and start the outer transaction
-    connection = engine.connect()
-    transaction = connection.begin()
-
-    result = {
-        'connection': connection,
-        'transaction': transaction,
-        'session': None,
-        'engine': engine,
-    }
-
-    if session_factory is not None:
-        if sa_major >= 2 and use_savepoint:
-            session = session_factory(
-                bind=connection,
-                join_transaction_mode="create_savepoint",
-            )
-        else:
-            session = session_factory(bind=connection)
-            session.begin_nested()
-
-        result['session'] = session
-
-    return result
-
-
-def _cleanup_sqlalchemy_isolation(isolation_context: dict[str, Any]) -> None:
-    """Clean up SQLAlchemy transaction isolation after a test."""
-    session = isolation_context.get('session')
-    transaction = isolation_context.get('transaction')
-    connection = isolation_context.get('connection')
-
-    if session is not None:
-        try:
-            session.rollback()
-            session.close()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error closing SQLAlchemy session: {e}", file=sys.stderr)
-
-    if transaction is not None:
-        try:
-            transaction.rollback()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error rolling back SQLAlchemy transaction: {e}", file=sys.stderr)
-
-    if connection is not None:
-        try:
-            connection.close()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error closing SQLAlchemy connection: {e}", file=sys.stderr)
-
-
-async def _apply_sqlalchemy_isolation_async(
-    engine: Any,
-    session_factory: Any | None = None,
-    *,
-    use_savepoint: bool = True,
-) -> dict[str, Any]:
-    """Apply async SQLAlchemy transaction isolation for a test.
-
-    Creates an async connection, starts a transaction, and optionally
-    creates an AsyncSession bound to that connection.
-
-    Args:
-        engine: SQLAlchemy AsyncEngine instance.
-        session_factory: Optional async_sessionmaker.
-        use_savepoint: If True, use join_transaction_mode="create_savepoint".
-
-    Returns:
-        Dict with 'connection', 'transaction', and optionally 'session'.
-    """
-    try:
-        from sqlalchemy import __version__ as sa_version
-        sa_major = int(sa_version.split('.')[0])
-    except ImportError:
-        raise RuntimeError("SQLAlchemy is not installed")
-
-    # Dispose engine to clear inherited connections
-    await engine.dispose(close=False)
-
-    # Create async connection and start transaction
-    connection = await engine.connect()
-    transaction = await connection.begin()
-
-    result = {
-        'connection': connection,
-        'transaction': transaction,
-        'session': None,
-        'engine': engine,
-    }
-
-    if session_factory is not None:
-        if sa_major >= 2 and use_savepoint:
-            session = session_factory(
-                bind=connection,
-                join_transaction_mode="create_savepoint",
-            )
-        else:
-            session = session_factory(bind=connection)
-            await session.begin_nested()
-
-        result['session'] = session
-
-    return result
-
-
-async def _cleanup_sqlalchemy_isolation_async(isolation_context: dict[str, Any]) -> None:
-    """Clean up async SQLAlchemy transaction isolation after a test.
-
-    Rolls back the outer transaction and closes the connection.
-
-    Args:
-        isolation_context: Dict returned by _apply_sqlalchemy_isolation_async.
-    """
-    session = isolation_context.get('session')
-    transaction = isolation_context.get('transaction')
-    connection = isolation_context.get('connection')
-
-    if session is not None:
-        try:
-            await session.rollback()
-            await session.close()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error closing async SQLAlchemy session: {e}", file=sys.stderr)
-
-    if transaction is not None:
-        try:
-            await transaction.rollback()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error rolling back async SQLAlchemy transaction: {e}", file=sys.stderr)
-
-    if connection is not None:
-        try:
-            await connection.close()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error closing async SQLAlchemy connection: {e}", file=sys.stderr)
-
-
-def _apply_sqlalchemy_isolation_scoped(
-    engine: Any,
-    scoped_session_instance: Any,
-) -> dict[str, Any]:
-    """Apply SQLAlchemy isolation for scoped_session patterns.
-
-    For applications using scoped_session (like Flask-SQLAlchemy),
-    this function reconfigures the scoped session to use a new
-    connection with transaction isolation.
-
-    Args:
-        engine: SQLAlchemy Engine instance.
-        scoped_session_instance: The scoped_session registry.
-
-    Returns:
-        Isolation context dict for cleanup.
-    """
-    # Dispose and get fresh connection
-    engine.dispose(close=False)
-    connection = engine.connect()
-    transaction = connection.begin()
-
-    # Remove any existing session from the registry
-    scoped_session_instance.remove()
-
-    # Reconfigure to use our isolated connection
-    scoped_session_instance.configure(bind=connection)
-
-    # Get the actual session and start nested transaction
-    session = scoped_session_instance()
-    session.begin_nested()
-
-    return {
-        'connection': connection,
-        'transaction': transaction,
-        'session': session,
-        'scoped_session': scoped_session_instance,
-        'engine': engine,
-    }
-
-
-def _cleanup_sqlalchemy_isolation_scoped(isolation_context: dict[str, Any]) -> None:
-    """Clean up scoped_session isolation.
-
-    Args:
-        isolation_context: Dict from _apply_sqlalchemy_isolation_scoped.
-    """
-    scoped_session = isolation_context.get('scoped_session')
-    transaction = isolation_context.get('transaction')
-    connection = isolation_context.get('connection')
-    engine = isolation_context.get('engine')
-
-    # Remove the scoped session
-    if scoped_session is not None:
-        try:
-            scoped_session.remove()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error removing scoped session: {e}", file=sys.stderr)
-
-    # Rollback transaction
-    if transaction is not None:
-        try:
-            transaction.rollback()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error rolling back: {e}", file=sys.stderr)
-
-    # Close connection
-    if connection is not None:
-        try:
-            connection.close()
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error closing connection: {e}", file=sys.stderr)
-
-    # Reconfigure scoped session to use engine directly
-    if scoped_session is not None and engine is not None:
-        try:
-            scoped_session.configure(bind=engine)
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error reconfiguring scoped session: {e}", file=sys.stderr)
-
-
-def _apply_sqlalchemy_isolation_multi(
-    engines: dict[str, Any],
-    session_factories: dict[str, Any] | None = None,
-) -> dict[str, dict[str, Any]]:
-    """Apply SQLAlchemy isolation for multiple engines.
-
-    For applications with multiple databases (e.g., read replicas,
-    sharded databases), this applies isolation to each engine.
-
-    Args:
-        engines: Dict mapping names to Engine instances.
-        session_factories: Optional dict mapping names to session factories.
-
-    Returns:
-        Dict mapping names to isolation contexts.
-    """
-    contexts = {}
-
-    if session_factories is None:
-        session_factories = {}
-
-    for name, engine in engines.items():
-        factory = session_factories.get(name)
-        contexts[name] = _apply_sqlalchemy_isolation(
-            engine,
-            factory,
-            use_savepoint=True,
-        )
-
-    return contexts
-
-
-def _cleanup_sqlalchemy_isolation_multi(contexts: dict[str, dict[str, Any]]) -> None:
-    """Clean up isolation for multiple engines.
-
-    Cleans up in reverse order to handle any cross-database dependencies.
-
-    Args:
-        contexts: Dict of isolation contexts from _apply_sqlalchemy_isolation_multi.
-    """
-    # Cleanup in reverse order
-    for name in reversed(list(contexts.keys())):
-        context = contexts[name]
-        try:
-            _cleanup_sqlalchemy_isolation(context)
-        except Exception as e:
-            print(f"[tach:harness] WARN: Error cleaning up engine '{name}': {e}", file=sys.stderr)
-
-
-# =============================================================================
-# ALEMBIC INTEGRATION (migration detection and verification)
-# =============================================================================
-
-
-def _detect_alembic() -> bool:
-    """Detect if Alembic is installed.
-
-    Returns:
-        True if Alembic is available, False otherwise.
-    """
-    try:
-        import alembic
-        return True
-    except ImportError:
-        return False
-
-
-def _get_alembic_config(config_path: str | None = None) -> Any | None:
-    """Get Alembic configuration.
-
-    Args:
-        config_path: Path to alembic.ini. If None, searches common locations.
-
-    Returns:
-        Alembic Config object or None if not found.
-    """
-    if not _detect_alembic():
-        return None
-
-    from pathlib import Path
-
-    # Search paths
-    search_paths = []
-    if config_path:
-        search_paths.append(Path(config_path))
-    else:
-        cwd = Path.cwd()
-        search_paths.extend([
-            cwd / 'alembic.ini',
-            cwd / 'migrations' / 'alembic.ini',
-            cwd / 'src' / 'alembic.ini',
-        ])
-
-    for path in search_paths:
-        if path.exists():
-            try:
-                from alembic.config import Config
-                return Config(str(path))
-            except Exception as e:
-                print(f"[tach:harness] WARN: Failed to load alembic config from {path}: {e}", file=sys.stderr)
-
-    return None
-
-
-def _verify_alembic_head(engine: Any, config: Any = None) -> tuple[bool, str]:
-    """Verify database is at Alembic head revision.
-
-    Args:
-        engine: SQLAlchemy Engine.
-        config: Optional Alembic Config.
-
-    Returns:
-        Tuple of (is_at_head, current_revision).
-    """
-    if config is None:
-        config = _get_alembic_config()
-
-    if config is None:
-        return True, "no_alembic"
-
-    try:
-        from alembic.runtime.migration import MigrationContext
-        from alembic.script import ScriptDirectory
-
-        with engine.connect() as conn:
-            context = MigrationContext.configure(conn)
-            current = context.get_current_revision()
-
-        # Get head revision
-        script = ScriptDirectory.from_config(config)
-        head = script.get_current_head()
-
-        return current == head, current or "none"
-    except Exception as e:
-        print(f"[tach:harness] WARN: Error checking Alembic head: {e}", file=sys.stderr)
-        return True, "error"
-
-
-def _get_database_aliases(requested: list[str] | None = None) -> list[str]:
-    """Get valid database aliases for iteration.
-
-    Filters requested aliases against actually configured databases.
-
-    Args:
-        requested: Specific aliases to use, or None for all configured.
-
-    Returns:
-        List of valid database aliases.
-    """
-    if not _is_django_available():
-        return []
-
-    try:
-        from django.db import connections
-
-        if requested is None:
-            return list(connections)
-
-        # Filter to only valid aliases
-        valid = []
-        for alias in requested:
-            if alias in connections:
-                valid.append(alias)
-            else:
-                print(f"[tach:harness] DEBUG: Skipping unknown database alias '{alias}'", file=sys.stderr)
-        return valid
-
-    except Exception:
-        return []
-
-
-def _check_test_db_exists() -> bool:
-    """Check if the test database already exists.
-
-    Used by --reuse-db to skip database creation when possible.
-    Checks the actual test database name from Django's TEST settings.
-
-    Returns:
-        True if test database exists and is accessible, False otherwise.
-    """
-    if not _is_django_available():
-        return False
-
-    try:
-        from django.db import connection
-
-        # Get the test database name from settings
-        test_db_name = connection.creation._get_test_db_name()
-
-        # Try to connect to check if it exists
-        # We use a temporary connection to avoid side effects
-        from django.db import connections
-        conn = connections['default']
-
-        # Save original database name
-        original_name = conn.settings_dict['NAME']
-
-        try:
-            # Temporarily point to test database
-            conn.settings_dict['NAME'] = test_db_name
-            conn.close()
-            conn.ensure_connection()
-            return True
-        except Exception:
-            return False
-        finally:
-            # Restore original database name
-            conn.settings_dict['NAME'] = original_name
-            conn.close()
-
-    except Exception:
-        return False
-
-
-def _create_test_db(verbosity: int = 0) -> None:
-    """Create the test database and run migrations.
-
-    Uses Django's proper test database creation utilities to ensure
-    the test database is created correctly with proper isolation.
-
-    Args:
-        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
-    """
-    if not _is_django_available():
-        return
-
-    try:
-        from django.db import connection
-        from django.test.utils import setup_test_environment
-
-        # Setup test environment first
-        try:
-            setup_test_environment()
-        except Exception:
-            pass  # May already be set up
-
-        # Use Django's test database creation
-        # keepdb=True to avoid destroying if it exists (--reuse-db behavior)
-        connection.creation.create_test_db(verbosity=verbosity, keepdb=True)
-
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to create test database: {e}", file=sys.stderr)
-
-
-def _destroy_test_db(verbosity: int = 0) -> None:
-    """Destroy the test database.
-
-    Uses Django's proper test database destruction utilities.
-
-    Args:
-        verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
-    """
-    if not _is_django_available():
-        return
-
-    try:
-        from django.db import connection, connections
-        from django.test.utils import teardown_test_environment
-
-        # Close all connections first
-        connections.close_all()
-
-        # Destroy the test database using Django's utilities
-        # This actually drops the database
-        connection.creation.destroy_test_db(verbosity=verbosity)
-
-        # Teardown test environment
-        try:
-            teardown_test_environment()
-        except Exception:
-            pass  # May not be set up
-
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to destroy test database: {e}", file=sys.stderr)
-
-
-def _handle_db_lifecycle(reuse_db: bool = False, create_db: bool = False) -> None:
-    """Handle database lifecycle based on CLI flags.
-
-    Implements --reuse-db and --create-db behavior:
-    - --reuse-db: Skip creation if database exists
-    - --create-db: Force recreation even if --reuse-db is set
-
-    Args:
-        reuse_db: Whether to reuse existing database
-        create_db: Whether to force database recreation
-    """
-    if not _is_django_available():
-        return
-
-    # --create-db takes precedence: destroy and recreate
-    if create_db:
-        print("[tach:harness] INFO: --create-db set, forcing database recreation", file=sys.stderr)
-        _destroy_test_db(verbosity=1)
-        _create_test_db(verbosity=1)
-        return
-
-    # --reuse-db: check if database exists
-    if reuse_db:
-        if _check_test_db_exists():
-            print("[tach:harness] INFO: --reuse-db set, reusing existing database", file=sys.stderr)
-            return
-        else:
-            print("[tach:harness] INFO: --reuse-db set but database doesn't exist, creating", file=sys.stderr)
-            _create_test_db(verbosity=1)
-            return
-
-    # Default: always create fresh database
-    _create_test_db(verbosity=0)
+        _logger.debug("Django connection close error: %s", e)
 
 
 def _apply_django_db_isolation(marker_args: dict[str, Any] | None) -> list[tuple[str, str]]:
@@ -3485,789 +2300,6 @@ def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
             print(f"[tach:harness] WARN: Failed to rollback savepoint for '{alias}': {e}", file=sys.stderr)
 
 
-def _flush_database(databases: list[str] | None = None) -> None:
-    """Flush (truncate) database tables after a transaction=True test.
-
-    This is the cleanup mechanism for tests that use real transactions.
-    Unlike savepoint rollback, this physically deletes data from tables.
-
-    Args:
-        databases: List of database aliases to flush, or None for all.
-    """
-    if not _is_django_available():
-        return
-
-    try:
-        from django.core.management import call_command
-        from django.db import connections
-
-        # Determine which databases to flush
-        if databases is None:
-            databases = list(connections)
-
-        for alias in databases:
-            if alias not in connections:
-                print(f"[tach:harness] WARN: Unknown database '{alias}' for flush", file=sys.stderr)
-                continue
-
-            try:
-                # Use Django's flush command which truncates all tables
-                call_command('flush', '--no-input', database=alias, verbosity=0)
-            except Exception as e:
-                print(f"[tach:harness] WARN: Failed to flush database '{alias}': {e}", file=sys.stderr)
-
-    except Exception as e:
-        print(f"[tach:harness] WARN: Database flush failed: {e}", file=sys.stderr)
-
-
-def _apply_django_db_isolation_v2(marker_args: dict[str, Any] | None) -> dict[str, Any]:
-    """Apply database isolation based on marker args (v2 with transaction=True support).
-
-    Enhanced version that returns structured result including flush indicator.
-
-    Args:
-        marker_args: Parsed django_db marker arguments.
-
-    Returns:
-        Dict with keys:
-        - savepoints: List of (alias, sid) tuples for rollback
-        - needs_flush: True if transaction=True (needs flush after test)
-        - databases: List of database aliases involved
-    """
-    result = {
-        "savepoints": [],
-        "needs_flush": False,
-        "databases": [],
-    }
-
-    if not _is_django_available():
-        return result
-
-    # If no marker_args, apply default isolation
-    if marker_args is None:
-        marker_args = {"transaction": False, "reset_sequences": False, "databases": None}
-
-    # Determine databases
-    from django.db import connections
-    databases = marker_args.get("databases")
-    if databases is None:
-        databases = list(connections)
-    result["databases"] = databases
-
-    # If transaction=True, mark for flush instead of savepoint
-    if marker_args.get("transaction", False):
-        result["needs_flush"] = True
-        return result
-
-    # Otherwise, use savepoint isolation (existing logic)
-    result["savepoints"] = _apply_django_db_isolation(marker_args)
-    return result
-
-
-def _cleanup_django_db_isolation_v2(isolation_result: dict[str, Any]) -> None:
-    """Cleanup database isolation based on result from _apply_django_db_isolation_v2.
-
-    Handles both savepoint rollback and flush cleanup.
-
-    Args:
-        isolation_result: Result dict from _apply_django_db_isolation_v2.
-    """
-    if isolation_result.get("needs_flush"):
-        _flush_database(databases=isolation_result.get("databases"))
-    else:
-        _cleanup_django_db_isolation(isolation_result.get("savepoints", []))
-
-
-# =============================================================================
-# Django URL and Template Markers (v0.2.4 - Issue #35)
-# =============================================================================
-
-
-def _parse_urls_marker(marker_info: list[dict[str, Any]] | None) -> str | None:
-    """Extract URL module path from @pytest.mark.urls marker.
-
-    The urls marker accepts a single positional argument specifying the
-    ROOT_URLCONF module to use for the test.
-
-    Example:
-        @pytest.mark.urls('myapp.test_urls')
-
-    Args:
-        marker_info: List of marker dictionaries from discovery.
-
-    Returns:
-        The URL module path string, or None if marker not present.
-    """
-    if not marker_info:
-        return None
-
-    for marker in marker_info:
-        if isinstance(marker, dict) and marker.get("name") == "urls":
-            args = marker.get("args", {})
-            # Positional arg is stored with key "0"
-            return args.get("0")
-
-    return None
-
-
-def _apply_urls_override(urlconf: str | None) -> str | None:
-    """Override ROOT_URLCONF for a test and clear URL resolver cache.
-
-    Args:
-        urlconf: The URL module path to use, or None to skip override.
-
-    Returns:
-        The original ROOT_URLCONF value for restoration, or None if not applied.
-    """
-    if urlconf is None or not _is_django_available():
-        return None
-
-    try:
-        from django.conf import settings
-        from django.urls import clear_url_caches
-
-        original = getattr(settings, "ROOT_URLCONF", None)
-        settings.ROOT_URLCONF = urlconf
-        clear_url_caches()
-        return original
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to apply urls override: {e}", file=sys.stderr)
-        return None
-
-
-def _cleanup_urls_override(original_urlconf: str | None) -> None:
-    """Restore original ROOT_URLCONF after test.
-
-    Args:
-        original_urlconf: The original ROOT_URLCONF value to restore,
-            or None if no override was applied.
-    """
-    if original_urlconf is None:
-        return
-
-    try:
-        from django.conf import settings
-        from django.urls import clear_url_caches
-
-        settings.ROOT_URLCONF = original_urlconf
-        clear_url_caches()
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to restore urls: {e}", file=sys.stderr)
-
-
-def _parse_ignore_template_errors_marker(marker_info: list[dict[str, Any]] | None) -> bool:
-    """Check if @pytest.mark.ignore_template_errors marker is present.
-
-    Args:
-        marker_info: List of marker dictionaries from discovery.
-
-    Returns:
-        True if the marker is present, False otherwise.
-    """
-    if not marker_info:
-        return False
-
-    for marker in marker_info:
-        if isinstance(marker, dict) and marker.get("name") == "ignore_template_errors":
-            return True
-
-    return False
-
-
-def _apply_ignore_template_errors(ignore: bool) -> dict[str, Any] | None:
-    """Disable template debug mode to suppress template errors.
-
-    When ignore_template_errors is set, we disable DEBUG and template
-    debugging to prevent TemplateSyntaxError from being raised.
-
-    Args:
-        ignore: Whether to ignore template errors.
-
-    Returns:
-        Dictionary of original settings for restoration, or None if not applied.
-    """
-    if not ignore or not _is_django_available():
-        return None
-
-    try:
-        from django.conf import settings
-
-        originals: dict[str, Any] = {}
-
-        # Save and modify DEBUG
-        originals["DEBUG"] = getattr(settings, "DEBUG", False)
-
-        # Save and modify TEMPLATES debug settings
-        if hasattr(settings, "TEMPLATES"):
-            originals["TEMPLATES"] = []
-            for i, template_config in enumerate(settings.TEMPLATES):
-                if isinstance(template_config, dict):
-                    orig_debug = template_config.get("OPTIONS", {}).get("debug")
-                    originals["TEMPLATES"].append(orig_debug)
-                    # Set debug to False to suppress template errors
-                    if "OPTIONS" not in template_config:
-                        template_config["OPTIONS"] = {}
-                    template_config["OPTIONS"]["debug"] = False
-
-        return originals
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to apply ignore_template_errors: {e}", file=sys.stderr)
-        return None
-
-
-def _cleanup_ignore_template_errors(originals: dict[str, Any] | None) -> None:
-    """Restore original template settings after test.
-
-    Args:
-        originals: Dictionary of original settings from _apply_ignore_template_errors,
-            or None if no override was applied.
-    """
-    if originals is None:
-        return
-
-    try:
-        from django.conf import settings
-
-        # Restore TEMPLATES debug settings
-        if "TEMPLATES" in originals and hasattr(settings, "TEMPLATES"):
-            for i, orig_debug in enumerate(originals["TEMPLATES"]):
-                if i < len(settings.TEMPLATES):
-                    template_config = settings.TEMPLATES[i]
-                    if isinstance(template_config, dict) and "OPTIONS" in template_config:
-                        if orig_debug is None:
-                            template_config["OPTIONS"].pop("debug", None)
-                        else:
-                            template_config["OPTIONS"]["debug"] = orig_debug
-    except Exception as e:
-        print(f"[tach:harness] WARN: Failed to restore template settings: {e}", file=sys.stderr)
-
-
-# =============================================================================
-# DJANGO FIXTURES (Issue #39)
-# =============================================================================
-
-_DJANGO_FIXTURES: dict[str, Any] = {}
-
-
-def _init_db_fixture() -> None:
-    """Initialize the db fixture.
-
-    The db fixture provides database access for tests. It signals that
-    the test requires database access and should have proper isolation.
-
-    This is a marker fixture - it doesn't return a value but enables
-    database operations within the test.
-    """
-    if not _is_django_available():
-        return
-    _DJANGO_FIXTURES["db"] = True
-
-
-def _cleanup_db_fixture() -> None:
-    """Cleanup the db fixture.
-
-    Removes the db marker from the fixture registry.
-    Actual database cleanup (rollback/flush) is handled by isolation functions.
-    """
-    _DJANGO_FIXTURES.pop("db", None)
-
-
-def _init_client_fixture() -> Any:
-    """Initialize the client fixture.
-
-    The client fixture provides a Django test client for making HTTP requests
-    to views without starting a real server.
-
-    Returns:
-        Django Test Client instance, or None if Django is not available.
-    """
-    if not _is_django_available():
-        return None
-    try:
-        from django.test import Client
-
-        client = Client()
-        _DJANGO_FIXTURES["client"] = client
-        return client
-    except ImportError:
-        return None
-
-
-def _cleanup_client_fixture() -> None:
-    """Cleanup the client fixture.
-
-    Logs out any authenticated session and removes the client from registry.
-    """
-    client = _DJANGO_FIXTURES.pop("client", None)
-    if client is not None:
-        try:
-            client.logout()
-        except Exception:
-            pass
-
-
-def _init_rf_fixture() -> Any:
-    """Initialize the rf (RequestFactory) fixture.
-
-    The rf fixture provides a Django RequestFactory for creating mock
-    request objects without going through the URL routing.
-
-    Returns:
-        Django RequestFactory instance, or None if Django is not available.
-    """
-    if not _is_django_available():
-        return None
-    try:
-        from django.test import RequestFactory
-
-        rf = RequestFactory()
-        _DJANGO_FIXTURES["rf"] = rf
-        return rf
-    except ImportError:
-        return None
-
-
-def _cleanup_rf_fixture() -> None:
-    """Cleanup the rf fixture.
-
-    Removes the RequestFactory from the fixture registry.
-    """
-    _DJANGO_FIXTURES.pop("rf", None)
-
-
-def _init_django_user_model_fixture() -> Any:
-    """Initialize the django_user_model fixture.
-
-    Returns the Django User model class (or custom user model).
-    """
-    if not _is_django_available():
-        return None
-    try:
-        from django.contrib.auth import get_user_model
-
-        User = get_user_model()
-        _DJANGO_FIXTURES["django_user_model"] = User
-        return User
-    except ImportError:
-        return None
-
-
-def _cleanup_django_user_model_fixture() -> None:
-    """Cleanup the django_user_model fixture."""
-    _DJANGO_FIXTURES.pop("django_user_model", None)
-
-
-def _init_django_username_field_fixture() -> Any:
-    """Initialize the django_username_field fixture.
-
-    Returns the name of the username field on the User model.
-    """
-    if not _is_django_available():
-        return None
-    try:
-        from django.contrib.auth import get_user_model
-
-        User = get_user_model()
-        field_name = User.USERNAME_FIELD
-        _DJANGO_FIXTURES["django_username_field"] = field_name
-        return field_name
-    except (ImportError, AttributeError):
-        return "username"  # Default fallback
-
-
-def _cleanup_django_username_field_fixture() -> None:
-    """Cleanup the django_username_field fixture."""
-    _DJANGO_FIXTURES.pop("django_username_field", None)
-
-
-def _init_admin_user_fixture() -> Any:
-    """Initialize the admin_user fixture.
-
-    Creates and returns a superuser with known credentials.
-    Username: admin, Password: password
-    """
-    if not _is_django_available():
-        return None
-
-    try:
-        from django.contrib.auth import get_user_model
-
-        User = get_user_model()
-
-        username_field = User.USERNAME_FIELD
-
-        # Create superuser with known credentials
-        user_data = {
-            username_field: "admin",
-            "email": "admin@example.com",
-            "password": "password",
-        }
-
-        # Check if user already exists
-        try:
-            admin_user = User.objects.get(**{username_field: "admin"})
-        except User.DoesNotExist:
-            admin_user = User.objects.create_superuser(**user_data)
-
-        _DJANGO_FIXTURES["admin_user"] = admin_user
-        return admin_user
-    except ImportError:
-        return None
-
-
-def _cleanup_admin_user_fixture() -> None:
-    """Cleanup the admin_user fixture."""
-    _DJANGO_FIXTURES.pop("admin_user", None)
-
-
-def _init_admin_client_fixture() -> Any:
-    """Initialize the admin_client fixture.
-
-    Returns a Django test client logged in as admin.
-    """
-    if not _is_django_available():
-        return None
-
-    try:
-        from django.test import Client
-
-        # Get or create admin user
-        admin_user = _DJANGO_FIXTURES.get("admin_user")
-        if admin_user is None:
-            admin_user = _init_admin_user_fixture()
-
-        # Create client and force login
-        client = Client()
-        client.force_login(admin_user)
-
-        _DJANGO_FIXTURES["admin_client"] = client
-        return client
-    except ImportError:
-        return None
-
-
-def _cleanup_admin_client_fixture() -> None:
-    """Cleanup the admin_client fixture."""
-    client = _DJANGO_FIXTURES.pop("admin_client", None)
-    if client is not None:
-        try:
-            client.logout()
-        except Exception:
-            pass
-
-
-class SettingsWrapper:
-    """Wrapper for Django settings that tracks and restores overrides.
-
-    Uses Django's override_settings internally to ensure proper signal
-    emission and cache invalidation.
-    """
-
-    def __init__(self):
-        self._overrides: list[Any] = []
-        self._original_values: dict[str, Any] = {}
-
-    def __getattr__(self, name: str) -> Any:
-        from django.conf import settings
-
-        return getattr(settings, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            super().__setattr__(name, value)
-            return
-
-        from django.conf import settings
-        from django.test.utils import override_settings
-
-        # Store original if not already stored
-        if name not in self._original_values:
-            self._original_values[name] = getattr(settings, name, None)
-
-        # Create and enable override
-        override = override_settings(**{name: value})
-        override.enable()
-        self._overrides.append(override)
-
-    def finalize(self) -> None:
-        """Restore all overridden settings in reverse order."""
-        for override in reversed(self._overrides):
-            try:
-                override.disable()
-            except Exception:
-                pass
-        self._overrides.clear()
-        self._original_values.clear()
-
-
-def _init_settings_fixture() -> Any:
-    """Initialize the settings fixture.
-
-    Returns a SettingsWrapper for overriding Django settings.
-    """
-    if not _is_django_available():
-        return None
-
-    wrapper = SettingsWrapper()
-    _DJANGO_FIXTURES["settings"] = wrapper
-    return wrapper
-
-
-def _cleanup_settings_fixture() -> None:
-    """Cleanup the settings fixture."""
-    wrapper = _DJANGO_FIXTURES.pop("settings", None)
-    if wrapper is not None:
-        wrapper.finalize()
-
-
-def _init_transactional_db_fixture() -> Any:
-    """Initialize the transactional_db fixture.
-
-    Provides database access without savepoint wrapping.
-    Uses flush for cleanup instead of rollback.
-    """
-    if not _is_django_available():
-        return None
-
-    # Mark that we need flush cleanup, not savepoint rollback
-    _DJANGO_FIXTURES["transactional_db"] = True
-    _DJANGO_FIXTURES["_needs_flush"] = True
-    return True
-
-
-def _cleanup_transactional_db_fixture() -> None:
-    """Cleanup the transactional_db fixture."""
-    needs_flush = _DJANGO_FIXTURES.pop("_needs_flush", False)
-    _DJANGO_FIXTURES.pop("transactional_db", None)
-
-    if needs_flush and _is_django_available():
-        try:
-            from django.core.management import call_command
-            call_command("flush", "--no-input", verbosity=0)
-        except Exception as e:
-            print(f"[tach:harness] WARN: Failed to flush database: {e}", file=sys.stderr)
-
-
-class LiveServer:
-    """Wrapper for Django's live server test case functionality."""
-
-    def __init__(self, host: str = "localhost", port: int = 0):
-        self._host = host
-        self._port = port
-        self._server_thread = None
-        self._url: Optional[str] = None
-
-    def start(self) -> None:
-        """Start the live server."""
-        if not _is_django_available():
-            return
-
-        try:
-            from django.test.testcases import LiveServerThread
-
-            # Find an available port
-            if self._port == 0:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(('', 0))
-                    self._port = s.getsockname()[1]
-
-            # Start server thread
-            self._server_thread = LiveServerThread(self._host, [self._port])
-            self._server_thread.daemon = True
-            self._server_thread.start()
-            self._server_thread.is_ready.wait()
-
-            if self._server_thread.error:
-                raise self._server_thread.error
-
-            self._url = f"http://{self._host}:{self._port}"
-        except ImportError as e:
-            print(f"[tach:harness] WARN: LiveServerThread not available: {e}", file=sys.stderr)
-            self._url = f"http://{self._host}:8000"  # Fallback
-
-    def stop(self) -> None:
-        """Stop the live server."""
-        if self._server_thread is not None:
-            try:
-                self._server_thread.terminate()
-                self._server_thread.join(timeout=5)
-            except Exception:
-                pass
-            self._server_thread = None
-
-    @property
-    def url(self) -> str:
-        """Return the live server URL."""
-        return self._url or f"http://{self._host}:{self._port}"
-
-    def __str__(self) -> str:
-        return self.url
-
-
-def _init_live_server_fixture() -> Any:
-    """Initialize the live_server fixture."""
-    if not _is_django_available():
-        return None
-
-    server = LiveServer()
-    server.start()
-    _DJANGO_FIXTURES["live_server"] = server
-    return server
-
-
-def _cleanup_live_server_fixture() -> None:
-    """Cleanup the live_server fixture."""
-    server = _DJANGO_FIXTURES.pop("live_server", None)
-    if server is not None:
-        server.stop()
-
-
-# Fixture registry mapping names to init/cleanup functions
-_FIXTURE_REGISTRY: dict[str, tuple[Any, Any]] = {
-    "db": (_init_db_fixture, _cleanup_db_fixture),
-    "client": (_init_client_fixture, _cleanup_client_fixture),
-    "rf": (_init_rf_fixture, _cleanup_rf_fixture),
-    "django_user_model": (_init_django_user_model_fixture, _cleanup_django_user_model_fixture),
-    "django_username_field": (_init_django_username_field_fixture, _cleanup_django_username_field_fixture),
-    "admin_user": (_init_admin_user_fixture, _cleanup_admin_user_fixture),
-    "admin_client": (_init_admin_client_fixture, _cleanup_admin_client_fixture),
-    "settings": (_init_settings_fixture, _cleanup_settings_fixture),
-    "transactional_db": (_init_transactional_db_fixture, _cleanup_transactional_db_fixture),
-    "live_server": (_init_live_server_fixture, _cleanup_live_server_fixture),
-}
-
-
-def _setup_django_fixtures(fixture_names: list[str]) -> dict[str, Any]:
-    """Initialize Django fixtures requested by a test.
-
-    Takes a list of fixture names the test requests, calls the appropriate
-    init functions, and returns a dict of fixture name -> value.
-
-    Args:
-        fixture_names: List of fixture names (e.g., ["db", "client"])
-
-    Returns:
-        Dict mapping fixture name to its initialized value
-    """
-    fixture_values: dict[str, Any] = {}
-
-    for name in fixture_names:
-        if name in _FIXTURE_REGISTRY:
-            init_fn, _ = _FIXTURE_REGISTRY[name]
-            value = init_fn()
-            fixture_values[name] = value
-
-    return fixture_values
-
-
-def _teardown_django_fixtures() -> None:
-    """Cleanup all active Django fixtures.
-
-    Calls all cleanup functions in reverse order of the fixture registry
-    and clears the _DJANGO_FIXTURES registry.
-    """
-    # Get cleanup functions in reverse order for proper teardown
-    cleanup_order = list(reversed(_FIXTURE_REGISTRY.keys()))
-
-    for name in cleanup_order:
-        if name in _DJANGO_FIXTURES:
-            _, cleanup_fn = _FIXTURE_REGISTRY[name]
-            try:
-                cleanup_fn()
-            except Exception:
-                # Swallow cleanup errors to ensure all fixtures are cleaned
-                pass
-
-    # Ensure registry is cleared even if cleanup functions missed something
-    _DJANGO_FIXTURES.clear()
-
-
-def _get_fixture_names_from_item(item: Any) -> list[str]:
-    """Extract Django fixture names from a pytest test item.
-
-    Inspects the test function signature to find parameters that match
-    known Django fixture names.
-
-    Args:
-        item: Pytest test item
-
-    Returns:
-        List of fixture names the test requires
-    """
-    fixture_names: list[str] = []
-
-    try:
-        # Get the actual test function
-        func = item.obj
-        if hasattr(func, "__wrapped__"):
-            func = func.__wrapped__
-
-        # Inspect function signature for fixture parameters
-        import inspect
-        sig = inspect.signature(func)
-        for param_name in sig.parameters:
-            if param_name in _FIXTURE_REGISTRY:
-                fixture_names.append(param_name)
-    except Exception:
-        # If inspection fails, return empty list
-        pass
-
-    return fixture_names
-
-
-def _construct_nodeid(file_path: str, node_id: str) -> str:
-    """
-    Transform a nodeid to be relative to pytest's rootdir.
-
-    The node_id from Rust may have a different path prefix than pytest expects.
-    We extract the test identifier and reconstruct it relative to rootdir.
-
-    Args:
-        file_path: Absolute or relative path to the test file (fallback)
-        node_id: Full nodeid from Rust (e.g., "test-aistudio/tests/foo.py::TestClass::test_method")
-
-    Returns:
-        Nodeid string matching pytest's format (e.g., "tests/foo.py::test_bar")
-    """
-    global _SESSION
-
-    if _SESSION is None:
-        return node_id  # Can't transform without session
-
-    # Get pytest's rootdir
-    rootdir = _SESSION.config.rootdir
-
-    # Split nodeid into path and test parts
-    # e.g., "test-aistudio/tests/foo.py::TestClass::test_method"
-    # -> path = "test-aistudio/tests/foo.py", test_part = "TestClass::test_method"
-    if "::" in node_id:
-        parts = node_id.split("::", 1)
-        path_part = parts[0]
-        test_part = parts[1] if len(parts) > 1 else ""
-    else:
-        # No :: means it's just a path, use file_path instead
-        path_part = file_path
-        test_part = node_id
-
-    # Convert path to be relative to rootdir
-    abs_path = os.path.abspath(path_part)
-    try:
-        rel_path = os.path.relpath(abs_path, start=str(rootdir))
-    except ValueError:
-        rel_path = path_part
-
-    # Normalize to forward slashes
-    rel_path = rel_path.replace(os.sep, "/")
-
-    # Reconstruct nodeid
-    constructed = f"{rel_path}::{test_part}" if test_part else rel_path
-
-    if os.environ.get("TACH_DEBUG_NODEID"):
-        os.write(2, f"[tach:harness] nodeid: {node_id} -> {constructed}\n".encode())
-
-    return constructed
-
-
 def run_test(
     file_path: str,
     node_id: str,
@@ -4333,50 +2365,15 @@ def run_test(
     initial_thread_count = threading.active_count()
 
     try:
-        # Construct nodeid relative to pytest's rootdir for reliable lookup
-        # The node_id parameter contains test_name (e.g., "TestClass::test_method")
-        # We combine it with file_path to build the correct nodeid
-        constructed_nodeid = _construct_nodeid(file_path, node_id)
-
         # O(1) lookup from pre-collected items
-        target_item = _ITEMS_MAP.get(constructed_nodeid)
-
-        # Fallback: try the original node_id in case it's already correct
-        if not target_item:
-            target_item = _ITEMS_MAP.get(node_id)
-
-        # Fallback for Unicode nodeids (Issue #XX): pytest may escape Unicode chars
-        # differently than Rust discovery. Try matching by file basename + test name.
-        if not target_item:
-            # Match by file basename + test part to avoid false positives
-            constructed_file: str = constructed_nodeid.split("::")[0] if "::" in constructed_nodeid else ""
-            constructed_test: str = constructed_nodeid.split("::")[-1] if "::" in constructed_nodeid else constructed_nodeid
-            for key, item in _ITEMS_MAP.items():
-                key_file: str = key.split("::")[0] if "::" in key else ""
-                key_test: str = key.split("::")[-1] if "::" in key else key
-                # Match if file basenames match AND test parts match
-                if os.path.basename(key_file) == os.path.basename(constructed_file) and key_test == constructed_test:
-                    target_item = item
-                    break
-
-        # Fallback: fuzzy match by test name only (discovery reconciliation)
-        if not target_item:
-            fuzzy_match = _fuzzy_match_test(node_id, _ITEMS_MAP)
-            if fuzzy_match:
-                target_item = _ITEMS_MAP.get(fuzzy_match)
-                print(f"[tach:harness] Fuzzy matched {node_id} -> {fuzzy_match}", file=sys.stderr)
+        target_item = _ITEMS_MAP.get(node_id)
 
         if not target_item:
             duration = time.perf_counter() - start
-            # Include both attempted nodeids in error for debugging
             return (
                 STATUS_HARNESS_ERROR,
                 duration,
-                f"Test not found in Zygote session.\n"
-                f"  Constructed: {constructed_nodeid}\n"
-                f"  Original: {node_id}\n"
-                f"  Available: {len(_ITEMS_MAP)} items\n"
-                f"  Sample keys: {list(_ITEMS_MAP.keys())[:3]}",
+                f"Test not found in Zygote session: {node_id}\nAvailable: {len(_ITEMS_MAP)} items",
                 False,  # No thread leak detection for failed lookup
             )
 
@@ -4389,18 +2386,13 @@ def run_test(
         if hasattr(original_obj, "__func__"):
             func_to_check = original_obj.__func__
 
-        # Use EventLoopManager for scoped loop management (both async tests and fixture resolution)
-        loop_manager = EventLoopManager.get_instance()
-
-        # Cache async check to avoid duplicate inspect.iscoroutinefunction() calls
-        is_async_test = inspect.iscoroutinefunction(func_to_check)
-
-        if is_async_test:
+        if inspect.iscoroutinefunction(func_to_check):
+            # Use EventLoopManager for scoped loop management
+            loop_manager = EventLoopManager.get_instance()
 
             # Parse asyncio marker for loop_scope configuration
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
-            # Preserve auto_mode when updating loop_scope
-            loop_manager.configure(loop_scope=loop_scope, auto_mode=loop_manager.auto_mode)
+            loop_manager.configure(loop_scope=loop_scope)
 
             # Scope transition handling (Issue #43)
             fspath = str(getattr(target_item, 'fspath', ''))
@@ -4415,15 +2407,6 @@ def run_test(
                     loop = mgr.get_loop(key)
                     # Set as current event loop for this thread
                     asyncio.set_event_loop(loop)
-                    # Share loop with AsyncFixtureWrapper for consistency
-                    AsyncFixtureWrapper.set_loop(loop)
-
-                    # CRITICAL: Consume async fixtures in kwargs before calling test
-                    # Fixtures may be raw async generators from Zygote cache
-                    for name, val in list(kwargs.items()):
-                        if inspect.isasyncgen(val) or asyncio.iscoroutine(val):
-                            kwargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, val, "function")
-
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
@@ -4441,79 +2424,9 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
-        # === SCOPED LOOP SETUP (Batch 1 Fix) ===
-        # Get the scoped loop BEFORE runtestprotocol() so fixtures resolve with correct loop
-        # This fixes the issue where AsyncFixtureWrapper.set_loop() was called with a generic
-        # loop, but the test's scoped loop was only set inside sync_wrapper (too late for fixtures)
-        if is_async_test:
-            # Async test: use the already-computed scope_key from above
-            fixture_loop = loop_manager.get_loop(scope_key)
-        else:
-            # Non-async test: use function scope for async fixture consumption
-            fixture_scope_key = f"function:{target_item.nodeid}"
-            fixture_loop = loop_manager.get_loop(fixture_scope_key)
-
-        # Set the scoped loop as current BEFORE fixtures are resolved
-        asyncio.set_event_loop(fixture_loop)
-        # === END SCOPED LOOP SETUP ===
-
-        # Django Fixtures (v0.3.0 - Issue #39)
-        # Setup fixtures after db isolation is applied
-        fixture_names = _get_fixture_names_from_item(target_item)
-        fixture_values = _setup_django_fixtures(fixture_names)
-
-        # Django URL and Template Markers (v0.2.4 - Issue #35)
-        urlconf = _parse_urls_marker(marker_info)
-        original_urlconf = _apply_urls_override(urlconf)
-
-        ignore_templates = _parse_ignore_template_errors_marker(marker_info)
-        template_originals = _apply_ignore_template_errors(ignore_templates)
-
-        # === ASYNC FIXTURE HANDLING ===
-        # Set up the scoped event loop for async fixtures BEFORE pytest runs
-        # (fixture_loop is already the correct scoped loop from above)
-        AsyncFixtureWrapper.set_loop(fixture_loop)
-
-        # Scope transition handling for fixtures (Batch 1)
-        fspath_for_fixture = str(getattr(target_item, 'fspath', ''))
-        item_cls_for_fixture = getattr(target_item, 'cls', None)
-        class_name_for_fixture = f"{item_cls_for_fixture.__module__}.{item_cls_for_fixture.__name__}" if item_cls_for_fixture else None
-        AsyncFixtureWrapper.on_test_start(fspath_for_fixture, class_name_for_fixture)
-
-        # Invalidate stale async fixture caches inherited from Zygote parent
-        # Fixtures are cached in parent process before fork - workers inherit raw coroutines
-        # Clear these so pytest calls FixtureDef.execute() again (cache miss)
-        from _pytest.fixtures import FixtureDef
-        fixture_info = getattr(target_item, "_fixtureinfo", None)
-        if fixture_info and hasattr(fixture_info, 'name2fixturedefs'):
-            for fixturedefs in fixture_info.name2fixturedefs.values():
-                for fixturedef in fixturedefs:
-                    cached = getattr(fixturedef, "cached_result", None)
-                    if cached is not None and isinstance(cached, tuple) and len(cached) > 0:
-                        val = cached[0]
-                        # If cached value is raw async, consume it now
-                        if asyncio.iscoroutine(val) or inspect.isasyncgen(val):
-                            scope = getattr(fixturedef, 'scope', 'function')
-                            consumed = AsyncFixtureWrapper.consume_async_fixture(
-                                fixturedef.argname, val, scope
-                            )
-                            # Replace cached_result with consumed value
-                            # cached_result is (value, cache_key, teardown)
-                            fixturedef.cached_result = (consumed, cached[1], cached[2]) if len(cached) >= 3 else (consumed,)
-
-        # === END ASYNC FIXTURE HANDLING ===
-
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
-            # Cleanup in reverse order of application
-            # Only teardown function-scoped fixtures after each test
-            # Module/class/session scoped fixtures persist until scope transition
-            AsyncFixtureWrapper.teardown_function_scope()
-            _cleanup_ignore_template_errors(template_originals)
-            _cleanup_urls_override(original_urlconf)
-            # Teardown Django fixtures before db isolation cleanup
-            _teardown_django_fixtures()
             # Rollback savepoints to restore database state
             _cleanup_django_db_isolation(django_savepoints)
 
@@ -4530,14 +2443,6 @@ def run_test(
                 failed_report = report
             elif report.skipped:
                 skipped_report = report
-
-        # Check for teardown errors (Batch 4 - Fix Teardown Error Handling)
-        teardown_errors: list[Exception] = AsyncFixtureWrapper.get_teardown_errors()
-        teardown_msg: str | None = None
-        if teardown_errors:
-            # Format teardown error messages
-            error_msgs = [f"Teardown Error ({type(e).__name__}): {str(e)}" for e in teardown_errors]
-            teardown_msg = "\n".join(error_msgs)
 
         if failed_report:
             longrepr = failed_report.longrepr
@@ -4558,25 +2463,11 @@ def run_test(
                 # Debug logging for troubleshooting enhancement failures
                 print(f"[tach:harness] DEBUG: Enhanced failure formatting failed: {enhance_err}", file=sys.stderr)
 
-            # Teardown errors take precedence - upgrade to STATUS_ERROR
-            if teardown_msg:
-                msg = f"{msg}\n\n{teardown_msg}"
-                return (STATUS_ERROR, duration, msg, _thread_leak_detected)
             return (STATUS_FAIL, duration, msg, _thread_leak_detected)
 
         if skipped_report:
             skip_reason = str(skipped_report.longrepr) if skipped_report.longrepr else ""
-            skip_msg = f"Skipped: {skip_reason}"
-            # Teardown errors take precedence - upgrade to STATUS_ERROR
-            if teardown_msg:
-                skip_msg = f"{skip_msg}\n\n{teardown_msg}"
-                return (STATUS_ERROR, duration, skip_msg, _thread_leak_detected)
-            return (STATUS_SKIP, duration, skip_msg, _thread_leak_detected)
-
-        # Test passed - but check for teardown errors
-        if teardown_msg:
-            # Upgrade status to ERROR if test passed but teardown failed
-            return (STATUS_ERROR, duration, teardown_msg, _thread_leak_detected)
+            return (STATUS_SKIP, duration, f"Skipped: {skip_reason}", _thread_leak_detected)
 
         return (STATUS_PASS, duration, "", _thread_leak_detected)
 
@@ -4611,9 +2502,6 @@ def reset_worker_state() -> bool:
     try:
         # Reset event loop manager to cleanup any lingering loops (Issue #43)
         EventLoopManager.reset()
-
-        # Reset async fixture wrapper state (Issue #43 audit)
-        AsyncFixtureWrapper.reset()
 
         import tach_rust
 
@@ -4809,9 +2697,9 @@ def _coverage_py_start_callback(code, instruction_offset):
 
         tach_rust.record_py_start(code_id, filename)
 
-    except Exception:
+    except Exception as e:
         # Never let coverage errors crash the test
-        pass
+        _logger.debug("Coverage PY_START error (non-fatal): %s", e)
 
     # Disable PY_START for this code object after registration
     # This is an optimization - we only need to register once
@@ -4851,9 +2739,9 @@ def _coverage_line_callback(code, instruction_offset):
         # Record to ring buffer (releases GIL internally)
         tach_rust.record_line(code_id, lineno)
 
-    except Exception:
+    except Exception as e:
         # Never let coverage errors crash the test
-        pass
+        _logger.debug("Coverage LINE error (non-fatal): %s", e)
 
     return None  # Continue monitoring
 
@@ -4964,5 +2852,6 @@ def get_coverage_stats() -> dict:
             "coverage_overflow": tach_rust.get_coverage_overflow() if _coverage_enabled else 0,
             "mapping_overflow": tach_rust.get_mapping_overflow() if _coverage_enabled else 0,
         }
-    except Exception:
+    except Exception as e:
+        _logger.debug("Coverage stats error: %s", e)
         return {"enabled": False, "coverage_overflow": 0, "mapping_overflow": 0}
