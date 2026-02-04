@@ -271,6 +271,7 @@ fn expr_to_string(expr: &ast::Expr) -> Option<String> {
             ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
             ast::Constant::None => Some("None".to_string()),
             ast::Constant::Float(f) => Some(f.to_string()),
+            ast::Constant::Bytes(b) => Some(format!("bytes{}", b.len())),
             _ => None,
         },
         // Handle simple Name expressions (like exception classes)
@@ -471,6 +472,7 @@ fn expr_to_pytest_id(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Opt
             ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
             ast::Constant::None => Some("None".to_string()),
             ast::Constant::Float(f) => Some(f.to_string()),
+            ast::Constant::Bytes(b) => Some(format!("bytes{}", b.len())),
             _ => None,
         },
         // Name expressions (like exception classes: ValueError, TypeError)
