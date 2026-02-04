@@ -279,6 +279,56 @@ def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
         return None
 
 
+def _configure_asyncio_from_pyproject(root_dir: str) -> None:
+    """Parse asyncio_mode from pyproject.toml and configure EventLoopManager.
+
+    This enables pytest-asyncio auto mode support without needing the plugin.
+    When asyncio_mode=auto, all coroutine tests are treated as async tests
+    even without @pytest.mark.asyncio decorator.
+
+    Args:
+        root_dir: Project root directory containing pyproject.toml
+    """
+    import tomllib
+    from pathlib import Path
+
+    # Walk up from root_dir to find pyproject.toml (may be in parent)
+    search_path = Path(root_dir).resolve()
+    pyproject_path = None
+    for _ in range(5):  # Max 5 levels up
+        candidate = search_path / "pyproject.toml"
+        if candidate.exists():
+            pyproject_path = candidate
+            break
+        if search_path.parent == search_path:
+            break
+        search_path = search_path.parent
+
+    if pyproject_path is None:
+        return
+
+    try:
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+
+        # Look for [tool.pytest.ini_options] section
+        pytest_opts = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
+        asyncio_mode = pytest_opts.get("asyncio_mode", "strict")
+        loop_scope = pytest_opts.get("asyncio_default_fixture_loop_scope", "function")
+
+        auto_mode = asyncio_mode == "auto"
+
+        if auto_mode or loop_scope != "function":
+            EventLoopManager.get_instance().configure(loop_scope=loop_scope, auto_mode=auto_mode)
+            os.write(
+                2,
+                f"[tach:harness] Asyncio config: mode={asyncio_mode}, loop_scope={loop_scope}\n".encode()
+            )
+    except Exception as e:
+        # Don't fail on config parse errors, just log and continue
+        os.write(2, f"[tach:harness] WARN: Failed to parse asyncio config: {e}\n".encode())
+
+
 # Sentinel value to distinguish timeout from legitimate None return
 _TIMEOUT_SENTINEL = object()
 
@@ -1674,7 +1724,27 @@ def post_fork_init() -> bool:
     except Exception as e:
         print(f"[tach:harness] WARN: AsyncFixtureWrapper reset failed: {e}", file=sys.stderr)
 
-    # 4. Install import hook for zero-copy module loading
+    # 4. Patch FixtureDef.execute to consume async fixtures at resolution time
+    # This MUST happen early before any fixtures are resolved
+    try:
+        from _pytest.fixtures import FixtureDef
+        _original_execute = FixtureDef.execute
+
+        def _patched_execute(self, request):
+            result = _original_execute(self, request)
+            # If the fixture returns an async generator or coroutine, consume it
+            if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+                print(f"[tach:fixture-patch] Consuming async fixture: {self.argname}", file=sys.stderr)
+                scope = getattr(self, 'scope', 'function')
+                result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
+            return result
+
+        FixtureDef.execute = _patched_execute
+        print("[tach:harness] FixtureDef.execute patched", file=sys.stderr)
+    except Exception as e:
+        print(f"[tach:harness] WARN: FixtureDef patch failed: {e}", file=sys.stderr)
+
+    # 5. Install import hook for zero-copy module loading
     # This must be done BEFORE snapshot to be part of the golden state
     install_tach_import_hook()
 
@@ -2467,6 +2537,25 @@ def init_session(root_dir: str):
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
+    # CRITICAL: Patch FixtureDef.execute to consume async fixtures at resolution time
+    # This MUST be in init_session() so workers inherit the patch via fork
+    from _pytest.fixtures import FixtureDef
+    _original_execute = FixtureDef.execute
+
+    def _patched_execute(self, request):
+        os.write(2, f"[tach:patch] execute called for: {self.argname}\n".encode())
+        result = _original_execute(self, request)
+        is_async = inspect.isasyncgen(result) or asyncio.iscoroutine(result)
+        os.write(2, f"[tach:patch] {self.argname} -> is_async={is_async}, type={type(result).__name__}\n".encode())
+        # If the fixture returns an async generator or coroutine, consume it
+        if is_async:
+            scope = getattr(self, 'scope', 'function')
+            result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
+        return result
+
+    FixtureDef.execute = _patched_execute
+    os.write(2, b"[tach:harness] FixtureDef.execute patched for async fixtures\n")
+
     # ASYNC FIXTURE HOOK (v0.3.1 - Batch 2):
     # Register TachFixturePlugin to intercept async fixtures at resolution time.
     # This solves the indirect dependency problem where sync fixtures depend on async fixtures.
@@ -2493,6 +2582,12 @@ def init_session(root_dir: str):
 
     _SESSION = _pytest.main.Session.from_config(cfg)
     cfg.hook.pytest_sessionstart(session=_SESSION)
+
+    # ASYNCIO AUTO MODE (v0.3.2 - Fix #70):
+    # Parse asyncio_mode from pyproject.toml and configure EventLoopManager.
+    # This is done directly in the Zygote since the Rust-side AsyncioSetup effect
+    # is added to hook_registry AFTER session effects are collected from Zygote.
+    _configure_asyncio_from_pyproject(root_dir)
 
     _SESSION.perform_collect()
 
@@ -4292,7 +4387,8 @@ def run_test(
 
             # Parse asyncio marker for loop_scope configuration
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
-            loop_manager.configure(loop_scope=loop_scope)
+            # Preserve auto_mode when updating loop_scope
+            loop_manager.configure(loop_scope=loop_scope, auto_mode=loop_manager.auto_mode)
 
             # Scope transition handling (Issue #43)
             fspath = str(getattr(target_item, 'fspath', ''))
@@ -4309,6 +4405,13 @@ def run_test(
                     asyncio.set_event_loop(loop)
                     # Share loop with AsyncFixtureWrapper for consistency
                     AsyncFixtureWrapper.set_loop(loop)
+
+                    # CRITICAL: Consume async fixtures in kwargs before calling test
+                    # Fixtures may be raw async generators from Zygote cache
+                    for name, val in list(kwargs.items()):
+                        if inspect.isasyncgen(val) or asyncio.iscoroutine(val):
+                            kwargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, val, "function")
+
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
@@ -4376,28 +4479,21 @@ def run_test(
                     cached = getattr(fixturedef, "cached_result", None)
                     if cached is not None and isinstance(cached, tuple) and len(cached) > 0:
                         val = cached[0]
+                        # If cached value is raw async, consume it now
                         if asyncio.iscoroutine(val) or inspect.isasyncgen(val):
-                            fixturedef.cached_result = None
+                            scope = getattr(fixturedef, 'scope', 'function')
+                            consumed = AsyncFixtureWrapper.consume_async_fixture(
+                                fixturedef.argname, val, scope
+                            )
+                            # Replace cached_result with consumed value
+                            # cached_result is (value, cache_key, teardown)
+                            fixturedef.cached_result = (consumed, cached[1], cached[2]) if len(cached) >= 3 else (consumed,)
 
-        # Patch FixtureDef.execute to consume async fixtures at resolution time
-        _original_execute = FixtureDef.execute
-
-        def _patched_execute(self, request):
-            result = _original_execute(self, request)
-            # If the fixture returns an async generator or coroutine, consume it
-            if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
-                scope = getattr(self, 'scope', 'function')
-                result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
-            return result
-
-        FixtureDef.execute = _patched_execute
         # === END ASYNC FIXTURE HANDLING ===
 
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
-            # Restore original execute
-            FixtureDef.execute = _original_execute
             # Cleanup in reverse order of application
             # Only teardown function-scoped fixtures after each test
             # Module/class/session scoped fixtures persist until scope transition
