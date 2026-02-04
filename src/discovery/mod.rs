@@ -7,9 +7,11 @@
 //! - `graph`: Dependency graph construction
 //! - `analysis`: Toxicity analysis and classification
 //! - `cache`: Disk-based conftest parsing cache
+//! - `config`: Asyncio configuration parsing
 
 pub mod analysis;
 pub mod cache;
+pub mod config;
 pub mod graph;
 pub mod loader;
 pub mod resolver;
@@ -20,3 +22,6 @@ pub use scanner::{
     DiscoveryResult, FixtureDefinition, FixtureScope, HookDefinition, MarkerInfo, TestCase,
     TestModule, detect_blocking_patterns, discover, dump_json,
 };
+
+// Re-export config types
+pub use config::{AsyncioConfig, parse_asyncio_config};

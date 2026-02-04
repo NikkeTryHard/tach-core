@@ -116,6 +116,10 @@ harness = false
 
 # Integration tests
 [[test]]
+name = "asyncio_config_tests"
+path = "rust_tests/asyncio_config_tests.rs"
+
+[[test]]
 name = "discovery_integration"
 path = "rust_tests/discovery_integration.rs"
 
