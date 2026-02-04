@@ -288,8 +288,20 @@ def _configure_asyncio_from_pyproject(root_dir: str) -> None:
 
     Args:
         root_dir: Project root directory containing pyproject.toml
+
+    Note:
+        This duplicates logic in src/discovery/config.rs::parse_asyncio_config().
+        Both are needed: Python runs in Zygote before Rust effects are wired up.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            # Neither available - skip config parsing
+            return
+
     from pathlib import Path
 
     # Walk up from root_dir to find pyproject.toml (may be in parent)
@@ -1725,22 +1737,22 @@ def post_fork_init() -> bool:
         print(f"[tach:harness] WARN: AsyncFixtureWrapper reset failed: {e}", file=sys.stderr)
 
     # 4. Patch FixtureDef.execute to consume async fixtures at resolution time
-    # This MUST happen early before any fixtures are resolved
+    # NOTE: This duplicates init_session() but is needed for snapshot mode workers
+    # that may not inherit the Zygote's patched state (see src/tach_harness.py:2544)
     try:
         from _pytest.fixtures import FixtureDef
-        _original_execute = FixtureDef.execute
+        if not hasattr(FixtureDef.execute, '_tach_patched'):
+            _original_execute = FixtureDef.execute
 
-        def _patched_execute(self, request):
-            result = _original_execute(self, request)
-            # If the fixture returns an async generator or coroutine, consume it
-            if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
-                print(f"[tach:fixture-patch] Consuming async fixture: {self.argname}", file=sys.stderr)
-                scope = getattr(self, 'scope', 'function')
-                result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
-            return result
+            def _patched_execute(self, request):
+                result = _original_execute(self, request)
+                if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+                    scope = getattr(self, 'scope', 'function')
+                    result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
+                return result
 
-        FixtureDef.execute = _patched_execute
-        print("[tach:harness] FixtureDef.execute patched", file=sys.stderr)
+            _patched_execute._tach_patched = True
+            FixtureDef.execute = _patched_execute
     except Exception as e:
         print(f"[tach:harness] WARN: FixtureDef patch failed: {e}", file=sys.stderr)
 

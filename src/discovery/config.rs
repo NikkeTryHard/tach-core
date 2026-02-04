@@ -40,6 +40,10 @@ impl Default for AsyncioConfig {
 ///
 /// # Returns
 /// * `AsyncioConfig` with parsed values, or defaults if not found
+///
+/// # Note
+/// This duplicates logic in `src/tach_harness.py::_configure_asyncio_from_pyproject()`.
+/// Both are needed: Python runs in Zygote before Rust effects are wired up.
 pub fn parse_asyncio_config(project_dir: &Path) -> Result<AsyncioConfig> {
     let pyproject_path = project_dir.join("pyproject.toml");
 
