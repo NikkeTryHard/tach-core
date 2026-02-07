@@ -9,6 +9,73 @@ All notable changes to Project Tach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/NikkeTryHard/tach-core/compare/v0.3.1...v0.4.0) (2026-02-07)
+
+
+### Features
+
+* **discovery:** expand parametrized tests to match pytest collection ([39f52d4](https://github.com/NikkeTryHard/tach-core/commit/39f52d41941844e84c05a4de2e86f723443f5b62))
+* **discovery:** parse asyncio_mode from pyproject.toml ([08b6e36](https://github.com/NikkeTryHard/tach-core/commit/08b6e36265a137c4cc2f50b569bb647de0aad365))
+* **discovery:** resolve import aliases in parametrize IDs ([0bd87f4](https://github.com/NikkeTryHard/tach-core/commit/0bd87f48993020e3685c5be8a89a03850edcc086))
+* **harness:** add AsyncFixtureWrapper for async fixture handling ([2afd3f3](https://github.com/NikkeTryHard/tach-core/commit/2afd3f3ae2879e5f3999214f109aa63921ab89a7))
+* **harness:** add scope-aware fixture tracking to AsyncFixtureWrapper ([2a44a0a](https://github.com/NikkeTryHard/tach-core/commit/2a44a0ae234911331c6fd51be7281d464386fb2b))
+* **harness:** integrate AsyncFixtureWrapper with EventLoopManager ([afb9e72](https://github.com/NikkeTryHard/tach-core/commit/afb9e7200a7dcff5a14af1c75533c51f132b6949))
+* **reporter:** add vitest-style TachReporter with file-grouped output ([d348579](https://github.com/NikkeTryHard/tach-core/commit/d3485794d3875bc94ddece3731ec8979e5636034))
+* **reporter:** make TachReporter the default interactive reporter ([b80a78b](https://github.com/NikkeTryHard/tach-core/commit/b80a78b0bc6037ff917fbdfbb4832441c05c6f87))
+* **reporter:** vitest-style TachReporter with file-grouped output ([3d9e28f](https://github.com/NikkeTryHard/tach-core/commit/3d9e28fe7e042cef2ab012f3b022cf548728d3d1))
+* **signals:** add shutdown watchdog for forced exit on hang ([8049c02](https://github.com/NikkeTryHard/tach-core/commit/8049c028479454bc2cc49e0b8ead913fe8d08567))
+* **supervisor:** wire up asyncio config parsing to session effects ([3c239c3](https://github.com/NikkeTryHard/tach-core/commit/3c239c3e57682251d0c27652a5af108305deb8a6))
+
+
+### Bug Fixes
+
+* **bincode:** serialize MarkerInfo.args as JSON string for bincode compatibility ([84bd96b](https://github.com/NikkeTryHard/tach-core/commit/84bd96b1335de77e2f1ce425e8c30cc9a5d0b3fd))
+* **ci:** add integration tests job to CI workflow ([808a550](https://github.com/NikkeTryHard/tach-core/commit/808a550b01b00092552d6f1f93e1e29ae5996a22)), closes [#41](https://github.com/NikkeTryHard/tach-core/issues/41)
+* correct skip counting, unicode nodeids, and fixture event loop ([633e3aa](https://github.com/NikkeTryHard/tach-core/commit/633e3aac759e31682b6a8a7d133cd64e5c017646))
+* correct skip counting, unicode nodeids, and fixture event loop ([4cc092c](https://github.com/NikkeTryHard/tach-core/commit/4cc092c20f0472ecadd139f376c2ca0299ca903a))
+* **discovery:** add allowlist to reduce false positive toxicity ([66e8d8d](https://github.com/NikkeTryHard/tach-core/commit/66e8d8d134e13efd99a6fb3f984af1461f4ff304))
+* **discovery:** add Bytes constant support to expr_to_pytest_id ([6387d1b](https://github.com/NikkeTryHard/tach-core/commit/6387d1b81689f4d4eec9a1b2a85fb142c4ee7bf1))
+* **discovery:** add Bytes constant support to expr_to_pytest_id ([680a076](https://github.com/NikkeTryHard/tach-core/commit/680a076abd764de3b71142cfe7512d2847b45669))
+* **discovery:** use from_utf8_lossy for non-ASCII file handling ([894597b](https://github.com/NikkeTryHard/tach-core/commit/894597b6c41e49baaf97a9af3f393ea1f30856a9))
+* **docker:** add mold linker for Rust builds ([860ef6f](https://github.com/NikkeTryHard/tach-core/commit/860ef6f23ada88eefbe1dc28694ccc8b7a7b8774))
+* **harness:** add AsyncFixtureWrapper for async fixture handling ([2fb3b34](https://github.com/NikkeTryHard/tach-core/commit/2fb3b3446ff6c051476c61e5eca522d2f52b93a6))
+* **harness:** add plugin registration idempotency check ([852dcc2](https://github.com/NikkeTryHard/tach-core/commit/852dcc228ec1b83d01d5ba5e032db0e40de70587))
+* **harness:** address audit issues in async scope handling ([f4ae67a](https://github.com/NikkeTryHard/tach-core/commit/f4ae67a3dafdc56b13c964de0e3198906218b07a))
+* **harness:** address audit issues in AsyncFixtureWrapper ([4272dad](https://github.com/NikkeTryHard/tach-core/commit/4272dad5db59370238315f58752e30a2b73c9c5b))
+* **harness:** align status codes with Rust protocol ([dd1fc10](https://github.com/NikkeTryHard/tach-core/commit/dd1fc10d825bca43c2c44fa65fe789c516752ca4))
+* **harness:** call AsyncFixtureWrapper.get_teardown_errors not EventLoopManager ([56eb813](https://github.com/NikkeTryHard/tach-core/commit/56eb8131e64bc08376c0c644037a343799b22eea))
+* **harness:** check teardown errors and upgrade status accordingly ([1a0293f](https://github.com/NikkeTryHard/tach-core/commit/1a0293fd0b28bc8608fb0bf718fba1950df04af5))
+* **harness:** construct nodeid relative to pytest rootdir ([f41d4d1](https://github.com/NikkeTryHard/tach-core/commit/f41d4d1e1ca66e77f4b9841292cb30d6af9cf262))
+* **harness:** construct nodeid relative to pytest rootdir ([a3a7462](https://github.com/NikkeTryHard/tach-core/commit/a3a7462c204c26e049f1f8fbba46ea426c685efc))
+* **harness:** consume async fixtures from Zygote cache before test execution ([b4cef54](https://github.com/NikkeTryHard/tach-core/commit/b4cef54d07419cd2c46f09c0a467ee1dcc285317))
+* **harness:** consume async fixtures from Zygote cache before test execution ([8ffa818](https://github.com/NikkeTryHard/tach-core/commit/8ffa818815dfb3c87160ecf5b0b49d4fe88d6990))
+* **harness:** correctly parse nodeid path component ([2516df3](https://github.com/NikkeTryHard/tach-core/commit/2516df34600c4bdfdf42c116d3e86cb7e5146ba9))
+* **harness:** fix pytest import for TachFixturePlugin ([11efbcf](https://github.com/NikkeTryHard/tach-core/commit/11efbcffc8a990656e8475e6f15d396c0bf12679))
+* **harness:** prioritize STATUS_ERROR for teardown failures ([905159f](https://github.com/NikkeTryHard/tach-core/commit/905159fe3c00a3356e126398b1b6456d4b6fe743))
+* **harness:** reset EventLoopManager and AsyncFixtureWrapper in post_fork_init ([f3a1da6](https://github.com/NikkeTryHard/tach-core/commit/f3a1da628d920a3d46200250da72938086b6b4a4))
+* **harness:** restore async fixtures, fuzzy parametrize matching, and node ID alignment ([#72](https://github.com/NikkeTryHard/tach-core/issues/72)) ([904b178](https://github.com/NikkeTryHard/tach-core/commit/904b17839f7eba2a33fe709268dfeb124ce55ad9))
+* **harness:** scope-aware async fixture handling ([b295253](https://github.com/NikkeTryHard/tach-core/commit/b2952535e01e49fd4ca3cece044fbe5caac7499d))
+* **harness:** set scoped event loop before fixture resolution ([f9a240c](https://github.com/NikkeTryHard/tach-core/commit/f9a240c592471a5a741db6e7c6103251ee5bb7a6))
+* **harness:** set scoped loop before runtestprotocol for fixtures ([64cffbb](https://github.com/NikkeTryHard/tach-core/commit/64cffbb9c596ee3530925131f3bb7addf5928104))
+* **harness:** stop disabling asyncio/trio plugins in Zygote collection ([1092424](https://github.com/NikkeTryHard/tach-core/commit/10924249f916c0c50b23d04a6f62887b3f8858f1))
+* **harness:** use aclose() for async fixture teardown ([f434f22](https://github.com/NikkeTryHard/tach-core/commit/f434f22f13905c664591628d6cb9e153f593ee69))
+* issues [#41](https://github.com/NikkeTryHard/tach-core/issues/41), [#42](https://github.com/NikkeTryHard/tach-core/issues/42), [#44](https://github.com/NikkeTryHard/tach-core/issues/44), [#45](https://github.com/NikkeTryHard/tach-core/issues/45) - CI, logging, tests ([f721ab8](https://github.com/NikkeTryHard/tach-core/commit/f721ab89df84bd9c471dbf0e90722fa7ce578cd8))
+* **junit:** properly strip OSC escape sequences from error messages ([c5bbdb1](https://github.com/NikkeTryHard/tach-core/commit/c5bbdb145628e5bac9f7a11be4365996c2da2fb1))
+* prevent unkillable hang on Ctrl+C ([144827f](https://github.com/NikkeTryHard/tach-core/commit/144827fcfd2c4ade360bf827178f3e1b69a9eaa0))
+* **pyproject:** remove deprecated license classifier (PEP 639) ([4091eef](https://github.com/NikkeTryHard/tach-core/commit/4091eefb81c40e7e857e9c4b909ad3565984a636))
+* reduce tach test failures with UTF-8 encoding, fuzzy matching, and toxicity allowlist ([8b329fb](https://github.com/NikkeTryHard/tach-core/commit/8b329fb6f04585b214c31297c6cbbf55abcf7785))
+* **reporter:** count crash/timeout/error as failures in all reporters ([faee803](https://github.com/NikkeTryHard/tach-core/commit/faee8036a31fec36fb23d8b770f0b913b44950a0))
+* **reporter:** distinguish skipped files and show skip counts in per-file output ([f99a7c8](https://github.com/NikkeTryHard/tach-core/commit/f99a7c832aa109331f21f1b83e47aa2a1c2999cc))
+* **reporter:** remove inaccurate 'Saved' initialization overhead metric ([3ab27cb](https://github.com/NikkeTryHard/tach-core/commit/3ab27cbf850eaa82dd36e18fee1f42ef00f4784f))
+* resolve test count discrepancy between aistudioproxy and tach-core ([b9d6e22](https://github.com/NikkeTryHard/tach-core/commit/b9d6e228763b5182950fb24a8646fc68dcb2d162))
+* **scheduler:** add crash detection to capacity-wait loop ([59db68d](https://github.com/NikkeTryHard/tach-core/commit/59db68d3e7419f125fc6e0608c04874ac0c0cabd))
+* **scheduler:** add crash detection to capacity-wait loop ([707fadf](https://github.com/NikkeTryHard/tach-core/commit/707fadf0a7d4c418e9f564658742cf7267228354))
+* **scheduler:** add timeout to cmd_socket to prevent indefinite hang ([b67f862](https://github.com/NikkeTryHard/tach-core/commit/b67f862f1bc0e982e6e44330a609fd832b4e982f))
+* **scheduler:** address all audit issues from end-of-worktree review ([fbc3050](https://github.com/NikkeTryHard/tach-core/commit/fbc30504a7ac8e2a4ad640383cd4849f96dce2f1))
+* **scheduler:** count skipped tests separately from failures ([#61](https://github.com/NikkeTryHard/tach-core/issues/61)) ([8d2cd3d](https://github.com/NikkeTryHard/tach-core/commit/8d2cd3d536297921632b5b1b853ef23ce902b07a))
+* **signals:** prevent watchdog false positive with SHUTDOWN_COMPLETE flag ([9173bc3](https://github.com/NikkeTryHard/tach-core/commit/9173bc3e0419e76f495cd55b017f7c7a740cdcd6))
+* **toxicity:** canonicalize paths in is_toxic() lookup ([0fd85c7](https://github.com/NikkeTryHard/tach-core/commit/0fd85c7d89da230aa260bec60eb92830fc5151ca))
+
 ## [Unreleased]
 
 ---
