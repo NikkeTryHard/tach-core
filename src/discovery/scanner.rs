@@ -463,12 +463,29 @@ struct ParametrizeInfo {
 /// For simple values: returns the string representation
 /// For tuples: joins elements with "-"
 /// For pytest.param with id=: uses the explicit id
+/// Escape non-ASCII characters in a string to match pytest's parameter ID format.
+/// pytest uses `\uXXXX` encoding for non-ASCII characters in parametrize IDs.
+fn escape_non_ascii(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii() {
+            result.push(c);
+        } else {
+            // pytest uses \uXXXX format for BMP characters
+            for unit in c.encode_utf16(&mut [0u16; 2]) {
+                result.push_str(&format!("\\u{:04x}", unit));
+            }
+        }
+    }
+    result
+}
+
 fn expr_to_pytest_id(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Option<String> {
     match expr {
         // Simple literals
         ast::Expr::Constant(c) => match &c.value {
             ast::Constant::Int(i) => Some(i.to_string()),
-            ast::Constant::Str(s) => Some(s.to_string()),
+            ast::Constant::Str(s) => Some(escape_non_ascii(s)),
             ast::Constant::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
             ast::Constant::None => Some("None".to_string()),
             ast::Constant::Float(f) => Some(f.to_string()),
@@ -551,8 +568,47 @@ fn expr_to_pytest_id(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Opt
                 None
             }
         }
+        // Unary operations (e.g., -1, -0.5)
+        ast::Expr::UnaryOp(unary) => {
+            if matches!(unary.op, ast::UnaryOp::USub) {
+                expr_to_pytest_id(&unary.operand, aliases).map(|s| format!("-{}", s))
+            } else {
+                None
+            }
+        }
+        // Dict: pytest uses {param_name}{index} fallback for dict values,
+        // so we return None to trigger the same fallback.
+        ast::Expr::Dict(_) => None,
         _ => None,
     }
+}
+
+/// Generate a pytest-compatible ID for a tuple of parameter values.
+///
+/// When a tuple element can't be converted to a string (e.g. `OSError(...)`,
+/// `lambda`, `dict`), pytest uses `{param_name}{value_index}` as fallback
+/// for that specific parameter position. This matches pytest's `_idval` behavior.
+fn tuple_to_pytest_id(
+    elts: &[ast::Expr],
+    arg_names: &[String],
+    value_index: usize,
+    aliases: &HashMap<String, String>,
+) -> String {
+    let parts: Vec<String> = elts
+        .iter()
+        .enumerate()
+        .map(|(param_pos, elt)| {
+            expr_to_pytest_id(elt, aliases).unwrap_or_else(|| {
+                // Fallback: {param_name}{value_index} like pytest does
+                let param_name = arg_names
+                    .get(param_pos)
+                    .unwrap_or(&"param".to_string())
+                    .clone();
+                format!("{}{}", param_name, value_index)
+            })
+        })
+        .collect();
+    parts.join("-")
 }
 
 /// Extract parametrize information from a single decorator
@@ -657,11 +713,18 @@ fn extract_parametrize_info(
             {
                 return ParametrizeValue { id: id.clone() };
             }
-            // Otherwise generate from expression, with index fallback for complex types
-            let id = expr_to_pytest_id(expr, aliases).unwrap_or_else(|| {
-                // Pytest uses {first_arg_name}{index} for complex values
-                format!("{}{}", arg_names.first().unwrap_or(&"param".to_string()), i)
-            });
+            // For multi-param tuples/lists, generate per-element IDs with name-based fallback
+            let id = match expr {
+                ast::Expr::Tuple(tuple) if arg_names.len() > 1 => {
+                    tuple_to_pytest_id(&tuple.elts, &arg_names, i, aliases)
+                }
+                ast::Expr::List(list) if arg_names.len() > 1 => {
+                    tuple_to_pytest_id(&list.elts, &arg_names, i, aliases)
+                }
+                _ => expr_to_pytest_id(expr, aliases).unwrap_or_else(|| {
+                    format!("{}{}", arg_names.first().unwrap_or(&"param".to_string()), i)
+                }),
+            };
             ParametrizeValue { id }
         })
         .collect();

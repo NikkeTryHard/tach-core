@@ -18,6 +18,7 @@ import re
 import math
 import logging
 import warnings as warnings_module
+import pytest
 import _pytest.runner
 import _pytest.main
 import _pytest.config
@@ -79,6 +80,16 @@ class EventLoopManager:
         if cls._instance is not None:
             cls._instance.close_all()
             cls._instance = None
+
+    @classmethod
+    def get_current_loop(cls) -> Optional[asyncio.AbstractEventLoop]:
+        """Get the most recently created valid loop, or None."""
+        instance = cls.get_instance()
+        for key in reversed(list(instance._loops.keys())):
+            loop = instance._loops[key]
+            if loop and not loop.is_closed():
+                return loop
+        return None
 
     def configure(self, loop_scope: str = "function", auto_mode: bool = False) -> None:
         """Configure loop scope and auto mode."""
@@ -209,6 +220,217 @@ def get_uvloop_policy() -> Optional[asyncio.AbstractEventLoopPolicy]:
         return uvloop.EventLoopPolicy()
     except ImportError:
         return None
+
+
+class AsyncFixtureWrapper:
+    """Wrapper that tracks async fixtures for proper teardown by scope.
+
+    When pytest resolves an async fixture, we intercept it, consume the
+    coroutine/generator, store the value, and return that to the test.
+    The generator is stored for teardown based on its scope.
+    """
+
+    _generators_by_scope: dict[str, dict[str, Any]] = {
+        "session": {}, "module": {}, "class": {}, "function": {},
+    }
+    _consumed_by_scope: dict[str, set[str]] = {
+        "session": set(), "module": set(), "class": set(), "function": set(),
+    }
+    _values_by_scope: dict[str, dict[str, Any]] = {
+        "session": {}, "module": {}, "class": {}, "function": {},
+    }
+    _loop: Optional[asyncio.AbstractEventLoop] = None
+    _teardown_errors: list[Exception] = []
+    _current_module: Optional[str] = None
+    _current_class: Optional[str] = None
+
+    @classmethod
+    def set_loop(cls, loop: asyncio.AbstractEventLoop) -> None:
+        cls._loop = loop
+
+    @classmethod
+    def get_loop(cls) -> asyncio.AbstractEventLoop:
+        if cls._loop is not None and not cls._loop.is_closed():
+            return cls._loop
+        try:
+            loop = EventLoopManager.get_current_loop()
+            if loop:
+                cls._loop = loop
+                return cls._loop
+        except Exception:
+            pass
+        cls._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(cls._loop)
+        return cls._loop
+
+    @classmethod
+    def on_test_start(cls, module_path: Optional[str], class_name: Optional[str]) -> None:
+        if cls._current_module is not None and cls._current_module != module_path:
+            cls.teardown_module_scope()
+        if cls._current_class is not None and cls._current_class != class_name:
+            cls.teardown_class_scope()
+        cls._current_module = module_path
+        cls._current_class = class_name
+
+    @classmethod
+    def consume_async_fixture(
+        cls, fixture_name: str, fixture_value: Any, scope: str = "function"
+    ) -> Any:
+        if scope not in cls._consumed_by_scope:
+            scope = "function"
+        if fixture_name in cls._consumed_by_scope[scope]:
+            return cls._values_by_scope[scope].get(fixture_name, fixture_value)
+
+        loop = cls.get_loop()
+        try:
+            if inspect.isasyncgen(fixture_value):
+                async def consume_gen():
+                    return await fixture_value.__anext__()
+                result = loop.run_until_complete(consume_gen())
+                cls._generators_by_scope[scope][fixture_name] = fixture_value
+                cls._consumed_by_scope[scope].add(fixture_name)
+                cls._values_by_scope[scope][fixture_name] = result
+                return result
+
+            if asyncio.iscoroutine(fixture_value):
+                result = loop.run_until_complete(fixture_value)
+                cls._consumed_by_scope[scope].add(fixture_name)
+                cls._values_by_scope[scope][fixture_name] = result
+                return result
+
+            return fixture_value
+        except Exception as e:
+            _logger.error("Async fixture '%s' failed: %s", fixture_name, e)
+            raise
+
+    @classmethod
+    def _teardown_scope(cls, scope: str) -> None:
+        generators = cls._generators_by_scope.get(scope, {})
+        if generators:
+            loop = cls.get_loop()
+            for name, gen in list(generators.items()):
+                try:
+                    async def cleanup():
+                        await gen.aclose()
+                    loop.run_until_complete(cleanup())
+                except Exception as e:
+                    cls._teardown_errors.append(
+                        RuntimeError(f"Fixture '{name}' ({scope}) teardown: {e}")
+                    )
+        cls._generators_by_scope[scope].clear()
+        cls._consumed_by_scope[scope].clear()
+        cls._values_by_scope[scope].clear()
+
+    @classmethod
+    def teardown_function_scope(cls) -> None:
+        cls._teardown_scope("function")
+
+    @classmethod
+    def teardown_class_scope(cls) -> None:
+        cls._teardown_scope("class")
+
+    @classmethod
+    def teardown_module_scope(cls) -> None:
+        cls._teardown_scope("class")
+        cls._teardown_scope("module")
+        cls._current_class = None
+
+    @classmethod
+    def teardown_session_scope(cls) -> None:
+        cls._teardown_scope("session")
+
+    @classmethod
+    def teardown_all(cls) -> None:
+        cls.teardown_function_scope()
+        cls.teardown_class_scope()
+        cls.teardown_module_scope()
+        cls.teardown_session_scope()
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.teardown_all()
+        cls._current_module = None
+        cls._current_class = None
+        if cls._loop is not None:
+            if not cls._loop.is_running() and not cls._loop.is_closed():
+                try:
+                    cls._loop.close()
+                except Exception:
+                    pass
+        cls._loop = None
+
+    @classmethod
+    def get_teardown_errors(cls) -> list[Exception]:
+        errors = cls._teardown_errors.copy()
+        cls._teardown_errors.clear()
+        return errors
+
+
+class TachFixturePlugin:
+    """Pytest plugin that intercepts async fixtures at resolution time."""
+
+    @staticmethod
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_fixture_setup(fixturedef, request):
+        outcome = yield
+        try:
+            result = outcome.get_result()
+        except Exception:
+            return
+        is_async = inspect.isasyncgen(result) or asyncio.iscoroutine(result)
+        if is_async:
+            scope = getattr(fixturedef, 'scope', 'function')
+            try:
+                consumed_value = AsyncFixtureWrapper.consume_async_fixture(
+                    fixturedef.argname, result, scope
+                )
+                outcome.force_result(consumed_value)
+            except Exception as e:
+                _logger.error("Failed to consume async fixture '%s': %s", fixturedef.argname, e)
+                raise
+
+
+_TACH_FIXTURE_PLUGIN: Optional[TachFixturePlugin] = None
+
+
+def _configure_asyncio_from_pyproject(root_dir: str) -> None:
+    """Parse asyncio_mode from pyproject.toml and configure EventLoopManager."""
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return
+
+    from pathlib import Path
+
+    search_path = Path(root_dir).resolve()
+    pyproject_path = None
+    for _ in range(5):
+        candidate = search_path / "pyproject.toml"
+        if candidate.exists():
+            pyproject_path = candidate
+            break
+        if search_path.parent == search_path:
+            break
+        search_path = search_path.parent
+
+    if pyproject_path is None:
+        return
+
+    try:
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+        pytest_opts = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
+        asyncio_mode = pytest_opts.get("asyncio_mode", "strict")
+        loop_scope = pytest_opts.get("asyncio_default_fixture_loop_scope", "function")
+        auto_mode = asyncio_mode == "auto"
+        if auto_mode or loop_scope != "function":
+            EventLoopManager.get_instance().configure(loop_scope=loop_scope, auto_mode=auto_mode)
+            os.write(2, f"[tach:harness] Asyncio config: mode={asyncio_mode}, loop_scope={loop_scope}\n".encode())
+    except Exception as e:
+        _logger.warning("Failed to parse asyncio config: %s", e)
 
 
 # Sentinel value to distinguish timeout from legitimate None return
@@ -2020,6 +2242,86 @@ def apply_cached_effects(effects: list) -> int:
 
 _SESSION = None
 _ITEMS_MAP = {}  # nodeid -> pytest Item
+_PARAM_FUZZY_INDEX = {}  # "file::test_name" -> [pytest Item, ...]
+
+
+def _fuzzy_parametrize_lookup(rust_node_id: str) -> Any:
+    """Fuzzy lookup for parametrized tests when Rust-generated IDs don't match pytest's.
+
+    Rust's AST parser can't evaluate runtime expressions like json.dumps(),
+    OSError(), Exception(), etc. This causes its generated parameter IDs to
+    differ from pytest's. This function matches using multiple strategies:
+
+    1. Suffix matching: Rust params are a suffix of pytest params
+    2. Shared suffix matching: the last N parts that Rust resolved match
+    3. Index extraction: Rust fallback IDs contain the value index ({param}{N})
+       which maps to the Nth pytest candidate in order
+
+    This is generalizable — works for any repo where Rust discovery generates
+    different parametrize IDs than pytest collection.
+    """
+    if "[" not in rust_node_id:
+        return None
+
+    base, rust_params = rust_node_id.rsplit("[", 1)
+    rust_params = rust_params.rstrip("]")
+
+    candidates = _PARAM_FUZZY_INDEX.get(base, [])
+    if not candidates:
+        return None
+
+    rust_parts = rust_params.split("-")
+
+    # Strategy 1: Suffix matching — Rust params are a contiguous suffix of pytest params
+    for item in candidates:
+        pytest_params = item.nodeid.rsplit("[", 1)[-1].rstrip("]")
+        pytest_parts = pytest_params.split("-")
+        if len(rust_parts) <= len(pytest_parts):
+            if pytest_parts[-len(rust_parts):] == rust_parts:
+                return item
+
+    # Strategy 2: Shared suffix — find candidates where the last N resolved parts match
+    # This handles cases where Rust resolves SOME params (e.g. True, None) but not others
+    if len(rust_parts) > 1:
+        for item in candidates:
+            pytest_params = item.nodeid.rsplit("[", 1)[-1].rstrip("]")
+            pytest_parts = pytest_params.split("-")
+            # Count matching parts from the end
+            match_count = 0
+            for r, p in zip(reversed(rust_parts), reversed(pytest_parts)):
+                if r == p:
+                    match_count += 1
+                else:
+                    break
+            # If at least half the parts match from the end, it's likely the same test
+            if match_count > 0 and match_count >= len(rust_parts) // 2:
+                # Verify this is unique — only return if exactly one candidate matches
+                matches = []
+                for c in candidates:
+                    cp = c.nodeid.rsplit("[", 1)[-1].rstrip("]").split("-")
+                    mc = 0
+                    for r, p in zip(reversed(rust_parts), reversed(cp)):
+                        if r == p:
+                            mc += 1
+                        else:
+                            break
+                    if mc == match_count:
+                        matches.append(c)
+                if len(matches) == 1:
+                    return matches[0]
+
+    # Strategy 3: Index extraction — Rust fallback IDs use {param_name}{index} pattern
+    # Extract the index from fallback parts and map to the Nth candidate
+    import re
+    for part in rust_parts:
+        m = re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*?(\d+)$', part)
+        if m:
+            idx = int(m.group(1))
+            if 0 <= idx < len(candidates):
+                return candidates[idx]
+            break
+
+    return None
 
 
 def init_session(root_dir: str):
@@ -2036,7 +2338,7 @@ def init_session(root_dir: str):
     Plugin Detection (v0.2.0):
     We detect installed pytest plugins and warn about unsupported ones.
     """
-    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS
+    global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS, _PARAM_FUZZY_INDEX
 
     os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
 
@@ -2073,6 +2375,28 @@ def init_session(root_dir: str):
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
+    # Patch FixtureDef.execute to consume async fixtures at resolution time.
+    # This MUST be in init_session() so workers inherit the patch via fork.
+    from _pytest.fixtures import FixtureDef
+    if not getattr(FixtureDef.execute, '_tach_patched', False):
+        _original_execute = FixtureDef.execute
+
+        def _patched_execute(self, request):
+            result = _original_execute(self, request)
+            if inspect.isasyncgen(result) or asyncio.iscoroutine(result):
+                scope = getattr(self, 'scope', 'function')
+                result = AsyncFixtureWrapper.consume_async_fixture(self.argname, result, scope)
+            return result
+
+        _patched_execute._tach_patched = True
+        FixtureDef.execute = _patched_execute
+
+    # Register TachFixturePlugin to intercept async fixtures (indirect deps)
+    global _TACH_FIXTURE_PLUGIN
+    if not cfg.pluginmanager.has_plugin("tach_fixture_plugin"):
+        _TACH_FIXTURE_PLUGIN = TachFixturePlugin()
+        cfg.pluginmanager.register(_TACH_FIXTURE_PLUGIN, "tach_fixture_plugin")
+
     # HOOK EFFECT RECORDING: Capture state AFTER pytest_configure
     # At this point, pytest_configure hooks have run via cfg._do_configure()
     env_after = dict(os.environ)
@@ -2093,12 +2417,60 @@ def init_session(root_dir: str):
     _SESSION = _pytest.main.Session.from_config(cfg)
     cfg.hook.pytest_sessionstart(session=_SESSION)
 
+    # Parse asyncio_mode from pyproject.toml and configure EventLoopManager
+    _configure_asyncio_from_pyproject(root_dir)
+
     _SESSION.perform_collect()
 
     for item in _SESSION.items:
         _ITEMS_MAP[item.nodeid] = item
 
-    os.write(2, f"[tach:harness] Pre-collected {len(_ITEMS_MAP)} tests\n".encode())
+    # Node ID alignment: Rust discovery builds node IDs relative to the project
+    # root (CWD), but pytest builds them relative to rootdir.  When rootdir is a
+    # subdirectory (e.g. "test-aistudio/"), the paths diverge:
+    #   Rust sends:  "test-aistudio/tests/file.py::test_foo"
+    #   Pytest has:  "tests/file.py::test_foo"
+    # Fix: store a second key per item using the project-root-relative path so
+    # the O(1) lookup in run_test() succeeds regardless of which form is used.
+    project_root = os.path.abspath(os.getcwd())
+    rootdir_abs = os.path.abspath(str(cfg.rootdir))
+    if project_root != rootdir_abs:
+        for item in _SESSION.items:
+            abs_path = str(item.fspath)
+            rel_to_project = os.path.relpath(abs_path, project_root)
+            # item.nodeid = "tests/file.py::Class::method[param]"
+            # Split at first "::" to replace only the file path portion
+            parts = item.nodeid.split("::", 1)
+            if len(parts) == 2:
+                full_key = rel_to_project + "::" + parts[1]
+                if full_key not in _ITEMS_MAP:
+                    _ITEMS_MAP[full_key] = item
+
+    # Build fuzzy parametrize index: "file::test_base" -> [items]
+    # This enables fuzzy matching when Rust-generated parametrize IDs differ
+    # from pytest's (e.g. runtime expressions like json.dumps(), OSError()).
+    global _PARAM_FUZZY_INDEX
+    _PARAM_FUZZY_INDEX = {}
+    for item in _SESSION.items:
+        if "[" in item.nodeid:
+            base = item.nodeid.rsplit("[", 1)[0]
+            _PARAM_FUZZY_INDEX.setdefault(base, []).append(item)
+    # Also index with project-root-relative keys for dual-key alignment
+    if project_root != rootdir_abs:
+        for item in _SESSION.items:
+            if "[" in item.nodeid:
+                abs_path = str(item.fspath)
+                rel_to_project = os.path.relpath(abs_path, project_root)
+                parts = item.nodeid.split("::", 1)
+                if len(parts) == 2:
+                    full_base = (rel_to_project + "::" + parts[1]).rsplit("[", 1)[0]
+                    if full_base not in _PARAM_FUZZY_INDEX:
+                        _PARAM_FUZZY_INDEX[full_base] = _PARAM_FUZZY_INDEX.get(
+                            item.nodeid.rsplit("[", 1)[0], []
+                        )
+
+    fuzzy_count = sum(len(v) for v in _PARAM_FUZZY_INDEX.values())
+    os.write(2, f"[tach:harness] Pre-collected {len(_ITEMS_MAP)} tests ({fuzzy_count} fuzzy parametrize entries)\n".encode())
 
 
 def _parse_django_db_marker(marker_info: list[dict[str, Any]] | None) -> dict[str, Any] | None:
@@ -2346,6 +2718,17 @@ def run_test(
 
     logging._lock = threading.RLock()
 
+    # Ensure stdout/stderr use UTF-8 encoding after fork/redirect
+    # Workers redirect stdout to memfd which may default to ASCII encoding,
+    # causing UnicodeEncodeError in libraries like colorama
+    for stream_name in ('stdout', 'stderr'):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except Exception:
+                pass
+
     # HOOK EFFECT REPLAY (v0.2.0):
     # Apply cached effects before running the test
     # If cached_effects is provided (from TestPayload), use those
@@ -2369,6 +2752,14 @@ def run_test(
         target_item = _ITEMS_MAP.get(node_id)
 
         if not target_item:
+            # Fuzzy fallback for parametrize ID mismatches.
+            # Rust AST can't evaluate runtime expressions (json.dumps, OSError, etc.)
+            # so its generated IDs may differ from pytest's. Try matching by:
+            # 1. Same file + test name (before '[')
+            # 2. Rust params are a suffix of pytest params (extra params were dropped)
+            target_item = _fuzzy_parametrize_lookup(node_id)
+
+        if not target_item:
             duration = time.perf_counter() - start
             return (
                 STATUS_HARNESS_ERROR,
@@ -2386,13 +2777,15 @@ def run_test(
         if hasattr(original_obj, "__func__"):
             func_to_check = original_obj.__func__
 
+        is_async_test = False
         if inspect.iscoroutinefunction(func_to_check):
+            is_async_test = True
             # Use EventLoopManager for scoped loop management
             loop_manager = EventLoopManager.get_instance()
 
             # Parse asyncio marker for loop_scope configuration
             loop_scope, _has_asyncio_marker = parse_asyncio_marker(target_item)
-            loop_manager.configure(loop_scope=loop_scope)
+            loop_manager.configure(loop_scope=loop_scope, auto_mode=loop_manager.auto_mode)
 
             # Scope transition handling (Issue #43)
             fspath = str(getattr(target_item, 'fspath', ''))
@@ -2407,6 +2800,13 @@ def run_test(
                     loop = mgr.get_loop(key)
                     # Set as current event loop for this thread
                     asyncio.set_event_loop(loop)
+                    AsyncFixtureWrapper.set_loop(loop)
+
+                    # Consume async fixtures in kwargs before calling test
+                    for name, val in list(kwargs.items()):
+                        if inspect.isasyncgen(val) or asyncio.iscoroutine(val):
+                            kwargs[name] = AsyncFixtureWrapper.consume_async_fixture(name, val, "function")
+
                     try:
                         return loop.run_until_complete(async_fn(*args, **kwargs))
                     finally:
@@ -2424,9 +2824,43 @@ def run_test(
         django_db_args = _parse_django_db_marker(marker_info)
         django_savepoints = _apply_django_db_isolation(django_db_args)
 
+        # Set up scoped event loop for async fixture consumption BEFORE runtestprotocol
+        if is_async_test:
+            fixture_loop = loop_manager.get_loop(scope_key)
+        else:
+            fixture_scope_key = f"function:{target_item.nodeid}"
+            loop_manager = EventLoopManager.get_instance()
+            fixture_loop = loop_manager.get_loop(fixture_scope_key)
+
+        asyncio.set_event_loop(fixture_loop)
+        AsyncFixtureWrapper.set_loop(fixture_loop)
+
+        # Scope transition handling for async fixtures
+        fspath_for_fixture = str(getattr(target_item, 'fspath', ''))
+        item_cls_for_fixture = getattr(target_item, 'cls', None)
+        class_name_for_fixture = f"{item_cls_for_fixture.__module__}.{item_cls_for_fixture.__name__}" if item_cls_for_fixture else None
+        AsyncFixtureWrapper.on_test_start(fspath_for_fixture, class_name_for_fixture)
+
+        # Invalidate stale async fixture caches inherited from Zygote parent
+        from _pytest.fixtures import FixtureDef
+        fixture_info = getattr(target_item, "_fixtureinfo", None)
+        if fixture_info and hasattr(fixture_info, 'name2fixturedefs'):
+            for fixturedefs in fixture_info.name2fixturedefs.values():
+                for fixturedef in fixturedefs:
+                    cached = getattr(fixturedef, "cached_result", None)
+                    if cached is not None and isinstance(cached, tuple) and len(cached) > 0:
+                        val = cached[0]
+                        if asyncio.iscoroutine(val) or inspect.isasyncgen(val):
+                            scope = getattr(fixturedef, 'scope', 'function')
+                            consumed = AsyncFixtureWrapper.consume_async_fixture(
+                                fixturedef.argname, val, scope
+                            )
+                            fixturedef.cached_result = (consumed, cached[1], cached[2]) if len(cached) >= 3 else (consumed,)
+
         try:
             reports = _pytest.runner.runtestprotocol(target_item, nextitem=None, log=False)
         finally:
+            AsyncFixtureWrapper.teardown_function_scope()
             # Rollback savepoints to restore database state
             _cleanup_django_db_isolation(django_savepoints)
 
@@ -2502,6 +2936,12 @@ def reset_worker_state() -> bool:
     try:
         # Reset event loop manager to cleanup any lingering loops (Issue #43)
         EventLoopManager.reset()
+
+        # Reset async fixture wrapper state
+        try:
+            AsyncFixtureWrapper.reset()
+        except Exception as e:
+            _logger.debug("AsyncFixtureWrapper reset failed: %s", e)
 
         import tach_rust
 
