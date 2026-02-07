@@ -9,7 +9,6 @@
 use std::fs::File;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 /// Redirects stderr to a log file for the duration of its lifetime.
 ///
@@ -25,12 +24,15 @@ pub struct LogRedirect {
 }
 
 impl LogRedirect {
-    /// Create a new LogRedirect that captures stderr to `/tmp/tach_<uuid>.log`.
+    /// Create a new LogRedirect that captures stderr to `/tmp/tach.log`.
+    ///
+    /// Uses a fixed path so each run overwrites the previous log, avoiding
+    /// accumulation of stale log files in /tmp.
     ///
     /// # Errors
     /// Returns an error if the log file cannot be created or fd operations fail.
     pub fn new() -> std::io::Result<Self> {
-        let log_path = PathBuf::from(format!("/tmp/tach_{}.log", Uuid::new_v4()));
+        let log_path = PathBuf::from("/tmp/tach.log");
         Self::with_path(log_path)
     }
 
@@ -108,6 +110,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::unix::io::FromRawFd;
+    use uuid::Uuid;
 
     #[test]
     fn test_log_file_created() {
@@ -126,11 +129,10 @@ mod tests {
         let path = redirect.log_path();
         let path_str = path.to_string_lossy();
 
-        assert!(
-            path_str.starts_with("/tmp/tach_"),
-            "path should start with /tmp/tach_"
+        assert_eq!(
+            path_str, "/tmp/tach.log",
+            "path should be the fixed /tmp/tach.log"
         );
-        assert!(path_str.ends_with(".log"), "path should end with .log");
 
         // Clean up
         let path_owned = path.to_path_buf();

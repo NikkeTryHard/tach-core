@@ -1357,6 +1357,10 @@ impl Reporter for TachReporter {
 
     fn on_error(&mut self, message: &str) {
         self.bar.finish_and_clear();
+        // NOTE: Uses println! (stdout) intentionally. TachReporter and JsonReporter
+        // are mutually exclusive (see OutputFormat match in main.rs), so this won't
+        // pollute JSON output. Using stdout ensures the error is visible even when
+        // stderr is redirected to the log file by LogRedirect.
         println!("[tach:reporter] FATAL ERROR: {}", message);
     }
 }

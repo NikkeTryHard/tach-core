@@ -343,6 +343,13 @@ fn execute_session(
     // Redirect stderr to log file for interactive terminal mode.
     // This keeps diagnostic [tach:*] and [worker:*] logs out of the terminal
     // while TachReporter outputs test results to stdout.
+    //
+    // NOTE: Child processes (Zygote, workers) inherit this redirect, which is
+    // intentional -- worker diagnostic noise goes to the log file. If the
+    // Zygote fails to start, the parent process detects the child exit and
+    // surfaces the error through the reporter's on_error() method (which uses
+    // stdout). The child's eprintln! in that path is a secondary diagnostic
+    // captured in the log file at /tmp/tach.log.
     let log_redirect =
         if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() {
             LogRedirect::new().ok()
