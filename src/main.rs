@@ -9,6 +9,7 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
+use tach_core::logredirect::{self, LogRedirect};
 use tach_core::reporter::{
     DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
 };
@@ -324,9 +325,8 @@ fn execute_session(
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
             if ProgressReporter::should_use_progress_bar() {
-                reporters.push(Box::new(TachReporter::with_traceback_style(
-                    config.traceback_style,
-                )));
+                let tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
+                reporters.push(Box::new(tach_reporter));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(
                     config.traceback_style,
@@ -338,6 +338,30 @@ fn execute_session(
         reporters.push(Box::new(JunitReporter::new(path.clone())));
     }
     let mut reporter = MultiReporter::new(reporters);
+
+    // Redirect stderr to log file for interactive terminal mode.
+    // This keeps diagnostic [tach:*] and [worker:*] logs out of the terminal
+    // while TachReporter outputs test results to stdout.
+    //
+    // NOTE: Child processes (Zygote, workers) inherit this redirect, which is
+    // intentional -- worker diagnostic noise goes to the log file. If the
+    // Zygote fails to start, the parent process detects the child exit and
+    // surfaces the error through the reporter's on_error() method (which uses
+    // stdout). The child's eprintln! in that path is a secondary diagnostic
+    // captured in the log file at /tmp/tach.log.
+    let log_redirect =
+        if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() {
+            match LogRedirect::new() {
+                Ok(redirect) => {
+                    // Only show log path in summary if redirect actually succeeded
+                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
+                    Some(redirect)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
 
     let cleanup = CleanupGuard::new();
 
@@ -497,6 +521,16 @@ fn execute_session(
     // Build the hook registry from discovery results before forking
     let hook_registry = discovery_result.build_hook_registry(cwd);
 
+    // --- COMPUTE PER-FILE TEST COUNTS (for real-time streaming) ---
+    let mut file_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for test in &filtered_tests {
+        *file_counts
+            .entry(test.file_path.to_string_lossy().to_string())
+            .or_insert(0) += 1;
+    }
+    reporter.on_session_setup(&file_counts);
+
     // --- RUN TESTS ---
     let failed_count = run_tests(
         &cleanup,
@@ -508,6 +542,9 @@ fn execute_session(
         hook_registry,
         cwd.clone(),
     )?;
+
+    // Restore stderr before exiting (LogRedirect drops and restores automatically)
+    drop(log_redirect);
 
     // Exit with code 1 if any tests failed
     if failed_count > 0 {

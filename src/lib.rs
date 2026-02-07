@@ -94,6 +94,7 @@ pub use reporting::coverage;
 pub use reporting::debugger;
 pub use reporting::junit;
 pub use reporting::logcapture;
+pub use reporting::logredirect;
 pub use reporting::reporter;
 
 // Re-export execution modules at top level for backward compatibility
