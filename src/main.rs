@@ -520,7 +520,7 @@ fn execute_session(
         std::collections::HashMap::new();
     for test in &filtered_tests {
         *file_counts
-            .entry(test.file_path.display().to_string())
+            .entry(test.file_path.to_string_lossy().to_string())
             .or_insert(0) += 1;
     }
     reporter.on_session_setup(file_counts);

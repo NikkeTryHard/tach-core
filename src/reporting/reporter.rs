@@ -1005,6 +1005,15 @@ pub struct TachReporter {
 }
 
 impl TachReporter {
+    /// Return the fail icon (×), optionally wrapped in red ANSI codes.
+    fn fail_icon(use_colors: bool) -> String {
+        if use_colors {
+            format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
+        } else {
+            "\u{00d7}".to_string()
+        }
+    }
+
     /// Create a new TachReporter with default settings
     pub fn new() -> Self {
         Self::with_traceback_style(TracebackStyle::Long)
@@ -1083,11 +1092,7 @@ impl TachReporter {
                 format!("{} failed", result.failed)
             };
 
-            let icon = if use_colors {
-                format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
-            } else {
-                "\u{00d7}".to_string()
-            };
+            let icon = Self::fail_icon(use_colors);
 
             format!(" {} {} ({})  {}", icon, file_path, counts, duration)
         } else if result.passed == 0 && result.skipped > 0 {
@@ -1136,11 +1141,7 @@ impl TachReporter {
             // List failed test names under the file
             if result.has_failures() {
                 for failure in &result.failures {
-                    let fail_icon = if use_colors {
-                        format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
-                    } else {
-                        "\u{00d7}".to_string()
-                    };
+                    let fail_icon = Self::fail_icon(use_colors);
                     println!("   {} {}", fail_icon, failure.short_name);
                 }
             }
@@ -1372,11 +1373,7 @@ impl Reporter for TachReporter {
                     // For failed files, also print the failed test names
                     if file_result.has_failures() {
                         for failure in &file_result.failures {
-                            let fail_icon = if use_colors {
-                                format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
-                            } else {
-                                "\u{00d7}".to_string()
-                            };
+                            let fail_icon = Self::fail_icon(use_colors);
                             self.bar
                                 .println(format!("   {} {}", fail_icon, failure.short_name));
                         }
