@@ -25,17 +25,6 @@ pub use crate::config::TracebackStyle as TbStyle;
 // Constants
 // =============================================================================
 
-/// Estimated time per test in cold pytest execution (milliseconds).
-///
-/// This baseline represents typical pytest startup + import overhead per test:
-/// - pytest discovery and collection: ~100-150ms
-/// - Module import and fixture setup: ~100-150ms
-/// - Test execution overhead: ~50ms
-///
-/// Used to calculate "time saved" by Tach's snapshot-based warm execution.
-/// Based on empirical measurements across typical Python test suites.
-const PYTEST_COLD_TEST_MS: u64 = 300;
-
 // =============================================================================
 // ANSI Color Codes (Tasks 2.4, 2.5)
 // =============================================================================
@@ -784,34 +773,6 @@ impl Reporter for ProgressReporter {
                 passed, failed, skipped, duration_secs
             );
         }
-
-        // Time Saved metric: compare actual time vs estimated cold pytest time
-        let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
-        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
-
-        if time_saved_ms > 1000 && total_tests > 10 {
-            let saved_secs = time_saved_ms as f64 / 1000.0;
-            if saved_secs >= 60.0 {
-                let mins = (saved_secs / 60.0).floor() as u64;
-                let secs = saved_secs % 60.0;
-                if use_colors {
-                    eprintln!(
-                        "{}(Saved {}m {:.0}s of initialization overhead){}",
-                        ANSI_CYAN, mins, secs, ANSI_RESET
-                    );
-                } else {
-                    eprintln!("(Saved {}m {:.0}s of initialization overhead)", mins, secs);
-                }
-            } else if use_colors {
-                eprintln!(
-                    "{}(Saved {:.1}s of initialization overhead){}",
-                    ANSI_CYAN, saved_secs, ANSI_RESET
-                );
-            } else {
-                eprintln!("(Saved {:.1}s of initialization overhead)", saved_secs);
-            }
-        }
     }
 
     fn on_error(&mut self, message: &str) {
@@ -946,28 +907,6 @@ impl Reporter for DotsReporter {
             "\n[tach:reporter] {} passed, {} failed, {} skipped in {:.2}s",
             passed, failed, skipped, duration_secs
         );
-
-        // Time Saved metric: compare actual time vs estimated cold pytest time
-        let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
-        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
-
-        if time_saved_ms > 1000 && total_tests > 10 {
-            let saved_secs = time_saved_ms as f64 / 1000.0;
-            if saved_secs >= 60.0 {
-                let mins = (saved_secs / 60.0).floor() as u64;
-                let secs = saved_secs % 60.0;
-                eprintln!(
-                    "[tach:reporter] (Saved {}m {:.0}s of initialization overhead)",
-                    mins, secs
-                );
-            } else {
-                eprintln!(
-                    "[tach:reporter] (Saved {:.1}s of initialization overhead)",
-                    saved_secs
-                );
-            }
-        }
     }
 
     fn on_error(&mut self, message: &str) {

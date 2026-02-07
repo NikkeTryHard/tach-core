@@ -316,7 +316,7 @@ fn execute_session(
     let is_json = *format == OutputFormat::Json;
 
     // Create reporters
-    //  Use ProgressReporter for interactive terminals, DotsReporter for CI
+    //  Use TachReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
