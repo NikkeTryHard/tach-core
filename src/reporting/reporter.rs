@@ -15,7 +15,7 @@
 
 use crate::config::TracebackStyle;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 
 // Re-export TracebackStyle for convenience
@@ -357,6 +357,10 @@ pub enum MachineEvent<'a> {
 
 /// Reporter trait for output abstraction
 pub trait Reporter {
+    /// Called before the run starts with per-file test counts.
+    /// Used by TachReporter for real-time file streaming.
+    fn on_session_setup(&mut self, _file_counts: HashMap<String, usize>) {}
+
     /// Called at start of test run
     fn on_run_start(&mut self, count: usize);
 
@@ -547,6 +551,12 @@ impl MultiReporter {
 }
 
 impl Reporter for MultiReporter {
+    fn on_session_setup(&mut self, file_counts: HashMap<String, usize>) {
+        for r in &mut self.reporters {
+            r.on_session_setup(file_counts.clone());
+        }
+    }
+
     fn on_run_start(&mut self, count: usize) {
         for r in &mut self.reporters {
             r.on_run_start(count);
@@ -986,6 +996,12 @@ pub struct TachReporter {
     failed: usize,
     skipped: usize,
     traceback_style: TracebackStyle,
+    /// Per-file expected test counts (set via on_session_setup)
+    file_expected: HashMap<String, usize>,
+    /// Set of file paths already streamed to terminal
+    files_streamed: HashSet<String>,
+    /// Count of files already streamed (for testing)
+    files_printed: usize,
 }
 
 impl TachReporter {
@@ -1014,6 +1030,9 @@ impl TachReporter {
             failed: 0,
             skipped: 0,
             traceback_style,
+            file_expected: HashMap::new(),
+            files_streamed: HashSet::new(),
+            files_printed: 0,
         }
     }
 
@@ -1044,44 +1063,78 @@ impl TachReporter {
         files
     }
 
+    /// Format a single file result line as a String (without trailing newline).
+    fn format_file_line(&self, file_path: &str, result: &FileResult, use_colors: bool) -> String {
+        let duration = Self::format_duration(result.total_duration_ms);
+
+        if result.has_failures() {
+            let counts = if result.passed > 0 {
+                if use_colors {
+                    format!(
+                        "{}{} passed{} | {}{} failed{}",
+                        ANSI_GREEN, result.passed, ANSI_RESET, ANSI_RED, result.failed, ANSI_RESET,
+                    )
+                } else {
+                    format!("{} passed | {} failed", result.passed, result.failed)
+                }
+            } else if use_colors {
+                format!("{}{} failed{}", ANSI_RED, result.failed, ANSI_RESET)
+            } else {
+                format!("{} failed", result.failed)
+            };
+
+            let icon = if use_colors {
+                format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
+            } else {
+                "\u{00d7}".to_string()
+            };
+
+            format!(" {} {} ({})  {}", icon, file_path, counts, duration)
+        } else if result.passed == 0 && result.skipped > 0 {
+            let icon = if use_colors {
+                format!("{}-{}", ANSI_YELLOW, ANSI_RESET)
+            } else {
+                "-".to_string()
+            };
+            format!(
+                " {} {} ({} skipped)  {}",
+                icon, file_path, result.skipped, duration
+            )
+        } else if result.skipped > 0 {
+            let icon = if use_colors {
+                format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
+            } else {
+                "\u{2713}".to_string()
+            };
+            format!(
+                " {} {} ({} passed | {} skipped)  {}",
+                icon, file_path, result.passed, result.skipped, duration
+            )
+        } else {
+            let icon = if use_colors {
+                format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
+            } else {
+                "\u{2713}".to_string()
+            };
+            format!(" {} {} ({})  {}", icon, file_path, result.total(), duration)
+        }
+    }
+
     /// Render the file-grouped results list to stdout.
+    /// Skips files that were already streamed in real-time.
     fn render_file_list(&self, use_colors: bool) {
         let files = self.sorted_files();
 
         for (file_path, result) in &files {
-            let duration = Self::format_duration(result.total_duration_ms);
+            // Skip files already streamed during the run
+            if self.files_streamed.contains(*file_path) {
+                continue;
+            }
 
+            println!("{}", self.format_file_line(file_path, result, use_colors));
+
+            // List failed test names under the file
             if result.has_failures() {
-                // File with failures: × file (N passed | M failed)  duration
-                let counts = if result.passed > 0 {
-                    if use_colors {
-                        format!(
-                            "{}{} passed{} | {}{} failed{}",
-                            ANSI_GREEN,
-                            result.passed,
-                            ANSI_RESET,
-                            ANSI_RED,
-                            result.failed,
-                            ANSI_RESET,
-                        )
-                    } else {
-                        format!("{} passed | {} failed", result.passed, result.failed)
-                    }
-                } else if use_colors {
-                    format!("{}{} failed{}", ANSI_RED, result.failed, ANSI_RESET)
-                } else {
-                    format!("{} failed", result.failed)
-                };
-
-                let icon = if use_colors {
-                    format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
-                } else {
-                    "\u{00d7}".to_string()
-                };
-
-                println!(" {} {} ({})  {}", icon, file_path, counts, duration);
-
-                // List failed test names under the file
                 for failure in &result.failures {
                     let fail_icon = if use_colors {
                         format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
@@ -1090,36 +1143,6 @@ impl TachReporter {
                     };
                     println!("   {} {}", fail_icon, failure.short_name);
                 }
-            } else if result.passed == 0 && result.skipped > 0 {
-                // Only-skips file: - file (N skipped)  duration
-                let icon = if use_colors {
-                    format!("{}-{}", ANSI_YELLOW, ANSI_RESET)
-                } else {
-                    "-".to_string()
-                };
-                println!(
-                    " {} {} ({} skipped)  {}",
-                    icon, file_path, result.skipped, duration
-                );
-            } else if result.skipped > 0 {
-                // Mixed pass+skip file: ✓ file (N passed | M skipped)  duration
-                let icon = if use_colors {
-                    format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
-                } else {
-                    "\u{2713}".to_string()
-                };
-                println!(
-                    " {} {} ({} passed | {} skipped)  {}",
-                    icon, file_path, result.passed, result.skipped, duration
-                );
-            } else {
-                // All-pass file: ✓ file (N)  duration
-                let icon = if use_colors {
-                    format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
-                } else {
-                    "\u{2713}".to_string()
-                };
-                println!(" {} {} ({})  {}", icon, file_path, result.total(), duration);
             }
         }
     }
@@ -1252,6 +1275,10 @@ impl Default for TachReporter {
 }
 
 impl Reporter for TachReporter {
+    fn on_session_setup(&mut self, file_counts: HashMap<String, usize>) {
+        self.file_expected = file_counts;
+    }
+
     fn on_run_start(&mut self, count: usize) {
         self.total = count;
         self.bar
@@ -1286,7 +1313,7 @@ impl Reporter for TachReporter {
             .unwrap_or_else(|| "unknown".to_string());
 
         let order = self.file_order;
-        let file_result = self.file_results.entry(file).or_insert_with(|| {
+        let file_result = self.file_results.entry(file.clone()).or_insert_with(|| {
             self.file_order = order + 1;
             FileResult::new(order)
         });
@@ -1330,6 +1357,36 @@ impl Reporter for TachReporter {
             "Running tests... {}/{} ({}%)",
             done, self.total, pct
         ));
+
+        // --- Real-time file streaming ---
+        // Check if this file is now complete (all expected tests finished)
+        if let Some(&expected) = self.file_expected.get(&file) {
+            // Re-borrow file_result immutably after the mutable borrow above has ended
+            if let Some(file_result) = self.file_results.get(&file) {
+                let actual = file_result.total();
+                if actual == expected {
+                    let use_colors = supports_colors_stdout();
+                    let line = self.format_file_line(&file, file_result, use_colors);
+                    self.bar.println(&line);
+
+                    // For failed files, also print the failed test names
+                    if file_result.has_failures() {
+                        for failure in &file_result.failures {
+                            let fail_icon = if use_colors {
+                                format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
+                            } else {
+                                "\u{00d7}".to_string()
+                            };
+                            self.bar
+                                .println(format!("   {} {}", fail_icon, failure.short_name));
+                        }
+                    }
+
+                    self.files_streamed.insert(file);
+                    self.files_printed += 1;
+                }
+            }
+        }
     }
 
     fn on_run_finished(
@@ -2163,5 +2220,117 @@ AssertionError"#;
         files.sort_by_key(|(_, r)| r.order);
         let names: Vec<&str> = files.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(names, vec!["b.py", "a.py", "c.py"]);
+    }
+
+    // =========================================================================
+    //  Real-time File Streaming Tests (Batch 2)
+    // =========================================================================
+
+    #[test]
+    fn test_tach_reporter_streams_file_on_completion() {
+        let mut reporter = TachReporter::new();
+        let mut counts = HashMap::new();
+        counts.insert("tests/test_a.py".to_string(), 2usize);
+        counts.insert("tests/test_b.py".to_string(), 1usize);
+        reporter.on_session_setup(counts);
+        reporter.on_run_start(3);
+
+        reporter.on_test_start("tests/test_a.py::test_1", "tests/test_a.py");
+        reporter.on_test_start("tests/test_a.py::test_2", "tests/test_a.py");
+        reporter.on_test_start("tests/test_b.py::test_1", "tests/test_b.py");
+
+        reporter.on_test_finished("tests/test_a.py::test_1", "pass", 100, None);
+        assert_eq!(reporter.files_printed, 0); // Not complete yet
+
+        reporter.on_test_finished("tests/test_a.py::test_2", "pass", 200, None);
+        assert_eq!(reporter.files_printed, 1); // File a complete
+
+        reporter.on_test_finished("tests/test_b.py::test_1", "pass", 50, None);
+        assert_eq!(reporter.files_printed, 2); // File b complete
+
+        assert_eq!(reporter.passed, 3);
+    }
+
+    #[test]
+    fn test_tach_reporter_no_session_setup_still_works() {
+        // If on_session_setup is never called, nothing streams (backward compat)
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_start("tests/test_a.py::test_1", "tests/test_a.py");
+        reporter.on_test_finished("tests/test_a.py::test_1", "pass", 100, None);
+        assert_eq!(reporter.files_printed, 0); // No streaming without setup
+    }
+
+    #[test]
+    fn test_tach_reporter_streams_failed_file() {
+        let mut reporter = TachReporter::new();
+        let mut counts = HashMap::new();
+        counts.insert("tests/test_c.py".to_string(), 2usize);
+        reporter.on_session_setup(counts);
+        reporter.on_run_start(2);
+
+        reporter.on_test_start("tests/test_c.py::test_1", "tests/test_c.py");
+        reporter.on_test_start("tests/test_c.py::test_2", "tests/test_c.py");
+        reporter.on_test_finished("tests/test_c.py::test_1", "pass", 100, None);
+        reporter.on_test_finished(
+            "tests/test_c.py::test_2",
+            "fail",
+            200,
+            Some("AssertionError"),
+        );
+        assert_eq!(reporter.files_printed, 1);
+        assert!(reporter.files_streamed.contains("tests/test_c.py"));
+    }
+
+    #[test]
+    fn test_tach_reporter_unfinished_file_not_streamed() {
+        // If a file never reaches expected count (e.g., worker crash), it stays unstreamed
+        let mut reporter = TachReporter::new();
+        let mut counts = HashMap::new();
+        counts.insert("tests/test_d.py".to_string(), 3usize);
+        reporter.on_session_setup(counts);
+        reporter.on_run_start(3);
+
+        reporter.on_test_start("tests/test_d.py::test_1", "tests/test_d.py");
+        reporter.on_test_start("tests/test_d.py::test_2", "tests/test_d.py");
+        reporter.on_test_finished("tests/test_d.py::test_1", "pass", 100, None);
+        reporter.on_test_finished("tests/test_d.py::test_2", "pass", 200, None);
+        // test_3 never finishes (crash scenario)
+        assert_eq!(reporter.files_printed, 0); // Not complete yet
+        assert!(!reporter.files_streamed.contains("tests/test_d.py"));
+    }
+
+    #[test]
+    fn test_tach_reporter_format_file_line_all_pass() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_start("f.py::t1", "f.py");
+        reporter.on_test_finished("f.py::t1", "pass", 100, None);
+        reporter.on_test_start("f.py::t2", "f.py");
+        reporter.on_test_finished("f.py::t2", "pass", 200, None);
+
+        let result = &reporter.file_results["f.py"];
+        let line = reporter.format_file_line("f.py", result, false);
+        assert!(line.contains("\u{2713}"), "Should contain check mark");
+        assert!(line.contains("f.py"), "Should contain file path");
+        assert!(line.contains("(2)"), "Should contain total count");
+    }
+
+    #[test]
+    fn test_tach_reporter_format_file_line_with_failures() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_start("f.py::t1", "f.py");
+        reporter.on_test_finished("f.py::t1", "pass", 100, None);
+        reporter.on_test_start("f.py::t2", "f.py");
+        reporter.on_test_finished("f.py::t2", "fail", 200, Some("boom"));
+
+        let result = &reporter.file_results["f.py"];
+        let line = reporter.format_file_line("f.py", result, false);
+        assert!(line.contains("\u{00d7}"), "Should contain x mark");
+        assert!(
+            line.contains("1 passed | 1 failed"),
+            "Should show pass/fail counts"
+        );
     }
 }

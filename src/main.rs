@@ -515,6 +515,16 @@ fn execute_session(
     // Build the hook registry from discovery results before forking
     let hook_registry = discovery_result.build_hook_registry(cwd);
 
+    // --- COMPUTE PER-FILE TEST COUNTS (for real-time streaming) ---
+    let mut file_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for test in &filtered_tests {
+        *file_counts
+            .entry(test.file_path.display().to_string())
+            .or_insert(0) += 1;
+    }
+    reporter.on_session_setup(file_counts);
+
     // --- RUN TESTS ---
     let failed_count = run_tests(
         &cleanup,
