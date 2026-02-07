@@ -30,3 +30,4 @@ rust_tests/proptest_snapshot.proptest-regressions
 src/CLAUDE.md
 src/core/CLAUDE.md
 src/execution/CLAUDE.md
+src/reporting/CLAUDE.md

@@ -53,6 +53,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
 # Add cargo to PATH for all shells
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Install sccache and nextest for fast builds and test execution
+RUN cargo install sccache --locked \
+    && cargo install cargo-nextest --locked
+
 # Create workspace directory
 WORKDIR /workspace
 
