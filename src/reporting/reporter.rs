@@ -375,6 +375,9 @@ pub trait Reporter {
 
     /// Called on fatal error (Boss Refinement #2)
     fn on_error(&mut self, message: &str);
+
+    /// Set the log file path to display in summary (default: no-op).
+    fn set_log_path(&mut self, _path: String) {}
 }
 
 /// JSON Reporter - outputs NDJSON to stdout
@@ -590,6 +593,12 @@ impl Reporter for MultiReporter {
     fn on_error(&mut self, message: &str) {
         for r in &mut self.reporters {
             r.on_error(message);
+        }
+    }
+
+    fn set_log_path(&mut self, path: String) {
+        for r in &mut self.reporters {
+            r.set_log_path(path.clone());
         }
     }
 }
@@ -1048,11 +1057,6 @@ impl TachReporter {
         }
     }
 
-    /// Set the log file path to display in the summary block.
-    pub fn set_log_path(&mut self, path: String) {
-        self.log_path = Some(path);
-    }
-
     /// Extract the short test name from a fully-qualified test ID.
     ///
     /// `"tests/foo.py::TestClass::test_method"` -> `"test_method"`
@@ -1426,6 +1430,10 @@ impl Reporter for TachReporter {
         // pollute JSON output. Using stdout ensures the error is visible even when
         // stderr is redirected to the log file by LogRedirect.
         println!("[tach:reporter] FATAL ERROR: {}", message);
+    }
+
+    fn set_log_path(&mut self, path: String) {
+        self.log_path = Some(path);
     }
 }
 

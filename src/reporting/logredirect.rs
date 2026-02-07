@@ -47,9 +47,10 @@ impl LogRedirect {
         let log_file = File::create(&log_path)?;
 
         // Save original stderr fd
-        // SAFETY: dup(2) duplicates fd 2 (stderr). This is a standard POSIX
-        // operation with no memory safety concerns.
-        let original_stderr_fd = unsafe { libc::dup(2) };
+        // SAFETY: fcntl(2, F_DUPFD_CLOEXEC, 0) duplicates fd 2 (stderr) and
+        // atomically sets CLOEXEC on the new fd, preventing it from leaking
+        // into child processes (Zygote, workers).
+        let original_stderr_fd = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 0) };
         if original_stderr_fd < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -157,7 +158,9 @@ mod tests {
         }
 
         // Also flush via File to ensure write is committed
-        let mut log_file = unsafe { File::from_raw_fd(libc::dup(2)) };
+        let fd = unsafe { libc::dup(2) };
+        assert!(fd >= 0, "dup(2) failed in test");
+        let mut log_file = unsafe { File::from_raw_fd(fd) };
         log_file.flush().ok();
 
         // Restore stderr

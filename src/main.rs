@@ -325,9 +325,7 @@ fn execute_session(
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
             if ProgressReporter::should_use_progress_bar() {
-                let mut tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
-                // Set log path before wrapping (LogRedirect always writes to DEFAULT_LOG_PATH)
-                tach_reporter.set_log_path(logredirect::DEFAULT_LOG_PATH.to_string());
+                let tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
                 reporters.push(Box::new(tach_reporter));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(
@@ -353,7 +351,14 @@ fn execute_session(
     // captured in the log file at /tmp/tach.log.
     let log_redirect =
         if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() {
-            LogRedirect::new().ok()
+            match LogRedirect::new() {
+                Ok(redirect) => {
+                    // Only show log path in summary if redirect actually succeeded
+                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH.to_string());
+                    Some(redirect)
+                }
+                Err(_) => None,
+            }
         } else {
             None
         };
