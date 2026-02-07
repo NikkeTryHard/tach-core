@@ -9,7 +9,7 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
-use tach_core::logredirect::LogRedirect;
+use tach_core::logredirect::{self, LogRedirect};
 use tach_core::reporter::{
     DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
 };
@@ -321,17 +321,13 @@ fn execute_session(
     // Create reporters
     //  Use TachReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
-    let is_interactive =
-        *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
             if ProgressReporter::should_use_progress_bar() {
                 let mut tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
-                // Set log path before wrapping (LogRedirect always writes to /tmp/tach.log)
-                if is_interactive {
-                    tach_reporter.set_log_path("/tmp/tach.log".to_string());
-                }
+                // Set log path before wrapping (LogRedirect always writes to DEFAULT_LOG_PATH)
+                tach_reporter.set_log_path(logredirect::DEFAULT_LOG_PATH.to_string());
                 reporters.push(Box::new(tach_reporter));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(

@@ -10,6 +10,9 @@ use std::fs::File;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 
+/// Default log file path for diagnostic output
+pub const DEFAULT_LOG_PATH: &str = "/tmp/tach.log";
+
 /// Redirects stderr to a log file for the duration of its lifetime.
 ///
 /// On creation, saves the original stderr fd and redirects fd 2 to a log file.
@@ -32,7 +35,8 @@ impl LogRedirect {
     /// # Errors
     /// Returns an error if the log file cannot be created or fd operations fail.
     pub fn new() -> std::io::Result<Self> {
-        let log_path = PathBuf::from("/tmp/tach.log");
+        let log_path = DEFAULT_LOG_PATH.to_string();
+        let log_path = PathBuf::from(log_path);
         Self::with_path(log_path)
     }
 
@@ -130,8 +134,8 @@ mod tests {
         let path_str = path.to_string_lossy();
 
         assert_eq!(
-            path_str, "/tmp/tach.log",
-            "path should be the fixed /tmp/tach.log"
+            path_str, DEFAULT_LOG_PATH,
+            "path should be the fixed DEFAULT_LOG_PATH"
         );
 
         // Clean up
