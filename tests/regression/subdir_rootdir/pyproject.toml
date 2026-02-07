@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# This pyproject.toml causes pytest to set rootdir to this directory,
+# NOT the tach-core project root. This is a regression test for the
+# node ID alignment fix (issue #67).
