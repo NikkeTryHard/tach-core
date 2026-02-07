@@ -9,7 +9,9 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
-use tach_core::reporter::{DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter};
+use tach_core::reporter::{
+    DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
+};
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
 use tach_core::signals;

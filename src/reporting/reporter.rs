@@ -1015,10 +1015,7 @@ impl TachReporter {
     /// `"tests/foo.py::test_simple"` -> `"test_simple"`
     /// `"just_a_name"` -> `"just_a_name"`
     fn short_test_name(test_id: &str) -> &str {
-        test_id
-            .rsplit("::")
-            .next()
-            .unwrap_or(test_id)
+        test_id.rsplit("::").next().unwrap_or(test_id)
     }
 
     /// Format a duration in milliseconds for display.
@@ -1032,11 +1029,16 @@ impl TachReporter {
         }
     }
 
+    /// Return file results sorted by insertion order.
+    fn sorted_files(&self) -> Vec<(&String, &FileResult)> {
+        let mut files: Vec<_> = self.file_results.iter().collect();
+        files.sort_by_key(|(_, r)| r.order);
+        files
+    }
+
     /// Render the file-grouped results list to stderr.
     fn render_file_list(&self, use_colors: bool) {
-        // Sort files by insertion order
-        let mut files: Vec<(&String, &FileResult)> = self.file_results.iter().collect();
-        files.sort_by_key(|(_, r)| r.order);
+        let files = self.sorted_files();
 
         for (file_path, result) in &files {
             let duration = Self::format_duration(result.total_duration_ms);
@@ -1047,8 +1049,12 @@ impl TachReporter {
                     if use_colors {
                         format!(
                             "{}{} passed{} | {}{} failed{}",
-                            ANSI_GREEN, result.passed, ANSI_RESET,
-                            ANSI_RED, result.failed, ANSI_RESET,
+                            ANSI_GREEN,
+                            result.passed,
+                            ANSI_RESET,
+                            ANSI_RED,
+                            result.failed,
+                            ANSI_RESET,
                         )
                     } else {
                         format!("{} passed | {} failed", result.passed, result.failed)
@@ -1076,6 +1082,28 @@ impl TachReporter {
                     };
                     eprintln!("   {} {}", fail_icon, failure.short_name);
                 }
+            } else if result.passed == 0 && result.skipped > 0 {
+                // Only-skips file: - file (N skipped)  duration
+                let icon = if use_colors {
+                    format!("{}-{}", ANSI_YELLOW, ANSI_RESET)
+                } else {
+                    "-".to_string()
+                };
+                eprintln!(
+                    " {} {} ({} skipped)  {}",
+                    icon, file_path, result.skipped, duration
+                );
+            } else if result.skipped > 0 {
+                // Mixed pass+skip file: ✓ file (N passed | M skipped)  duration
+                let icon = if use_colors {
+                    format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
+                } else {
+                    "\u{2713}".to_string()
+                };
+                eprintln!(
+                    " {} {} ({} passed | {} skipped)  {}",
+                    icon, file_path, result.passed, result.skipped, duration
+                );
             } else {
                 // All-pass file: ✓ file (N)  duration
                 let icon = if use_colors {
@@ -1090,33 +1118,44 @@ impl TachReporter {
 
     /// Render the summary block to stderr.
     fn render_summary(&self, duration_ms: u64, use_colors: bool) {
-        // Count file-level pass/fail
-        let mut files_passed = 0usize;
-        let mut files_failed = 0usize;
-        for result in self.file_results.values() {
-            if result.has_failures() {
-                files_failed += 1;
-            } else {
-                files_passed += 1;
-            }
-        }
-        let total_files = files_passed + files_failed;
+        // Count file-level pass/fail/skip
+        let files = self.sorted_files();
+        let total_files = files.len();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = total_files - failed_files - skipped_files;
 
         // File summary line
-        let file_counts = if files_failed > 0 {
+        let mut file_parts: Vec<String> = Vec::new();
+
+        if passed_files > 0 {
             if use_colors {
-                format!(
-                    "{}{} passed{} | {}{} failed{}",
-                    ANSI_GREEN, files_passed, ANSI_RESET,
-                    ANSI_RED, files_failed, ANSI_RESET,
-                )
+                file_parts.push(format!(
+                    "{}{} passed{}",
+                    ANSI_GREEN, passed_files, ANSI_RESET
+                ));
             } else {
-                format!("{} passed | {} failed", files_passed, files_failed)
+                file_parts.push(format!("{} passed", passed_files));
             }
-        } else if use_colors {
-            format!("{}{} passed{}", ANSI_GREEN, files_passed, ANSI_RESET)
+        }
+        if failed_files > 0 {
+            if use_colors {
+                file_parts.push(format!("{}{} failed{}", ANSI_RED, failed_files, ANSI_RESET));
+            } else {
+                file_parts.push(format!("{} failed", failed_files));
+            }
+        }
+        if skipped_files > 0 {
+            file_parts.push(format!("{} skipped", skipped_files));
+        }
+
+        let file_counts = if file_parts.is_empty() {
+            "0".to_string()
         } else {
-            format!("{} passed", files_passed)
+            file_parts.join(" | ")
         };
 
         eprintln!();
@@ -1128,7 +1167,10 @@ impl TachReporter {
 
         if self.passed > 0 {
             if use_colors {
-                test_parts.push(format!("{}{} passed{}", ANSI_GREEN, self.passed, ANSI_RESET));
+                test_parts.push(format!(
+                    "{}{} passed{}",
+                    ANSI_GREEN, self.passed, ANSI_RESET
+                ));
             } else {
                 test_parts.push(format!("{} passed", self.passed));
             }
@@ -1163,14 +1205,11 @@ impl TachReporter {
             return;
         }
 
-        let all_failures: Vec<&TachFailureRecord> = {
-            let mut files: Vec<(&String, &FileResult)> = self.file_results.iter().collect();
-            files.sort_by_key(|(_, r)| r.order);
-            files
-                .iter()
-                .flat_map(|(_, r)| r.failures.iter())
-                .collect()
-        };
+        let all_failures: Vec<&TachFailureRecord> = self
+            .sorted_files()
+            .iter()
+            .flat_map(|(_, r)| r.failures.iter())
+            .collect();
 
         if all_failures.is_empty() {
             return;
@@ -1181,10 +1220,7 @@ impl TachReporter {
 
         for failure in &all_failures {
             let header = if use_colors {
-                format!(
-                    "{}FAIL{} > {}",
-                    ANSI_BOLD_RED, ANSI_RESET, failure.test_id
-                )
+                format!("{}FAIL{} > {}", ANSI_BOLD_RED, ANSI_RESET, failure.test_id)
             } else {
                 format!("FAIL > {}", failure.test_id)
             };
@@ -1210,13 +1246,13 @@ impl Default for TachReporter {
 impl Reporter for TachReporter {
     fn on_run_start(&mut self, count: usize) {
         self.total = count;
-        self.bar.set_message(format!("Running tests... 0/{}", count));
+        self.bar
+            .set_message(format!("Running tests... 0/{}", count));
     }
 
     fn on_test_start(&mut self, id: &str, file: &str) {
         // Map test ID to file
-        self.test_to_file
-            .insert(id.to_string(), file.to_string());
+        self.test_to_file.insert(id.to_string(), file.to_string());
 
         // Ensure file entry exists
         let order = self.file_order;
@@ -1242,13 +1278,10 @@ impl Reporter for TachReporter {
             .unwrap_or_else(|| "unknown".to_string());
 
         let order = self.file_order;
-        let file_result = self
-            .file_results
-            .entry(file)
-            .or_insert_with(|| {
-                self.file_order = order + 1;
-                FileResult::new(order)
-            });
+        let file_result = self.file_results.entry(file).or_insert_with(|| {
+            self.file_order = order + 1;
+            FileResult::new(order)
+        });
 
         file_result.total_duration_ms += duration_ms;
 
@@ -1285,11 +1318,19 @@ impl Reporter for TachReporter {
         } else {
             0
         };
-        self.bar
-            .set_message(format!("Running tests... {}/{} ({}%)", done, self.total, pct));
+        self.bar.set_message(format!(
+            "Running tests... {}/{} ({}%)",
+            done, self.total, pct
+        ));
     }
 
-    fn on_run_finished(&mut self, _passed: usize, _failed: usize, _skipped: usize, duration_ms: u64) {
+    fn on_run_finished(
+        &mut self,
+        _passed: usize,
+        _failed: usize,
+        _skipped: usize,
+        duration_ms: u64,
+    ) {
         // Clear spinner
         self.bar.finish_and_clear();
 
@@ -1911,13 +1952,30 @@ AssertionError"#;
     fn test_tach_reporter_groups_by_file() {
         let mut reporter = TachReporter::new();
         reporter.on_run_start(4);
-        reporter.on_test_start("tests/auth/test_login.py::test_valid", "tests/auth/test_login.py");
+        reporter.on_test_start(
+            "tests/auth/test_login.py::test_valid",
+            "tests/auth/test_login.py",
+        );
         reporter.on_test_finished("tests/auth/test_login.py::test_valid", "pass", 100, None);
-        reporter.on_test_start("tests/auth/test_login.py::test_invalid", "tests/auth/test_login.py");
+        reporter.on_test_start(
+            "tests/auth/test_login.py::test_invalid",
+            "tests/auth/test_login.py",
+        );
         reporter.on_test_finished("tests/auth/test_login.py::test_invalid", "pass", 50, None);
-        reporter.on_test_start("tests/api/test_users.py::test_create", "tests/api/test_users.py");
-        reporter.on_test_finished("tests/api/test_users.py::test_create", "fail", 200, Some("AssertionError"));
-        reporter.on_test_start("tests/api/test_users.py::test_list", "tests/api/test_users.py");
+        reporter.on_test_start(
+            "tests/api/test_users.py::test_create",
+            "tests/api/test_users.py",
+        );
+        reporter.on_test_finished(
+            "tests/api/test_users.py::test_create",
+            "fail",
+            200,
+            Some("AssertionError"),
+        );
+        reporter.on_test_start(
+            "tests/api/test_users.py::test_list",
+            "tests/api/test_users.py",
+        );
         reporter.on_test_finished("tests/api/test_users.py::test_list", "pass", 80, None);
 
         assert_eq!(reporter.file_results.len(), 2);
@@ -1929,7 +1987,10 @@ AssertionError"#;
         assert_eq!(api.passed, 1);
         assert_eq!(api.failed, 1);
         assert_eq!(api.failures.len(), 1);
-        assert_eq!(api.failures[0].test_id, "tests/api/test_users.py::test_create");
+        assert_eq!(
+            api.failures[0].test_id,
+            "tests/api/test_users.py::test_create"
+        );
     }
 
     #[test]
@@ -1968,6 +2029,63 @@ AssertionError"#;
         let file = &reporter.file_results["f.py"];
         assert_eq!(file.skipped, 2);
         assert!(!file.has_failures());
+
+        // File with only skips should NOT count as "passed"
+        let files = reporter.sorted_files();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = files.len() - failed_files - skipped_files;
+        assert_eq!(passed_files, 0, "all-skip file should not count as passed");
+        assert_eq!(skipped_files, 1, "all-skip file should count as skipped");
+    }
+
+    #[test]
+    fn test_tach_reporter_mixed_pass_and_skip() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(4);
+        // File with mixed pass + skip
+        reporter.on_test_start("mix.py::t1", "mix.py");
+        reporter.on_test_finished("mix.py::t1", "pass", 100, None);
+        reporter.on_test_start("mix.py::t2", "mix.py");
+        reporter.on_test_finished("mix.py::t2", "skip", 10, None);
+        // File with only passes
+        reporter.on_test_start("pass.py::t1", "pass.py");
+        reporter.on_test_finished("pass.py::t1", "pass", 50, None);
+        // File with only skips
+        reporter.on_test_start("skip.py::t1", "skip.py");
+        reporter.on_test_finished("skip.py::t1", "skip", 10, None);
+
+        // Verify file-level counts
+        let mix = &reporter.file_results["mix.py"];
+        assert_eq!(mix.passed, 1);
+        assert_eq!(mix.skipped, 1);
+
+        let pass = &reporter.file_results["pass.py"];
+        assert_eq!(pass.passed, 1);
+        assert_eq!(pass.skipped, 0);
+
+        let skip = &reporter.file_results["skip.py"];
+        assert_eq!(skip.passed, 0);
+        assert_eq!(skip.skipped, 1);
+
+        // Verify summary-level file classification
+        let files = reporter.sorted_files();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = files.len() - failed_files - skipped_files;
+
+        assert_eq!(failed_files, 0);
+        assert_eq!(
+            passed_files, 2,
+            "mix.py and pass.py should count as passed files"
+        );
+        assert_eq!(skipped_files, 1, "skip.py should count as a skipped file");
     }
 
     #[test]
@@ -1988,9 +2106,18 @@ AssertionError"#;
 
     #[test]
     fn test_tach_reporter_short_test_name() {
-        assert_eq!(TachReporter::short_test_name("tests/foo.py::TestClass::test_method"), "test_method");
-        assert_eq!(TachReporter::short_test_name("tests/foo.py::test_simple"), "test_simple");
-        assert_eq!(TachReporter::short_test_name("tests/foo.py::test_param[1-2-3]"), "test_param[1-2-3]");
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::TestClass::test_method"),
+            "test_method"
+        );
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::test_simple"),
+            "test_simple"
+        );
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::test_param[1-2-3]"),
+            "test_param[1-2-3]"
+        );
         assert_eq!(TachReporter::short_test_name("just_a_name"), "just_a_name");
     }
 
