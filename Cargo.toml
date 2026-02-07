@@ -43,7 +43,7 @@ dashmap = "6.1"
 libc = "0.2"
 
 # System interfaces (ptrace for TLS capture, namespaces for isolation)
-nix = { version = "0.30.1", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched", "term", "ptrace"] }
+nix = { version = "0.31.1", features = ["process", "signal", "uio", "socket", "fs", "mount", "sched", "term", "ptrace"] }
 
 # Discovery (static AST analysis)
 rustpython-parser = "0.4"
