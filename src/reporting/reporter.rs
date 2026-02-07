@@ -15,6 +15,7 @@
 
 use crate::config::TracebackStyle;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::io::IsTerminal;
 
 // Re-export TracebackStyle for convenience
@@ -23,17 +24,6 @@ pub use crate::config::TracebackStyle as TbStyle;
 // =============================================================================
 // Constants
 // =============================================================================
-
-/// Estimated time per test in cold pytest execution (milliseconds).
-///
-/// This baseline represents typical pytest startup + import overhead per test:
-/// - pytest discovery and collection: ~100-150ms
-/// - Module import and fixture setup: ~100-150ms
-/// - Test execution overhead: ~50ms
-///
-/// Used to calculate "time saved" by Tach's snapshot-based warm execution.
-/// Based on empirical measurements across typical Python test suites.
-const PYTEST_COLD_TEST_MS: u64 = 300;
 
 // =============================================================================
 // ANSI Color Codes (Tasks 2.4, 2.5)
@@ -783,34 +773,6 @@ impl Reporter for ProgressReporter {
                 passed, failed, skipped, duration_secs
             );
         }
-
-        // Time Saved metric: compare actual time vs estimated cold pytest time
-        let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
-        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
-
-        if time_saved_ms > 1000 && total_tests > 10 {
-            let saved_secs = time_saved_ms as f64 / 1000.0;
-            if saved_secs >= 60.0 {
-                let mins = (saved_secs / 60.0).floor() as u64;
-                let secs = saved_secs % 60.0;
-                if use_colors {
-                    eprintln!(
-                        "{}(Saved {}m {:.0}s of initialization overhead){}",
-                        ANSI_CYAN, mins, secs, ANSI_RESET
-                    );
-                } else {
-                    eprintln!("(Saved {}m {:.0}s of initialization overhead)", mins, secs);
-                }
-            } else if use_colors {
-                eprintln!(
-                    "{}(Saved {:.1}s of initialization overhead){}",
-                    ANSI_CYAN, saved_secs, ANSI_RESET
-                );
-            } else {
-                eprintln!("(Saved {:.1}s of initialization overhead)", saved_secs);
-            }
-        }
     }
 
     fn on_error(&mut self, message: &str) {
@@ -945,28 +907,6 @@ impl Reporter for DotsReporter {
             "\n[tach:reporter] {} passed, {} failed, {} skipped in {:.2}s",
             passed, failed, skipped, duration_secs
         );
-
-        // Time Saved metric: compare actual time vs estimated cold pytest time
-        let total_tests = passed + failed + skipped;
-        let estimated_cold_ms = total_tests as u64 * PYTEST_COLD_TEST_MS;
-        let time_saved_ms = estimated_cold_ms.saturating_sub(duration_ms);
-
-        if time_saved_ms > 1000 && total_tests > 10 {
-            let saved_secs = time_saved_ms as f64 / 1000.0;
-            if saved_secs >= 60.0 {
-                let mins = (saved_secs / 60.0).floor() as u64;
-                let secs = saved_secs % 60.0;
-                eprintln!(
-                    "[tach:reporter] (Saved {}m {:.0}s of initialization overhead)",
-                    mins, secs
-                );
-            } else {
-                eprintln!(
-                    "[tach:reporter] (Saved {:.1}s of initialization overhead)",
-                    saved_secs
-                );
-            }
-        }
     }
 
     fn on_error(&mut self, message: &str) {
@@ -974,6 +914,441 @@ impl Reporter for DotsReporter {
             eprintln!();
             self.column = 0;
         }
+        eprintln!("[tach:reporter] FATAL ERROR: {}", message);
+    }
+}
+
+// =============================================================================
+//  Tach Reporter (Vitest-style)
+// =============================================================================
+
+/// Record of a single test failure within a file
+struct TachFailureRecord {
+    test_id: String,
+    short_name: String,
+    message: String,
+}
+
+/// Aggregated results for a single test file
+struct FileResult {
+    /// Insertion order index for stable ordering
+    order: usize,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    total_duration_ms: u64,
+    failures: Vec<TachFailureRecord>,
+}
+
+impl FileResult {
+    fn new(order: usize) -> Self {
+        Self {
+            order,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            total_duration_ms: 0,
+            failures: Vec::new(),
+        }
+    }
+
+    fn total(&self) -> usize {
+        self.passed + self.failed + self.skipped
+    }
+
+    fn has_failures(&self) -> bool {
+        self.failed > 0
+    }
+}
+
+/// Vitest-style reporter with file-grouped output
+///
+/// Groups test results by file and displays them in a compact format:
+/// ```text
+///  ✓ tests/auth/test_login.py (12)  340ms
+///  × tests/api/test_users.py (14 passed | 1 failed)  890ms
+///    × test_create_user_invalid_email
+/// ```
+pub struct TachReporter {
+    bar: ProgressBar,
+    file_results: HashMap<String, FileResult>,
+    test_to_file: HashMap<String, String>,
+    file_order: usize,
+    total: usize,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    traceback_style: TracebackStyle,
+}
+
+impl TachReporter {
+    /// Create a new TachReporter with default settings
+    pub fn new() -> Self {
+        Self::with_traceback_style(TracebackStyle::Long)
+    }
+
+    /// Create a new TachReporter with a specific traceback style
+    #[must_use]
+    pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} {msg}")
+                .expect("invalid spinner template"),
+        );
+        Self {
+            bar,
+            file_results: HashMap::new(),
+            test_to_file: HashMap::new(),
+            file_order: 0,
+            total: 0,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            traceback_style,
+        }
+    }
+
+    /// Extract the short test name from a fully-qualified test ID.
+    ///
+    /// `"tests/foo.py::TestClass::test_method"` -> `"test_method"`
+    /// `"tests/foo.py::test_simple"` -> `"test_simple"`
+    /// `"just_a_name"` -> `"just_a_name"`
+    fn short_test_name(test_id: &str) -> &str {
+        test_id.rsplit("::").next().unwrap_or(test_id)
+    }
+
+    /// Format a duration in milliseconds for display.
+    ///
+    /// Returns e.g. `"340ms"` or `"2.14s"` for longer durations.
+    fn format_duration(ms: u64) -> String {
+        if ms < 1000 {
+            format!("{}ms", ms)
+        } else {
+            format!("{:.2}s", ms as f64 / 1000.0)
+        }
+    }
+
+    /// Return file results sorted by insertion order.
+    fn sorted_files(&self) -> Vec<(&String, &FileResult)> {
+        let mut files: Vec<_> = self.file_results.iter().collect();
+        files.sort_by_key(|(_, r)| r.order);
+        files
+    }
+
+    /// Render the file-grouped results list to stderr.
+    fn render_file_list(&self, use_colors: bool) {
+        let files = self.sorted_files();
+
+        for (file_path, result) in &files {
+            let duration = Self::format_duration(result.total_duration_ms);
+
+            if result.has_failures() {
+                // File with failures: × file (N passed | M failed)  duration
+                let counts = if result.passed > 0 {
+                    if use_colors {
+                        format!(
+                            "{}{} passed{} | {}{} failed{}",
+                            ANSI_GREEN,
+                            result.passed,
+                            ANSI_RESET,
+                            ANSI_RED,
+                            result.failed,
+                            ANSI_RESET,
+                        )
+                    } else {
+                        format!("{} passed | {} failed", result.passed, result.failed)
+                    }
+                } else if use_colors {
+                    format!("{}{} failed{}", ANSI_RED, result.failed, ANSI_RESET)
+                } else {
+                    format!("{} failed", result.failed)
+                };
+
+                let icon = if use_colors {
+                    format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
+                } else {
+                    "\u{00d7}".to_string()
+                };
+
+                eprintln!(" {} {} ({})  {}", icon, file_path, counts, duration);
+
+                // List failed test names under the file
+                for failure in &result.failures {
+                    let fail_icon = if use_colors {
+                        format!("{}\u{00d7}{}", ANSI_RED, ANSI_RESET)
+                    } else {
+                        "\u{00d7}".to_string()
+                    };
+                    eprintln!("   {} {}", fail_icon, failure.short_name);
+                }
+            } else if result.passed == 0 && result.skipped > 0 {
+                // Only-skips file: - file (N skipped)  duration
+                let icon = if use_colors {
+                    format!("{}-{}", ANSI_YELLOW, ANSI_RESET)
+                } else {
+                    "-".to_string()
+                };
+                eprintln!(
+                    " {} {} ({} skipped)  {}",
+                    icon, file_path, result.skipped, duration
+                );
+            } else if result.skipped > 0 {
+                // Mixed pass+skip file: ✓ file (N passed | M skipped)  duration
+                let icon = if use_colors {
+                    format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
+                } else {
+                    "\u{2713}".to_string()
+                };
+                eprintln!(
+                    " {} {} ({} passed | {} skipped)  {}",
+                    icon, file_path, result.passed, result.skipped, duration
+                );
+            } else {
+                // All-pass file: ✓ file (N)  duration
+                let icon = if use_colors {
+                    format!("{}\u{2713}{}", ANSI_GREEN, ANSI_RESET)
+                } else {
+                    "\u{2713}".to_string()
+                };
+                eprintln!(" {} {} ({})  {}", icon, file_path, result.total(), duration);
+            }
+        }
+    }
+
+    /// Render the summary block to stderr.
+    fn render_summary(&self, duration_ms: u64, use_colors: bool) {
+        // Count file-level pass/fail/skip
+        let files = self.sorted_files();
+        let total_files = files.len();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = total_files - failed_files - skipped_files;
+
+        // File summary line
+        let mut file_parts: Vec<String> = Vec::new();
+
+        if passed_files > 0 {
+            if use_colors {
+                file_parts.push(format!(
+                    "{}{} passed{}",
+                    ANSI_GREEN, passed_files, ANSI_RESET
+                ));
+            } else {
+                file_parts.push(format!("{} passed", passed_files));
+            }
+        }
+        if failed_files > 0 {
+            if use_colors {
+                file_parts.push(format!("{}{} failed{}", ANSI_RED, failed_files, ANSI_RESET));
+            } else {
+                file_parts.push(format!("{} failed", failed_files));
+            }
+        }
+        if skipped_files > 0 {
+            file_parts.push(format!("{} skipped", skipped_files));
+        }
+
+        let file_counts = if file_parts.is_empty() {
+            "0".to_string()
+        } else {
+            file_parts.join(" | ")
+        };
+
+        eprintln!();
+        eprintln!(" Test Files  {} ({})", file_counts, total_files);
+
+        // Test counts line
+        let test_total = self.passed + self.failed + self.skipped;
+        let mut test_parts: Vec<String> = Vec::new();
+
+        if self.passed > 0 {
+            if use_colors {
+                test_parts.push(format!(
+                    "{}{} passed{}",
+                    ANSI_GREEN, self.passed, ANSI_RESET
+                ));
+            } else {
+                test_parts.push(format!("{} passed", self.passed));
+            }
+        }
+        if self.failed > 0 {
+            if use_colors {
+                test_parts.push(format!("{}{} failed{}", ANSI_RED, self.failed, ANSI_RESET));
+            } else {
+                test_parts.push(format!("{} failed", self.failed));
+            }
+        }
+        if self.skipped > 0 {
+            test_parts.push(format!("{} skipped", self.skipped));
+        }
+
+        let test_counts = if test_parts.is_empty() {
+            "0".to_string()
+        } else {
+            test_parts.join(" | ")
+        };
+
+        eprintln!("     Tests  {} ({})", test_counts, test_total);
+
+        // Duration line
+        let duration_str = Self::format_duration(duration_ms);
+        eprintln!("  Duration  {}", duration_str);
+    }
+
+    /// Render failure details at the end.
+    fn render_failures(&self, use_colors: bool) {
+        if self.traceback_style == TracebackStyle::No {
+            return;
+        }
+
+        let all_failures: Vec<&TachFailureRecord> = self
+            .sorted_files()
+            .iter()
+            .flat_map(|(_, r)| r.failures.iter())
+            .collect();
+
+        if all_failures.is_empty() {
+            return;
+        }
+
+        eprintln!();
+        eprintln!("{} FAILURES {}", "=".repeat(30), "=".repeat(30));
+
+        for failure in &all_failures {
+            let header = if use_colors {
+                format!("{}FAIL{} > {}", ANSI_BOLD_RED, ANSI_RESET, failure.test_id)
+            } else {
+                format!("FAIL > {}", failure.test_id)
+            };
+            eprintln!();
+            eprintln!("{}", header);
+            eprintln!("{}", "-".repeat(failure.test_id.len().min(70) + 7));
+            if !failure.message.is_empty() {
+                for line in failure.message.lines().take(20) {
+                    eprintln!("{}", line);
+                }
+            }
+        }
+        eprintln!("{}", "=".repeat(70));
+    }
+}
+
+impl Default for TachReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Reporter for TachReporter {
+    fn on_run_start(&mut self, count: usize) {
+        self.total = count;
+        self.bar
+            .set_message(format!("Running tests... 0/{}", count));
+    }
+
+    fn on_test_start(&mut self, id: &str, file: &str) {
+        // Map test ID to file
+        self.test_to_file.insert(id.to_string(), file.to_string());
+
+        // Ensure file entry exists
+        let order = self.file_order;
+        self.file_results
+            .entry(file.to_string())
+            .or_insert_with(|| {
+                self.file_order = order + 1;
+                FileResult::new(order)
+            });
+    }
+
+    fn on_test_finished(
+        &mut self,
+        id: &str,
+        status: &str,
+        duration_ms: u64,
+        message: Option<&str>,
+    ) {
+        let file = self
+            .test_to_file
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let order = self.file_order;
+        let file_result = self.file_results.entry(file).or_insert_with(|| {
+            self.file_order = order + 1;
+            FileResult::new(order)
+        });
+
+        file_result.total_duration_ms += duration_ms;
+
+        if is_pass(status) {
+            self.passed += 1;
+            file_result.passed += 1;
+        } else if is_skip(status) {
+            self.skipped += 1;
+            file_result.skipped += 1;
+        } else {
+            // fail, crash, timeout, error, harness_error
+            self.failed += 1;
+            file_result.failed += 1;
+
+            let use_colors = supports_colors();
+            let formatted_msg = message
+                .map(|m| {
+                    let formatted = format_traceback(m, id, self.traceback_style);
+                    colorize_traceback(&formatted, use_colors)
+                })
+                .unwrap_or_default();
+
+            file_result.failures.push(TachFailureRecord {
+                test_id: id.to_string(),
+                short_name: Self::short_test_name(id).to_string(),
+                message: formatted_msg,
+            });
+        }
+
+        // Update spinner
+        let done = self.passed + self.failed + self.skipped;
+        let pct = if self.total > 0 {
+            (done * 100) / self.total
+        } else {
+            0
+        };
+        self.bar.set_message(format!(
+            "Running tests... {}/{} ({}%)",
+            done, self.total, pct
+        ));
+    }
+
+    fn on_run_finished(
+        &mut self,
+        _passed: usize,
+        _failed: usize,
+        _skipped: usize,
+        duration_ms: u64,
+    ) {
+        // Clear spinner
+        self.bar.finish_and_clear();
+
+        let use_colors = supports_colors();
+
+        // Render file-grouped list
+        eprintln!();
+        self.render_file_list(use_colors);
+
+        // Render summary block
+        self.render_summary(duration_ms, use_colors);
+
+        // Render failure details
+        self.render_failures(use_colors);
+    }
+
+    fn on_error(&mut self, message: &str) {
+        self.bar.finish_and_clear();
         eprintln!("[tach:reporter] FATAL ERROR: {}", message);
     }
 }
@@ -1567,5 +1942,214 @@ AssertionError"#;
             "all non-pass/skip statuses should be failures"
         );
         assert_eq!(reporter.failures.len(), 5);
+    }
+
+    // =========================================================================
+    // TachReporter tests
+    // =========================================================================
+
+    #[test]
+    fn test_tach_reporter_groups_by_file() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(4);
+        reporter.on_test_start(
+            "tests/auth/test_login.py::test_valid",
+            "tests/auth/test_login.py",
+        );
+        reporter.on_test_finished("tests/auth/test_login.py::test_valid", "pass", 100, None);
+        reporter.on_test_start(
+            "tests/auth/test_login.py::test_invalid",
+            "tests/auth/test_login.py",
+        );
+        reporter.on_test_finished("tests/auth/test_login.py::test_invalid", "pass", 50, None);
+        reporter.on_test_start(
+            "tests/api/test_users.py::test_create",
+            "tests/api/test_users.py",
+        );
+        reporter.on_test_finished(
+            "tests/api/test_users.py::test_create",
+            "fail",
+            200,
+            Some("AssertionError"),
+        );
+        reporter.on_test_start(
+            "tests/api/test_users.py::test_list",
+            "tests/api/test_users.py",
+        );
+        reporter.on_test_finished("tests/api/test_users.py::test_list", "pass", 80, None);
+
+        assert_eq!(reporter.file_results.len(), 2);
+        let auth = &reporter.file_results["tests/auth/test_login.py"];
+        assert_eq!(auth.passed, 2);
+        assert_eq!(auth.failed, 0);
+        assert_eq!(auth.total_duration_ms, 150);
+        let api = &reporter.file_results["tests/api/test_users.py"];
+        assert_eq!(api.passed, 1);
+        assert_eq!(api.failed, 1);
+        assert_eq!(api.failures.len(), 1);
+        assert_eq!(
+            api.failures[0].test_id,
+            "tests/api/test_users.py::test_create"
+        );
+    }
+
+    #[test]
+    fn test_tach_reporter_spinner_message_updates() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(10);
+        assert_eq!(reporter.total, 10);
+        reporter.on_test_start("f.py::t1", "f.py");
+        reporter.on_test_finished("f.py::t1", "pass", 100, None);
+        assert_eq!(reporter.passed, 1);
+        reporter.on_test_start("f.py::t2", "f.py");
+        reporter.on_test_finished("f.py::t2", "fail", 50, Some("boom"));
+        assert_eq!(reporter.failed, 1);
+        reporter.on_test_start("f.py::t3", "f.py");
+        reporter.on_test_finished("f.py::t3", "skip", 10, None);
+        assert_eq!(reporter.skipped, 1);
+    }
+
+    #[test]
+    fn test_tach_reporter_empty_run() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(0);
+        reporter.on_run_finished(0, 0, 0, 100);
+    }
+
+    #[test]
+    fn test_tach_reporter_all_skipped() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(2);
+        reporter.on_test_start("f.py::t1", "f.py");
+        reporter.on_test_finished("f.py::t1", "skip", 10, None);
+        reporter.on_test_start("f.py::t2", "f.py");
+        reporter.on_test_finished("f.py::t2", "skip", 10, None);
+        assert_eq!(reporter.skipped, 2);
+        assert_eq!(reporter.passed, 0);
+        let file = &reporter.file_results["f.py"];
+        assert_eq!(file.skipped, 2);
+        assert!(!file.has_failures());
+
+        // File with only skips should NOT count as "passed"
+        let files = reporter.sorted_files();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = files.len() - failed_files - skipped_files;
+        assert_eq!(passed_files, 0, "all-skip file should not count as passed");
+        assert_eq!(skipped_files, 1, "all-skip file should count as skipped");
+    }
+
+    #[test]
+    fn test_tach_reporter_mixed_pass_and_skip() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(4);
+        // File with mixed pass + skip
+        reporter.on_test_start("mix.py::t1", "mix.py");
+        reporter.on_test_finished("mix.py::t1", "pass", 100, None);
+        reporter.on_test_start("mix.py::t2", "mix.py");
+        reporter.on_test_finished("mix.py::t2", "skip", 10, None);
+        // File with only passes
+        reporter.on_test_start("pass.py::t1", "pass.py");
+        reporter.on_test_finished("pass.py::t1", "pass", 50, None);
+        // File with only skips
+        reporter.on_test_start("skip.py::t1", "skip.py");
+        reporter.on_test_finished("skip.py::t1", "skip", 10, None);
+
+        // Verify file-level counts
+        let mix = &reporter.file_results["mix.py"];
+        assert_eq!(mix.passed, 1);
+        assert_eq!(mix.skipped, 1);
+
+        let pass = &reporter.file_results["pass.py"];
+        assert_eq!(pass.passed, 1);
+        assert_eq!(pass.skipped, 0);
+
+        let skip = &reporter.file_results["skip.py"];
+        assert_eq!(skip.passed, 0);
+        assert_eq!(skip.skipped, 1);
+
+        // Verify summary-level file classification
+        let files = reporter.sorted_files();
+        let failed_files = files.iter().filter(|(_, r)| r.has_failures()).count();
+        let skipped_files = files
+            .iter()
+            .filter(|(_, r)| !r.has_failures() && r.passed == 0)
+            .count();
+        let passed_files = files.len() - failed_files - skipped_files;
+
+        assert_eq!(failed_files, 0);
+        assert_eq!(
+            passed_files, 2,
+            "mix.py and pass.py should count as passed files"
+        );
+        assert_eq!(skipped_files, 1, "skip.py should count as a skipped file");
+    }
+
+    #[test]
+    fn test_tach_reporter_crash_timeout_counted_as_failure() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(3);
+        reporter.on_test_start("f.py::t1", "f.py");
+        reporter.on_test_finished("f.py::t1", "crash", 100, Some("segfault"));
+        reporter.on_test_start("f.py::t2", "f.py");
+        reporter.on_test_finished("f.py::t2", "timeout", 5000, Some("exceeded limit"));
+        reporter.on_test_start("f.py::t3", "f.py");
+        reporter.on_test_finished("f.py::t3", "harness_error", 100, Some("import error"));
+        assert_eq!(reporter.failed, 3);
+        let file = &reporter.file_results["f.py"];
+        assert_eq!(file.failed, 3);
+        assert_eq!(file.failures.len(), 3);
+    }
+
+    #[test]
+    fn test_tach_reporter_short_test_name() {
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::TestClass::test_method"),
+            "test_method"
+        );
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::test_simple"),
+            "test_simple"
+        );
+        assert_eq!(
+            TachReporter::short_test_name("tests/foo.py::test_param[1-2-3]"),
+            "test_param[1-2-3]"
+        );
+        assert_eq!(TachReporter::short_test_name("just_a_name"), "just_a_name");
+    }
+
+    #[test]
+    fn test_tach_reporter_with_traceback_style() {
+        let reporter = TachReporter::with_traceback_style(TracebackStyle::Short);
+        assert_eq!(reporter.traceback_style, TracebackStyle::Short);
+    }
+
+    #[test]
+    fn test_tach_reporter_default() {
+        let reporter = TachReporter::default();
+        assert_eq!(reporter.passed, 0);
+        assert_eq!(reporter.failed, 0);
+        assert_eq!(reporter.skipped, 0);
+        assert!(reporter.file_results.is_empty());
+    }
+
+    #[test]
+    fn test_tach_reporter_file_ordering_preserved() {
+        let mut reporter = TachReporter::new();
+        reporter.on_run_start(3);
+        reporter.on_test_start("b.py::t1", "b.py");
+        reporter.on_test_finished("b.py::t1", "pass", 100, None);
+        reporter.on_test_start("a.py::t1", "a.py");
+        reporter.on_test_finished("a.py::t1", "pass", 50, None);
+        reporter.on_test_start("c.py::t1", "c.py");
+        reporter.on_test_finished("c.py::t1", "pass", 75, None);
+
+        let mut files: Vec<(&String, &FileResult)> = reporter.file_results.iter().collect();
+        files.sort_by_key(|(_, r)| r.order);
+        let names: Vec<&str> = files.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, vec!["b.py", "a.py", "c.py"]);
     }
 }

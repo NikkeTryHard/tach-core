@@ -9,7 +9,9 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
-use tach_core::reporter::{DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter};
+use tach_core::reporter::{
+    DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
+};
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
 use tach_core::signals;
@@ -316,14 +318,13 @@ fn execute_session(
     let is_json = *format == OutputFormat::Json;
 
     // Create reporters
-    //  Use ProgressReporter for interactive terminals, DotsReporter for CI
+    //  Use TachReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
-            // Use progress bar for interactive terminals, dots for CI
             if ProgressReporter::should_use_progress_bar() {
-                reporters.push(Box::new(ProgressReporter::with_traceback_style(
+                reporters.push(Box::new(TachReporter::with_traceback_style(
                     config.traceback_style,
                 )));
             } else {
