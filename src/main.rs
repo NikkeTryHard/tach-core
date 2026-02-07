@@ -321,13 +321,18 @@ fn execute_session(
     // Create reporters
     //  Use TachReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
+    let is_interactive =
+        *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
             if ProgressReporter::should_use_progress_bar() {
-                reporters.push(Box::new(TachReporter::with_traceback_style(
-                    config.traceback_style,
-                )));
+                let mut tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
+                // Set log path before wrapping (LogRedirect always writes to /tmp/tach.log)
+                if is_interactive {
+                    tach_reporter.set_log_path("/tmp/tach.log".to_string());
+                }
+                reporters.push(Box::new(tach_reporter));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(
                     config.traceback_style,
@@ -537,12 +542,8 @@ fn execute_session(
         cwd.clone(),
     )?;
 
-    // Restore stderr and print log file path before exiting
-    if let Some(mut redirect) = log_redirect {
-        let path = redirect.log_path().to_path_buf();
-        redirect.restore(); // Restore stderr so eprintln works
-        eprintln!("   Log file  {}", path.display());
-    }
+    // Restore stderr before exiting (LogRedirect drops and restores automatically)
+    drop(log_redirect);
 
     // Exit with code 1 if any tests failed
     if failed_count > 0 {

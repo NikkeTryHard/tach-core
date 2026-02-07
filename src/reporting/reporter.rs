@@ -1002,6 +1002,8 @@ pub struct TachReporter {
     files_streamed: HashSet<String>,
     /// Count of files already streamed (for testing)
     files_printed: usize,
+    /// Optional log file path to display in summary
+    log_path: Option<String>,
 }
 
 impl TachReporter {
@@ -1042,7 +1044,13 @@ impl TachReporter {
             file_expected: HashMap::new(),
             files_streamed: HashSet::new(),
             files_printed: 0,
+            log_path: None,
         }
+    }
+
+    /// Set the log file path to display in the summary block.
+    pub fn set_log_path(&mut self, path: String) {
+        self.log_path = Some(path);
     }
 
     /// Extract the short test name from a fully-qualified test ID.
@@ -1229,6 +1237,11 @@ impl TachReporter {
         // Duration line
         let duration_str = Self::format_duration(duration_ms);
         println!("  Duration  {}", duration_str);
+
+        // Log file path (if set)
+        if let Some(ref path) = self.log_path {
+            println!("  Log file  {}", path);
+        }
     }
 
     /// Render failure details at the end.
@@ -1282,8 +1295,7 @@ impl Reporter for TachReporter {
 
     fn on_run_start(&mut self, count: usize) {
         self.total = count;
-        self.bar
-            .set_message(format!("Running tests... 0/{}", count));
+        self.bar.set_message(format!("Running {} tests", count));
     }
 
     fn on_test_start(&mut self, id: &str, file: &str) {
@@ -1348,16 +1360,14 @@ impl Reporter for TachReporter {
         }
 
         // Update spinner
-        let done = self.passed + self.failed + self.skipped;
-        let pct = if self.total > 0 {
-            (done * 100) / self.total
-        } else {
-            0
-        };
-        self.bar.set_message(format!(
-            "Running tests... {}/{} ({}%)",
-            done, self.total, pct
-        ));
+        let mut parts = vec![format!("Running {} tests", self.total)];
+        if self.passed > 0 {
+            parts.push(format!("{} passed", self.passed));
+        }
+        if self.failed > 0 {
+            parts.push(format!("{} failed", self.failed));
+        }
+        self.bar.set_message(parts.join(" \u{00b7} "));
 
         // --- Real-time file streaming ---
         // Check if this file is now complete (all expected tests finished)
@@ -2311,6 +2321,34 @@ AssertionError"#;
         assert!(line.contains("\u{2713}"), "Should contain check mark");
         assert!(line.contains("f.py"), "Should contain file path");
         assert!(line.contains("(2)"), "Should contain total count");
+    }
+
+    #[test]
+    fn test_tach_reporter_crash_prints_unstreamed_files() {
+        let mut reporter = TachReporter::new();
+        let mut counts = HashMap::new();
+        counts.insert("tests/test_a.py".to_string(), 3usize);
+        reporter.on_session_setup(counts);
+        reporter.on_run_start(3);
+
+        reporter.on_test_start("tests/test_a.py::test_1", "tests/test_a.py");
+        reporter.on_test_start("tests/test_a.py::test_2", "tests/test_a.py");
+        reporter.on_test_start("tests/test_a.py::test_3", "tests/test_a.py");
+
+        reporter.on_test_finished("tests/test_a.py::test_1", "pass", 100, None);
+        reporter.on_test_finished("tests/test_a.py::test_2", "crash", 200, Some("worker died"));
+        // test_3 never finishes — worker crash took it out
+
+        assert_eq!(reporter.files_printed, 0); // File NOT streamed (only 2/3 done)
+
+        // on_run_finished should print the file in the final output (via render_file_list)
+        reporter.on_run_finished(1, 1, 0, 300);
+        // No assertion needed — just verify it doesn't panic
+        // The file should appear in final output because it's NOT in files_streamed
+        assert!(
+            !reporter.files_streamed.contains("tests/test_a.py"),
+            "crashed file should not be in files_streamed"
+        );
     }
 
     #[test]
