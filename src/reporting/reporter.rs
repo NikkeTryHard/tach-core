@@ -61,6 +61,13 @@ fn supports_colors() -> bool {
     std::io::stderr().is_terminal() && std::env::var("NO_COLOR").is_err()
 }
 
+/// Check if stdout is connected to a terminal that supports colors.
+///
+/// Used by TachReporter which outputs to stdout (stderr may be redirected to log file).
+fn supports_colors_stdout() -> bool {
+    std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err()
+}
+
 /// Colorize a single traceback line based on its content (Tasks 2.4, 2.5).
 ///
 /// Color scheme:
@@ -581,7 +588,7 @@ impl Reporter for MultiReporter {
 //  Progress Bar Reporter
 // =============================================================================
 
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 /// Record of a test failure for summary display
 struct FailureRecord {
@@ -670,7 +677,7 @@ impl ProgressReporter {
 
     /// Check if we should use progress bar (interactive terminal)
     pub fn should_use_progress_bar() -> bool {
-        std::io::stderr().is_terminal() && std::env::var("CI").is_err()
+        std::io::stdout().is_terminal() && std::env::var("CI").is_err()
     }
 }
 
@@ -991,6 +998,7 @@ impl TachReporter {
     #[must_use]
     pub fn with_traceback_style(traceback_style: TracebackStyle) -> Self {
         let bar = ProgressBar::new_spinner();
+        bar.set_draw_target(ProgressDrawTarget::stdout());
         bar.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg}")
@@ -1036,7 +1044,7 @@ impl TachReporter {
         files
     }
 
-    /// Render the file-grouped results list to stderr.
+    /// Render the file-grouped results list to stdout.
     fn render_file_list(&self, use_colors: bool) {
         let files = self.sorted_files();
 
@@ -1071,7 +1079,7 @@ impl TachReporter {
                     "\u{00d7}".to_string()
                 };
 
-                eprintln!(" {} {} ({})  {}", icon, file_path, counts, duration);
+                println!(" {} {} ({})  {}", icon, file_path, counts, duration);
 
                 // List failed test names under the file
                 for failure in &result.failures {
@@ -1080,7 +1088,7 @@ impl TachReporter {
                     } else {
                         "\u{00d7}".to_string()
                     };
-                    eprintln!("   {} {}", fail_icon, failure.short_name);
+                    println!("   {} {}", fail_icon, failure.short_name);
                 }
             } else if result.passed == 0 && result.skipped > 0 {
                 // Only-skips file: - file (N skipped)  duration
@@ -1089,7 +1097,7 @@ impl TachReporter {
                 } else {
                     "-".to_string()
                 };
-                eprintln!(
+                println!(
                     " {} {} ({} skipped)  {}",
                     icon, file_path, result.skipped, duration
                 );
@@ -1100,7 +1108,7 @@ impl TachReporter {
                 } else {
                     "\u{2713}".to_string()
                 };
-                eprintln!(
+                println!(
                     " {} {} ({} passed | {} skipped)  {}",
                     icon, file_path, result.passed, result.skipped, duration
                 );
@@ -1111,12 +1119,12 @@ impl TachReporter {
                 } else {
                     "\u{2713}".to_string()
                 };
-                eprintln!(" {} {} ({})  {}", icon, file_path, result.total(), duration);
+                println!(" {} {} ({})  {}", icon, file_path, result.total(), duration);
             }
         }
     }
 
-    /// Render the summary block to stderr.
+    /// Render the summary block to stdout.
     fn render_summary(&self, duration_ms: u64, use_colors: bool) {
         // Count file-level pass/fail/skip
         let files = self.sorted_files();
@@ -1158,8 +1166,8 @@ impl TachReporter {
             file_parts.join(" | ")
         };
 
-        eprintln!();
-        eprintln!(" Test Files  {} ({})", file_counts, total_files);
+        println!();
+        println!(" Test Files  {} ({})", file_counts, total_files);
 
         // Test counts line
         let test_total = self.passed + self.failed + self.skipped;
@@ -1192,11 +1200,11 @@ impl TachReporter {
             test_parts.join(" | ")
         };
 
-        eprintln!("     Tests  {} ({})", test_counts, test_total);
+        println!("     Tests  {} ({})", test_counts, test_total);
 
         // Duration line
         let duration_str = Self::format_duration(duration_ms);
-        eprintln!("  Duration  {}", duration_str);
+        println!("  Duration  {}", duration_str);
     }
 
     /// Render failure details at the end.
@@ -1215,8 +1223,8 @@ impl TachReporter {
             return;
         }
 
-        eprintln!();
-        eprintln!("{} FAILURES {}", "=".repeat(30), "=".repeat(30));
+        println!();
+        println!("{} FAILURES {}", "=".repeat(30), "=".repeat(30));
 
         for failure in &all_failures {
             let header = if use_colors {
@@ -1224,16 +1232,16 @@ impl TachReporter {
             } else {
                 format!("FAIL > {}", failure.test_id)
             };
-            eprintln!();
-            eprintln!("{}", header);
-            eprintln!("{}", "-".repeat(failure.test_id.len().min(70) + 7));
+            println!();
+            println!("{}", header);
+            println!("{}", "-".repeat(failure.test_id.len().min(70) + 7));
             if !failure.message.is_empty() {
                 for line in failure.message.lines().take(20) {
-                    eprintln!("{}", line);
+                    println!("{}", line);
                 }
             }
         }
-        eprintln!("{}", "=".repeat(70));
+        println!("{}", "=".repeat(70));
     }
 }
 
@@ -1296,7 +1304,7 @@ impl Reporter for TachReporter {
             self.failed += 1;
             file_result.failed += 1;
 
-            let use_colors = supports_colors();
+            let use_colors = supports_colors_stdout();
             let formatted_msg = message
                 .map(|m| {
                     let formatted = format_traceback(m, id, self.traceback_style);
@@ -1334,10 +1342,10 @@ impl Reporter for TachReporter {
         // Clear spinner
         self.bar.finish_and_clear();
 
-        let use_colors = supports_colors();
+        let use_colors = supports_colors_stdout();
 
         // Render file-grouped list
-        eprintln!();
+        println!();
         self.render_file_list(use_colors);
 
         // Render summary block
@@ -1349,7 +1357,7 @@ impl Reporter for TachReporter {
 
     fn on_error(&mut self, message: &str) {
         self.bar.finish_and_clear();
-        eprintln!("[tach:reporter] FATAL ERROR: {}", message);
+        println!("[tach:reporter] FATAL ERROR: {}", message);
     }
 }
 

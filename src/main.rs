@@ -9,6 +9,7 @@ use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
+use tach_core::logredirect::LogRedirect;
 use tach_core::reporter::{
     DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
 };
@@ -339,6 +340,16 @@ fn execute_session(
     }
     let mut reporter = MultiReporter::new(reporters);
 
+    // Redirect stderr to log file for interactive terminal mode.
+    // This keeps diagnostic [tach:*] and [worker:*] logs out of the terminal
+    // while TachReporter outputs test results to stdout.
+    let log_redirect =
+        if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() {
+            LogRedirect::new().ok()
+        } else {
+            None
+        };
+
     let cleanup = CleanupGuard::new();
 
     // --- DISCOVERY ---
@@ -508,6 +519,13 @@ fn execute_session(
         hook_registry,
         cwd.clone(),
     )?;
+
+    // Restore stderr and print log file path before exiting
+    if let Some(mut redirect) = log_redirect {
+        let path = redirect.log_path().to_path_buf();
+        redirect.restore(); // Restore stderr so eprintln works
+        eprintln!("   Log file  {}", path.display());
+    }
 
     // Exit with code 1 if any tests failed
     if failed_count > 0 {
