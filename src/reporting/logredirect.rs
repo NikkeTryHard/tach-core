@@ -4,7 +4,7 @@
 //! `[worker:*]` messages are captured instead of cluttering the terminal.
 //! Reporter output is routed through stdout, so it remains visible.
 //!
-//! Uses `libc::dup` / `libc::dup2` for fd-level redirection.
+//! Uses `libc::fcntl(F_DUPFD_CLOEXEC)` / `libc::dup2` for fd-level redirection.
 
 use std::fs::File;
 use std::os::unix::io::{AsRawFd, RawFd};

@@ -359,7 +359,7 @@ pub enum MachineEvent<'a> {
 pub trait Reporter {
     /// Called before the run starts with per-file test counts.
     /// Used by TachReporter for real-time file streaming.
-    fn on_session_setup(&mut self, _file_counts: HashMap<String, usize>) {}
+    fn on_session_setup(&mut self, _file_counts: &HashMap<String, usize>) {}
 
     /// Called at start of test run
     fn on_run_start(&mut self, count: usize);
@@ -377,7 +377,7 @@ pub trait Reporter {
     fn on_error(&mut self, message: &str);
 
     /// Set the log file path to display in summary (default: no-op).
-    fn set_log_path(&mut self, _path: String) {}
+    fn set_log_path(&mut self, _path: &str) {}
 }
 
 /// JSON Reporter - outputs NDJSON to stdout
@@ -554,9 +554,9 @@ impl MultiReporter {
 }
 
 impl Reporter for MultiReporter {
-    fn on_session_setup(&mut self, file_counts: HashMap<String, usize>) {
+    fn on_session_setup(&mut self, file_counts: &HashMap<String, usize>) {
         for r in &mut self.reporters {
-            r.on_session_setup(file_counts.clone());
+            r.on_session_setup(file_counts);
         }
     }
 
@@ -596,9 +596,9 @@ impl Reporter for MultiReporter {
         }
     }
 
-    fn set_log_path(&mut self, path: String) {
+    fn set_log_path(&mut self, path: &str) {
         for r in &mut self.reporters {
-            r.set_log_path(path.clone());
+            r.set_log_path(path);
         }
     }
 }
@@ -1236,15 +1236,15 @@ impl TachReporter {
             test_parts.join(" | ")
         };
 
-        println!("     Tests  {} ({})", test_counts, test_total);
+        println!("      Tests  {} ({})", test_counts, test_total);
 
         // Duration line
         let duration_str = Self::format_duration(duration_ms);
-        println!("  Duration  {}", duration_str);
+        println!("   Duration  {}", duration_str);
 
         // Log file path (if set)
         if let Some(ref path) = self.log_path {
-            println!("  Log file  {}", path);
+            println!("   Log file  {}", path);
         }
     }
 
@@ -1293,8 +1293,8 @@ impl Default for TachReporter {
 }
 
 impl Reporter for TachReporter {
-    fn on_session_setup(&mut self, file_counts: HashMap<String, usize>) {
-        self.file_expected = file_counts;
+    fn on_session_setup(&mut self, file_counts: &HashMap<String, usize>) {
+        self.file_expected = file_counts.clone();
     }
 
     fn on_run_start(&mut self, count: usize) {
@@ -1412,9 +1412,15 @@ impl Reporter for TachReporter {
 
         let use_colors = supports_colors_stdout();
 
-        // Render file-grouped list
-        println!();
-        self.render_file_list(use_colors);
+        // Render file-grouped list (only files not already streamed)
+        let has_unstreamed = self
+            .file_results
+            .keys()
+            .any(|path| !self.files_streamed.contains(path));
+        if has_unstreamed {
+            println!();
+            self.render_file_list(use_colors);
+        }
 
         // Render summary block
         self.render_summary(duration_ms, use_colors);
@@ -1432,8 +1438,8 @@ impl Reporter for TachReporter {
         println!("[tach:reporter] FATAL ERROR: {}", message);
     }
 
-    fn set_log_path(&mut self, path: String) {
-        self.log_path = Some(path);
+    fn set_log_path(&mut self, path: &str) {
+        self.log_path = Some(path.to_owned());
     }
 }
 
@@ -2247,7 +2253,7 @@ AssertionError"#;
         let mut counts = HashMap::new();
         counts.insert("tests/test_a.py".to_string(), 2usize);
         counts.insert("tests/test_b.py".to_string(), 1usize);
-        reporter.on_session_setup(counts);
+        reporter.on_session_setup(&counts);
         reporter.on_run_start(3);
 
         reporter.on_test_start("tests/test_a.py::test_1", "tests/test_a.py");
@@ -2281,7 +2287,7 @@ AssertionError"#;
         let mut reporter = TachReporter::new();
         let mut counts = HashMap::new();
         counts.insert("tests/test_c.py".to_string(), 2usize);
-        reporter.on_session_setup(counts);
+        reporter.on_session_setup(&counts);
         reporter.on_run_start(2);
 
         reporter.on_test_start("tests/test_c.py::test_1", "tests/test_c.py");
@@ -2303,7 +2309,7 @@ AssertionError"#;
         let mut reporter = TachReporter::new();
         let mut counts = HashMap::new();
         counts.insert("tests/test_d.py".to_string(), 3usize);
-        reporter.on_session_setup(counts);
+        reporter.on_session_setup(&counts);
         reporter.on_run_start(3);
 
         reporter.on_test_start("tests/test_d.py::test_1", "tests/test_d.py");
@@ -2336,7 +2342,7 @@ AssertionError"#;
         let mut reporter = TachReporter::new();
         let mut counts = HashMap::new();
         counts.insert("tests/test_a.py".to_string(), 3usize);
-        reporter.on_session_setup(counts);
+        reporter.on_session_setup(&counts);
         reporter.on_run_start(3);
 
         reporter.on_test_start("tests/test_a.py::test_1", "tests/test_a.py");

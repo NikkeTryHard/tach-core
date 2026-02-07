@@ -354,7 +354,7 @@ fn execute_session(
             match LogRedirect::new() {
                 Ok(redirect) => {
                     // Only show log path in summary if redirect actually succeeded
-                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH.to_string());
+                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
                     Some(redirect)
                 }
                 Err(_) => None,
@@ -529,7 +529,7 @@ fn execute_session(
             .entry(test.file_path.to_string_lossy().to_string())
             .or_insert(0) += 1;
     }
-    reporter.on_session_setup(file_counts);
+    reporter.on_session_setup(&file_counts);
 
     // --- RUN TESTS ---
     let failed_count = run_tests(
