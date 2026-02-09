@@ -36,7 +36,7 @@ experiments = []
 
 [dependencies]
 # Core
-pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
+pyo3 = { version = "0.28.0", features = ["auto-initialize"] }
 anyhow = "1.0.101"
 thiserror = "2.0.18"
 dashmap = "6.1"
