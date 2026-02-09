@@ -37,7 +37,7 @@ experiments = []
 [dependencies]
 # Core
 pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 thiserror = "2.0.18"
 dashmap = "6.1"
 libc = "0.2"
@@ -103,7 +103,7 @@ seccompiler = "0.5"
 tempfile = "3"
 bincode = { version = "2.0", features = ["serde"] }
 wait-timeout = "0.2"
-proptest = "1.4"
+proptest = "1.10"
 criterion = "0.5"
 
 [[bench]]
