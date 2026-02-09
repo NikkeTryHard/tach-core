@@ -1,8 +1,8 @@
 # Nextest configuration for fast parallel testing
 
 [profile.default]
-# Run tests in parallel
-test-threads = "num-cpus"
+# Run tests in parallel (capped at 8)
+test-threads = 8
 # Fail fast on first failure
 fail-fast = true
 # Retry flaky tests once
