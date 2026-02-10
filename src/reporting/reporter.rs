@@ -17,6 +17,7 @@ use crate::config::TracebackStyle;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
+use std::time::Duration;
 
 // Re-export TracebackStyle for convenience
 pub use crate::config::TracebackStyle as TbStyle;
@@ -681,6 +682,7 @@ impl ProgressReporter {
                 .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("=>-"),
         );
+        bar.enable_steady_tick(Duration::from_millis(100));
 
         Self {
             bar,
@@ -1040,6 +1042,7 @@ impl TachReporter {
                 .template("{spinner:.green} {msg}")
                 .expect("invalid spinner template"),
         );
+        bar.enable_steady_tick(Duration::from_millis(100));
         Self {
             bar,
             file_results: HashMap::new(),
