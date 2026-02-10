@@ -7,7 +7,8 @@
 //!
 //! Run with: `cargo bench --bench plugin_overhead`
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::path::PathBuf;
 
 use tach_core::hooks::{Hook, HookEffect, HookRegistry, HookSpec, LoopScope, SysPathAction};

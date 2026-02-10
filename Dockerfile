@@ -53,9 +53,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
 # Add cargo to PATH for all shells
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install sccache and nextest for fast builds and test execution
-RUN cargo install sccache --locked \
-    && cargo install cargo-nextest --locked
+# Install sccache and nextest (pre-built binaries, not from source)
+RUN ARCH=$(uname -m) \
+    && curl -fsSL "https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-${ARCH}-unknown-linux-musl.tar.gz" \
+       | tar xz --strip-components=1 -C /usr/local/bin/ "sccache-v0.10.0-${ARCH}-unknown-linux-musl/sccache" \
+    && curl -fsSL "https://get.nexte.st/latest/linux" | tar xz -C /usr/local/bin/
 
 # Create workspace directory
 WORKDIR /workspace

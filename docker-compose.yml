@@ -27,6 +27,9 @@ services:
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
 
+      # Build cache — survives container rebuilds
+      - cargo-target:/workspace/target
+
     working_dir: /workspace
 
     # Keep container running for interactive use
@@ -45,3 +48,4 @@ services:
 volumes:
   cargo-registry:
   cargo-git:
+  cargo-target:

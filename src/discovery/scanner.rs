@@ -1346,7 +1346,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
             }
             ast::Stmt::ClassDef(class) => {
                 let class_name = class.name.as_str();
-                if class_name.starts_with("Test") {
+                if super::is_test_class(class_name) || super::has_testcase_base(&class.bases) {
                     for stmt in &class.body {
                         if let ast::Stmt::FunctionDef(func) = stmt {
                             let method_name = func.name.as_str();
@@ -2086,7 +2086,7 @@ class MyClass:
         pass
 "#;
         let module = parse_source(source);
-        // Class doesn't start with "Test", so methods should be ignored
+        // Class doesn't match test naming conventions, so methods should be ignored
         assert!(module.tests.is_empty());
     }
 
@@ -2851,5 +2851,202 @@ def test_errors(exc):
                 .iter()
                 .any(|t| t.name == "test_errors[TimeoutError]")
         );
+    }
+
+    // =========================================================================
+    // Suffix-based test class discovery (Issue #80)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_class_ending_with_test() {
+        let source = r#"
+class LoginTest:
+    def test_valid_credentials(self):
+        pass
+
+    def test_invalid_password(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "LoginTest::test_valid_credentials")
+        );
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "LoginTest::test_invalid_password")
+        );
+    }
+
+    #[test]
+    fn test_parse_class_ending_with_tests() {
+        let source = r#"
+class ModelFormTests:
+    def test_form_valid(self):
+        pass
+
+    def test_form_invalid(self, db):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "ModelFormTests::test_form_valid")
+        );
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "ModelFormTests::test_form_invalid")
+        );
+    }
+
+    #[test]
+    fn test_parse_suffix_class_excludes_non_test_methods() {
+        let source = r#"
+class PermissionTests:
+    def test_access_denied(self):
+        pass
+
+    def setUp(self):
+        pass
+
+    def helper(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "PermissionTests::test_access_denied");
+    }
+
+    #[test]
+    fn test_parse_suffix_class_async_method() {
+        let source = r#"
+class WebSocketTest:
+    async def test_connect(self, client):
+        await client.connect()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "WebSocketTest::test_connect");
+        assert!(module.tests[0].is_async);
+        assert_eq!(module.tests[0].dependencies, vec!["client"]);
+    }
+
+    #[test]
+    fn test_is_test_class() {
+        use crate::discovery::is_test_class;
+
+        assert!(is_test_class("TestLogin"));
+        assert!(is_test_class("TestModelForm"));
+        assert!(is_test_class("LoginTest"));
+        assert!(is_test_class("ModelFormTests"));
+        assert!(is_test_class("PermissionTests"));
+        assert!(is_test_class("AutodiscoverModulesTestCase"));
+        assert!(is_test_class("MyFeatureTestCase"));
+        assert!(is_test_class("JSONNormalizeTestCase"));
+
+        assert!(!is_test_class("MyClass"));
+        assert!(!is_test_class("Helper"));
+        assert!(!is_test_class("Contest"));
+        assert!(!is_test_class("Fastest"));
+        assert!(!is_test_class("Test"));
+        assert!(is_test_class("Tests"));
+        assert!(!is_test_class("Tes"));
+    }
+
+    // =========================================================================
+    // Inheritance-Based Discovery (Base Class Detection)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_unittest_testcase_class() {
+        let source = r#"
+import unittest
+
+class DatabaseMigration(unittest.TestCase):
+    def test_migrate(self):
+        pass
+
+    def test_rollback(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "DatabaseMigration::test_migrate")
+        );
+        assert!(
+            module
+                .tests
+                .iter()
+                .any(|t| t.name == "DatabaseMigration::test_rollback")
+        );
+    }
+
+    #[test]
+    fn test_parse_plain_testcase_base() {
+        let source = r#"
+from unittest import TestCase
+
+class MyValidation(TestCase):
+    def test_valid(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "MyValidation::test_valid");
+    }
+
+    #[test]
+    fn test_parse_django_testcase_base() {
+        let source = r#"
+from django.test import TestCase
+
+class OrderViewPermissions(TestCase):
+    def test_anonymous(self):
+        pass
+
+    def test_authenticated(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_no_test_in_name_no_testcase_base() {
+        let source = r#"
+class MyHelper:
+    def test_something(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_custom_testcase_subclass() {
+        let source = r#"
+from myproject.testing import AppTestCase
+
+class PaymentFlow(AppTestCase):
+    def test_checkout(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "PaymentFlow::test_checkout");
     }
 }

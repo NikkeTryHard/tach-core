@@ -265,7 +265,6 @@ impl FixtureRegistry {
         // Check class-scoped fixtures first for tests in classes
         // Test names in classes have format "ClassName::method_name"
         if let Some(class_name) = test_name.split("::").next()
-            && class_name.starts_with("Test")
             && test_name.contains("::")
         {
             let key = (module_path.clone(), class_name.to_string());

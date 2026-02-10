@@ -4,8 +4,8 @@
 [build]
 # Use sccache for compilation caching
 rustc-wrapper = "sccache"
-# Parallel jobs (adjust based on RAM)
-jobs = 4
+# Parallel jobs (capped at 8 to limit SSD/CPU pressure)
+jobs = 8
 
 [target.x86_64-unknown-linux-gnu]
 # Use mold linker (10x faster than default ld)
@@ -13,8 +13,8 @@ linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [env]
-# Parallel test threads
-RUST_TEST_THREADS = "4"
+# Parallel test threads (for cargo test, nextest uses its own config)
+RUST_TEST_THREADS = "8"
 
 [profile.dev]
 incremental = true
