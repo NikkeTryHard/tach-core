@@ -1368,8 +1368,22 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
-                                let (markers, marker_info) =
+                                let (mut markers, mut marker_info) =
                                     extract_markers_from_decorators(&func.decorator_list);
+
+                                // Merge class-level markers (e.g., @pytest.mark.django_db on the class)
+                                let (class_markers, class_marker_info) =
+                                    extract_markers_from_decorators(&class.decorator_list);
+                                for cm in class_markers {
+                                    if !markers.contains(&cm) {
+                                        markers.push(cm);
+                                    }
+                                }
+                                for cmi in class_marker_info {
+                                    if !marker_info.iter().any(|m| m.name == cmi.name) {
+                                        marker_info.push(cmi);
+                                    }
+                                }
                                 let parametrized_args = extract_injected_args(
                                     &func.decorator_list,
                                     &extract_args_from_arguments(&func.args),
@@ -1446,8 +1460,22 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                             if method_name.starts_with("test_") {
                                 let line_number =
                                     get_line_number(&source, func.range.start().to_usize());
-                                let (markers, marker_info) =
+                                let (mut markers, mut marker_info) =
                                     extract_markers_from_decorators(&func.decorator_list);
+
+                                // Merge class-level markers
+                                let (class_markers, class_marker_info) =
+                                    extract_markers_from_decorators(&class.decorator_list);
+                                for cm in class_markers {
+                                    if !markers.contains(&cm) {
+                                        markers.push(cm);
+                                    }
+                                }
+                                for cmi in class_marker_info {
+                                    if !marker_info.iter().any(|m| m.name == cmi.name) {
+                                        marker_info.push(cmi);
+                                    }
+                                }
                                 let parametrized_args = extract_injected_args(
                                     &func.decorator_list,
                                     &extract_args_from_arguments(&func.args),
