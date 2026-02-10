@@ -773,6 +773,12 @@ fn handle_list_command(
                 eprintln!("{}::{}", module.path.display(), test.name);
             }
         }
+        eprintln!();
+        eprintln!(
+            "Discovered {} tests in {} files",
+            discovery_result.test_count(),
+            discovery_result.modules.len()
+        );
     }
     Ok(())
 }

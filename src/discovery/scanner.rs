@@ -370,6 +370,22 @@ fn has_fixture_decorator(decorators: &[ast::Expr]) -> bool {
     decorators.iter().any(is_fixture_decorator)
 }
 
+fn is_abstractmethod_decorator(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Name(name) => name.id.as_str() == "abstractmethod",
+        ast::Expr::Attribute(attr) => attr.attr.as_str() == "abstractmethod",
+        _ => false,
+    }
+}
+
+fn has_abc_base(bases: &[ast::Expr]) -> bool {
+    bases.iter().any(|base| match base {
+        ast::Expr::Name(name) => matches!(name.id.as_str(), "ABC" | "ABCMeta"),
+        ast::Expr::Attribute(attr) => matches!(attr.attr.as_str(), "ABC" | "ABCMeta"),
+        _ => false,
+    })
+}
+
 /// Extract fixture scope from decorators
 fn extract_scope_from_decorators(decorators: &[ast::Expr]) -> FixtureScope {
     for decorator in decorators {
@@ -1346,8 +1362,10 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
             }
             ast::Stmt::ClassDef(class) => {
                 let class_name = class.name.as_str();
-                let is_test =
-                    super::is_test_class(class_name) || super::has_testcase_base(&class.bases);
+                let has_tc_base = super::has_testcase_base(&class.bases);
+                let is_test = super::is_test_class(class_name)
+                    || super::is_testcase_by_suffix(class_name)
+                    || has_tc_base;
 
                 // Extract base class names as strings for inheritance resolution
                 let base_names: Vec<String> = class
@@ -1384,6 +1402,45 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                 let class_line = get_line_number(&source, class.range.start().to_usize());
                 let (class_level_markers, class_level_marker_info) =
                     extract_markers_from_decorators(&class.decorator_list);
+
+                let mut has_test_false = false;
+                let mut has_init = false;
+                let mut has_new = false;
+                let mut has_abstractmethod = false;
+
+                for stmt in &class.body {
+                    match stmt {
+                        ast::Stmt::Assign(assign) => {
+                            // Detect `__test__ = False`
+                            if assign.targets.len() == 1
+                                && let ast::Expr::Name(name) = &assign.targets[0]
+                                && name.id.as_str() == "__test__"
+                                && let ast::Expr::Constant(c) = assign.value.as_ref()
+                                && let ast::Constant::Bool(false) = &c.value
+                            {
+                                has_test_false = true;
+                            }
+                        }
+                        ast::Stmt::FunctionDef(func) => {
+                            match func.name.as_str() {
+                                "__init__" => has_init = true,
+                                "__new__" => has_new = true,
+                                _ => {}
+                            }
+                            if func.decorator_list.iter().any(is_abstractmethod_decorator) {
+                                has_abstractmethod = true;
+                            }
+                        }
+                        ast::Stmt::AsyncFunctionDef(func) => {
+                            if func.decorator_list.iter().any(is_abstractmethod_decorator) {
+                                has_abstractmethod = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let is_abstract_class = has_abstractmethod || has_abc_base(&class.bases);
 
                 // Collect test methods from the class body
                 let mut class_methods: Vec<TestCase> = vec![];
@@ -1581,6 +1638,11 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                     is_test_class: is_test,
                     class_markers: (class_level_markers, class_level_marker_info),
                     line_number: class_line,
+                    has_testcase_base: has_tc_base,
+                    has_test_false,
+                    has_init,
+                    has_new,
+                    is_abstract: is_abstract_class,
                 });
 
                 // Only add tests to module for classes already identified as test classes
@@ -2952,12 +3014,35 @@ def test_errors(exc):
 
     // =========================================================================
     // Suffix-based test class discovery (Issue #80)
+    // With pytest-matching, suffix-only classes (no TestCase base) are NOT
+    // collected. They only contribute tests via inheritance resolution.
     // =========================================================================
 
     #[test]
-    fn test_parse_class_ending_with_test() {
+    fn test_parse_class_ending_with_test_no_base() {
         let source = r#"
 class LoginTest:
+    def test_valid_credentials(self):
+        pass
+
+    def test_invalid_password(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(
+            module.tests.len(),
+            0,
+            "Suffix-only class without TestCase base should not be collected"
+        );
+        assert_eq!(module.class_defs.len(), 1);
+        assert_eq!(module.class_defs[0].methods.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_class_ending_with_test_with_testcase_base() {
+        let source = r#"
+import unittest
+class LoginTest(unittest.TestCase):
     def test_valid_credentials(self):
         pass
 
@@ -2981,7 +3066,7 @@ class LoginTest:
     }
 
     #[test]
-    fn test_parse_class_ending_with_tests() {
+    fn test_parse_class_ending_with_tests_no_base() {
         let source = r#"
 class ModelFormTests:
     def test_form_valid(self):
@@ -2991,25 +3076,14 @@ class ModelFormTests:
         pass
 "#;
         let module = parse_source(source);
-        assert_eq!(module.tests.len(), 2);
-        assert!(
-            module
-                .tests
-                .iter()
-                .any(|t| t.name == "ModelFormTests::test_form_valid")
-        );
-        assert!(
-            module
-                .tests
-                .iter()
-                .any(|t| t.name == "ModelFormTests::test_form_invalid")
-        );
+        assert_eq!(module.tests.len(), 0);
+        assert_eq!(module.class_defs[0].methods.len(), 2);
     }
 
     #[test]
     fn test_parse_suffix_class_excludes_non_test_methods() {
         let source = r#"
-class PermissionTests:
+class PermissionTests(TestCase):
     def test_access_denied(self):
         pass
 
@@ -3025,38 +3099,46 @@ class PermissionTests:
     }
 
     #[test]
-    fn test_parse_suffix_class_async_method() {
+    fn test_parse_suffix_class_async_method_no_base() {
         let source = r#"
 class WebSocketTest:
     async def test_connect(self, client):
         await client.connect()
 "#;
         let module = parse_source(source);
-        assert_eq!(module.tests.len(), 1);
-        assert_eq!(module.tests[0].name, "WebSocketTest::test_connect");
-        assert!(module.tests[0].is_async);
-        assert_eq!(module.tests[0].dependencies, vec!["client"]);
+        assert_eq!(
+            module.tests.len(),
+            0,
+            "Suffix-only class without TestCase base should not be collected"
+        );
+        assert_eq!(module.class_defs[0].methods.len(), 1);
+        assert!(module.class_defs[0].methods[0].is_async);
     }
 
     #[test]
     fn test_is_test_class() {
         use crate::discovery::is_test_class;
+        use crate::discovery::is_testcase_by_suffix;
 
         assert!(is_test_class("TestLogin"));
         assert!(is_test_class("TestModelForm"));
-        assert!(is_test_class("LoginTest"));
-        assert!(is_test_class("ModelFormTests"));
-        assert!(is_test_class("PermissionTests"));
-        assert!(is_test_class("AutodiscoverModulesTestCase"));
-        assert!(is_test_class("MyFeatureTestCase"));
-        assert!(is_test_class("JSONNormalizeTestCase"));
+        assert!(is_test_class("Tests"));
+
+        // is_test_class is prefix-only — suffix patterns use is_testcase_by_suffix
+        assert!(!is_test_class("LoginTest"));
+        assert!(!is_test_class("ModelFormTests"));
+        assert!(!is_test_class("PermissionTests"));
+
+        assert!(is_testcase_by_suffix("AutodiscoverModulesTestCase"));
+        assert!(is_testcase_by_suffix("MyFeatureTestCase"));
+        assert!(is_testcase_by_suffix("JSONNormalizeTestCase"));
+        assert!(!is_testcase_by_suffix("TestCase"));
 
         assert!(!is_test_class("MyClass"));
         assert!(!is_test_class("Helper"));
         assert!(!is_test_class("Contest"));
         assert!(!is_test_class("Fastest"));
         assert!(!is_test_class("Test"));
-        assert!(is_test_class("Tests"));
         assert!(!is_test_class("Tes"));
     }
 
@@ -3303,5 +3385,93 @@ class BaseLoader:
         assert!(!base.is_test_class);
         assert_eq!(base.methods.len(), 2);
         assert_eq!(module.tests.len(), 0);
+    }
+
+    #[test]
+    fn test_test_false_attribute_detected() {
+        let source = r#"
+class TestHidden:
+    __test__ = False
+    def test_something(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let class = &module.class_defs[0];
+        assert!(class.has_test_false);
+        assert_eq!(class.methods.len(), 1);
+    }
+
+    #[test]
+    fn test_init_method_detected() {
+        let source = r#"
+class TestWidget:
+    def __init__(self, name):
+        self.name = name
+    def test_render(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let class = &module.class_defs[0];
+        assert!(class.has_init);
+    }
+
+    #[test]
+    fn test_new_method_detected() {
+        let source = r#"
+class TestSingleton:
+    def __new__(cls):
+        return super().__new__(cls)
+    def test_instance(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let class = &module.class_defs[0];
+        assert!(class.has_new);
+    }
+
+    #[test]
+    fn test_abstract_class_detected_via_decorator() {
+        let source = r#"
+import abc
+
+class TestBase:
+    @abc.abstractmethod
+    def test_something(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let class = &module.class_defs[0];
+        assert!(class.is_abstract);
+    }
+
+    #[test]
+    fn test_abstract_class_detected_via_abc_base() {
+        let source = r#"
+from abc import ABC
+
+class TestBase(ABC):
+    def test_something(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let class = &module.class_defs[0];
+        assert!(class.is_abstract);
+    }
+
+    #[test]
+    fn test_testcase_suffix_with_testcase_base_is_collected() {
+        let source = r#"
+import unittest
+
+class AutodiscoverModulesTestCase(unittest.TestCase):
+    def test_discover(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(
+            module.tests[0].name,
+            "AutodiscoverModulesTestCase::test_discover"
+        );
     }
 }
