@@ -18,30 +18,27 @@ pub mod loader;
 pub mod resolver;
 pub mod scanner;
 
-/// Check whether a class name follows pytest's test class naming conventions.
+/// Check whether a class name matches pytest's `python_classes` prefix convention.
 ///
-/// Pytest discovers test classes through two mechanisms:
-/// 1. **Name matching**: classes whose name starts with `Test` (the `python_classes` default)
-/// 2. **Inheritance**: any `unittest.TestCase` subclass, regardless of name
+/// Pytest's default `python_classes = ["Test"]` uses **prefix matching**:
+/// `name.starts_with("Test")`. This matches `TestFoo`, `Testing`, etc.
 ///
-/// Since tach performs static AST analysis without import-time MRO resolution,
-/// we approximate mechanism (2) by also matching common suffix conventions:
-/// - `*Test`     (e.g. `LoginTest`, `FormTest`)
-/// - `*Tests`    (e.g. `LoginTests`, `ModelFormTests`)
-/// - `*TestCase` (e.g. `AutodiscoverModulesTestCase`, `MyFeatureTestCase`)
-///
-/// The name must be at least 5 characters so that bare `"Test"` alone doesn't match —
-/// a descriptive component is always required.
+/// For classes that DON'T start with `Test` but inherit from `unittest.TestCase`,
+/// pytest's unittest plugin collects them via a separate path that bypasses
+/// name matching entirely. We handle that via `has_testcase_base()` in the scanner.
 #[inline]
 pub fn is_test_class(name: &str) -> bool {
-    let len = name.len();
-    if len < 5 {
-        return false;
-    }
-    name.starts_with("Test")
-        || name.ends_with("Test")
-        || name.ends_with("Tests")
-        || name.ends_with("TestCase")
+    name.starts_with("Test") && name.len() >= 5
+}
+
+/// Check whether a class name follows `*TestCase` suffix conventions.
+///
+/// This matches classes like `MyFeatureTestCase` which strongly imply
+/// unittest.TestCase lineage. Used together with `has_testcase_base()` to
+/// identify test classes that don't follow the `Test*` prefix convention.
+#[inline]
+pub fn is_testcase_by_suffix(name: &str) -> bool {
+    name.ends_with("TestCase") && name.len() > 8
 }
 
 /// Check whether any base class in the AST suggests a `unittest.TestCase` lineage.
