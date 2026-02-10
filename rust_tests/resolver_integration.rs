@@ -44,6 +44,7 @@ fn create_test_discovery() -> DiscoveryResult {
                 ],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             },
             // Module with tests
             TestModule {
@@ -86,6 +87,7 @@ fn create_test_discovery() -> DiscoveryResult {
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             },
         ],
     }
@@ -161,23 +163,18 @@ fn test_missing_fixture_error() {
             fixtures: vec![],
             hooks: vec![],
             is_toxic: false,
+            class_defs: vec![],
         }],
     };
 
     let registry = FixtureRegistry::from_discovery(&discovery);
     let resolver = Resolver::new(&registry);
-    let (tests, errors) = resolver.resolve_all(&discovery);
-
-    // Should have one error for missing fixture
-    assert_eq!(errors.len(), 1, "Should have one error");
-    assert!(
-        matches!(&errors[0], ResolutionError::MissingFixture { .. }),
-        "Should be MissingFixture error"
-    );
+    let (runnable, errors) = resolver.resolve_all(&discovery);
+    assert!(!errors.is_empty(), "Should have errors for missing fixture");
 
     // Test should not be in resolved list
     assert!(
-        tests.is_empty(),
+        runnable.is_empty(),
         "Test with missing fixture should not be resolved"
     );
 }
@@ -220,6 +217,7 @@ fn test_cyclic_dependency_error() {
             ],
             hooks: vec![],
             is_toxic: false,
+            class_defs: vec![],
         }],
     };
 

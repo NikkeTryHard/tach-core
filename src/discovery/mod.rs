@@ -13,6 +13,7 @@ pub mod analysis;
 pub mod cache;
 pub mod config;
 pub mod graph;
+pub mod inheritance;
 pub mod loader;
 pub mod resolver;
 pub mod scanner;
