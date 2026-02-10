@@ -470,7 +470,8 @@ fn execute_session(
     let mut runnable_tests = runnable_tests;
     let mut toxic_test_count = 0;
     for test in &mut runnable_tests {
-        test.is_toxic = toxicity_graph.is_toxic(&test.file_path);
+        test.is_toxic =
+            toxicity_graph.is_toxic(&test.file_path) || test.has_django_transaction_marker();
         if test.is_toxic {
             toxic_test_count += 1;
         }
@@ -822,7 +823,8 @@ fn handle_dry_run_command(
     // --- TOXICITY TAGGING ---
     let mut runnable_tests = runnable_tests;
     for test in &mut runnable_tests {
-        test.is_toxic = toxicity_graph.is_toxic(&test.file_path);
+        test.is_toxic =
+            toxicity_graph.is_toxic(&test.file_path) || test.has_django_transaction_marker();
     }
 
     // --- PATH FILTERING ---

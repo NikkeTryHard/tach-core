@@ -2784,8 +2784,13 @@ def _apply_django_db_isolation(
             "databases": None,
         }
 
-    # If transaction=True, skip isolation (test manages its own transactions)
+    # If transaction=True, the test manages its own transactions and may
+    # commit directly to the database. Savepoint-based isolation won't work
+    # because commits escape the savepoint. Instead, these tests are marked
+    # toxic so the worker exits after running — the Zygote's clean DB
+    # snapshot is restored on the next fork.
     if marker_args.get("transaction", False):
+        _close_django_connections()
         return []
 
     # Determine which databases to isolate

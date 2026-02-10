@@ -93,6 +93,22 @@ pub struct RunnableTest {
     pub marker_info: Vec<crate::discovery::MarkerInfo>,
 }
 
+impl RunnableTest {
+    /// Returns true if this test has `@pytest.mark.django_db(transaction=True)`.
+    ///
+    /// Transaction tests commit directly to the database, requiring process-level
+    /// isolation (toxic mode) instead of savepoint-based rollback.
+    pub fn has_django_transaction_marker(&self) -> bool {
+        self.marker_info.iter().any(|m| {
+            m.name == "django_db"
+                && m.args
+                    .get("transaction")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+        })
+    }
+}
+
 /// A resolved fixture with full context
 #[derive(Debug, Clone)]
 pub struct ResolvedFixture {
@@ -450,7 +466,7 @@ impl<'a> Resolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::TestModule;
+    use crate::discovery::{MarkerInfo, TestModule};
 
     /// Helper to create a fixture definition
     fn make_fixture(name: &str, deps: Vec<&str>) -> FixtureDefinition {
@@ -874,5 +890,64 @@ mod tests {
         assert_eq!(runnable[0].fixtures[0].name, "database");
         // Inner fixture has function scope (default)
         assert_eq!(runnable[0].fixtures[0].scope, FixtureScope::Function);
+    }
+
+    #[test]
+    fn test_has_django_transaction_marker_true() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test_views.py"),
+            test_name: "test_create_user".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec!["django_db".to_string()],
+            marker_info: vec![MarkerInfo {
+                name: "django_db".to_string(),
+                args: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("transaction".to_string(), serde_json::Value::Bool(true));
+                    m
+                },
+            }],
+        };
+        assert!(test.has_django_transaction_marker());
+    }
+
+    #[test]
+    fn test_has_django_transaction_marker_false_when_no_marker() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test_utils.py"),
+            test_name: "test_parse".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert!(!test.has_django_transaction_marker());
+    }
+
+    #[test]
+    fn test_has_django_transaction_marker_false_when_transaction_false() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test_views.py"),
+            test_name: "test_read_user".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec!["django_db".to_string()],
+            marker_info: vec![MarkerInfo {
+                name: "django_db".to_string(),
+                args: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("transaction".to_string(), serde_json::Value::Bool(false));
+                    m
+                },
+            }],
+        };
+        assert!(!test.has_django_transaction_marker());
     }
 }
