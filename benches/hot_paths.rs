@@ -5,15 +5,15 @@
 //!
 //! Results are stored in target/criterion/ for historical comparison.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use std::hint::black_box as hint_black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 /// Baseline benchmark to verify criterion is working correctly.
 /// This provides a reference point for timing measurements.
 fn bench_baseline(c: &mut Criterion) {
     let mut group = c.benchmark_group("baseline");
 
-    group.bench_function("noop", |b| b.iter(|| hint_black_box(42)));
+    group.bench_function("noop", |b| b.iter(|| black_box(42)));
 
     group.bench_function("sum_1000", |b| {
         b.iter(|| {
