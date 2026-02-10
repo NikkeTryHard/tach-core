@@ -13,6 +13,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// overlayfs filesystem magic number from the Linux kernel
+const OVERLAYFS_SUPER_MAGIC: i64 = 0x794c7630;
+
+/// Detect if the given path resides on an overlayfs filesystem.
+///
+/// Used to prevent nested overlay mounts which the Linux kernel does not
+/// support — this is the root cause of isolation failures in Docker
+/// containers where the storage driver is overlay2.
+pub fn is_overlayfs(path: &Path) -> bool {
+    let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
+    let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let rc = unsafe { libc::statfs(c_path.as_ptr(), &mut buf) };
+    if rc != 0 {
+        return false;
+    }
+    buf.f_type == OVERLAYFS_SUPER_MAGIC
+}
+
 /// Set up complete isolation for a worker (Iron Dome)
 ///
 /// CRITICAL SEQUENCE:
@@ -28,6 +49,14 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
     //  Allow skipping isolation for raw speed benchmarks
     if std::env::var("TACH_NO_ISOLATION").unwrap_or_default() == "1" {
         return Ok(());
+    }
+
+    let overlay_disabled = is_overlayfs(project_root);
+    if overlay_disabled {
+        eprintln!(
+            "[tach:isolation] Project root is on overlayfs (Docker detected). \
+             Overlay mounts disabled — using fork-only isolation."
+        );
     }
 
     // 1. Create new mount AND network namespaces
@@ -86,38 +115,40 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
     fs::create_dir_all(&proj_upper)?;
     fs::create_dir_all(&proj_work)?;
 
-    // 8. Overlay /tmp (writable zone #1)
-    let tmp_overlay_opts = format!(
-        "lowerdir=/tmp,upperdir={},workdir={}",
-        tmp_upper.display(),
-        tmp_work.display()
-    );
+    if !overlay_disabled {
+        // 8. Overlay /tmp (writable zone #1)
+        let tmp_overlay_opts = format!(
+            "lowerdir=/tmp,upperdir={},workdir={}",
+            tmp_upper.display(),
+            tmp_work.display()
+        );
 
-    mount::<str, str, str, str>(
-        Some("overlay"),
-        "/tmp",
-        Some("overlay"),
-        MsFlags::empty(),
-        Some(&tmp_overlay_opts),
-    )
-    .context("Failed to mount overlay on /tmp")?;
+        mount::<str, str, str, str>(
+            Some("overlay"),
+            "/tmp",
+            Some("overlay"),
+            MsFlags::empty(),
+            Some(&tmp_overlay_opts),
+        )
+        .context("Failed to mount overlay on /tmp")?;
 
-    // 9. Overlay project root (writable zone #2)
-    let proj_overlay_opts = format!(
-        "lowerdir={},upperdir={},workdir={}",
-        project_root.display(),
-        proj_upper.display(),
-        proj_work.display()
-    );
+        // 9. Overlay project root (writable zone #2)
+        let proj_overlay_opts = format!(
+            "lowerdir={},upperdir={},workdir={}",
+            project_root.display(),
+            proj_upper.display(),
+            proj_work.display()
+        );
 
-    mount::<str, Path, str, str>(
-        Some("overlay"),
-        project_root,
-        Some("overlay"),
-        MsFlags::empty(),
-        Some(&proj_overlay_opts),
-    )
-    .context("Failed to mount overlay on project root")?;
+        mount::<str, Path, str, str>(
+            Some("overlay"),
+            project_root,
+            Some("overlay"),
+            MsFlags::empty(),
+            Some(&proj_overlay_opts),
+        )
+        .context("Failed to mount overlay on project root")?;
+    }
 
     Ok(())
 }

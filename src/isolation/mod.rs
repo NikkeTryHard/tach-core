@@ -12,7 +12,7 @@ pub mod sandbox;
 pub mod snapshot;
 
 // Re-export main functions from namespace for backward compatibility
-pub use namespace::setup_filesystem;
+pub use namespace::{is_overlayfs, setup_filesystem};
 
 // Re-export calibration for Zygote warm-up
 pub use calibration::TlsCalibration;
