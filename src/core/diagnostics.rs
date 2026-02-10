@@ -447,6 +447,32 @@ pub fn check_seccomp() -> DiagnosticResult {
     }
 }
 
+/// Check if project root is on overlayfs (e.g., inside Docker)
+///
+/// Nested overlay mounts are unsupported by the Linux kernel, so tach
+/// must fall back to fork-only isolation when running inside a container
+/// that uses the overlay2 storage driver.
+pub fn check_overlay_filesystem(project_root: &std::path::Path) -> DiagnosticResult {
+    if crate::isolation::is_overlayfs(project_root) {
+        DiagnosticResult::warn(
+            "Overlay FS",
+            "Project root is on overlayfs (Docker detected)",
+        )
+        .with_details(
+            "Nested overlay mounts are unsupported by the Linux kernel.\n\
+             Tach will automatically fall back to fork-only isolation.\n\
+             This is safe but disables filesystem write protection.",
+        )
+        .with_remediation(Remediation {
+            command: Some("Run natively or use --no-isolation to suppress this check".to_string()),
+            docs_url: None,
+            explanation: "Overlay isolation requires ext4/btrfs/xfs host filesystem".to_string(),
+        })
+    } else {
+        DiagnosticResult::pass("Overlay FS", "Native filesystem — full isolation available")
+    }
+}
+
 /// Check jemalloc allocator status
 pub fn check_jemalloc() -> DiagnosticResult {
     match crate::allocator::verify_jemalloc_active() {
@@ -839,6 +865,7 @@ pub fn run_diagnostics() -> DiagnosticReport {
         check_userfaultfd(),
         check_landlock(),
         check_seccomp(),
+        check_overlay_filesystem(&std::env::current_dir().unwrap_or_default()),
         check_jemalloc(),
         check_ptrace_capability(),
         check_python(),
@@ -891,6 +918,9 @@ pub fn run_and_print_diagnose() -> bool {
 
     let seccomp_result = check_seccomp();
     print_diagnose_line("  Seccomp", &seccomp_result);
+
+    let overlay_result = check_overlay_filesystem(&std::env::current_dir().unwrap_or_default());
+    print_diagnose_line("  Overlay FS", &overlay_result);
 
     let jemalloc_result = check_jemalloc();
     print_diagnose_line("  Jemalloc", &jemalloc_result);
