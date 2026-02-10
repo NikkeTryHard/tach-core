@@ -192,8 +192,10 @@ impl Scheduler {
     ) -> Result<Self> {
         let max_workers = log_capture.slot_count();
 
-        // Set read timeout on result socket for crash detection
-        result_socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+        // Set read timeout on result socket for crash detection.
+        // 100ms keeps the scheduler responsive for TUI updates while still
+        // being efficient (the scheduler sleeps 50ms between iterations anyway).
+        result_socket.set_read_timeout(Some(Duration::from_millis(100)))?;
 
         // Set read timeout on cmd socket to prevent indefinite hang if Zygote crashes
         cmd_socket.set_read_timeout(Some(Duration::from_secs(10)))?;
