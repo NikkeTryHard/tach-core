@@ -148,6 +148,22 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
             Some(&proj_overlay_opts),
         )
         .context("Failed to mount overlay on project root")?;
+    } else {
+        // Docker/overlayfs: Can't nest overlays. Instead of mounting a
+        // bare tmpfs (which would hide existing /tmp contents like the
+        // project root when tests live under /tmp), bind-mount /tmp onto
+        // itself and remount it writable so workers can use tempfile.
+        mount::<str, str, str, str>(Some("/tmp"), "/tmp", None, MsFlags::MS_BIND, None)
+            .context("Failed to bind-mount /tmp (Docker fallback)")?;
+
+        mount::<str, str, str, str>(
+            Some("/tmp"),
+            "/tmp",
+            None,
+            MsFlags::MS_BIND | MsFlags::MS_REMOUNT,
+            None,
+        )
+        .context("Failed to remount /tmp as writable (Docker fallback)")?;
     }
 
     Ok(())

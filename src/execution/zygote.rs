@@ -685,6 +685,23 @@ except Exception as e:
             None,
         )?;
 
+        // Set __main__.__file__ so code inspecting the main module (e.g.
+        // Django's autoreload) finds an attribute instead of AttributeError.
+        // Embedded Python has no script entry point, so __main__ lacks __file__.
+        // Use /proc/self/exe (the tach-core binary) as a real, resolvable path.
+        py.run(
+            c_str!(
+                r#"
+import sys, os
+m = sys.modules.get('__main__')
+if m is not None and not hasattr(m, '__file__'):
+    m.__file__ = os.path.realpath('/proc/self/exe')
+"#
+            ),
+            None,
+            None,
+        )?;
+
         // CRITICAL: Inject tach_rust module BEFORE loading harness
         // This allows 'import tach_rust' in Python code
         inject_tach_rust_module(py)?;

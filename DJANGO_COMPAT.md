@@ -45,6 +45,44 @@ The conftest.py runs `setup_run_tests()` inside `pytest_configure`, so the
 setup happens in the **same Python process** as test collection. Without it,
 tach-core's zygote spawns a fresh Python process that has no apps registered.
 
+## `utils_tests/` Results (Focus Suite)
+
+### tach-core (after /tmp + __main__.__file__ fixes)
+```
+659 passed, 0 failed, 21 skipped in 1.99s
+```
+
+### pytest
+```
+618 passed, 3 failed, 21 skipped, 41 errors in 1.51s
+```
+
+### Comparison
+
+| Metric | tach-core | pytest |
+|--------|-----------|--------|
+| Passed | 659 | 618 |
+| Failed | 0 | 3 |
+| Skipped | 21 | 21 |
+| Errors | 0 | 41 |
+
+tach-core achieves **100% pass rate** on utils_tests/ (all non-skipped tests pass).
+pytest has 44 failures/errors on the same suite.
+
+### Fixes applied (not yet merged)
+
+**1. Read-only `/tmp` in Docker workers (32 failures fixed)**
+- `src/isolation/namespace.rs`: When overlay is disabled (Docker), bind-mount
+  `/tmp` onto itself and remount writable instead of using tmpfs (which would
+  hide existing `/tmp` contents) or leaving it read-only.
+- Tests using `tempfile.mkdtemp()` / `TemporaryDirectory()` now work.
+
+**2. Missing `__main__.__file__` (1 failure fixed)**
+- `src/execution/zygote.rs`: Set `__main__.__file__` to `/proc/self/exe`
+  during zygote init. Embedded Python lacks a script entry point, so
+  `__main__` has no `__file__` attribute by default.
+- Django's autoreload (`iter_modules_and_files`) now resolves `__main__`.
+
 ## Full Suite Results (Django 6.0.2 on SQLite)
 
 ### tach-core
@@ -148,11 +186,14 @@ bootstrap. This hook executes inside the zygote's Python process during
 ## Known Gaps / Next Steps
 
 ### Remaining work
+- [x] `utils_tests/` — 100% pass rate achieved (659/659 non-skipped tests pass)
 - [ ] Investigate the 491 remaining zygote misses (likely fixable)
 - [ ] Wire missing Django fixtures (`_pre_setup`, `_post_teardown`)
 - [ ] GIS tests (need PostGIS backend, always skip with sqlite)
 - [ ] Backend-specific tests (postgres JSON, mysql-specific)
-- [ ] `no:django` plugin flag in harness — may need selective re-enabling
+- [ ] `no:django` plugin flag in harness — confirmed safe for Django TestCase
+       subclasses (lifecycle is self-contained in Django's __call__)
+- [ ] Scale to next test suite module (methodical, one at a time)
 
 ### Not tach-core bugs
 - `TestFinder` in `test_module_loading.py` — has `__init__`, correctly skipped
