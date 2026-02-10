@@ -201,6 +201,15 @@ fn main() -> Result<()> {
     // SAFETY: Same as above - called before worker threads spawn.
     unsafe { std::env::set_var("TACH_TARGET_PATH", &cli.path) };
 
+    // Set Django test DB flags for Zygote to read during setup_databases()
+    // SAFETY: Same as above - called before worker threads spawn.
+    if cli.reuse_db {
+        unsafe { std::env::set_var("TACH_REUSE_DB", "1") };
+    }
+    if cli.create_db {
+        unsafe { std::env::set_var("TACH_CREATE_DB", "1") };
+    }
+
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
@@ -1160,6 +1169,8 @@ fn run_tests(
                 timeout_hook,
                 hook_registry,
                 project_root,
+                std::env::var("TACH_REUSE_DB").unwrap_or_default() == "1",
+                std::env::var("TACH_CREATE_DB").unwrap_or_default() == "1",
             )?;
 
             let stats = scheduler.run(runnable_tests, reporter)?;
