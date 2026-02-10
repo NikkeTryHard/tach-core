@@ -152,11 +152,9 @@ pub struct TestModule {
     pub path: PathBuf,
     pub tests: Vec<TestCase>,
     pub fixtures: Vec<FixtureDefinition>,
-    /// Pytest hooks defined in this module (e.g., pytest_configure, pytest_runtest_setup)
     pub hooks: Vec<HookDefinition>,
-    /// Whether this module is toxic (requires fork/kill instead of reset)
-    /// Set by toxicity analysis
     pub is_toxic: bool,
+    pub class_defs: Vec<crate::discovery::inheritance::ClassInfo>,
 }
 
 /// Discovery result containing all parsed modules
@@ -1119,7 +1117,7 @@ fn analyze_function(
 ) {
     let name = func.name.as_str();
 
-    if name.starts_with("test_") {
+    if name == "test" || name.starts_with("test_") {
         let line_number = get_line_number(source, func.range.start().to_usize());
         let (markers, marker_info) = extract_markers_from_decorators(&func.decorator_list);
         let parametrized_args = extract_injected_args(
@@ -1204,7 +1202,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                 tests: vec![],
                 fixtures: vec![],
                 hooks: vec![],
-                is_toxic: false, // Set later by ToxicityGraph
+                is_toxic: false,
+                class_defs: vec![],
             });
         }
     };
@@ -1212,6 +1211,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
     let mut tests = vec![];
     let mut fixtures = vec![];
     let mut hooks = vec![];
+    let mut class_defs = vec![];
 
     // Build import alias map: alias -> original name
     // Handles: from X import Y as Z (Z -> Y)
@@ -1275,7 +1275,7 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                         line_number,
                     });
                 }
-                if name.starts_with("test_") {
+                if name == "test" || name.starts_with("test_") {
                     let line_number = get_line_number(&source, func.range.start().to_usize());
                     let (markers, marker_info) =
                         extract_markers_from_decorators(&func.decorator_list);
@@ -1346,88 +1346,114 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
             }
             ast::Stmt::ClassDef(class) => {
                 let class_name = class.name.as_str();
-                if super::is_test_class(class_name) || super::has_testcase_base(&class.bases) {
-                    for stmt in &class.body {
-                        if let ast::Stmt::FunctionDef(func) = stmt {
-                            let method_name = func.name.as_str();
+                let is_test =
+                    super::is_test_class(class_name) || super::has_testcase_base(&class.bases);
 
-                            // Detect class-method fixtures
-                            if has_fixture_decorator(&func.decorator_list) {
-                                fixtures.push(FixtureDefinition {
-                                    name: method_name.to_string(),
-                                    scope: extract_scope_from_decorators(&func.decorator_list),
-                                    dependencies: extract_args_from_arguments(&func.args),
-                                    params: extract_params_from_decorators(&func.decorator_list),
-                                    class_scope: Some(class_name.to_string()),
-                                    autouse: extract_autouse_from_decorators(&func.decorator_list),
-                                    is_async: false,
-                                });
-                            }
-
-                            // Existing: Detect test methods
-                            if method_name.starts_with("test_") {
-                                let line_number =
-                                    get_line_number(&source, func.range.start().to_usize());
-                                let (mut markers, mut marker_info) =
-                                    extract_markers_from_decorators(&func.decorator_list);
-
-                                // Merge class-level markers (e.g., @pytest.mark.django_db on the class)
-                                let (class_markers, class_marker_info) =
-                                    extract_markers_from_decorators(&class.decorator_list);
-                                for cm in class_markers {
-                                    if !markers.contains(&cm) {
-                                        markers.push(cm);
-                                    }
-                                }
-                                for cmi in class_marker_info {
-                                    if !marker_info.iter().any(|m| m.name == cmi.name) {
-                                        marker_info.push(cmi);
-                                    }
-                                }
-                                let parametrized_args = extract_injected_args(
-                                    &func.decorator_list,
-                                    &extract_args_from_arguments(&func.args),
-                                );
-                                let timeout_secs =
-                                    extract_timeout_from_decorators(&func.decorator_list);
-                                let dependencies = extract_args_from_arguments(&func.args);
-                                let base_name = format!("{}::{}", class_name, method_name);
-
-                                // Try to extract parametrize info and expand tests
-                                if let Some(param_infos) = extract_all_parametrize_info(
-                                    &func.decorator_list,
-                                    &import_aliases,
-                                ) {
-                                    if !param_infos.is_empty() {
-                                        let param_ids = generate_param_combinations(&param_infos);
-                                        for param_id in param_ids {
-                                            tests.push(TestCase {
-                                                name: format!("{}[{}]", base_name, param_id),
-                                                dependencies: dependencies.clone(),
-                                                is_async: false,
-                                                line_number,
-                                                parametrized_args: parametrized_args.clone(),
-                                                timeout_secs,
-                                                markers: markers.clone(),
-                                                marker_info: marker_info.clone(),
-                                                param_id: Some(param_id),
-                                            });
+                // Extract base class names as strings for inheritance resolution
+                let base_names: Vec<String> = class
+                    .bases
+                    .iter()
+                    .filter_map(|base| {
+                        match base {
+                            ast::Expr::Name(name) => Some(name.id.to_string()),
+                            ast::Expr::Attribute(attr) => {
+                                // Reconstruct dotted name: a.b.C -> "a.b.C"
+                                let mut parts = vec![attr.attr.to_string()];
+                                let mut current = &*attr.value;
+                                loop {
+                                    match current {
+                                        ast::Expr::Attribute(inner) => {
+                                            parts.push(inner.attr.to_string());
+                                            current = &*inner.value;
                                         }
-                                    } else {
-                                        tests.push(TestCase {
-                                            name: base_name,
-                                            dependencies,
+                                        ast::Expr::Name(name) => {
+                                            parts.push(name.id.to_string());
+                                            break;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                parts.reverse();
+                                Some(parts.join("."))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect();
+
+                let class_line = get_line_number(&source, class.range.start().to_usize());
+                let (class_level_markers, class_level_marker_info) =
+                    extract_markers_from_decorators(&class.decorator_list);
+
+                // Collect test methods from the class body
+                let mut class_methods: Vec<TestCase> = vec![];
+
+                for stmt in &class.body {
+                    if let ast::Stmt::FunctionDef(func) = stmt {
+                        let method_name = func.name.as_str();
+
+                        // Detect class-method fixtures (only for test classes)
+                        if is_test && has_fixture_decorator(&func.decorator_list) {
+                            fixtures.push(FixtureDefinition {
+                                name: method_name.to_string(),
+                                scope: extract_scope_from_decorators(&func.decorator_list),
+                                dependencies: extract_args_from_arguments(&func.args),
+                                params: extract_params_from_decorators(&func.decorator_list),
+                                class_scope: Some(class_name.to_string()),
+                                autouse: extract_autouse_from_decorators(&func.decorator_list),
+                                is_async: false,
+                            });
+                        }
+
+                        // Detect test methods
+                        if method_name == "test" || method_name.starts_with("test_") {
+                            let line_number =
+                                get_line_number(&source, func.range.start().to_usize());
+                            let (mut markers, mut marker_info) =
+                                extract_markers_from_decorators(&func.decorator_list);
+
+                            // Merge class-level markers
+                            for cm in &class_level_markers {
+                                if !markers.contains(cm) {
+                                    markers.push(cm.clone());
+                                }
+                            }
+                            for cmi in &class_level_marker_info {
+                                if !marker_info.iter().any(|m| m.name == cmi.name) {
+                                    marker_info.push(cmi.clone());
+                                }
+                            }
+                            let parametrized_args = extract_injected_args(
+                                &func.decorator_list,
+                                &extract_args_from_arguments(&func.args),
+                            );
+                            let timeout_secs =
+                                extract_timeout_from_decorators(&func.decorator_list);
+                            let dependencies = extract_args_from_arguments(&func.args);
+                            let base_name = format!("{}::{}", class_name, method_name);
+
+                            // Try to extract parametrize info and expand tests
+                            if let Some(param_infos) =
+                                extract_all_parametrize_info(&func.decorator_list, &import_aliases)
+                            {
+                                if !param_infos.is_empty() {
+                                    let param_ids = generate_param_combinations(&param_infos);
+                                    for param_id in param_ids {
+                                        let tc = TestCase {
+                                            name: format!("{}[{}]", base_name, param_id),
+                                            dependencies: dependencies.clone(),
                                             is_async: false,
                                             line_number,
-                                            parametrized_args,
+                                            parametrized_args: parametrized_args.clone(),
                                             timeout_secs,
-                                            markers,
-                                            marker_info,
-                                            param_id: None,
-                                        });
+                                            markers: markers.clone(),
+                                            marker_info: marker_info.clone(),
+                                            param_id: Some(param_id),
+                                        };
+                                        class_methods.push(tc);
                                     }
                                 } else {
-                                    tests.push(TestCase {
+                                    class_methods.push(TestCase {
                                         name: base_name,
                                         dependencies,
                                         is_async: false,
@@ -1439,87 +1465,85 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                         param_id: None,
                                     });
                                 }
-                            }
-                        } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
-                            let method_name = func.name.as_str();
-
-                            // Detect async class-method fixtures
-                            if has_fixture_decorator(&func.decorator_list) {
-                                fixtures.push(FixtureDefinition {
-                                    name: method_name.to_string(),
-                                    scope: extract_scope_from_decorators(&func.decorator_list),
-                                    dependencies: extract_args_from_arguments(&func.args),
-                                    params: extract_params_from_decorators(&func.decorator_list),
-                                    class_scope: Some(class_name.to_string()),
-                                    autouse: extract_autouse_from_decorators(&func.decorator_list),
-                                    is_async: true,
+                            } else {
+                                class_methods.push(TestCase {
+                                    name: base_name,
+                                    dependencies,
+                                    is_async: false,
+                                    line_number,
+                                    parametrized_args,
+                                    timeout_secs,
+                                    markers,
+                                    marker_info,
+                                    param_id: None,
                                 });
                             }
+                        }
+                    } else if let ast::Stmt::AsyncFunctionDef(func) = stmt {
+                        let method_name = func.name.as_str();
 
-                            // Existing: Detect async test methods
-                            if method_name.starts_with("test_") {
-                                let line_number =
-                                    get_line_number(&source, func.range.start().to_usize());
-                                let (mut markers, mut marker_info) =
-                                    extract_markers_from_decorators(&func.decorator_list);
+                        // Detect async class-method fixtures (only for test classes)
+                        if is_test && has_fixture_decorator(&func.decorator_list) {
+                            fixtures.push(FixtureDefinition {
+                                name: method_name.to_string(),
+                                scope: extract_scope_from_decorators(&func.decorator_list),
+                                dependencies: extract_args_from_arguments(&func.args),
+                                params: extract_params_from_decorators(&func.decorator_list),
+                                class_scope: Some(class_name.to_string()),
+                                autouse: extract_autouse_from_decorators(&func.decorator_list),
+                                is_async: true,
+                            });
+                        }
 
-                                // Merge class-level markers
-                                let (class_markers, class_marker_info) =
-                                    extract_markers_from_decorators(&class.decorator_list);
-                                for cm in class_markers {
-                                    if !markers.contains(&cm) {
-                                        markers.push(cm);
-                                    }
+                        // Detect async test methods
+                        if method_name == "test" || method_name.starts_with("test_") {
+                            let line_number =
+                                get_line_number(&source, func.range.start().to_usize());
+                            let (mut markers, mut marker_info) =
+                                extract_markers_from_decorators(&func.decorator_list);
+
+                            // Merge class-level markers
+                            for cm in &class_level_markers {
+                                if !markers.contains(cm) {
+                                    markers.push(cm.clone());
                                 }
-                                for cmi in class_marker_info {
-                                    if !marker_info.iter().any(|m| m.name == cmi.name) {
-                                        marker_info.push(cmi);
-                                    }
+                            }
+                            for cmi in &class_level_marker_info {
+                                if !marker_info.iter().any(|m| m.name == cmi.name) {
+                                    marker_info.push(cmi.clone());
                                 }
-                                let parametrized_args = extract_injected_args(
-                                    &func.decorator_list,
-                                    &extract_args_from_arguments(&func.args),
-                                );
-                                let timeout_secs =
-                                    extract_timeout_from_decorators(&func.decorator_list);
-                                let dependencies = extract_args_from_arguments(&func.args);
-                                let base_name = format!("{}::{}", class_name, method_name);
+                            }
+                            let parametrized_args = extract_injected_args(
+                                &func.decorator_list,
+                                &extract_args_from_arguments(&func.args),
+                            );
+                            let timeout_secs =
+                                extract_timeout_from_decorators(&func.decorator_list);
+                            let dependencies = extract_args_from_arguments(&func.args);
+                            let base_name = format!("{}::{}", class_name, method_name);
 
-                                // Try to extract parametrize info and expand tests
-                                if let Some(param_infos) = extract_all_parametrize_info(
-                                    &func.decorator_list,
-                                    &import_aliases,
-                                ) {
-                                    if !param_infos.is_empty() {
-                                        let param_ids = generate_param_combinations(&param_infos);
-                                        for param_id in param_ids {
-                                            tests.push(TestCase {
-                                                name: format!("{}[{}]", base_name, param_id),
-                                                dependencies: dependencies.clone(),
-                                                is_async: true,
-                                                line_number,
-                                                parametrized_args: parametrized_args.clone(),
-                                                timeout_secs,
-                                                markers: markers.clone(),
-                                                marker_info: marker_info.clone(),
-                                                param_id: Some(param_id),
-                                            });
-                                        }
-                                    } else {
-                                        tests.push(TestCase {
-                                            name: base_name,
-                                            dependencies,
+                            // Try to extract parametrize info and expand tests
+                            if let Some(param_infos) =
+                                extract_all_parametrize_info(&func.decorator_list, &import_aliases)
+                            {
+                                if !param_infos.is_empty() {
+                                    let param_ids = generate_param_combinations(&param_infos);
+                                    for param_id in param_ids {
+                                        let tc = TestCase {
+                                            name: format!("{}[{}]", base_name, param_id),
+                                            dependencies: dependencies.clone(),
                                             is_async: true,
                                             line_number,
-                                            parametrized_args,
+                                            parametrized_args: parametrized_args.clone(),
                                             timeout_secs,
-                                            markers,
-                                            marker_info,
-                                            param_id: None,
-                                        });
+                                            markers: markers.clone(),
+                                            marker_info: marker_info.clone(),
+                                            param_id: Some(param_id),
+                                        };
+                                        class_methods.push(tc);
                                     }
                                 } else {
-                                    tests.push(TestCase {
+                                    class_methods.push(TestCase {
                                         name: base_name,
                                         dependencies,
                                         is_async: true,
@@ -1531,9 +1555,37 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
                                         param_id: None,
                                     });
                                 }
+                            } else {
+                                class_methods.push(TestCase {
+                                    name: base_name,
+                                    dependencies,
+                                    is_async: true,
+                                    line_number,
+                                    parametrized_args,
+                                    timeout_secs,
+                                    markers,
+                                    marker_info,
+                                    param_id: None,
+                                });
                             }
                         }
                     }
+                }
+
+                // Store ClassInfo for ALL classes (needed for inheritance resolution)
+                class_defs.push(crate::discovery::inheritance::ClassInfo {
+                    name: class_name.to_string(),
+                    file_path: rel_path.to_path_buf(),
+                    bases: base_names,
+                    methods: class_methods.clone(),
+                    is_test_class: is_test,
+                    class_markers: (class_level_markers, class_level_marker_info),
+                    line_number: class_line,
+                });
+
+                // Only add tests to module for classes already identified as test classes
+                if is_test {
+                    tests.extend(class_methods);
                 }
             }
             _ => {}
@@ -1545,7 +1597,8 @@ fn parse_module_with_relative_path(abs_path: &Path, rel_path: &Path) -> Result<T
         tests,
         fixtures,
         hooks,
-        is_toxic: false, // Set later by ToxicityGraph
+        is_toxic: false,
+        class_defs,
     })
 }
 
@@ -1617,14 +1670,28 @@ pub fn discover(root: &Path, no_ignore: bool) -> Result<DiscoveryResult> {
         })
         .collect();
 
-    let modules: Vec<TestModule> = paths
+    let mut modules: Vec<TestModule> = paths
         .par_iter()
-        .filter_map(|(abs_path, rel_path)| {
-            // Parse using absolute path, but store relative path in module
-            parse_module_with_relative_path(abs_path, rel_path).ok()
+        .filter_map(|(abs_path, rel_path)| parse_module_with_relative_path(abs_path, rel_path).ok())
+        .filter(|m| {
+            !m.tests.is_empty()
+                || !m.fixtures.is_empty()
+                || !m.hooks.is_empty()
+                || !m.class_defs.is_empty()
         })
-        .filter(|m| !m.tests.is_empty() || !m.fixtures.is_empty() || !m.hooks.is_empty())
         .collect();
+
+    // Phase 2: Resolve class inheritance across all modules
+    let all_class_defs: Vec<crate::discovery::inheritance::ClassInfo> =
+        modules.iter().flat_map(|m| m.class_defs.clone()).collect();
+
+    if !all_class_defs.is_empty() {
+        let resolved = crate::discovery::inheritance::resolve_inheritance(&all_class_defs);
+        crate::discovery::inheritance::apply_resolved_classes(&mut modules, &resolved);
+    }
+
+    // Remove modules that still have no tests, fixtures, or hooks after resolution
+    modules.retain(|m| !m.tests.is_empty() || !m.fixtures.is_empty() || !m.hooks.is_empty());
 
     Ok(DiscoveryResult { modules })
 }
@@ -1911,6 +1978,7 @@ async def test_async_with_marker():
                     }],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 TestModule {
                     path: PathBuf::from("test_b.py"),
@@ -1928,6 +1996,7 @@ async def test_async_with_marker():
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -3076,5 +3145,163 @@ class PaymentFlow(AppTestCase):
         let module = parse_source(source);
         assert_eq!(module.tests.len(), 1);
         assert_eq!(module.tests[0].name, "PaymentFlow::test_checkout");
+    }
+
+    // =========================================================================
+    // Bare `test` Method Discovery (Issue #86, Gap 3)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_bare_test_method() {
+        let source = r#"
+import unittest
+
+class TestDuration(unittest.TestCase):
+    def test(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "TestDuration::test");
+    }
+
+    #[test]
+    fn test_parse_bare_test_function_top_level() {
+        let source = r#"
+def test():
+    pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "test");
+    }
+
+    #[test]
+    fn test_parse_bare_test_async_class_method() {
+        let source = r#"
+class TestAsync:
+    async def test(self):
+        await something()
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.tests.len(), 1);
+        assert_eq!(module.tests[0].name, "TestAsync::test");
+        assert!(module.tests[0].is_async);
+    }
+
+    // =========================================================================
+    // ClassInfo Collection (Issue #86, Phase 1)
+    // =========================================================================
+
+    #[test]
+    fn test_class_defs_collected_for_all_classes() {
+        let source = r#"
+import unittest
+
+class TestCase(unittest.TestCase):
+    pass
+
+class BaseHelper:
+    def helper(self):
+        pass
+
+class TestFoo(TestCase):
+    def test_foo(self):
+        pass
+
+class NonTestClass(BaseHelper):
+    def do_thing(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.class_defs.len(), 4);
+        let names: Vec<&str> = module.class_defs.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"TestCase"));
+        assert!(names.contains(&"BaseHelper"));
+        assert!(names.contains(&"TestFoo"));
+        assert!(names.contains(&"NonTestClass"));
+    }
+
+    #[test]
+    fn test_class_defs_base_names_extracted() {
+        let source = r#"
+import unittest
+from django.test import TestCase as DjTestCase
+
+class MyTest(DjTestCase):
+    def test_one(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.class_defs.len(), 1);
+        assert_eq!(module.class_defs[0].bases, vec!["DjTestCase"]);
+    }
+
+    #[test]
+    fn test_class_defs_dotted_base_names() {
+        let source = r#"
+import unittest
+
+class MyTest(unittest.TestCase):
+    def test_one(self):
+        pass
+"#;
+        let module = parse_source(source);
+        assert_eq!(module.class_defs.len(), 1);
+        assert_eq!(module.class_defs[0].bases, vec!["unittest.TestCase"]);
+    }
+
+    #[test]
+    fn test_class_defs_methods_stored() {
+        let source = r#"
+class TestWidget:
+    def test_render(self):
+        pass
+
+    def test_click(self):
+        pass
+
+    def helper(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let widget = module
+            .class_defs
+            .iter()
+            .find(|c| c.name == "TestWidget")
+            .unwrap();
+        assert_eq!(widget.methods.len(), 2);
+        assert!(
+            widget
+                .methods
+                .iter()
+                .any(|m| m.name == "TestWidget::test_render")
+        );
+        assert!(
+            widget
+                .methods
+                .iter()
+                .any(|m| m.name == "TestWidget::test_click")
+        );
+    }
+
+    #[test]
+    fn test_class_defs_non_test_class_methods_collected() {
+        let source = r#"
+class BaseLoader:
+    def test_load(self):
+        pass
+    def test_unload(self):
+        pass
+"#;
+        let module = parse_source(source);
+        let base = module
+            .class_defs
+            .iter()
+            .find(|c| c.name == "BaseLoader")
+            .unwrap();
+        assert!(!base.is_test_class);
+        assert_eq!(base.methods.len(), 2);
+        assert_eq!(module.tests.len(), 0);
     }
 }

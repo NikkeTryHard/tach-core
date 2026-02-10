@@ -105,6 +105,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false, // Will be tagged by graph
+                class_defs: vec![],
             },
             TestModule {
                 path: root.join("test_safe.py"),
@@ -122,6 +123,7 @@ fn test_toxicity_discovery_to_runnable_test() {
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             },
         ],
     };
@@ -283,6 +285,7 @@ def test_network_stuff():
             fixtures: vec![],
             hooks: vec![],
             is_toxic: false,
+            class_defs: vec![],
         }],
     };
 
@@ -393,6 +396,7 @@ fn test_transitive_toxicity_propagation() {
             fixtures: vec![],
             hooks: vec![],
             is_toxic: false,
+            class_defs: vec![],
         }],
     };
 

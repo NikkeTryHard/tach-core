@@ -508,6 +508,7 @@ mod tests {
                     fixtures: vec![make_fixture("db", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // Local module with same-named "db" fixture (has dependencies)
                 TestModule {
@@ -516,6 +517,7 @@ mod tests {
                     fixtures: vec![make_fixture("db", vec!["connection"])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -554,6 +556,7 @@ mod tests {
                     ],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 TestModule {
                     path: PathBuf::from("test_cycle.py"),
@@ -561,6 +564,7 @@ mod tests {
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -596,6 +600,7 @@ mod tests {
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             }],
         };
 
@@ -636,6 +641,7 @@ mod tests {
                     ],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 TestModule {
                     path: PathBuf::from("test_chain.py"),
@@ -643,6 +649,7 @@ mod tests {
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -705,6 +712,7 @@ mod tests {
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             }],
         };
 
@@ -733,6 +741,7 @@ mod tests {
                     fixtures: vec![make_fixture("database", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 TestModule {
                     path: PathBuf::from("test_mixed.py"),
@@ -740,6 +749,7 @@ mod tests {
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -778,6 +788,7 @@ mod tests {
                     fixtures: vec![make_fixture("root_fixture", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // tests/conftest.py
                 TestModule {
@@ -786,6 +797,7 @@ mod tests {
                     fixtures: vec![make_fixture("tests_fixture", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // tests/subdir/conftest.py
                 TestModule {
@@ -794,6 +806,7 @@ mod tests {
                     fixtures: vec![make_fixture("subdir_fixture", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // Test file that uses fixtures from all levels
                 TestModule {
@@ -805,6 +818,7 @@ mod tests {
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };
@@ -855,6 +869,7 @@ mod tests {
                     fixtures: vec![outer_database, make_fixture("connection", vec![])],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // Inner conftest.py with database fixture (function scope, no deps)
                 TestModule {
@@ -863,6 +878,7 @@ mod tests {
                     fixtures: vec![inner_database],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
                 // Test in inner directory should use inner fixture
                 TestModule {
@@ -871,6 +887,7 @@ mod tests {
                     fixtures: vec![],
                     hooks: vec![],
                     is_toxic: false,
+                    class_defs: vec![],
                 },
             ],
         };

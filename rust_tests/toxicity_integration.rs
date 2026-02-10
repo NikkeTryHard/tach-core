@@ -243,6 +243,7 @@ def test_toxic():
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             },
             TestModule {
                 path: root.join("test_toxic.py"),
@@ -260,6 +261,7 @@ def test_toxic():
                 fixtures: vec![],
                 hooks: vec![],
                 is_toxic: false,
+                class_defs: vec![],
             },
         ],
     };

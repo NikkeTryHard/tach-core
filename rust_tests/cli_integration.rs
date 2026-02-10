@@ -110,6 +110,7 @@ fn test_discovery_result_with_line_numbers() {
             ],
             fixtures: vec![],
             hooks: vec![],
+            class_defs: vec![],
         }],
     };
 

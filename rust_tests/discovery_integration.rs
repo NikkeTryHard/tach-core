@@ -1025,3 +1025,180 @@ def test_no_markers():
         "test_no_markers should have no markers"
     );
 }
+
+#[test]
+fn test_transitive_inheritance_cross_file() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("test_base.py"),
+        r#"
+import unittest
+
+class BaseLoader(unittest.TestCase):
+    def test_load(self):
+        pass
+    def test_unload(self):
+        pass
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.join("test_custom.py"),
+        r#"
+from test_base import BaseLoader
+
+class CustomLoader(BaseLoader):
+    def test_custom(self):
+        pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+    let custom_module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_custom.py"))
+        .expect("test_custom.py should be discovered");
+
+    let test_names: Vec<&str> = custom_module
+        .tests
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert!(
+        test_names.contains(&"CustomLoader::test_custom"),
+        "Direct method should be found"
+    );
+    assert!(
+        test_names.contains(&"CustomLoader::test_load"),
+        "Inherited test_load should be found"
+    );
+    assert!(
+        test_names.contains(&"CustomLoader::test_unload"),
+        "Inherited test_unload should be found"
+    );
+}
+
+#[test]
+fn test_inherited_methods_empty_child() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("test_reloader.py"),
+        r#"
+class ReloaderTests:
+    def test_glob(self):
+        pass
+    def test_glob_recursive(self):
+        pass
+
+class StatReloaderTests(ReloaderTests):
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_reloader.py"))
+        .expect("test_reloader.py should be discovered");
+
+    let stat_tests: Vec<&str> = module
+        .tests
+        .iter()
+        .filter(|t| t.name.starts_with("StatReloaderTests::"))
+        .map(|t| t.name.as_str())
+        .collect();
+    assert!(
+        stat_tests.contains(&"StatReloaderTests::test_glob"),
+        "Should inherit test_glob"
+    );
+    assert!(
+        stat_tests.contains(&"StatReloaderTests::test_glob_recursive"),
+        "Should inherit test_glob_recursive"
+    );
+}
+
+#[test]
+fn test_bare_test_method_discovered() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("test_duration.py"),
+        r#"
+import unittest
+
+class TestDuration(unittest.TestCase):
+    def test(self):
+        pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_duration.py"))
+        .expect("test_duration.py should be discovered");
+
+    assert!(
+        module.tests.iter().any(|t| t.name == "TestDuration::test"),
+        "Bare 'test' method should be discovered"
+    );
+}
+
+#[test]
+fn test_three_level_transitive_inheritance() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("test_chain.py"),
+        r#"
+import unittest
+
+class GrandParent(unittest.TestCase):
+    def test_gp(self):
+        pass
+
+class Parent(GrandParent):
+    def test_parent(self):
+        pass
+
+class Child(Parent):
+    pass
+"#,
+    )
+    .unwrap();
+
+    let result = discover(root, false).expect("Discovery should succeed");
+    let module = result
+        .modules
+        .iter()
+        .find(|m| m.path.ends_with("test_chain.py"))
+        .expect("test_chain.py should be discovered");
+
+    let child_tests: Vec<&str> = module
+        .tests
+        .iter()
+        .filter(|t| t.name.starts_with("Child::"))
+        .map(|t| t.name.as_str())
+        .collect();
+    assert!(
+        child_tests.contains(&"Child::test_gp"),
+        "Child should inherit test_gp from GrandParent"
+    );
+    assert!(
+        child_tests.contains(&"Child::test_parent"),
+        "Child should inherit test_parent from Parent"
+    );
+}
