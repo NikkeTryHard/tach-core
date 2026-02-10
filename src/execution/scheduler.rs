@@ -123,6 +123,10 @@ pub struct Scheduler {
     hook_registry: HookRegistry,
     /// Project root directory for resolving hook paths
     project_root: PathBuf,
+    /// Reuse existing test database (--reuse-db)
+    reuse_db: bool,
+    /// Force recreation of test database (--create-db)
+    create_db: bool,
 }
 
 impl Scheduler {
@@ -143,6 +147,8 @@ impl Scheduler {
             None,
             hook_registry,
             project_root,
+            false,
+            false,
         )
     }
 
@@ -165,6 +171,8 @@ impl Scheduler {
             None,
             hook_registry,
             project_root,
+            false,
+            false,
         )
     }
 
@@ -179,6 +187,8 @@ impl Scheduler {
         timeout_hook: Option<String>,
         hook_registry: HookRegistry,
         project_root: PathBuf,
+        reuse_db: bool,
+        create_db: bool,
     ) -> Result<Self> {
         let max_workers = log_capture.slot_count();
 
@@ -202,6 +212,8 @@ impl Scheduler {
             timeout_hook,
             hook_registry,
             project_root,
+            reuse_db,
+            create_db,
         })
     }
 
@@ -518,8 +530,8 @@ impl Scheduler {
             cached_effects,
             markers: test.markers.clone(),
             marker_info: test.marker_info.clone(),
-            reuse_db: false,
-            create_db: false,
+            reuse_db: self.reuse_db,
+            create_db: self.create_db,
         };
 
         // Use encode_with_length which includes protocol header
