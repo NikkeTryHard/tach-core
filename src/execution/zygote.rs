@@ -703,20 +703,14 @@ except Exception as e:
         // Django Test Database: Create test DB after pytest is configured but
         // before workers fork. Reads TACH_REUSE_DB/TACH_CREATE_DB env vars.
         // Connections are closed before fork so workers get fresh FDs.
-        py.run(
-            c_str!(
-                r#"
-try:
-    import tach_harness
-    tach_harness._setup_django_test_db()
-except Exception as e:
-    import sys
-    print(f'[tach:zygote] Django test DB setup error: {e}', file=sys.stderr)
-"#
-            ),
-            None,
-            None,
-        )?;
+        // NOTE: Call through `harness` ref directly — sys.modules registration
+        // happens later, so `import tach_harness` would fail here.
+        if let Err(e) = harness
+            .getattr("_setup_django_test_db")
+            .and_then(|f| f.call0())
+        {
+            eprintln!("[tach:zygote] Django test DB setup error: {e}");
+        }
 
         // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
         // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
