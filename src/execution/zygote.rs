@@ -661,7 +661,10 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         }
 
         // Django Detection & Setup (Batteries-Included)
-        // Initialize Django in Zygote so workers inherit the pre-warmed state
+        // Initialize Django in Zygote so workers inherit the pre-warmed state.
+        // NOTE: We do NOT warm up DB connections here. setup_databases() creates
+        // a test DB after init_session(), and connections are closed before fork
+        // so workers get fresh file descriptors.
         py.run(
             c_str!(r#"
 import os
@@ -670,20 +673,9 @@ import sys
 try:
     import django
 
-    # Check if DJANGO_SETTINGS_MODULE is already set
     if 'DJANGO_SETTINGS_MODULE' in os.environ:
         django.setup()
         print(f'[tach:zygote] Django initialized: {os.environ["DJANGO_SETTINGS_MODULE"]}', file=sys.stderr)
-
-        # CRITICAL: Warm up DB connections before forking
-        # File descriptors must exist in Zygote to be inherited by workers
-        try:
-            from django.db import connections
-            for alias in connections:
-                connections[alias].ensure_connection()
-            print(f'[tach:zygote] Django DB connections warmed up', file=sys.stderr)
-        except Exception as e:
-            print(f'[tach:zygote] Django DB warmup failed: {e}', file=sys.stderr)
 except ImportError:
     pass  # Django not installed, skip
 except Exception as e:
@@ -707,6 +699,24 @@ except Exception as e:
         // This avoids importing test files outside the requested scope
         let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
         harness.getattr("init_session")?.call1((&target_path,))?;
+
+        // Django Test Database: Create test DB after pytest is configured but
+        // before workers fork. Reads TACH_REUSE_DB/TACH_CREATE_DB env vars.
+        // Connections are closed before fork so workers get fresh FDs.
+        py.run(
+            c_str!(
+                r#"
+try:
+    import tach_harness
+    tach_harness._setup_django_test_db()
+except Exception as e:
+    import sys
+    print(f'[tach:zygote] Django test DB setup error: {e}', file=sys.stderr)
+"#
+            ),
+            None,
+            None,
+        )?;
 
         // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
         // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
