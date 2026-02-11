@@ -636,7 +636,7 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         eprintln!("[tach:zygote] Found venv: {}", sp.display());
     }
 
-    let session_effects = Python::attach(|py| -> Result<Vec<crate::hooks::HookEffect>> {
+    let (session_effects, collected_tests) = Python::attach(|py| -> Result<(Vec<crate::hooks::HookEffect>, Vec<crate::protocol::CollectedTest>)> {
         let sys = py.import("sys")?;
         let path_attr = sys.getattr("path")?;
         let path: &Bound<PyList> = path_attr
@@ -738,14 +738,41 @@ if m is not None and not hasattr(m, '__file__'):
             .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
         let effects = convert_py_effects_to_rust(session_effects);
 
+        // COLLECTED TESTS (Issue #98): Extract pytest's authoritative test list
+        let collected_obj = harness.getattr("get_collected_tests")?.call0()?;
+        let collected_list: &Bound<'_, pyo3::types::PyList> = collected_obj
+            .cast::<pyo3::types::PyList>()
+            .map_err(|e| anyhow::anyhow!("get_collected_tests() didn't return a list: {}", e))?;
+
+        let mut collected = Vec::with_capacity(collected_list.len());
+        for item in collected_list.iter() {
+            let dict = item
+                .cast::<pyo3::types::PyDict>()
+                .map_err(|e| anyhow::anyhow!("collected test item is not a dict: {}", e))?;
+
+            let node_id: String = dict.get_item("node_id")?
+                .ok_or_else(|| anyhow::anyhow!("missing node_id"))?.extract()?;
+            let file_path: String = dict.get_item("file_path")?
+                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?.extract()?;
+            let markers: Vec<String> = dict.get_item("markers")?
+                .ok_or_else(|| anyhow::anyhow!("missing markers"))?.extract()?;
+            let is_async: bool = dict.get_item("is_async")?
+                .ok_or_else(|| anyhow::anyhow!("missing is_async"))?.extract()?;
+
+            collected.push(crate::protocol::CollectedTest {
+                node_id, file_path, markers, is_async,
+            });
+        }
+
         sys.getattr("modules")?.set_item("tach_harness", harness)?;
 
-        Ok(effects)
+        Ok((effects, collected))
     })?;
 
     eprintln!(
-        "[tach:zygote] Python ready. Session effects: {}",
-        session_effects.len()
+        "[tach:zygote] Python ready. Session effects: {}, Collected tests: {}",
+        session_effects.len(),
+        collected_tests.len()
     );
 
     // Signal ready on both sockets, then send session effects
@@ -784,6 +811,16 @@ if m is not None and not hasattr(m, '__file__'):
     let framed_effects = encode_with_length(&session_effects)
         .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
     cmd_socket.write_all(&framed_effects)?;
+
+    // COLLECTED TESTS IPC (Issue #98): Send pytest's authoritative test list
+    eprintln!(
+        "[tach:zygote] Sending {} collected tests to Supervisor (pytest-authoritative)",
+        collected_tests.len()
+    );
+
+    let framed_collected = encode_with_length(&collected_tests)
+        .map_err(|e| anyhow::anyhow!("Failed to encode collected tests: {}", e))?;
+    cmd_socket.write_all(&framed_collected)?;
 
     // Channel for collecting results from worker threads
     let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();
