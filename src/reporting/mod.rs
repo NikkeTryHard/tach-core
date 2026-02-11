@@ -13,4 +13,5 @@ pub mod debugger;
 pub mod junit;
 pub mod logcapture;
 pub mod logredirect;
+pub mod ratatui_reporter;
 pub mod reporter;

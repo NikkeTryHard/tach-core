@@ -10,8 +10,9 @@ use tach_core::lifecycle::CleanupGuard;
 use tach_core::loader;
 use tach_core::logcapture::LogCapture;
 use tach_core::logredirect::{self, LogRedirect};
+use tach_core::ratatui_reporter::RatatuiReporter;
 use tach_core::reporter::{
-    DotsReporter, JsonReporter, MultiReporter, ProgressReporter, Reporter, TachReporter,
+    DotsReporter, JsonReporter, MultiReporter, PhaseDetail, ProgressReporter, Reporter,
 };
 use tach_core::resolver::{self, FixtureRegistry, Resolver};
 use tach_core::scheduler::Scheduler;
@@ -334,8 +335,9 @@ fn execute_session(
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
             if ProgressReporter::should_use_progress_bar() {
-                let tach_reporter = TachReporter::with_traceback_style(config.traceback_style);
-                reporters.push(Box::new(tach_reporter));
+                let ratatui_reporter =
+                    RatatuiReporter::with_traceback_style(config.traceback_style);
+                reporters.push(Box::new(ratatui_reporter));
             } else {
                 reporters.push(Box::new(DotsReporter::with_traceback_style(
                     config.traceback_style,
@@ -375,12 +377,22 @@ fn execute_session(
     let cleanup = CleanupGuard::new();
 
     // --- DISCOVERY ---
+    reporter.on_phase("scanning", None);
     if !is_json {
         eprintln!("[tach:supervisor] Scanning {}...", cwd.display());
     }
 
     let start = std::time::Instant::now();
     let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, config.no_ignore)?;
+
+    reporter.on_phase(
+        "scanning",
+        Some(&PhaseDetail {
+            current: discovery_result.test_count(),
+            total: discovery_result.test_count(),
+            label: "tests".into(),
+        }),
+    );
 
     if !is_json {
         let toxic_count = toxicity_graph.toxic_modules().len();
@@ -399,6 +411,7 @@ fn execute_session(
     warn_if_blocking_patterns(cwd, discovery_result.modules.is_empty(), is_json);
 
     // --- EAGER COMPILATION ---
+    reporter.on_phase("compiling", None);
     // Compile ALL .py files in project and populate global registry BEFORE fork.
     // Workers will inherit this registry via CoW (copy-on-write).
     let start_compile = std::time::Instant::now();
@@ -426,6 +439,14 @@ fn execute_session(
     let registry = loader::init_registry(cwd.clone());
     if let Ok(compiler) = loader::BytecodeCompiler::new(cwd) {
         let compiled = compiler.compile_batch(&py_files, registry);
+        reporter.on_phase(
+            "compiling",
+            Some(&PhaseDetail {
+                current: compiled,
+                total: py_files.len(),
+                label: "files".into(),
+            }),
+        );
         if !is_json {
             eprintln!(
                 "[tach:supervisor] Compiled {} of {} modules for zero-copy loading in {:?}",
@@ -441,9 +462,19 @@ fn execute_session(
     }
 
     // --- RESOLUTION ---
+    reporter.on_phase("resolving", None);
     let fixture_registry = FixtureRegistry::from_discovery(&discovery_result);
     let resolver = Resolver::new(&fixture_registry);
     let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
+
+    reporter.on_phase(
+        "resolving",
+        Some(&PhaseDetail {
+            current: runnable_tests.len(),
+            total: runnable_tests.len() + errors.len(),
+            label: "resolved".into(),
+        }),
+    );
 
     if !is_json {
         eprintln!(
@@ -1049,6 +1080,7 @@ fn run_tests(
         );
     }
 
+    reporter.on_phase("booting", None);
     if !is_json {
         eprintln!("[tach:supervisor] Forking Zygote...");
     }

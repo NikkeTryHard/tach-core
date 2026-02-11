@@ -356,11 +356,31 @@ pub enum MachineEvent<'a> {
     Error { message: &'a str },
 }
 
+/// Optional quantitative detail for a pipeline phase.
+///
+/// Carries counts so reporters can display progress like
+/// "Scanning... 142 tests found" or "Compiling... 38/142 files".
+#[derive(Debug, Clone)]
+pub struct PhaseDetail {
+    /// Current progress value (e.g., items found/compiled)
+    pub current: usize,
+    /// Total expected items (0 if unknown)
+    pub total: usize,
+    /// Human-readable label (e.g., "tests", "files", "fixtures")
+    pub label: String,
+}
+
 /// Reporter trait for output abstraction
 pub trait Reporter {
     /// Called before the run starts with per-file test counts.
     /// Used by TachReporter for real-time file streaming.
     fn on_session_setup(&mut self, _file_counts: &HashMap<String, usize>) {}
+
+    /// Called to indicate a pipeline phase change (e.g. "scanning", "compiling",
+    /// "resolving", "booting"). Reporters can use this to show progress before
+    /// the first test starts. The optional `detail` carries quantitative counts.
+    /// Default: no-op.
+    fn on_phase(&mut self, _phase: &str, _detail: Option<&PhaseDetail>) {}
 
     /// Called at start of test run
     fn on_run_start(&mut self, count: usize);
@@ -558,6 +578,12 @@ impl Reporter for MultiReporter {
     fn on_session_setup(&mut self, file_counts: &HashMap<String, usize>) {
         for r in &mut self.reporters {
             r.on_session_setup(file_counts);
+        }
+    }
+
+    fn on_phase(&mut self, phase: &str, detail: Option<&PhaseDetail>) {
+        for r in &mut self.reporters {
+            r.on_phase(phase, detail);
         }
     }
 
@@ -867,6 +893,24 @@ impl Default for DotsReporter {
 }
 
 impl Reporter for DotsReporter {
+    fn on_phase(&mut self, phase: &str, detail: Option<&PhaseDetail>) {
+        let msg = match (phase, detail) {
+            ("scanning", Some(d)) => format!("[tach] Scanning... {} {} found", d.current, d.label),
+            ("scanning", None) => "[tach] Scanning for tests...".to_string(),
+            ("compiling", Some(d)) if d.total > 0 => {
+                format!("[tach] Compiling... {}/{} {}", d.current, d.total, d.label)
+            }
+            ("compiling", _) => "[tach] Compiling bytecode...".to_string(),
+            ("resolving", Some(d)) => {
+                format!("[tach] Resolving... {} {}", d.current, d.label)
+            }
+            ("resolving", None) => "[tach] Resolving fixtures...".to_string(),
+            ("booting", _) => "[tach] Booting zygote...".to_string(),
+            _ => return,
+        };
+        eprintln!("{}", msg);
+    }
+
     fn on_run_start(&mut self, count: usize) {
         eprintln!("[tach:reporter] Running {} tests...\n", count);
     }
@@ -1298,6 +1342,22 @@ impl Default for TachReporter {
 impl Reporter for TachReporter {
     fn on_session_setup(&mut self, file_counts: &HashMap<String, usize>) {
         self.file_expected = file_counts.clone();
+    }
+
+    fn on_phase(&mut self, phase: &str, detail: Option<&PhaseDetail>) {
+        let msg = match (phase, detail) {
+            ("scanning", Some(d)) => format!("Scanning... {} {} found", d.current, d.label),
+            ("scanning", None) => "Scanning for tests...".to_string(),
+            ("compiling", Some(d)) if d.total > 0 => {
+                format!("Compiling... {}/{} {}", d.current, d.total, d.label)
+            }
+            ("compiling", _) => "Compiling bytecode...".to_string(),
+            ("resolving", Some(d)) => format!("Resolving... {} {}", d.current, d.label),
+            ("resolving", None) => "Resolving fixtures...".to_string(),
+            ("booting", _) => "Booting zygote...".to_string(),
+            _ => return,
+        };
+        self.bar.set_message(msg);
     }
 
     fn on_run_start(&mut self, count: usize) {
@@ -2384,5 +2444,118 @@ AssertionError"#;
             line.contains("1 passed | 1 failed"),
             "Should show pass/fail counts"
         );
+    }
+
+    // =========================================================================
+    //  PhaseDetail Tests (Issues #96, #97)
+    // =========================================================================
+
+    #[test]
+    fn test_phase_detail_struct() {
+        let detail = PhaseDetail {
+            current: 142,
+            total: 142,
+            label: "tests".to_string(),
+        };
+        assert_eq!(detail.current, 142);
+        assert_eq!(detail.total, 142);
+        assert_eq!(detail.label, "tests");
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_scanning_no_detail() {
+        let mut reporter = TachReporter::new();
+        reporter.on_phase("scanning", None);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_scanning_with_detail() {
+        let mut reporter = TachReporter::new();
+        let detail = PhaseDetail {
+            current: 142,
+            total: 142,
+            label: "tests".to_string(),
+        };
+        reporter.on_phase("scanning", Some(&detail));
+        // Should not panic
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_compiling_with_detail() {
+        let mut reporter = TachReporter::new();
+        let detail = PhaseDetail {
+            current: 38,
+            total: 142,
+            label: "files".to_string(),
+        };
+        reporter.on_phase("compiling", Some(&detail));
+        // Should not panic
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_resolving_with_detail() {
+        let mut reporter = TachReporter::new();
+        let detail = PhaseDetail {
+            current: 120,
+            total: 122,
+            label: "resolved".to_string(),
+        };
+        reporter.on_phase("resolving", Some(&detail));
+        // Should not panic
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_booting() {
+        let mut reporter = TachReporter::new();
+        reporter.on_phase("booting", None);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_tach_reporter_on_phase_unknown_ignored() {
+        let mut reporter = TachReporter::new();
+        reporter.on_phase("unknown_phase", None);
+        // Should not panic, unknown phases are ignored
+    }
+
+    #[test]
+    fn test_dots_reporter_on_phase_scanning_no_detail() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_phase("scanning", None);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_dots_reporter_on_phase_with_detail() {
+        let mut reporter = DotsReporter::new();
+        let detail = PhaseDetail {
+            current: 50,
+            total: 100,
+            label: "files".to_string(),
+        };
+        reporter.on_phase("compiling", Some(&detail));
+        // Should not panic
+    }
+
+    #[test]
+    fn test_dots_reporter_on_phase_booting() {
+        let mut reporter = DotsReporter::new();
+        reporter.on_phase("booting", None);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_multi_reporter_forwards_phase_detail() {
+        let reporters: Vec<Box<dyn Reporter>> = vec![Box::new(DotsReporter::new())];
+        let mut multi = MultiReporter::new(reporters);
+        let detail = PhaseDetail {
+            current: 42,
+            total: 42,
+            label: "tests".to_string(),
+        };
+        multi.on_phase("scanning", Some(&detail));
+        multi.on_phase("compiling", None);
+        // Should not panic
     }
 }

@@ -80,6 +80,7 @@ serde_json = "1.0"
 quick-xml = { version = "0.38", features = ["serialize"] }
 indicatif = "0.18"
 terminal_size = "0.4"
+ratatui = "0.30.0"
 
 # Watch mode
 notify = "8.2"
