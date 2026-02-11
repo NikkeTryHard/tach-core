@@ -4,6 +4,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
+use tach_core::graph::ToxicityGraph;
 use tach_core::hooks::HookRegistry;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
@@ -582,6 +583,7 @@ fn execute_session(
         config.memory_enabled,
         hook_registry,
         cwd.clone(),
+        &toxicity_graph,
     )?;
 
     // Restore stderr before exiting (LogRedirect drops and restores automatically)
@@ -974,6 +976,7 @@ fn run_tests(
     memory_enabled: bool,
     mut hook_registry: HookRegistry,
     project_root: PathBuf,
+    toxicity_graph: &ToxicityGraph,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
 
@@ -1285,7 +1288,8 @@ fn run_tests(
 
                         let file_path = std::path::PathBuf::from(&ct.file_path);
 
-                        let is_toxic = ct.markers.iter().any(|m| m == "django_db") || true;
+                        let is_toxic = toxicity_graph.is_toxic(&file_path)
+                            || ct.markers.iter().any(|m| m == "django_db");
 
                         merged.push(resolver::RunnableTest {
                             file_path,
