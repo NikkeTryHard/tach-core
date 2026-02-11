@@ -2037,6 +2037,45 @@ def get_session_hook_effects() -> list:
     return _SESSION_HOOK_EFFECTS
 
 
+def get_collected_tests():
+    """Return the authoritative test list from pytest's collection.
+
+    Called by the Zygote after init_session() to send collected test metadata
+    back to the Rust Supervisor. The Supervisor uses this as the source of truth
+    for which tests exist, replacing Rust-only AST discovery.
+
+    Returns a list of dicts, each containing:
+      - node_id: Full pytest node ID (str)
+      - file_path: File path relative to project root (str)
+      - markers: List of marker names (list[str])
+      - is_async: Whether the test is async (bool)
+    """
+    result = []
+    for node_id, item in _ITEMS_MAP.items():
+        fspath = str(getattr(item, "fspath", ""))
+        try:
+            file_path = os.path.relpath(fspath, os.getcwd())
+        except ValueError:
+            file_path = fspath
+
+        markers = [m.name for m in getattr(item, "own_markers", [])]
+
+        obj = getattr(item, "obj", None)
+        func = getattr(obj, "__func__", obj) if obj else None
+        is_async = inspect.iscoroutinefunction(func) if func else False
+
+        result.append(
+            {
+                "node_id": node_id,
+                "file_path": file_path,
+                "markers": markers,
+                "is_async": is_async,
+            }
+        )
+
+    return result
+
+
 def _load_hook_function(
     hook_module_path: str,
     hook_function_name: str,

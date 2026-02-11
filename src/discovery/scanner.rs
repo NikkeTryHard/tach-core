@@ -244,7 +244,10 @@ fn is_test_file(path: &Path) -> bool {
         return false;
     }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
+    name.starts_with("test_")
+        || name.ends_with("_test.py")
+        || name == "conftest.py"
+        || name == "tests.py"
 }
 
 /// Extract function arguments, excluding self/cls
@@ -2615,7 +2618,10 @@ def test_with_zero_keyword_timeout():
                 return false;
             }
             // Check name patterns
-            name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py"
+            name.starts_with("test_")
+                || name.ends_with("_test.py")
+                || name == "conftest.py"
+                || name == "tests.py"
         };
 
         assert!(is_test_name("test_foo.py"), "Should match test_ prefix");
@@ -2625,6 +2631,20 @@ def test_with_zero_keyword_timeout():
         assert!(
             !is_test_name("test_module"),
             "Should not match without .py extension"
+        );
+    }
+
+    #[test]
+    fn test_is_test_name_accepts_tests_py() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tests_py = tmp.path().join("tests.py");
+        std::fs::write(&tests_py, "# tests").unwrap();
+
+        assert!(
+            super::is_test_file(&tests_py),
+            "is_test_file should accept tests.py"
         );
     }
 

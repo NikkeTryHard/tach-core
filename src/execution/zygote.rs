@@ -636,36 +636,40 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         eprintln!("[tach:zygote] Found venv: {}", sp.display());
     }
 
-    let session_effects = Python::attach(|py| -> Result<Vec<crate::hooks::HookEffect>> {
-        let sys = py.import("sys")?;
-        let path_attr = sys.getattr("path")?;
-        let path: &Bound<PyList> = path_attr
-            .cast()
-            .map_err(|e| anyhow::anyhow!("sys.path not a list: {}", e))?;
+    let (session_effects, collected_tests) = Python::attach(
+        |py| -> Result<(
+            Vec<crate::hooks::HookEffect>,
+            Vec<crate::protocol::CollectedTest>,
+        )> {
+            let sys = py.import("sys")?;
+            let path_attr = sys.getattr("path")?;
+            let path: &Bound<PyList> = path_attr
+                .cast()
+                .map_err(|e| anyhow::anyhow!("sys.path not a list: {}", e))?;
 
-        //  Inject venv site-packages FIRST (highest priority)
-        if let Some(ref sp) = site_packages {
-            path.insert(0, sp.to_string_lossy().to_string())?;
-        }
-
-        // Add project root
-        path.insert(0, &cwd_str)?;
-
-        // Now pytest should be importable from venv
-        match py.import("pytest") {
-            Ok(_) => eprintln!("[tach:zygote] pytest loaded successfully"),
-            Err(e) => {
-                eprintln!("[tach:zygote] Error: {}", e);
-                return Err(anyhow::anyhow!("Failed to import pytest: {}", e));
+            //  Inject venv site-packages FIRST (highest priority)
+            if let Some(ref sp) = site_packages {
+                path.insert(0, sp.to_string_lossy().to_string())?;
             }
-        }
 
-        // Django Detection & Setup (Batteries-Included)
-        // Initialize Django in Zygote so workers inherit the pre-warmed state.
-        // NOTE: We do NOT warm up DB connections here. setup_databases() creates
-        // a test DB after init_session(), and connections are closed before fork
-        // so workers get fresh file descriptors.
-        py.run(
+            // Add project root
+            path.insert(0, &cwd_str)?;
+
+            // Now pytest should be importable from venv
+            match py.import("pytest") {
+                Ok(_) => eprintln!("[tach:zygote] pytest loaded successfully"),
+                Err(e) => {
+                    eprintln!("[tach:zygote] Error: {}", e);
+                    return Err(anyhow::anyhow!("Failed to import pytest: {}", e));
+                }
+            }
+
+            // Django Detection & Setup (Batteries-Included)
+            // Initialize Django in Zygote so workers inherit the pre-warmed state.
+            // NOTE: We do NOT warm up DB connections here. setup_databases() creates
+            // a test DB after init_session(), and connections are closed before fork
+            // so workers get fresh file descriptors.
+            py.run(
             c_str!(r#"
 import os
 import sys
@@ -685,67 +689,108 @@ except Exception as e:
             None,
         )?;
 
-        // Set __main__.__file__ so code inspecting the main module (e.g.
-        // Django's autoreload) finds an attribute instead of AttributeError.
-        // Embedded Python has no script entry point, so __main__ lacks __file__.
-        // Use /proc/self/exe (the tach-core binary) as a real, resolvable path.
-        py.run(
-            c_str!(
-                r#"
+            // Set __main__.__file__ so code inspecting the main module (e.g.
+            // Django's autoreload) finds an attribute instead of AttributeError.
+            // Embedded Python has no script entry point, so __main__ lacks __file__.
+            // Use /proc/self/exe (the tach-core binary) as a real, resolvable path.
+            py.run(
+                c_str!(
+                    r#"
 import sys, os
 m = sys.modules.get('__main__')
 if m is not None and not hasattr(m, '__file__'):
     m.__file__ = os.path.realpath('/proc/self/exe')
 "#
-            ),
-            None,
-            None,
-        )?;
+                ),
+                None,
+                None,
+            )?;
 
-        // CRITICAL: Inject tach_rust module BEFORE loading harness
-        // This allows 'import tach_rust' in Python code
-        inject_tach_rust_module(py)?;
+            // CRITICAL: Inject tach_rust module BEFORE loading harness
+            // This allows 'import tach_rust' in Python code
+            inject_tach_rust_module(py)?;
 
-        // Load the tach harness module
-        // Convert &str to CString for PyModule::from_code
-        let harness_code = std::ffi::CString::new(TACH_HARNESS_PY)
-            .map_err(|e| anyhow::anyhow!("Failed to create CString: {}", e))?;
-        let harness = PyModule::from_code(py, &harness_code, c"tach_harness.py", c"tach_harness")?;
+            // Load the tach harness module
+            // Convert &str to CString for PyModule::from_code
+            let harness_code = std::ffi::CString::new(TACH_HARNESS_PY)
+                .map_err(|e| anyhow::anyhow!("Failed to create CString: {}", e))?;
+            let harness =
+                PyModule::from_code(py, &harness_code, c"tach_harness.py", c"tach_harness")?;
 
-        // ZYGOTE COLLECTION: Pre-collect tests for TARGET PATH only (not entire project)
-        // This avoids importing test files outside the requested scope
-        let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
-        harness.getattr("init_session")?.call1((&target_path,))?;
+            // ZYGOTE COLLECTION: Pre-collect tests for TARGET PATH only (not entire project)
+            // This avoids importing test files outside the requested scope
+            let target_path = std::env::var("TACH_TARGET_PATH").unwrap_or_else(|_| cwd_str.clone());
+            harness.getattr("init_session")?.call1((&target_path,))?;
 
-        // Django Test Database: Create test DB after pytest is configured but
-        // before workers fork. Reads TACH_REUSE_DB/TACH_CREATE_DB env vars.
-        // Connections are closed before fork so workers get fresh FDs.
-        // NOTE: Call through `harness` ref directly — sys.modules registration
-        // happens later, so `import tach_harness` would fail here.
-        if let Err(e) = harness
-            .getattr("_setup_django_test_db")
-            .and_then(|f| f.call0())
-        {
-            eprintln!("[tach:zygote] Django test DB setup error: {e}");
-        }
+            // Django Test Database: Create test DB after pytest is configured but
+            // before workers fork. Reads TACH_REUSE_DB/TACH_CREATE_DB env vars.
+            // Connections are closed before fork so workers get fresh FDs.
+            // NOTE: Call through `harness` ref directly — sys.modules registration
+            // happens later, so `import tach_harness` would fail here.
+            if let Err(e) = harness
+                .getattr("_setup_django_test_db")
+                .and_then(|f| f.call0())
+            {
+                eprintln!("[tach:zygote] Django test DB setup error: {e}");
+            }
 
-        // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
-        // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
-        // We retrieve them here and will send them to the Supervisor for HookRegistry population.
-        let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
-        let session_effects: &Bound<'_, PyList> = session_effects_obj
-            .cast::<PyList>()
-            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
-        let effects = convert_py_effects_to_rust(session_effects);
+            // HOOK EFFECT BRIDGE (v0.2.0): Retrieve session effects from Python
+            // After init_session(), Python has recorded effects in _SESSION_HOOK_EFFECTS.
+            // We retrieve them here and will send them to the Supervisor for HookRegistry population.
+            let session_effects_obj = harness.getattr("get_session_hook_effects")?.call0()?;
+            let session_effects: &Bound<'_, PyList> = session_effects_obj
+                .cast::<PyList>()
+                .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
+            let effects = convert_py_effects_to_rust(session_effects);
 
-        sys.getattr("modules")?.set_item("tach_harness", harness)?;
+            // COLLECTED TESTS (Issue #98): Extract pytest's authoritative test list
+            let collected_obj = harness.getattr("get_collected_tests")?.call0()?;
+            let collected_list: &Bound<'_, pyo3::types::PyList> =
+                collected_obj.cast::<pyo3::types::PyList>().map_err(|e| {
+                    anyhow::anyhow!("get_collected_tests() didn't return a list: {}", e)
+                })?;
 
-        Ok(effects)
-    })?;
+            let mut collected = Vec::with_capacity(collected_list.len());
+            for item in collected_list.iter() {
+                let dict = item
+                    .cast::<pyo3::types::PyDict>()
+                    .map_err(|e| anyhow::anyhow!("collected test item is not a dict: {}", e))?;
+
+                let node_id: String = dict
+                    .get_item("node_id")?
+                    .ok_or_else(|| anyhow::anyhow!("missing node_id"))?
+                    .extract()?;
+                let file_path: String = dict
+                    .get_item("file_path")?
+                    .ok_or_else(|| anyhow::anyhow!("missing file_path"))?
+                    .extract()?;
+                let markers: Vec<String> = dict
+                    .get_item("markers")?
+                    .ok_or_else(|| anyhow::anyhow!("missing markers"))?
+                    .extract()?;
+                let is_async: bool = dict
+                    .get_item("is_async")?
+                    .ok_or_else(|| anyhow::anyhow!("missing is_async"))?
+                    .extract()?;
+
+                collected.push(crate::protocol::CollectedTest {
+                    node_id,
+                    file_path,
+                    markers,
+                    is_async,
+                });
+            }
+
+            sys.getattr("modules")?.set_item("tach_harness", harness)?;
+
+            Ok((effects, collected))
+        },
+    )?;
 
     eprintln!(
-        "[tach:zygote] Python ready. Session effects: {}",
-        session_effects.len()
+        "[tach:zygote] Python ready. Session effects: {}, Collected tests: {}",
+        session_effects.len(),
+        collected_tests.len()
     );
 
     // Signal ready on both sockets, then send session effects
@@ -784,6 +829,16 @@ if m is not None and not hasattr(m, '__file__'):
     let framed_effects = encode_with_length(&session_effects)
         .map_err(|e| anyhow::anyhow!("Failed to encode session effects: {}", e))?;
     cmd_socket.write_all(&framed_effects)?;
+
+    // COLLECTED TESTS IPC (Issue #98): Send pytest's authoritative test list
+    eprintln!(
+        "[tach:zygote] Sending {} collected tests to Supervisor (pytest-authoritative)",
+        collected_tests.len()
+    );
+
+    let framed_collected = encode_with_length(&collected_tests)
+        .map_err(|e| anyhow::anyhow!("Failed to encode collected tests: {}", e))?;
+    cmd_socket.write_all(&framed_collected)?;
 
     // Channel for collecting results from worker threads
     let (result_tx, result_rx) = mpsc::channel::<Vec<u8>>();

@@ -187,6 +187,21 @@ impl TestResult {
     }
 }
 
+/// Test metadata sent from Zygote back to Supervisor after pytest collection.
+/// This is the authoritative test list — pytest found these, so they WILL exist
+/// in _ITEMS_MAP when the worker looks them up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CollectedTest {
+    /// Full pytest node ID (e.g., "tests/test_foo.py::TestBar::test_baz[param]")
+    pub node_id: String,
+    /// File path relative to project root
+    pub file_path: String,
+    /// Marker names (e.g., ["django_db", "slow", "skip"])
+    pub markers: Vec<String>,
+    /// Whether the test function is async
+    pub is_async: bool,
+}
+
 /// Memory usage threshold for warnings (500MB)
 pub const MEMORY_WARNING_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 
@@ -1004,5 +1019,52 @@ mod tests {
         let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
         assert!(!decoded.reuse_db);
         assert!(!decoded.create_db);
+    }
+
+    // =========================================================================
+    // CollectedTest Wire Format Tests
+    // =========================================================================
+
+    #[test]
+    fn test_collected_test_roundtrip() {
+        let test = CollectedTest {
+            node_id: "tests/test_foo.py::TestBar::test_baz".to_string(),
+            file_path: "tests/test_foo.py".to_string(),
+            markers: vec!["django_db".to_string(), "slow".to_string()],
+            is_async: false,
+        };
+
+        let encoded = encode_with_length(&vec![test.clone()]).unwrap();
+        let decoded: Vec<CollectedTest> = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].node_id, "tests/test_foo.py::TestBar::test_baz");
+        assert_eq!(decoded[0].file_path, "tests/test_foo.py");
+        assert_eq!(decoded[0].markers, vec!["django_db", "slow"]);
+        assert!(!decoded[0].is_async);
+    }
+
+    #[test]
+    fn test_collected_test_empty_list() {
+        let tests: Vec<CollectedTest> = vec![];
+        let encoded = encode_with_length(&tests).unwrap();
+        let decoded: Vec<CollectedTest> = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn test_collected_test_large_batch() {
+        let tests: Vec<CollectedTest> = (0..10000)
+            .map(|i| CollectedTest {
+                node_id: format!("tests/test_{}.py::test_func_{}", i / 10, i),
+                file_path: format!("tests/test_{}.py", i / 10),
+                markers: vec![],
+                is_async: i % 3 == 0,
+            })
+            .collect();
+
+        let encoded = encode_with_length(&tests).unwrap();
+        let decoded: Vec<CollectedTest> = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert_eq!(decoded.len(), 10000);
     }
 }

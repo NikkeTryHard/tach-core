@@ -4,6 +4,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
+use tach_core::graph::ToxicityGraph;
 use tach_core::hooks::HookRegistry;
 use tach_core::junit::JunitReporter;
 use tach_core::lifecycle::CleanupGuard;
@@ -582,6 +583,7 @@ fn execute_session(
         config.memory_enabled,
         hook_registry,
         cwd.clone(),
+        &toxicity_graph,
     )?;
 
     // Restore stderr before exiting (LogRedirect drops and restores automatically)
@@ -974,6 +976,7 @@ fn run_tests(
     memory_enabled: bool,
     mut hook_registry: HookRegistry,
     project_root: PathBuf,
+    toxicity_graph: &ToxicityGraph,
 ) -> Result<usize> {
     let cwd = std::env::current_dir()?;
 
@@ -1164,6 +1167,46 @@ fn run_tests(
                 }
             }
 
+            // COLLECTED TESTS IPC (Issue #98): Receive pytest's authoritative test list
+            let mut collected_header = [0u8; tach_core::protocol::HEADER_SIZE];
+            cmd_sock_clone.read_exact(&mut collected_header)?;
+
+            let collected_len = u32::from_le_bytes([
+                collected_header[4],
+                collected_header[5],
+                collected_header[6],
+                collected_header[7],
+            ]) as usize;
+
+            let collected_tests: Vec<tach_core::protocol::CollectedTest> = if collected_len > 0 {
+                let mut collected_buf = vec![0u8; tach_core::protocol::HEADER_SIZE + collected_len];
+                collected_buf[..tach_core::protocol::HEADER_SIZE]
+                    .copy_from_slice(&collected_header);
+                cmd_sock_clone
+                    .read_exact(&mut collected_buf[tach_core::protocol::HEADER_SIZE..])?;
+
+                tach_core::protocol::decode_with_limit(
+                    &collected_buf,
+                    tach_core::protocol::MAX_PAYLOAD_SIZE,
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "[tach:supervisor] Warning: Failed to decode collected tests: {}",
+                        e
+                    );
+                    vec![]
+                })
+            } else {
+                vec![]
+            };
+
+            if !is_json {
+                eprintln!(
+                    "[tach:supervisor] Received {} collected tests from Zygote (pytest-authoritative)",
+                    collected_tests.len()
+                );
+            }
+
             // --- ASYNCIO CONFIG ---
             // Parse asyncio configuration from pyproject.toml and add as session effect
             // This enables pytest-asyncio auto mode and loop_scope settings
@@ -1212,6 +1255,70 @@ fn run_tests(
                 std::env::var("TACH_REUSE_DB").unwrap_or_default() == "1",
                 std::env::var("TACH_CREATE_DB").unwrap_or_default() == "1",
             )?;
+
+            // PYTEST-AUTHORITATIVE MERGE (Issue #98)
+            let runnable_tests = if !collected_tests.is_empty() {
+                let mut rust_index: std::collections::HashMap<String, resolver::RunnableTest> =
+                    std::collections::HashMap::new();
+                for test in runnable_tests {
+                    let node_id =
+                        format!("{}::{}", test.file_path.to_string_lossy(), test.test_name);
+                    rust_index.insert(node_id, test);
+                }
+
+                let mut merged: Vec<resolver::RunnableTest> =
+                    Vec::with_capacity(collected_tests.len());
+                let mut python_only_count = 0usize;
+
+                for ct in &collected_tests {
+                    if let Some(rust_test) = rust_index.remove(&ct.node_id) {
+                        merged.push(rust_test);
+                    } else {
+                        python_only_count += 1;
+
+                        let test_name = ct
+                            .node_id
+                            .split_once("::")
+                            .map(|(_, name)| name.to_string())
+                            .unwrap_or_else(|| ct.node_id.clone());
+
+                        let file_path = std::path::PathBuf::from(&ct.file_path);
+
+                        let is_toxic = toxicity_graph.is_toxic(&file_path)
+                            || ct.markers.iter().any(|m| m == "django_db");
+
+                        merged.push(resolver::RunnableTest {
+                            file_path,
+                            test_name,
+                            is_async: ct.is_async,
+                            fixtures: vec![],
+                            is_toxic,
+                            timeout_secs: None,
+                            markers: ct.markers.clone(),
+                            marker_info: vec![],
+                        });
+                    }
+                }
+
+                if !is_json {
+                    eprintln!(
+                        "[tach:supervisor] Merged test list: {} total ({} from Rust+Python, {} Python-only)",
+                        merged.len(),
+                        merged.len() - python_only_count,
+                        python_only_count
+                    );
+                }
+
+                merged
+            } else {
+                if !is_json {
+                    eprintln!(
+                        "[tach:supervisor] Warning: pytest collected 0 tests, using Rust-only discovery ({} tests)",
+                        runnable_tests.len()
+                    );
+                }
+                runnable_tests
+            };
 
             let stats = scheduler.run(runnable_tests, reporter)?;
 
