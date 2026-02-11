@@ -244,7 +244,10 @@ fn is_test_file(path: &Path) -> bool {
         return false;
     }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py" || name == "tests.py"
+    name.starts_with("test_")
+        || name.ends_with("_test.py")
+        || name == "conftest.py"
+        || name == "tests.py"
 }
 
 /// Extract function arguments, excluding self/cls
@@ -2615,7 +2618,10 @@ def test_with_zero_keyword_timeout():
                 return false;
             }
             // Check name patterns
-            name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py" || name == "tests.py"
+            name.starts_with("test_")
+                || name.ends_with("_test.py")
+                || name == "conftest.py"
+                || name == "tests.py"
         };
 
         assert!(is_test_name("test_foo.py"), "Should match test_ prefix");

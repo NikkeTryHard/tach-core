@@ -1179,8 +1179,7 @@ fn run_tests(
             ]) as usize;
 
             let collected_tests: Vec<tach_core::protocol::CollectedTest> = if collected_len > 0 {
-                let mut collected_buf =
-                    vec![0u8; tach_core::protocol::HEADER_SIZE + collected_len];
+                let mut collected_buf = vec![0u8; tach_core::protocol::HEADER_SIZE + collected_len];
                 collected_buf[..tach_core::protocol::HEADER_SIZE]
                     .copy_from_slice(&collected_header);
                 cmd_sock_clone
@@ -1262,11 +1261,8 @@ fn run_tests(
                 let mut rust_index: std::collections::HashMap<String, resolver::RunnableTest> =
                     std::collections::HashMap::new();
                 for test in runnable_tests {
-                    let node_id = format!(
-                        "{}::{}",
-                        test.file_path.to_string_lossy(),
-                        test.test_name
-                    );
+                    let node_id =
+                        format!("{}::{}", test.file_path.to_string_lossy(), test.test_name);
                     rust_index.insert(node_id, test);
                 }
 
