@@ -2,6 +2,38 @@
 
 Target: run Django's own test suite through tach-core with full isolation.
 
+## Progress Overview
+
+```mermaid
+graph LR
+    subgraph Cleared
+        style Cleared fill:#d4edda,stroke:#28a745
+        U[utils_tests/<br/>659/659 ✅]
+    end
+
+    subgraph Blockers["Cross-Cutting Blockers"]
+        style Blockers fill:#fff3cd,stroke:#ffc107
+        Z[Zygote Misses<br/>491 tests]
+        F[Django Fixtures<br/>~200 failures]
+        NP["no:django flag"]
+    end
+
+    subgraph Skipped["Backend-Gated (skip on SQLite)"]
+        style Skipped fill:#e2e3e5,stroke:#6c757d
+        G[GIS / PostGIS]
+        B[postgres / mysql]
+    end
+
+    subgraph Pending["Next Module"]
+        style Pending fill:#cce5ff,stroke:#007bff
+        N["TBD — pick next<br/>module to clear"]
+    end
+
+    U --> N
+    Z -.-> N
+    F -.-> N
+```
+
 ## Test Setup
 
 **IMPORTANT**: Django tests require version-matched source and package.
