@@ -4,118 +4,174 @@ Target: run Django's own test suite through tach-core with full isolation.
 
 ## Progress Overview
 
-**1 / 215 modules cleared**
+**19 / 213 modules cleared** · 142 blocked by `tests.py` collection bug · 47 have failures · 5 no tests
 
-| Module | Status | Module | Status |
-|--------|--------|--------|--------|
-| `absolute_url_overrides/` | ❌ | `admin_autodiscover/` | ❌ |
-| `admin_changelist/` | ❌ | `admin_checks/` | ❌ |
-| `admin_custom_urls/` | ❌ | `admin_default_site/` | ❌ |
-| `admin_docs/` | ❌ | `admin_filters/` | ❌ |
-| `admin_inlines/` | ❌ | `admin_ordering/` | ❌ |
-| `admin_registration/` | ❌ | `admin_scripts/` | ❌ |
-| `admin_utils/` | ❌ | `admin_views/` | ❌ |
-| `admin_widgets/` | ❌ | `aggregation/` | ❌ |
-| `aggregation_regress/` | ❌ | `annotations/` | ❌ |
-| `app_loading/` | ❌ | `apps/` | ❌ |
-| `asgi/` | ❌ | `async/` | ❌ |
-| `auth_tests/` | ❌ | `backends/` | ❌ |
-| `base/` | ❌ | `bash_completion/` | ❌ |
-| `basic/` | ❌ | `builtin_server/` | ❌ |
-| `bulk_create/` | ❌ | `cache/` | ❌ |
-| `check_framework/` | ❌ | `composite_pk/` | ❌ |
-| `conditional_processing/` | ❌ | `constraints/` | ❌ |
-| `contenttypes_tests/` | ❌ | `context_processors/` | ❌ |
-| `csrf_tests/` | ❌ | `custom_columns/` | ❌ |
-| `custom_lookups/` | ❌ | `custom_managers/` | ❌ |
-| `custom_methods/` | ❌ | `custom_migration_operations/` | ❌ |
-| `custom_pk/` | ❌ | `datatypes/` | ❌ |
-| `dates/` | ❌ | `datetimes/` | ❌ |
-| `db_functions/` | ❌ | `db_typecasts/` | ❌ |
-| `db_utils/` | ❌ | `dbshell/` | ❌ |
-| `decorators/` | ❌ | `defer/` | ❌ |
-| `defer_regress/` | ❌ | `delete/` | ❌ |
-| `delete_regress/` | ❌ | `deprecation/` | ❌ |
-| `dispatch/` | ❌ | `distinct_on_fields/` | ❌ |
-| `empty/` | ❌ | `empty_models/` | ❌ |
-| `expressions/` | ❌ | `expressions_case/` | ❌ |
-| `expressions_window/` | ❌ | `extra_regress/` | ❌ |
-| `field_deconstruction/` | ❌ | `field_defaults/` | ❌ |
-| `field_subclassing/` | ❌ | `file_storage/` | ❌ |
-| `file_uploads/` | ❌ | `files/` | ❌ |
-| `filtered_relation/` | ❌ | `fixtures/` | ❌ |
-| `fixtures_model_package/` | ❌ | `fixtures_regress/` | ❌ |
-| `flatpages_tests/` | ❌ | `force_insert_update/` | ❌ |
-| `foreign_object/` | ❌ | `forms_tests/` | ❌ |
-| `from_db_value/` | ❌ | `generic_inline_admin/` | ❌ |
-| `generic_relations/` | ❌ | `generic_relations_regress/` | ❌ |
-| `generic_views/` | ❌ | `get_earliest_or_latest/` | ❌ |
-| `get_object_or_404/` | ❌ | `get_or_create/` | ❌ |
-| `gis_tests/` | ❌ | `handlers/` | ❌ |
-| `httpwrappers/` | ❌ | `humanize_tests/` | ❌ |
-| `i18n/` | ❌ | `import_error_package/` | ❌ |
-| `indexes/` | ❌ | `inline_formsets/` | ❌ |
-| `inspectdb/` | ❌ | `introspection/` | ❌ |
-| `invalid_models_tests/` | ❌ | `known_related_objects/` | ❌ |
-| `logging_tests/` | ❌ | `lookup/` | ❌ |
-| `m2m_and_m2o/` | ❌ | `m2m_intermediary/` | ❌ |
-| `m2m_multiple/` | ❌ | `m2m_recursive/` | ❌ |
-| `m2m_regress/` | ❌ | `m2m_signals/` | ❌ |
-| `m2m_through/` | ❌ | `m2m_through_regress/` | ❌ |
-| `m2o_recursive/` | ❌ | `mail/` | ❌ |
-| `managers_regress/` | ❌ | `many_to_many/` | ❌ |
-| `many_to_one/` | ❌ | `many_to_one_null/` | ❌ |
-| `max_lengths/` | ❌ | `messages_tests/` | ❌ |
-| `middleware/` | ❌ | `middleware_exceptions/` | ❌ |
-| `migrate_signals/` | ❌ | `migration_test_data_persistence/` | ❌ |
-| `migrations/` | ❌ | `migrations2/` | ❌ |
-| `model_enums/` | ❌ | `model_fields/` | ❌ |
-| `model_forms/` | ❌ | `model_formsets/` | ❌ |
-| `model_formsets_regress/` | ❌ | `model_indexes/` | ❌ |
-| `model_inheritance/` | ❌ | `model_inheritance_regress/` | ❌ |
-| `model_meta/` | ❌ | `model_options/` | ❌ |
-| `model_package/` | ❌ | `model_regress/` | ❌ |
-| `model_utils/` | ❌ | `modeladmin/` | ❌ |
-| `multiple_database/` | ❌ | `mutually_referential/` | ❌ |
-| `nested_foreign_keys/` | ❌ | `no_models/` | ❌ |
-| `null_fk/` | ❌ | `null_fk_ordering/` | ❌ |
-| `null_queries/` | ❌ | `one_to_one/` | ❌ |
-| `or_lookups/` | ❌ | `order_with_respect_to/` | ❌ |
-| `ordering/` | ❌ | `pagination/` | ❌ |
-| `postgres_tests/` | ❌ | `prefetch_related/` | ❌ |
-| `project_template/` | ❌ | `properties/` | ❌ |
-| `proxy_model_inheritance/` | ❌ | `proxy_models/` | ❌ |
-| `queries/` | ❌ | `queryset_pickle/` | ❌ |
-| `raw_query/` | ❌ | `redirects_tests/` | ❌ |
-| `requests_tests/` | ❌ | `requirements/` | ❌ |
-| `reserved_names/` | ❌ | `resolve_url/` | ❌ |
-| `responses/` | ❌ | `reverse_lookup/` | ❌ |
-| `save_delete_hooks/` | ❌ | `schema/` | ❌ |
-| `select_for_update/` | ❌ | `select_related/` | ❌ |
-| `select_related_onetoone/` | ❌ | `select_related_regress/` | ❌ |
-| `serializers/` | ❌ | `servers/` | ❌ |
-| `sessions_tests/` | ❌ | `settings_tests/` | ❌ |
-| `shell/` | ❌ | `shortcuts/` | ❌ |
-| `signals/` | ❌ | `signed_cookies_tests/` | ❌ |
-| `signing/` | ❌ | `sitemaps_tests/` | ❌ |
-| `sites_framework/` | ❌ | `sites_tests/` | ❌ |
-| `sphinx/` | ❌ | `staticfiles_tests/` | ❌ |
-| `str/` | ❌ | `string_lookup/` | ❌ |
-| `swappable_models/` | ❌ | `syndication_tests/` | ❌ |
-| `tasks/` | ❌ | `template_backends/` | ❌ |
-| `template_loader/` | ❌ | `template_tests/` | ❌ |
-| `templates/` | ❌ | `test_client/` | ❌ |
-| `test_client_regress/` | ❌ | `test_exceptions/` | ❌ |
-| `test_runner/` | ❌ | `test_runner_apps/` | ❌ |
-| `test_utils/` | ❌ | `timezones/` | ❌ |
-| `transaction_hooks/` | ❌ | `transactions/` | ❌ |
-| `unmanaged_models/` | ❌ | `update/` | ❌ |
-| `update_only_fields/` | ❌ | `urlpatterns/` | ❌ |
-| `urlpatterns_reverse/` | ❌ | `user_commands/` | ❌ |
-| `utils_tests/` | ✅ | `validation/` | ❌ |
-| `validators/` | ❌ | `version/` | ❌ |
-| `view_tests/` | ❌ | `wsgi/` | ❌ |
-| `xor_lookups/` | ❌ | | |
+Legend: ✅ Cleared (0 failures, passes ≥ pytest) · ❌ Has failures · 🔧 Blocked by `tests.py` collection bug · ➖ No test files
+
+### Cleared Modules (19)
+
+| Module | tach (p/f/s) | pytest (p/f/s) | Notes |
+|--------|-------------|----------------|-------|
+| `aggregation` | 20/0/0 | 20/0/0 | |
+| `composite_pk` | 155/0/2 | 155/0/2 | Largest cleared module |
+| `csrf_tests` | 1/0/0 | 1/0/0 | |
+| `deprecation` | 26/0/0 | 26/0/0 | |
+| `expressions` | 8/0/0 | 8/0/0 | |
+| `file_storage` | 39/0/0 | 39/0/0 | |
+| `lookup` | 11/0/0 | 11/0/0 | |
+| `m2m_through_regress` | 6/0/0 | 6/0/0 | |
+| `model_formsets` | 7/0/0 | 7/0/0 | |
+| `model_inheritance` | 16/0/0 | 16/0/0 | |
+| `model_regress` | 4/0/0 | 4/0/0 | |
+| `postgres_tests` | 0/0/637 | 0/0/637 | All skipped (no PostgreSQL) |
+| `prefetch_related` | 24/0/0 | 24/0/0 | |
+| `requests_tests` | 45/0/0 | 45/0/0 | |
+| `responses` | 38/0/0 | 38/0/0 | |
+| `test_client` | 2/0/0 | 2/0/0 | |
+| `test_exceptions` | 5/0/0 | 5/0/0 | |
+| `urlpatterns` | 8/0/0 | 8/0/0 | |
+| `validation` | 37/0/0 | 37/0/0 | |
+
+### Modules with Failures (47)
+
+| Module | tach (p/f/s) | pytest (p/f/s) | Notes |
+|--------|-------------|----------------|-------|
+| `admin_changelist` | 0/4/0 | 4/0/0 | |
+| `admin_docs` | 5/4/62 | 9/0/64 | |
+| `admin_inlines` | 0/1/0 | 1/0/0 | |
+| `admin_utils` | 0/15/0 | 15/0/0 | |
+| `admin_views` | 10/68/20 | 78/0/20 | |
+| `admin_widgets` | 0/10/0 | 10/0/0 | |
+| `async` | 5/54/1 | 59/0/1 | |
+| `auth_tests` | 346/471/12 | 827/0/12 | |
+| `backends` | 112/23/62 | 134/0/66 | |
+| `check_framework` | 149/8/1 | 163/0/1 | |
+| `contenttypes_tests` | 52/21/0 | 87/0/0 | |
+| `db_functions` | 321/26/12 | 321/0/16 | |
+| `dbshell` | 20/1/5 | 21/0/5 | |
+| `decorators` | 84/2/0 | 86/0/0 | |
+| `empty_models` | 0/2/0 | 2/0/0 | |
+| `flatpages_tests` | 4/50/0 | 54/0/0 | |
+| `foreign_object` | 27/1/0 | 28/0/0 | |
+| `forms_tests` | 481/290/10 | 1014/0/10 | |
+| `generic_relations` | 13/2/0 | 15/0/0 | |
+| `generic_views` | 58/162/0 | 220/0/0 | |
+| `gis_tests` | 28/375/0 | 34/0/0 | Backend-specific |
+| `handlers` | 0/3/0 | 3/0/0 | |
+| `i18n` | 2/9/90 | 11/0/90 | |
+| `invalid_models_tests` | 284/4/16 | 292/0/16 | |
+| `mail` | 7/6/0 | 13/0/0 | |
+| `messages_tests` | 30/2/0 | 98/0/0 | |
+| `middleware` | 13/26/1 | 39/0/1 | |
+| `migrations` | 423/387/0 | 808/1/2 | |
+| `model_fields` | 348/93/49 | 389/0/50 | |
+| `model_forms` | 25/4/0 | 29/0/0 | |
+| `model_options` | 19/5/0 | 21/0/3 | |
+| `modeladmin` | 139/1/0 | 140/0/0 | |
+| `project_template` | 0/1/0 | 1/0/0 | |
+| `queries` | 172/1/12 | 173/0/12 | |
+| `schema` | 0/1/0 | 1/0/0 | |
+| `serializers` | 35/2/0 | 206/0/0 | |
+| `servers` | 0/9/0 | 8/0/1 | |
+| `sphinx` | 0/18/0 | 0/0/0 | |
+| `staticfiles_tests` | 46/134/0 | 196/46/0 | pytest also fails 46 |
+| `tasks` | 65/10/0 | 75/0/0 | |
+| `template_backends` | 19/28/2 | 61/0/6 | |
+| `template_tests` | 461/1033/5 | 1508/1/5 | |
+| `test_runner` | 103/5/7 | 107/4/7 | pytest also fails 4 |
+| `test_utils` | 16/4/0 | 29/0/0 | |
+| `urlpatterns_reverse` | 4/4/0 | 8/0/0 | |
+| `utils_tests` | 618/41/21 | 658/2/21 | Regressed from 659/0 (see below) |
+| `view_tests` | 21/171/2 | 188/4/2 | pytest also fails 4 |
+
+### Blocked by `tests.py` Collection Bug (142)
+
+tach-core cannot collect modules that use `tests.py` instead of `test_*.py` when
+passed as directory paths. These modules show 0/0/0 for tach but have real pytest
+results. **This is the #1 blocker for per-module testing.**
+
+<details>
+<summary>Full list of blocked modules (click to expand)</summary>
+
+| Module | pytest (p/f/s) | Module | pytest (p/f/s) |
+|--------|----------------|--------|----------------|
+| `absolute_url_overrides` | 3/0/0 | `admin_autodiscover` | 1/0/0 |
+| `admin_checks` | 59/0/0 | `admin_custom_urls` | 7/0/0 |
+| `admin_default_site` | 4/0/0 | `admin_filters` | 55/0/0 |
+| `admin_ordering` | 10/0/0 | `admin_registration` | 19/0/0 |
+| `admin_scripts` | 221/1/0 | `aggregation_regress` | 68/0/5 |
+| `annotations` | 88/1/3 | `app_loading` | 7/0/0 |
+| `apps` | 50/0/2 | `asgi` | 26/0/0 |
+| `bash_completion` | 7/0/0 | `basic` | 71/0/3 |
+| `builtin_server` | 5/0/0 | `bulk_create` | 51/0/7 |
+| `cache` | 388/4/184 | `conditional_processing` | 24/0/0 |
+| `constraints` | 97/0/4 | `context_processors` | 9/0/0 |
+| `custom_columns` | 14/0/0 | `custom_lookups` | 31/0/4 |
+| `custom_managers` | 35/0/0 | `custom_methods` | 1/0/0 |
+| `custom_pk` | 14/0/1 | `datatypes` | 7/0/0 |
+| `dates` | 6/0/1 | `datetimes` | 7/0/0 |
+| `db_typecasts` | 1/0/0 | `db_utils` | 5/0/1 |
+| `defer` | 36/0/0 | `defer_regress` | 20/0/0 |
+| `delete` | 59/0/1 | `delete_regress` | 21/0/1 |
+| `dispatch` | 21/0/0 | `empty` | 1/0/0 |
+| `expressions_case` | 88/0/1 | `expressions_window` | 71/0/4 |
+| `extra_regress` | 12/0/0 | `field_deconstruction` | 38/0/0 |
+| `field_defaults` | 17/0/0 | `field_subclassing` | 2/0/0 |
+| `file_uploads` | 39/1/0 | `files` | 37/0/8 |
+| `filtered_relation` | 63/0/1 | `fixtures` | 47/0/1 |
+| `fixtures_model_package` | 2/0/0 | `fixtures_regress` | 60/0/1 |
+| `force_insert_update` | 13/0/0 | `from_db_value` | 6/0/0 |
+| `generic_inline_admin` | 20/0/0 | `generic_relations_regress` | 27/0/0 |
+| `get_earliest_or_latest` | 9/0/0 | `get_object_or_404` | 4/0/0 |
+| `get_or_create` | 47/0/2 | `httpwrappers` | 84/0/0 |
+| `humanize_tests` | 15/0/0 | `indexes` | 13/0/18 |
+| `inline_formsets` | 14/0/0 | `inspectdb` | 23/0/5 |
+| `introspection` | 19/0/2 | `known_related_objects` | 20/0/0 |
+| `logging_tests` | 54/0/0 | `m2m_and_m2o` | 3/0/0 |
+| `m2m_intermediary` | 1/0/0 | `m2m_multiple` | 1/0/0 |
+| `m2m_recursive` | 12/0/0 | `m2m_regress` | 10/0/0 |
+| `m2m_signals` | 14/0/0 | `m2m_through` | 55/0/0 |
+| `m2o_recursive` | 2/0/0 | `managers_regress` | 14/0/0 |
+| `many_to_many` | 37/0/1 | `many_to_one` | 41/0/0 |
+| `many_to_one_null` | 14/0/0 | `max_lengths` | 3/0/0 |
+| `middleware_exceptions` | 33/0/0 | `migrate_signals` | 3/0/0 |
+| `migration_test_data_persistence` | 3/0/0 | `model_enums` | 21/0/0 |
+| `model_formsets_regress` | 22/0/0 | `model_indexes` | 28/0/2 |
+| `model_inheritance_regress` | 30/0/0 | `model_meta` | 35/0/0 |
+| `model_package` | 3/0/0 | `model_utils` | 1/0/0 |
+| `multiple_database` | 78/0/0 | `mutually_referential` | 1/0/0 |
+| `nested_foreign_keys` | 7/0/0 | `no_models` | 1/0/0 |
+| `null_fk` | 2/0/0 | `null_fk_ordering` | 1/0/0 |
+| `null_queries` | 3/0/0 | `one_to_one` | 39/0/0 |
+| `or_lookups` | 11/0/0 | `order_with_respect_to` | 16/0/0 |
+| `ordering` | 35/0/0 | `pagination` | 46/0/0 |
+| `properties` | 2/0/0 | `proxy_model_inheritance` | 3/0/0 |
+| `proxy_models` | 30/0/0 | `queryset_pickle` | 39/0/0 |
+| `raw_query` | 30/0/0 | `redirects_tests` | 10/0/0 |
+| `reserved_names` | 5/0/0 | `resolve_url` | 9/0/0 |
+| `reverse_lookup` | 3/0/0 | `save_delete_hooks` | 1/0/0 |
+| `select_for_update` | 3/0/35 | `select_related` | 20/0/0 |
+| `select_related_onetoone` | 22/0/0 | `select_related_regress` | 9/0/0 |
+| `sessions_tests` | 645/0/4 | `settings_tests` | 57/0/0 |
+| `shell` | 28/0/0 | `shortcuts` | 6/0/0 |
+| `signals` | 22/0/0 | `signed_cookies_tests` | 7/0/0 |
+| `signing` | 19/0/0 | `sitemaps_tests` | 51/0/0 |
+| `sites_framework` | 5/0/0 | `sites_tests` | 27/0/0 |
+| `str` | 2/0/0 | `string_lookup` | 4/0/0 |
+| `swappable_models` | 2/0/0 | `syndication_tests` | 35/0/0 |
+| `template_loader` | 22/0/0 | `test_client_regress` | 109/0/0 |
+| `test_runner_apps` | 5/0/0 | `timezones` | 77/0/9 |
+| `transaction_hooks` | 20/0/1 | `transactions` | 85/0/2 |
+| `unmanaged_models` | 3/0/0 | `update` | 29/0/5 |
+| `update_only_fields` | 20/0/0 | `user_commands` | 48/0/4 |
+| `validators` | 14/0/1 | `version` | 5/0/0 |
+| `wsgi` | 7/0/0 | `xor_lookups` | 7/0/0 |
+
+</details>
+
+### No Test Files (5)
+
+`base`, `custom_migration_operations`, `distinct_on_fields`, `import_error_package`, `migrations2`
 
 ### Full Suite Snapshot (Django 6.0.2, SQLite)
 
@@ -311,13 +367,20 @@ bootstrap. This hook executes inside the zygote's Python process during
 
 ### Remaining work
 - [x] `utils_tests/` — 100% pass rate achieved (659/659 non-skipped tests pass)
+- [x] Full sweep of all 213 modules (tach vs pytest per-module comparison)
+- [x] 19 modules cleared (0 tach failures, passes ≥ pytest)
+- [ ] **P0: Fix `tests.py` collection bug** — tach-core cannot collect `tests.py`
+      files when passed as directory paths. "Selected 0 tests" for all
+      `tests.py`-only modules (~142 modules blocked). pytest works fine.
+- [ ] Investigate `utils_tests/` regression: 659/0 → 618/41 in sweep
+      (may be conftest/environment difference)
+- [ ] Investigate the 47 modules with tach failures (fixture issues, isolation, real bugs)
 - [ ] Investigate the 491 remaining zygote misses (likely fixable)
 - [ ] Wire missing Django fixtures (`_pre_setup`, `_post_teardown`)
 - [ ] GIS tests (need PostGIS backend, always skip with sqlite)
 - [ ] Backend-specific tests (postgres JSON, mysql-specific)
 - [ ] `no:django` plugin flag in harness — confirmed safe for Django TestCase
        subclasses (lifecycle is self-contained in Django's __call__)
-- [ ] Scale to next test suite module (methodical, one at a time)
 
 ### Not tach-core bugs
 - `TestFinder` in `test_module_loading.py` — has `__init__`, correctly skipped
