@@ -153,6 +153,12 @@ pub struct Cli {
     #[arg(short = 'm', long, value_name = "MARKERS")]
     pub markers: Option<String>,
 
+    #[arg(long)]
+    pub strict_markers: bool,
+
+    #[arg(long = "assert", value_name = "MODE")]
+    pub assert_mode: Option<String>,
+
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,

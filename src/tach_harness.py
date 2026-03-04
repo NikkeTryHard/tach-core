@@ -2961,6 +2961,9 @@ def init_session(root_dir: str):
             if ini_val:
                 args.extend(["-o", ini_val])
 
+    if os.environ.get("TACH_STRICT_MARKERS") == "1":
+        args.append("--strict-markers")
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

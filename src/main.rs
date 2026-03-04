@@ -280,6 +280,9 @@ fn main() -> Result<()> {
     if let Some(ref markers) = merged.markers {
         unsafe { std::env::set_var("TACH_MARKERS", markers) };
     }
+    if cli.strict_markers {
+        unsafe { std::env::set_var("TACH_STRICT_MARKERS", "1") };
+    }
     if !cli.override_ini.is_empty() {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
