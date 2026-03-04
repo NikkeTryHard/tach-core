@@ -66,7 +66,7 @@ userfaultfd = "0.9"
 uuid = { version = "1.21", features = ["v4"] }
 
 # Configuration
-toml = "0.9"
+toml = "1.0"
 
 # Lifecycle
 signal-hook = "0.4"
