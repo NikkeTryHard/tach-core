@@ -264,7 +264,10 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_KEYWORD", &new_kw) };
     }
     for plugin in &merged.disabled_plugins {
-        let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
+        let key = format!(
+            "TACH_DISABLE_PLUGIN_{}",
+            plugin.to_uppercase().replace('-', "_")
+        );
         unsafe { std::env::set_var(&key, "1") };
     }
 
@@ -345,7 +348,9 @@ fn main() -> Result<()> {
             last_failed: merged.last_failed,
             failed_first: merged.failed_first,
             cache_clear: merged.cache_clear,
-            durations: merged.durations, verbose: merged.verbose, _quiet: merged.quiet,
+            durations: merged.durations,
+            verbose: merged.verbose,
+            _quiet: merged.quiet,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -373,7 +378,9 @@ fn main() -> Result<()> {
             last_failed: merged.last_failed,
             failed_first: merged.failed_first,
             cache_clear: merged.cache_clear,
-            durations: merged.durations, verbose: merged.verbose, _quiet: merged.quiet,
+            durations: merged.durations,
+            verbose: merged.verbose,
+            _quiet: merged.quiet,
         },
     )
 }
@@ -435,18 +442,20 @@ fn execute_session(
     // surfaces the error through the reporter's on_error() method (which uses
     // stdout). The child's eprintln! in that path is a secondary diagnostic
     // captured in the log file at /tmp/tach.log.
-    let log_redirect =
-        if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() && config.verbose == 0 {
-            match LogRedirect::new() {
-                Ok(redirect) => {
-                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
-                    Some(redirect)
-                }
-                Err(_) => None,
+    let log_redirect = if *format != OutputFormat::Json
+        && ProgressReporter::should_use_progress_bar()
+        && config.verbose == 0
+    {
+        match LogRedirect::new() {
+            Ok(redirect) => {
+                reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
+                Some(redirect)
             }
-        } else {
-            None
-        };
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
 
     let cleanup = CleanupGuard::new();
 
@@ -706,7 +715,11 @@ fn execute_session(
     {
         let mut sorted = stats.test_durations.clone();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        let show = if n == 0 { sorted.len() } else { n.min(sorted.len()) };
+        let show = if n == 0 {
+            sorted.len()
+        } else {
+            n.min(sorted.len())
+        };
         eprintln!("\n= slowest {} durations =", show);
         for (name, ms) in sorted.iter().take(show) {
             if *ms >= 1000 {
@@ -843,7 +856,11 @@ fn pytest_fallback_retry(
     {
         eprintln!("[tach:fallback] Cannot create cache dir: {}, using /tmp", e);
     }
-    let fallback_dir = if cache_dir.exists() { &cache_dir } else { Path::new("/tmp") };
+    let fallback_dir = if cache_dir.exists() {
+        &cache_dir
+    } else {
+        Path::new("/tmp")
+    };
     let retry_file = fallback_dir.join("_fallback_retry.txt");
     let runner_file = fallback_dir.join("_fallback_runner.py");
     {
@@ -1186,10 +1203,7 @@ fn handle_list_command(
                 println!("{}::{}", module.path.display(), test.name);
             }
         }
-        println!(
-            "\n{} tests collected",
-            discovery_result.test_count()
-        );
+        println!("\n{} tests collected", discovery_result.test_count());
     }
     Ok(())
 }

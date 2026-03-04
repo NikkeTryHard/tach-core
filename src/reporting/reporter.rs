@@ -546,7 +546,7 @@ impl Reporter for HumanReporter {
         }
     }
 
-     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
         let secs = duration_ms as f64 / 1000.0;
         let mut parts = Vec::new();
         if failed > 0 {
@@ -929,7 +929,6 @@ impl Reporter for DotsReporter {
 
     fn on_test_start(&mut self, _id: &str, _file: &str) {}
 
-
     fn on_test_finished(
         &mut self,
         id: &str,
@@ -987,7 +986,9 @@ impl Reporter for DotsReporter {
         if !self.failures.is_empty() {
             eprintln!("\x1b[36m= short test summary info =\x1b[0m");
             for f in &self.failures {
-                let err = f.message.lines()
+                let err = f
+                    .message
+                    .lines()
                     .find(|l| l.contains("Error") || l.starts_with("E "))
                     .unwrap_or("")
                     .trim_start_matches("E ")
@@ -1011,13 +1012,7 @@ impl Reporter for DotsReporter {
         let color = if failed > 0 { "\x1b[31m" } else { "\x1b[32m" };
         let reset = "\x1b[0m";
         let bar = format!("{}{}{}", color, "=".repeat(20), reset);
-        eprintln!(
-            "\n{} {} in {:.2}s {}",
-            bar,
-            parts.join(", "),
-            secs,
-            bar,
-        );
+        eprintln!("\n{} {} in {:.2}s {}", bar, parts.join(", "), secs, bar,);
     }
 
     fn on_error(&mut self, message: &str) {

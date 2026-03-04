@@ -7,8 +7,8 @@
 //! - Writable overlay on project directory
 
 use anyhow::{Context, Result};
-use nix::mount::{mount, MsFlags};
-use nix::sched::{unshare, CloneFlags};
+use nix::mount::{MsFlags, mount};
+use nix::sched::{CloneFlags, unshare};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

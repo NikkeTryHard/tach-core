@@ -7,14 +7,14 @@
 use crate::hooks::HookRegistry;
 use crate::logcapture::LogCapture;
 use crate::protocol::{
-    decode_with_limit, encode_with_length, FixtureInfo, TestPayload, TestResult, CMD_EXIT,
-    CMD_FORK, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
+    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
+    TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
 use crate::signals;
 use anyhow::Result;
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -1341,8 +1341,8 @@ mod tests {
     /// set when collecting. Only the first caller to set the flag gets the worker.
     #[test]
     fn test_timeout_worker_collected_once() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
 
         // Simulate an ActiveWorker with the proposed timeout_handled field
@@ -1412,8 +1412,8 @@ mod tests {
     /// This test fails compilation until we add the field, then passes.
     #[test]
     fn test_active_worker_with_timeout_handled() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         // Create an ActiveWorker with the new field
         // This test will FAIL TO COMPILE until we add timeout_handled to ActiveWorker
@@ -1455,8 +1455,8 @@ mod tests {
     /// are calling collect_timed_out concurrently.
     #[test]
     fn test_concurrent_timeout_no_race() {
-        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         use std::thread;
 
         // Simulate 10 workers, all timed out
@@ -1549,8 +1549,8 @@ mod tests {
     /// Test that graceful_kill_worker with a valid PID attempts SIGTERM first.
     #[test]
     fn test_graceful_kill_worker_with_pid() {
-        use nix::sys::wait::{waitpid, WaitPidFlag};
-        use nix::unistd::{fork, ForkResult};
+        use nix::sys::wait::{WaitPidFlag, waitpid};
+        use nix::unistd::{ForkResult, fork};
         use std::time::Duration;
 
         // Fork a child that exits immediately

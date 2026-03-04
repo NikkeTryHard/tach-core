@@ -785,7 +785,9 @@ impl MergedConfig {
         let traceback = if cli.traceback != TracebackStyle::default() {
             cli.traceback
         } else {
-            file_config.traceback.as_deref()
+            file_config
+                .traceback
+                .as_deref()
                 .and_then(parse_traceback_style)
                 .unwrap_or(cli.traceback)
         };
@@ -1474,7 +1476,10 @@ LITERAL_BRACES = "{{NOT_EXPANDED}}"
         assert_eq!(parse_traceback_style("short"), Some(TracebackStyle::Short));
         assert_eq!(parse_traceback_style("long"), Some(TracebackStyle::Long));
         assert_eq!(parse_traceback_style("line"), Some(TracebackStyle::Line));
-        assert_eq!(parse_traceback_style("native"), Some(TracebackStyle::Native));
+        assert_eq!(
+            parse_traceback_style("native"),
+            Some(TracebackStyle::Native)
+        );
         assert_eq!(parse_traceback_style("no"), Some(TracebackStyle::No));
         assert_eq!(parse_traceback_style("invalid"), None);
     }
