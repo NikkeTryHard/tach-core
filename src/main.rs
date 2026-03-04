@@ -985,28 +985,58 @@ fn handle_init_command(cwd: &std::path::Path) -> Result<()> {
             eprintln!("[tool.tach] already exists in pyproject.toml");
             return Ok(());
         }
+        let config = detect_project_config(cwd);
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(&pyproject_path)?;
-        std::io::Write::write_all(&mut file, INIT_CONFIG.as_bytes())?;
+        std::io::Write::write_all(&mut file, config.as_bytes())?;
         eprintln!("Added [tool.tach] to {}", pyproject_path.display());
     } else {
-        std::fs::write(&pyproject_path, INIT_CONFIG)?;
+        let config = detect_project_config(cwd);
+        std::fs::write(&pyproject_path, &config)?;
         eprintln!("Created {}", pyproject_path.display());
     }
     Ok(())
 }
 
-const INIT_CONFIG: &str = r#"
-[tool.tach]
-timeout = 60
-workers = 0
-isolation_strategy = "auto"
+fn detect_project_config(cwd: &std::path::Path) -> String {
+    let has_django = cwd.join("manage.py").exists() || has_dependency(cwd, "django");
+    let has_flask = has_dependency(cwd, "flask");
 
-[tool.tach.coverage]
-enabled = false
-source = ["."]
-"#;
+    let mut config = String::from("\n[tool.tach]\ntimeout = 60\nworkers = 0\n");
+    config.push_str("isolation_strategy = \"auto\"\n");
+
+    if has_django {
+        config.push_str("reuse_db = true\n");
+        eprintln!("  Detected Django project");
+    }
+    if has_flask {
+        config.push_str("force_toxic = true\n");
+        eprintln!("  Detected Flask project");
+    }
+
+    config.push_str("\n[tool.tach.coverage]\nenabled = false\nsource = [\".\"]\n");
+    config
+}
+
+fn has_dependency(cwd: &std::path::Path, name: &str) -> bool {
+    let pyproject = cwd.join("pyproject.toml");
+    if let Ok(content) = std::fs::read_to_string(pyproject) {
+        return content.contains(name);
+    }
+    let req = cwd.join("requirements.txt");
+    if let Ok(content) = std::fs::read_to_string(req) {
+        return content.lines().any(|l| {
+            let l = l.trim().to_lowercase();
+            l.starts_with(name)
+                && (l.len() == name.len()
+                    || l.as_bytes()
+                        .get(name.len())
+                        .is_some_and(|&b| b == b'=' || b == b'>' || b == b'<' || b == b'['))
+        });
+    }
+    false
+}
 
 fn handle_self_test_command() -> Result<()> {
     let success = tach_core::diagnostics::run_and_print_diagnostics();
