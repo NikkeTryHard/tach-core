@@ -871,7 +871,12 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
                 }
             }
 
-            let real_failures = pytest_failed;
+            let real_failure_ids = read_lastfailed_cache_from(&results_file);
+            let real_failures = if real_failure_ids.is_empty() {
+                pytest_failed
+            } else {
+                real_failure_ids.len()
+            };
             let tach_specific = failed_ids.len().saturating_sub(real_failures);
 
             if !is_json {
