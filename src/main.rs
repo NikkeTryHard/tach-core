@@ -775,27 +775,33 @@ fn pytest_fallback_retry(
             }
 
             let stdout = String::from_utf8_lossy(&result.stdout);
-            let _stderr = String::from_utf8_lossy(&result.stderr);
 
-            let mut pytest_passed = 0usize;
+            let mut _pytest_passed = 0usize;
             let mut pytest_failed = 0usize;
+            let mut pytest_error = 0usize;
 
-            for line in stdout.lines() {
-                if line.contains("passed") || line.contains("failed") {
-                    for word in line.split_whitespace() {
-                        if let Ok(n) = word.parse::<usize>() {
-                            if line.contains("passed") && pytest_passed == 0 {
-                                pytest_passed = n;
-                            }
-                            if line.contains("failed") && pytest_failed == 0 {
+            // Parse pytest's summary line: "N failed, M passed, K error in Xs"
+            for line in stdout.lines().rev() {
+                let line = line.trim();
+                if line.contains(" in ") && (line.contains("passed") || line.contains("failed")) {
+                    for part in line.split(',') {
+                        let words: Vec<&str> = part.split_whitespace().collect();
+                        if let [num, kind, ..] = words.as_slice()
+                            && let Ok(n) = num.parse::<usize>()
+                        {
+                            if kind.starts_with("failed") {
                                 pytest_failed = n;
+                            } else if kind.starts_with("error") {
+                                pytest_error = n;
                             }
                         }
                     }
+                    break;
                 }
             }
 
-            let tach_specific = failed_ids.len().saturating_sub(pytest_failed);
+            let real_failures = pytest_failed + pytest_error;
+            let tach_specific = failed_ids.len().saturating_sub(real_failures);
 
             if !is_json {
                 if tach_specific > 0 {
@@ -804,10 +810,10 @@ fn pytest_fallback_retry(
                         tach_specific
                     );
                 }
-                if pytest_failed > 0 {
+                if real_failures > 0 {
                     eprintln!(
                         "[tach:fallback] {} test(s) failed in both tach and pytest (real failures)",
-                        pytest_failed
+                        real_failures
                     );
                 }
                 let elapsed = fallback_start.elapsed();
@@ -817,7 +823,7 @@ fn pytest_fallback_retry(
                 );
             }
 
-            pytest_failed
+            real_failures
         }
         Err(e) => {
             if !is_json {
