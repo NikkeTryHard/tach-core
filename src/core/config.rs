@@ -134,6 +134,10 @@ pub struct Cli {
     #[arg(long, value_name = "DIR")]
     pub rootdir: Option<String>,
 
+    /// Stop conftest.py discovery at this directory (pytest --confcutdir compat).
+    #[arg(long, value_name = "DIR")]
+    pub confcutdir: Option<String>,
+
     // =========================================================================
     // Test Selection (pytest compatible)
     // =========================================================================

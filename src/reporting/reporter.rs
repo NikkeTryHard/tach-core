@@ -924,6 +924,11 @@ impl Reporter for DotsReporter {
     }
 
     fn on_run_start(&mut self, count: usize) {
+        if std::env::var("TACH_NO_HEADER").is_err() {
+            let version = env!("CARGO_PKG_VERSION");
+            eprintln!("========================= test session starts =========================",);
+            eprintln!("tach-core v{} -- platform linux", version);
+        }
         eprintln!("collected {} items\n", count);
     }
 

@@ -2951,6 +2951,10 @@ def init_session(root_dir: str):
     if import_mode:
         args.extend(["--import-mode", import_mode])
 
+    confcutdir = os.environ.get("TACH_CONFCUTDIR")
+    if confcutdir:
+        args.extend(["--confcutdir", confcutdir])
+
     override_ini = os.environ.get("TACH_OVERRIDE_INI", "")
     if override_ini:
         for ini_val in override_ini.split("\x1f"):

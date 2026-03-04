@@ -238,6 +238,9 @@ fn main() -> Result<()> {
     if merged.verbose == 0 {
         unsafe { std::env::set_var("TACH_QUIET", "1") };
     }
+    if merged.no_header {
+        unsafe { std::env::set_var("TACH_NO_HEADER", "1") };
+    }
 
     let target_file_path = if merged.path.contains("::") {
         merged.path.split("::").next().unwrap_or(&merged.path)
@@ -280,6 +283,9 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
 
+    if let Some(ref confcutdir) = cli.confcutdir {
+        unsafe { std::env::set_var("TACH_CONFCUTDIR", confcutdir) };
+    }
     if cli.import_mode != "prepend" {
         unsafe { std::env::set_var("TACH_IMPORT_MODE", &cli.import_mode) };
     }
