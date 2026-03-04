@@ -198,9 +198,10 @@ pub struct Cli {
     #[arg(long = "sw")]
     pub stepwise: bool,
 
+    #[arg(long)]
+    pub resume: bool,
+
     /// Watch for changes and re-run tests automatically.
-    ///
-    /// Uses inotify to detect file changes and triggers re-runs.
     #[arg(long, short = 'w')]
     pub watch: bool,
 

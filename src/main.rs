@@ -52,6 +52,7 @@ struct SessionConfig {
     last_failed: bool,
     failed_first: bool,
     cache_clear: bool,
+    resume: bool,
     durations: Option<usize>,
     verbose: u8,
     _quiet: bool,
@@ -427,6 +428,7 @@ fn main() -> Result<()> {
             last_failed: merged.last_failed,
             failed_first: merged.failed_first,
             cache_clear: merged.cache_clear,
+            resume: cli.resume,
             durations: merged.durations,
             verbose: merged.verbose,
             _quiet: merged.quiet,
@@ -458,6 +460,7 @@ fn main() -> Result<()> {
             last_failed: merged.last_failed,
             failed_first: merged.failed_first,
             cache_clear: merged.cache_clear,
+            resume: cli.resume,
             durations: merged.durations,
             verbose: merged.verbose,
             _quiet: merged.quiet,
@@ -638,7 +641,24 @@ fn execute_session(
     reporter.on_phase("resolving", None);
     let fixture_registry = FixtureRegistry::from_discovery(&discovery_result);
     let resolver = Resolver::new(&fixture_registry);
-    let (runnable_tests, errors) = resolver.resolve_all(&discovery_result);
+    let (mut runnable_tests, errors) = resolver.resolve_all(&discovery_result);
+
+    if config.resume {
+        let completed = tach_core::cache::read_interrupted_cache(cwd);
+        if !completed.is_empty() {
+            let completed_set: std::collections::HashSet<&str> =
+                completed.iter().map(|s| s.as_str()).collect();
+            let before = runnable_tests.len();
+            runnable_tests.retain(|t| !completed_set.contains(t.test_name.as_str()));
+            if !is_json {
+                eprintln!(
+                    "[tach:resume] Skipping {} already-completed tests ({} remaining)",
+                    before - runnable_tests.len(),
+                    runnable_tests.len()
+                );
+            }
+        }
+    }
 
     reporter.on_phase(
         "resolving",
@@ -671,7 +691,6 @@ fn execute_session(
     // --- TOXICITY TAGGING ---
     // Tag each resolved test with its toxicity status from the graph.
     // Toxic tests use fork/kill instead of snapshot/reset.
-    let mut runnable_tests = runnable_tests;
     let mut toxic_test_count = 0;
     for test in &mut runnable_tests {
         test.is_toxic =
@@ -821,6 +840,24 @@ fn execute_session(
     }
 
     let _ = std::fs::remove_file(cwd.join(".tach_cache/_lf_filter.txt"));
+
+    let was_interrupted = tach_core::signals::shutdown_requested();
+    if was_interrupted {
+        let completed: Vec<String> = stats
+            .test_durations
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        tach_core::cache::write_interrupted_cache(cwd, &completed);
+        if !is_json {
+            eprintln!(
+                "[tach:interrupted] Saved {} completed tests for --resume",
+                completed.len()
+            );
+        }
+    } else {
+        tach_core::cache::clear_interrupted_cache(cwd);
+    }
 
     // --- PYTEST FALLBACK ---
     // When tests fail in tach, retry them with vanilla pytest to distinguish

@@ -52,6 +52,30 @@ pub fn read_lastfailed_cache_from(path: &Path) -> Vec<String> {
     }
 }
 
+pub fn write_interrupted_cache(root: &Path, completed_ids: &[String]) {
+    let cache_dir = root.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let path = cache_dir.join("interrupted");
+    if completed_ids.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    if let Ok(mut f) = std::fs::File::create(&path) {
+        use std::io::Write;
+        for id in completed_ids {
+            let _ = writeln!(f, "{}", id);
+        }
+    }
+}
+
+pub fn read_interrupted_cache(root: &Path) -> Vec<String> {
+    read_lastfailed_cache_from(&root.join(".tach_cache/interrupted"))
+}
+
+pub fn clear_interrupted_cache(root: &Path) {
+    let _ = std::fs::remove_file(root.join(".tach_cache/interrupted"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +132,31 @@ mod tests {
         write_duration_cache(dir.path(), &durations);
         let loaded = read_duration_cache(dir.path());
         assert_eq!(loaded.get("test_file::TestClass::test_method"), Some(&42));
+    }
+
+    #[test]
+    fn test_interrupted_cache_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let ids = vec!["test_a".to_string(), "test_b".to_string()];
+        write_interrupted_cache(dir.path(), &ids);
+        let loaded = read_interrupted_cache(dir.path());
+        assert_eq!(loaded, ids);
+    }
+
+    #[test]
+    fn test_interrupted_cache_clear() {
+        let dir = TempDir::new().unwrap();
+        write_interrupted_cache(dir.path(), &["test_a".to_string()]);
+        assert!(dir.path().join(".tach_cache/interrupted").exists());
+        clear_interrupted_cache(dir.path());
+        assert!(!dir.path().join(".tach_cache/interrupted").exists());
+    }
+
+    #[test]
+    fn test_interrupted_cache_empty_removes_file() {
+        let dir = TempDir::new().unwrap();
+        write_interrupted_cache(dir.path(), &["x".to_string()]);
+        write_interrupted_cache(dir.path(), &[]);
+        assert!(!dir.path().join(".tach_cache/interrupted").exists());
     }
 }
