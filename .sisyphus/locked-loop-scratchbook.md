@@ -7,9 +7,9 @@
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
 ## [22:15 UTC] Released v0.5.0 (init cmd, color, validation)
 
-## [22:25 UTC] Iteration 10
-- --runxfail flag wired to pytest
-- --cache-show command to display lastfailed/duration cache contents
-- --log-file and --timeout-method from last iteration
-- 992 tests, 50+ commits, 5 releases
-- Session: v0.3.1->v0.5.0, 44 new tests, ~25 new CLI flags
+## [22:30 UTC] Iteration 11
+- tach config command: shows effective merged configuration
+- --runxfail, --cache-show flags
+- Verified no panic!/expect() in production code
+- Fixed doc comment placement in Commands enum
+- 992 tests, 55+ commits, 5 releases, v0.3.1->v0.5.0

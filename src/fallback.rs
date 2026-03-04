@@ -108,25 +108,7 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
             }
 
             let stdout = String::from_utf8_lossy(&result.stdout);
-
-            let mut pytest_failed = 0usize;
-
-            // Parse pytest's summary line: "N failed, M passed, K error in Xs"
-            for line in stdout.lines().rev() {
-                let line = line.trim();
-                if line.contains(" in ") && (line.contains("passed") || line.contains("failed")) {
-                    for part in line.split(',') {
-                        let words: Vec<&str> = part.split_whitespace().collect();
-                        if let [num, kind, ..] = words.as_slice()
-                            && let Ok(n) = num.parse::<usize>()
-                            && kind.starts_with("failed")
-                        {
-                            pytest_failed = n;
-                        }
-                    }
-                    break;
-                }
-            }
+            let pytest_failed = parse_pytest_summary_failed(&stdout);
 
             let real_failure_ids = read_lastfailed_cache_from(&results_file);
             let real_failures = if real_failure_ids.is_empty() {
@@ -169,5 +151,76 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
             }
             stats.failed
         }
+    }
+}
+
+pub fn parse_pytest_summary_failed(output: &str) -> usize {
+    for line in output.lines().rev() {
+        let line = line.trim().trim_matches('=').trim();
+        if line.contains(" in ") && (line.contains("passed") || line.contains("failed")) {
+            for part in line.split(',') {
+                let words: Vec<&str> = part.split_whitespace().collect();
+                if words.len() >= 2
+                    && words[1].starts_with("failed")
+                    && let Ok(n) = words[0].parse::<usize>()
+                {
+                    return n;
+                }
+            }
+        }
+    }
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_pytest_summary_all_passed() {
+        let output = "======= 42 passed in 1.23s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 0);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_mixed() {
+        let output = "======= 3 failed, 10 passed in 2.5s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 3);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_with_errors() {
+        let output = "======= 1 failed, 2 error, 5 passed in 0.8s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 1);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_only_failed() {
+        let output = "======= 7 failed in 3.1s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 7);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_empty() {
+        assert_eq!(parse_pytest_summary_failed(""), 0);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_no_summary_line() {
+        let output = "collecting... 10 items\nPASSED test_foo.py\n";
+        assert_eq!(parse_pytest_summary_failed(output), 0);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_with_warnings() {
+        let output = "======= 1 failed, 9 passed, 3 warnings in 1.5s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 1);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_multiline() {
+        let output = "FAILED test_a.py::test_1\nFAILED test_b.py::test_2\n\
+                       ======= 2 failed, 8 passed, 1 skipped in 4.2s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 2);
     }
 }
