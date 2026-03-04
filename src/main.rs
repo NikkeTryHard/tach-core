@@ -443,12 +443,10 @@ fn execute_session(
     // stdout). The child's eprintln! in that path is a secondary diagnostic
     // captured in the log file at /tmp/tach.log.
     let log_redirect =
-        if *format != OutputFormat::Json && config.verbose == 0 {
+        if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() && config.verbose == 0 {
             match LogRedirect::new() {
                 Ok(redirect) => {
-                    if ProgressReporter::should_use_progress_bar() {
-                        reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
-                    }
+                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
                     Some(redirect)
                 }
                 Err(_) => None,
@@ -1809,10 +1807,6 @@ fn run_tests(
                         );
                     }
                 }
-            }
-
-            if !is_json {
-                eprintln!("[tach:supervisor] Done.");
             }
 
             // Mark shutdown as complete to prevent watchdog from force-exiting

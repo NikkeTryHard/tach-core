@@ -1101,21 +1101,12 @@ if m is not None and not hasattr(m, '__file__'):
                 }
             }
             CMD_EXIT => {
-                eprintln!("[tach:zygote] Received EXIT.");
-
-                //  Drain idle workers and send them EXIT commands
                 let idle_workers =
                     std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
-                let worker_count = idle_workers.len();
-                let mut worker_pids = Vec::with_capacity(worker_count);
+                let mut worker_pids = Vec::with_capacity(idle_workers.len());
                 for mut worker in idle_workers {
-                    eprintln!("[tach:zygote] Sending EXIT to idle worker {}", worker.pid);
                     worker_pids.push(worker.pid);
                     let _ = worker.socket.write_all(&[CMD_EXIT]);
-                    // Socket drops here, worker will see EOF if write fails
-                }
-                if worker_count > 0 {
-                    eprintln!("[tach:zygote] Drained {} idle workers", worker_count);
                 }
 
                 // Give threads time to forward final results
