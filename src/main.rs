@@ -799,9 +799,14 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
                     );
                 }
                 let elapsed = fallback_start.elapsed();
+                let total_effective_pass = stats.passed + tach_specific;
                 eprintln!(
                     "[tach:fallback] Fallback completed in {:.1}s",
                     elapsed.as_secs_f64()
+                );
+                eprintln!(
+                    "[tach:fallback] Final: {} passed, {} failed, {} skipped",
+                    total_effective_pass, real_failures, stats.skipped
                 );
             }
 
