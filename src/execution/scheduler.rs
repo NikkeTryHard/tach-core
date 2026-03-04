@@ -123,10 +123,9 @@ pub struct Scheduler {
     hook_registry: HookRegistry,
     /// Project root directory for resolving hook paths
     project_root: PathBuf,
-    /// Reuse existing test database (--reuse-db)
     reuse_db: bool,
-    /// Force recreation of test database (--create-db)
     create_db: bool,
+    maxfail: Option<usize>,
 }
 
 impl Scheduler {
@@ -216,7 +215,12 @@ impl Scheduler {
             project_root,
             reuse_db,
             create_db,
+            maxfail: None,
         })
+    }
+
+    pub fn set_maxfail(&mut self, maxfail: Option<usize>) {
+        self.maxfail = maxfail;
     }
 
     /// Sort tests into safe/toxic queues for dual-path execution
@@ -279,9 +283,14 @@ impl Scheduler {
 
         // Dispatch tests from queues (safe first, then toxic)
         while let Some((test_id, test)) = self.next_test() {
-            // Check for shutdown signal (Ctrl+C)
             if signals::shutdown_requested() {
                 reporter.on_error("Shutdown requested");
+                break;
+            }
+
+            if let Some(max) = self.maxfail
+                && failed >= max
+            {
                 break;
             }
 

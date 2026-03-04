@@ -237,6 +237,15 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_MARKERS", markers) };
     }
 
+    let maxfail = if cli.exitfirst {
+        Some(1)
+    } else {
+        cli.maxfail
+    };
+    if let Some(mf) = maxfail {
+        unsafe { std::env::set_var("TACH_MAXFAIL", mf.to_string()) };
+    }
+
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
@@ -1540,6 +1549,11 @@ fn run_tests(
                 std::env::var("TACH_REUSE_DB").unwrap_or_default() == "1",
                 std::env::var("TACH_CREATE_DB").unwrap_or_default() == "1",
             )?;
+
+            let maxfail_env = std::env::var("TACH_MAXFAIL")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok());
+            scheduler.set_maxfail(maxfail_env);
 
             // PYTEST-AUTHORITATIVE MERGE (Issue #98)
             let runnable_tests = if !collected_tests.is_empty() {
