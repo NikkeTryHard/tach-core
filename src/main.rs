@@ -689,12 +689,14 @@ fn pytest_fallback_retry(
     is_json: bool,
 ) -> usize {
     use std::process::Command;
+    use std::time::Instant;
 
     let failed_ids = &stats.failed_test_ids;
     if failed_ids.is_empty() {
         return 0;
     }
 
+    let fallback_start = Instant::now();
     if !is_json {
         eprintln!(
             "\n[tach:fallback] Retrying {} failed test(s) with pytest...",
@@ -737,7 +739,7 @@ fn pytest_fallback_retry(
     match output {
         Ok(result) => {
             let stdout = String::from_utf8_lossy(&result.stdout);
-            let stderr = String::from_utf8_lossy(&result.stderr);
+            let _stderr = String::from_utf8_lossy(&result.stderr);
 
             let mut pytest_passed = 0usize;
             let mut pytest_failed = 0usize;
@@ -772,9 +774,11 @@ fn pytest_fallback_retry(
                         pytest_failed
                     );
                 }
-                if !stderr.is_empty() && stderr.len() < 500 {
-                    eprintln!("[tach:fallback] pytest stderr: {}", stderr.trim());
-                }
+                let elapsed = fallback_start.elapsed();
+                eprintln!(
+                    "[tach:fallback] Fallback completed in {:.1}s",
+                    elapsed.as_secs_f64()
+                );
             }
 
             pytest_failed
