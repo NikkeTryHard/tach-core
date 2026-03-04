@@ -557,33 +557,25 @@ fn execute_session(
         })
         .collect();
 
-    let filtered_tests = if config.last_failed {
+    if config.last_failed {
         let last_failed = read_lastfailed_cache(cwd);
-        if last_failed.is_empty() {
-            if !is_json {
-                eprintln!("[tach:supervisor] No last-failed cache found, running all tests");
-            }
-            filtered_tests
-        } else {
-            let lf_count = last_failed.len();
-            let lf_set: std::collections::HashSet<&str> =
-                last_failed.iter().map(|s| s.as_str()).collect();
-            let lf_filtered: Vec<_> = filtered_tests
-                .into_iter()
-                .filter(|t| lf_set.contains(t.test_name.as_str()))
+        if !last_failed.is_empty() {
+            let methods: Vec<String> = last_failed
+                .iter()
+                .filter_map(|id| id.split("::").last().map(|s| s.to_string()))
                 .collect();
+            let k_expr = methods.join(" or ");
+            unsafe { std::env::set_var("TACH_LF_KEYWORD", &k_expr) };
             if !is_json {
                 eprintln!(
-                    "[tach:supervisor] --lf: {} of {} last-failed tests matched",
-                    lf_filtered.len(),
-                    lf_count
+                    "[tach:supervisor] --lf: re-running {} last-failed tests",
+                    last_failed.len()
                 );
             }
-            lf_filtered
+        } else if !is_json {
+            eprintln!("[tach:supervisor] No last-failed cache found, running all tests");
         }
-    } else {
-        filtered_tests
-    };
+    }
 
     if !is_json {
         eprintln!(

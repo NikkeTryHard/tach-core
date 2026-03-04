@@ -2969,6 +2969,19 @@ def init_session(root_dir: str):
 
     _SESSION.perform_collect()
 
+    # --lf filter: if TACH_LF_KEYWORD is set, deselect non-matching items
+    lf_keyword = os.environ.get("TACH_LF_KEYWORD", "")
+    if lf_keyword and _SESSION.items:
+        keywords = set(lf_keyword.split(" or "))
+        original_count = len(_SESSION.items)
+        _SESSION.items = [
+            item for item in _SESSION.items if any(kw in item.nodeid for kw in keywords)
+        ]
+        os.write(
+            2,
+            f"[tach:harness] --lf filter: {len(_SESSION.items)}/{original_count} tests\n".encode(),
+        )
+
     # TRIGGER SESSION-SCOPED AUTOUSE FIXTURES in the Zygote so workers
     # inherit their effects via fork CoW.  Framework plugins register
     # session-scoped autouse fixtures that do critical setup:
