@@ -45,6 +45,7 @@ struct SessionConfig {
     no_ignore: bool,
     no_fallback: bool,
     last_failed: bool,
+    failed_first: bool,
 }
 
 // =============================================================================
@@ -304,6 +305,7 @@ fn main() -> Result<()> {
             no_ignore: cli.no_ignore,
             no_fallback: cli.no_fallback,
             last_failed: cli.last_failed,
+            failed_first: cli.failed_first,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -330,6 +332,7 @@ fn main() -> Result<()> {
             no_ignore: cli.no_ignore,
             no_fallback: cli.no_fallback,
             last_failed: cli.last_failed,
+            failed_first: cli.failed_first,
         },
     )
 }
@@ -557,20 +560,32 @@ fn execute_session(
         })
         .collect();
 
-    if config.last_failed {
+    if config.last_failed || config.failed_first {
         let last_failed = read_lastfailed_cache(cwd);
         if !last_failed.is_empty() {
             let methods: Vec<String> = last_failed
                 .iter()
                 .filter_map(|id| id.split("::").last().map(|s| s.to_string()))
                 .collect();
-            let k_expr = methods.join(" or ");
-            unsafe { std::env::set_var("TACH_LF_KEYWORD", &k_expr) };
-            if !is_json {
-                eprintln!(
-                    "[tach:supervisor] --lf: re-running {} last-failed tests",
-                    last_failed.len()
-                );
+
+            if config.last_failed {
+                let k_expr = methods.join(" or ");
+                unsafe { std::env::set_var("TACH_LF_KEYWORD", &k_expr) };
+                if !is_json {
+                    eprintln!(
+                        "[tach:supervisor] --lf: re-running {} last-failed tests",
+                        last_failed.len()
+                    );
+                }
+            } else {
+                let k_expr = methods.join(" or ");
+                unsafe { std::env::set_var("TACH_FF_KEYWORD", &k_expr) };
+                if !is_json {
+                    eprintln!(
+                        "[tach:supervisor] --ff: running {} last-failed tests first",
+                        last_failed.len()
+                    );
+                }
             }
         } else if !is_json {
             eprintln!("[tach:supervisor] No last-failed cache found, running all tests");

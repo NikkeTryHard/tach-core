@@ -2982,6 +2982,18 @@ def init_session(root_dir: str):
             f"[tach:harness] --lf filter: {len(_SESSION.items)}/{original_count} tests\n".encode(),
         )
 
+    # --ff reorder: if TACH_FF_KEYWORD is set, move matching items to front
+    ff_keyword = os.environ.get("TACH_FF_KEYWORD", "")
+    if ff_keyword and _SESSION.items:
+        keywords = set(ff_keyword.split(" or "))
+        failed = [i for i in _SESSION.items if any(kw in i.nodeid for kw in keywords)]
+        rest = [i for i in _SESSION.items if not any(kw in i.nodeid for kw in keywords)]
+        _SESSION.items = failed + rest
+        os.write(
+            2,
+            f"[tach:harness] --ff reorder: {len(failed)} failed-first, {len(rest)} rest\n".encode(),
+        )
+
     # TRIGGER SESSION-SCOPED AUTOUSE FIXTURES in the Zygote so workers
     # inherit their effects via fork CoW.  Framework plugins register
     # session-scoped autouse fixtures that do critical setup:

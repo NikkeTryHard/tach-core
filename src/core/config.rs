@@ -165,6 +165,10 @@ pub struct Cli {
     #[arg(long = "lf")]
     pub last_failed: bool,
 
+    /// Run last-failed tests first, then the rest.
+    #[arg(long = "ff")]
+    pub failed_first: bool,
+
     /// Exit after N failures (--maxfail=N).
     #[arg(long, value_name = "N")]
     pub maxfail: Option<usize>,
