@@ -304,6 +304,10 @@ pub struct Cli {
     #[arg(long = "disable-plugin", value_name = "PLUGIN")]
     pub disable_plugins: Vec<String>,
 
+    /// Pytest-compatible plugin flag. Use -p no:PLUGIN to disable.
+    #[arg(short = 'p', value_name = "PLUGIN")]
+    pub plugins: Vec<String>,
+
     /// Show timing for slowest N tests.
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
@@ -367,7 +371,7 @@ pub struct Cli {
     ///
     /// This is a pytest-compatible alias for 'tach list'. It discovers
     /// all tests matching the given filters and prints them to stdout.
-    #[arg(long)]
+    #[arg(long, alias = "co")]
     pub collect_only: bool,
 
     // =========================================================================
@@ -827,6 +831,11 @@ impl MergedConfig {
 
         let mut disabled_plugins = file_config.plugins.disabled.clone();
         disabled_plugins.extend(cli.disable_plugins.clone());
+        for p in &cli.plugins {
+            if let Some(name) = p.strip_prefix("no:") {
+                disabled_plugins.push(name.to_string());
+            }
+        }
         disabled_plugins.sort();
         disabled_plugins.dedup();
 
