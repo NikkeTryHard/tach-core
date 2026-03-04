@@ -48,6 +48,8 @@ struct SessionConfig {
     failed_first: bool,
     cache_clear: bool,
     durations: Option<usize>,
+    verbose: u8,
+    _quiet: bool,
 }
 
 // =============================================================================
@@ -341,7 +343,7 @@ fn main() -> Result<()> {
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
-            durations: cli.durations,
+            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -370,7 +372,7 @@ fn main() -> Result<()> {
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
-            durations: cli.durations,
+            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
         },
     )
 }
@@ -402,7 +404,11 @@ fn execute_session(
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
-            if ProgressReporter::should_use_progress_bar() {
+            if config.verbose > 0 {
+                reporters.push(Box::new(DotsReporter::with_traceback_style(
+                    config.traceback_style,
+                )));
+            } else if ProgressReporter::should_use_progress_bar() {
                 let ratatui_reporter =
                     RatatuiReporter::with_traceback_style(config.traceback_style);
                 reporters.push(Box::new(ratatui_reporter));
