@@ -50,6 +50,7 @@ struct SessionConfig {
     durations: Option<usize>,
     verbose: u8,
     _quiet: bool,
+    _retries: Option<u32>,
 }
 
 // =============================================================================
@@ -378,6 +379,7 @@ fn main() -> Result<()> {
             durations: merged.durations,
             verbose: merged.verbose,
             _quiet: merged.quiet,
+            _retries: merged.retries,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -408,6 +410,7 @@ fn main() -> Result<()> {
             durations: merged.durations,
             verbose: merged.verbose,
             _quiet: merged.quiet,
+            _retries: merged.retries,
         },
     )
 }

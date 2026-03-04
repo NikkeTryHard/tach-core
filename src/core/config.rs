@@ -313,6 +313,11 @@ pub struct Cli {
     #[arg(long, value_name = "SECONDS", env = "TACH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// Retry failed tests up to N times to detect flaky tests.
+    /// Tests that pass on retry are reported as "flaky" instead of "failed".
+    #[arg(long, value_name = "N", env = "TACH_RETRIES")]
+    pub retries: Option<u32>,
+
     // =========================================================================
     // Diagnostics
     // =========================================================================
@@ -571,6 +576,9 @@ pub struct TachConfig {
     /// Disable filesystem/network isolation
     pub no_isolation: Option<bool>,
 
+    /// Retry failed tests up to N times
+    pub retries: Option<u32>,
+
     // =========================================================================
     // Output Control
     // =========================================================================
@@ -749,6 +757,7 @@ pub struct MergedConfig {
     pub watch: bool,
     pub timeout: u64,
     pub workers: usize,
+    pub retries: Option<u32>,
 
     // Isolation
     pub no_isolation: bool,
@@ -823,6 +832,7 @@ impl MergedConfig {
             watch: cli.watch,
             timeout,
             workers: cli.worker_count().unwrap_or_else(|| file_config.workers()),
+            retries: cli.retries.or(file_config.retries),
 
             no_isolation: cli.no_isolation || file_config.no_isolation.unwrap_or(false),
             force_toxic: cli.force_toxic || file_config.force_toxic.unwrap_or(false),
