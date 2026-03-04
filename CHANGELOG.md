@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-03-04
+
+### Added
+
+- **`tach clean` Command**: Remove .tach_cache directory and all cached data
+- **`--count` Flag**: Quick test count without running (supports `--format json`)
+- **`tach config` Improvements**: Shows configfile path, plugins, database sections
+- 2 new CLI tests (--count, combined flags integration)
+
 ## [0.5.5] - 2026-03-04
 
 ### Added
