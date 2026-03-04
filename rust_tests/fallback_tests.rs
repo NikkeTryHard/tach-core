@@ -65,3 +65,36 @@ fn test_exit_code_5_no_tests() {
         "No tests collected should return exit code 5 (pytest compat)"
     );
 }
+
+#[test]
+fn test_node_id_path_targeting() {
+    if !pytest_available() {
+        return;
+    }
+    let dir = project_root().join("tests/gauntlet_phase1");
+    if !dir.exists() {
+        return;
+    }
+    let test_files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("test_"))
+        .collect();
+    if test_files.is_empty() {
+        return;
+    }
+    let first_file = test_files[0].file_name();
+    let target = format!("tests/gauntlet_phase1/{}", first_file.to_string_lossy());
+    let output = Command::new(tach_binary())
+        .args(["--no-isolation", "--no-fallback", "-n", "1"])
+        .arg(&target)
+        .current_dir(project_root())
+        .output()
+        .expect("failed to run tach");
+
+    assert!(
+        output.status.success() || output.status.code() == Some(1),
+        "Node ID path should find tests, got exit code {:?}",
+        output.status.code()
+    );
+}
