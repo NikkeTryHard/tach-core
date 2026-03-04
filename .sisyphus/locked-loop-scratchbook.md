@@ -1,25 +1,28 @@
 # Locked Loop Scratchbook
 
-## [19:15 UTC] Clean output improvements
+## [19:45 UTC] Clean output - harness messages suppressed
 
 ### Pushed to master:
-- 5375a47: Suppress diagnostics, add short test summary info
-- 22cf439: Suppress allocator messages from stderr  
-- 04e677d: Suppress zygote cleanup messages
-- 8676459: Suppress worker ready and overlay messages
-- f819ba4: Suppress phase messages in quiet mode
+- 9692146: --collect-only matches pytest format (stdout, "N tests collected")
+- 23a8147: Harness diagnostic messages suppressed via TACH_QUIET
 
-### Output before:
-- 30+ lines of [tach:*] diagnostic noise before test dots
-- Worker/isolation messages interleaved with test output
-- No "short test summary info" section
+### Test execution output now clean:
+```
+collected 4 items
+.s.F
+============================== FAILURES ==============================
+test_fail
+---------
+...
+= short test summary info =
+FAILED test_fail - AssertionError: intentional failure
+==================== 1 failed, 2 passed, 1 skipped in 0.03s ====================
+```
 
-### Output after:
-- "collected N items" header
-- Clean test dots (.sFx)
-- FAILURES section with traceback
-- "short test summary info" matching pytest format
-- Colored summary line
+### Verified pre-existing test failures (228 in gauntlet)
+- All pre-existing, not caused by my changes
+- ImportError: unimplemented features (SQLAlchemy, client fixture)
+- TypeError: stale test code vs harness API mismatch
+- PermissionError: sandbox capability requirements
 
-### Django still works: 8783/51 with fallback
-### All 948 unit tests pass
+### All 948 unit tests pass, clippy clean
