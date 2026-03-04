@@ -2762,6 +2762,33 @@ def _neutralize_plugin_conflicts(cfg) -> None:
     except Exception:
         pass
 
+    # --- pytest-cov ---
+    # Detect pytest-cov and warn that tach has native PEP 669 coverage.
+    # Disable pytest-cov to avoid double-counting and overhead.
+    try:
+        cov_plugin = pm.get_plugin("pytest_cov")
+        if cov_plugin is not None:
+            if not _TACH_QUIET:
+                _tach_log(
+                    b"[tach:harness] pytest-cov detected; use tach --coverage instead for zero-overhead PEP 669 coverage\n",
+                )
+            pm.unregister(cov_plugin)
+    except Exception:
+        pass
+
+    # --- pytest-xdist ---
+    # Detect pytest-xdist and disable it; tach has native parallelism.
+    try:
+        xdist_plugin = pm.get_plugin("xdist")
+        if xdist_plugin is not None:
+            if not _TACH_QUIET:
+                _tach_log(
+                    b"[tach:harness] pytest-xdist detected; tach -n auto provides native parallelism\n",
+                )
+            pm.unregister(xdist_plugin)
+    except Exception:
+        pass
+
 
 def _unblock_django_db(cfg) -> None:
     """Restore the original BaseDatabaseWrapper.ensure_connection.
