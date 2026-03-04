@@ -631,8 +631,9 @@ fn execute_session(
         &toxicity_graph,
     )?;
 
-    // Restore stderr before exiting (LogRedirect drops and restores automatically)
     drop(log_redirect);
+
+    let _ = std::fs::remove_file(cwd.join(".tach_cache/_lf_filter.txt"));
 
     // --- PYTEST FALLBACK ---
     // When tests fail in tach, retry them with vanilla pytest to distinguish
