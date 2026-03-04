@@ -260,11 +260,12 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_TIMEOUT", timeout.to_string()) };
     }
     if let Some((_, node)) = cli.path.split_once("::") {
+        let kw = node.replace("::", " and ");
         let existing = std::env::var("TACH_KEYWORD").unwrap_or_default();
         let new_kw = if existing.is_empty() {
-            node.to_string()
+            kw
         } else {
-            format!("{existing} and {node}")
+            format!("{existing} and {kw}")
         };
         unsafe { std::env::set_var("TACH_KEYWORD", &new_kw) };
     }
