@@ -247,6 +247,9 @@ pub struct Cli {
     #[arg(long = "showlocals", short = 'l')]
     pub show_locals: bool,
 
+    #[arg(long)]
+    pub pdb: bool,
+
     #[arg(long, value_name = "PATH")]
     pub log_file: Option<std::path::PathBuf>,
 

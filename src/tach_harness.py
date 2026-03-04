@@ -2972,6 +2972,9 @@ def init_session(root_dir: str):
             if node_id:
                 args.extend(["--deselect", node_id])
 
+    if os.environ.get("TACH_PDB") == "1":
+        args.append("--pdb")
+
     log_file = os.environ.get("TACH_LOG_FILE")
     if log_file:
         args.extend(["--log-file", log_file])
