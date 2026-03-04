@@ -433,6 +433,9 @@ fn execute_session(
     if let Some(path) = junit_path {
         reporters.push(Box::new(JunitReporter::new(path.clone())));
     }
+    if tach_core::github::is_github_actions() {
+        reporters.push(Box::new(tach_core::github::GitHubReporter::new()));
+    }
     let mut reporter = MultiReporter::new(reporters);
 
     // Redirect stderr to log file for interactive terminal mode.

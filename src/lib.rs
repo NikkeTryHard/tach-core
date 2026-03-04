@@ -92,6 +92,7 @@ pub use isolation::snapshot;
 // Re-export reporting modules at top level for backward compatibility
 pub use reporting::coverage;
 pub use reporting::debugger;
+pub use reporting::github;
 pub use reporting::junit;
 pub use reporting::logcapture;
 pub use reporting::logredirect;

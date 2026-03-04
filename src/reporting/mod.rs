@@ -10,6 +10,7 @@
 
 pub mod coverage;
 pub mod debugger;
+pub mod github;
 pub mod junit;
 pub mod logcapture;
 pub mod logredirect;
