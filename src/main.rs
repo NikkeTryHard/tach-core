@@ -197,6 +197,10 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_NO_ISOLATION", "1") };
     }
 
+    if cli.verbose == 0 {
+        unsafe { std::env::set_var("TACH_QUIET", "1") };
+    }
+
     let target_file_path = if cli.path.contains("::") {
         cli.path.split("::").next().unwrap_or(&cli.path)
     } else {

@@ -918,7 +918,9 @@ impl Reporter for DotsReporter {
             ("booting", _) => "[tach] Booting zygote...".to_string(),
             _ => return,
         };
-        eprintln!("{}", msg);
+        if std::env::var("TACH_QUIET").is_err() {
+            eprintln!("{}", msg);
+        }
     }
 
     fn on_run_start(&mut self, count: usize) {
