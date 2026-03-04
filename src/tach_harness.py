@@ -2510,9 +2510,12 @@ class _MinimalFixtureRequest:
         self.node = session
         self.fspath = None
         self.scope = "session"
+        self._finalizers = []
+
+    def addfinalizer(self, finalizer):
+        self._finalizers.append(finalizer)
 
     def getfixturevalue(self, argname):
-        """Proxy to the session's fixture manager."""
         raise NotImplementedError(
             f"getfixturevalue('{argname}') not available in zygote context"
         )
@@ -2662,7 +2665,6 @@ def _trigger_session_fixtures(cfg, session) -> None:
                 f"for worker inheritance\n".encode(),
             )
 
-        # Register teardown for generator fixtures
         if _generators:
             import atexit
 
