@@ -2951,6 +2951,12 @@ def init_session(root_dir: str):
     if import_mode:
         args.extend(["--import-mode", import_mode])
 
+    override_ini = os.environ.get("TACH_OVERRIDE_INI", "")
+    if override_ini:
+        for ini_val in override_ini.split("\x1f"):
+            if ini_val:
+                args.extend(["-o", ini_val])
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

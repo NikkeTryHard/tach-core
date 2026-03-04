@@ -386,6 +386,10 @@ pub struct Cli {
     #[arg(long, value_name = "MODE", default_value = "prepend")]
     pub import_mode: String,
 
+    /// Override ini-file options (pytest -o compat). E.g. -o "markers=slow: slow tests"
+    #[arg(short = 'o', long = "override-ini", value_name = "INI")]
+    pub override_ini: Vec<String>,
+
     // =========================================================================
     // Passthrough Arguments
     // =========================================================================

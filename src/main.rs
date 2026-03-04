@@ -276,6 +276,9 @@ fn main() -> Result<()> {
     if let Some(ref markers) = merged.markers {
         unsafe { std::env::set_var("TACH_MARKERS", markers) };
     }
+    if !cli.override_ini.is_empty() {
+        unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
+    }
 
     if cli.import_mode != "prepend" {
         unsafe { std::env::set_var("TACH_IMPORT_MODE", &cli.import_mode) };
