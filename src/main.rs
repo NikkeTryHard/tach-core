@@ -768,9 +768,7 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
 
             let stdout = String::from_utf8_lossy(&result.stdout);
 
-            let mut _pytest_passed = 0usize;
             let mut pytest_failed = 0usize;
-            let mut pytest_error = 0usize;
 
             // Parse pytest's summary line: "N failed, M passed, K error in Xs"
             for line in stdout.lines().rev() {
@@ -780,19 +778,16 @@ sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
                         let words: Vec<&str> = part.split_whitespace().collect();
                         if let [num, kind, ..] = words.as_slice()
                             && let Ok(n) = num.parse::<usize>()
+                            && kind.starts_with("failed")
                         {
-                            if kind.starts_with("failed") {
-                                pytest_failed = n;
-                            } else if kind.starts_with("error") {
-                                pytest_error = n;
-                            }
+                            pytest_failed = n;
                         }
                     }
                     break;
                 }
             }
 
-            let real_failures = pytest_failed + pytest_error;
+            let real_failures = pytest_failed;
             let tach_specific = failed_ids.len().saturating_sub(real_failures);
 
             if !is_json {
