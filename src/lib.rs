@@ -63,6 +63,7 @@ pub mod cache;
 pub mod core;
 pub mod discovery;
 pub mod execution;
+pub mod fallback;
 pub mod hooks;
 pub mod isolation;
 pub mod reporting;

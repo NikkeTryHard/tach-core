@@ -2939,6 +2939,10 @@ def init_session(root_dir: str):
             plugin_name = key[len("TACH_DISABLE_PLUGIN_") :].lower().replace("_", "-")
             args.extend(["-p", f"no:{plugin_name}"])
 
+    import_mode = os.environ.get("TACH_IMPORT_MODE")
+    if import_mode:
+        args.extend(["--import-mode", import_mode])
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

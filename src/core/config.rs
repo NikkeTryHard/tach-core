@@ -130,6 +130,10 @@ pub struct Cli {
     )]
     pub workers: String,
 
+    /// Override root directory for test discovery (pytest --rootdir compat).
+    #[arg(long, value_name = "DIR")]
+    pub rootdir: Option<String>,
+
     // =========================================================================
     // Test Selection (pytest compatible)
     // =========================================================================
@@ -373,6 +377,14 @@ pub struct Cli {
     /// all tests matching the given filters and prints them to stdout.
     #[arg(long, alias = "co")]
     pub collect_only: bool,
+
+    // =========================================================================
+    // Import Mode
+    // =========================================================================
+    /// Python import mode for test modules (pytest --import-mode compat).
+    /// "prepend" (default), "append", or "importlib".
+    #[arg(long, value_name = "MODE", default_value = "prepend")]
+    pub import_mode: String,
 
     // =========================================================================
     // Passthrough Arguments

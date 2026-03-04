@@ -8,6 +8,7 @@ use tach_core::debugger::{self, DebugServer};
 use tach_core::discover_with_toxicity_options;
 use tach_core::discovery;
 use tach_core::errors::CategorizedError;
+use tach_core::fallback::pytest_fallback_retry;
 use tach_core::graph::ToxicityGraph;
 use tach_core::hooks::HookRegistry;
 use tach_core::junit::JunitReporter;
@@ -200,7 +201,16 @@ fn main() -> Result<()> {
 
     // Parse CLI arguments and merge with pyproject.toml config
     let cli = Cli::parse();
-    let cwd = std::env::current_dir()?;
+    let cwd = if let Some(ref rootdir) = cli.rootdir {
+        let p = std::path::Path::new(rootdir);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(p)
+        }
+    } else {
+        std::env::current_dir()?
+    };
     let file_config = config::load_tach_config(&cwd);
     config::load_env_from_pyproject(&cwd);
     let merged = config::MergedConfig::from_cli_and_file(&cli, &file_config);
@@ -265,6 +275,10 @@ fn main() -> Result<()> {
     }
     if let Some(ref markers) = merged.markers {
         unsafe { std::env::set_var("TACH_MARKERS", markers) };
+    }
+
+    if cli.import_mode != "prepend" {
+        unsafe { std::env::set_var("TACH_IMPORT_MODE", &cli.import_mode) };
     }
 
     let maxfail = if merged.exitfirst {
@@ -814,176 +828,6 @@ fn execute_session(
     }
 
     Ok(())
-}
-
-fn pytest_fallback_retry(
-    stats: &tach_core::scheduler::SchedulerStats,
-    cwd: &Path,
-    is_json: bool,
-    target_path: &str,
-) -> usize {
-    use std::io::Write;
-    use std::process::Command;
-    use std::time::Instant;
-
-    let failed_ids = &stats.failed_test_ids;
-    if failed_ids.is_empty() {
-        return 0;
-    }
-
-    let fallback_start = Instant::now();
-    if !is_json {
-        eprintln!(
-            "\n[tach:fallback] Retrying {} failed test(s) with pytest...",
-            failed_ids.len()
-        );
-    }
-
-    // Write a Python script that runs pytest with exact test name filtering.
-    // This avoids -k's substring matching (test_foo matches test_foobar)
-    // and OS arg length limits on large failure sets.
-    let cache_dir = cwd.join(".tach_cache");
-    if let Err(e) = std::fs::create_dir_all(&cache_dir)
-        && !is_json
-    {
-        eprintln!("[tach:fallback] Cannot create cache dir: {}, using /tmp", e);
-    }
-    let fallback_dir = if cache_dir.exists() {
-        &cache_dir
-    } else {
-        Path::new("/tmp")
-    };
-    let retry_file = fallback_dir.join("_fallback_retry.txt");
-    let runner_file = fallback_dir.join("_fallback_runner.py");
-    {
-        let mut f = match std::fs::File::create(&retry_file) {
-            Ok(f) => f,
-            Err(e) => {
-                if !is_json {
-                    eprintln!("[tach:fallback] Failed to create retry file: {}", e);
-                }
-                return stats.failed;
-            }
-        };
-        for id in failed_ids {
-            let _ = writeln!(f, "{}", id);
-        }
-    }
-
-    let results_file = fallback_dir.join("_fallback_results.txt");
-    let runner_code = format!(
-        r#"import sys, pathlib, pytest
-_IDS = set(pathlib.Path({retry_path:?}).read_text().splitlines())
-_RESULTS = pathlib.Path({results_path:?})
-class _TachFilter:
-    def pytest_collection_modifyitems(self, items):
-        items[:] = [i for i in items if _suffix(i.nodeid) in _IDS]
-    def pytest_runtest_logreport(self, report):
-        if report.when == "call" and report.failed:
-            with open(_RESULTS, "a") as f:
-                f.write(_suffix(report.nodeid) + "\n")
-def _suffix(nodeid):
-    parts = nodeid.split("::")
-    return "::".join(parts[1:]) if len(parts) > 1 else nodeid
-_RESULTS.unlink(missing_ok=True)
-sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
-    "--continue-on-collection-errors", {target:?}], plugins=[_TachFilter()]))
-"#,
-        retry_path = retry_file.display(),
-        results_path = results_file.display(),
-        target = if target_path.contains("::") {
-            target_path.split("::").next().unwrap_or(".")
-        } else {
-            target_path
-        },
-    );
-    if let Err(e) = std::fs::write(&runner_file, &runner_code) {
-        if !is_json {
-            eprintln!("[tach:fallback] Failed to write runner: {}", e);
-        }
-        return stats.failed;
-    }
-
-    let output = Command::new("python3")
-        .arg(&runner_file)
-        .current_dir(cwd)
-        .output();
-
-    let _ = std::fs::remove_file(&retry_file);
-    let _ = std::fs::remove_file(&runner_file);
-
-    match output {
-        Ok(result) => {
-            if result.status.code() == Some(127) {
-                if !is_json {
-                    eprintln!("[tach:fallback] pytest not found, reporting raw tach results");
-                }
-                return stats.failed;
-            }
-
-            let stdout = String::from_utf8_lossy(&result.stdout);
-
-            let mut pytest_failed = 0usize;
-
-            // Parse pytest's summary line: "N failed, M passed, K error in Xs"
-            for line in stdout.lines().rev() {
-                let line = line.trim();
-                if line.contains(" in ") && (line.contains("passed") || line.contains("failed")) {
-                    for part in line.split(',') {
-                        let words: Vec<&str> = part.split_whitespace().collect();
-                        if let [num, kind, ..] = words.as_slice()
-                            && let Ok(n) = num.parse::<usize>()
-                            && kind.starts_with("failed")
-                        {
-                            pytest_failed = n;
-                        }
-                    }
-                    break;
-                }
-            }
-
-            let real_failure_ids = read_lastfailed_cache_from(&results_file);
-            let real_failures = if real_failure_ids.is_empty() {
-                pytest_failed
-            } else {
-                real_failure_ids.len()
-            };
-            let tach_specific = failed_ids.len().saturating_sub(real_failures);
-
-            if !is_json {
-                if tach_specific > 0 {
-                    eprintln!(
-                        "[tach:fallback] {} test(s) passed in pytest (tach-specific failures)",
-                        tach_specific
-                    );
-                }
-                if real_failures > 0 {
-                    eprintln!(
-                        "[tach:fallback] {} test(s) failed in both tach and pytest (real failures)",
-                        real_failures
-                    );
-                }
-                let elapsed = fallback_start.elapsed();
-                let total_effective_pass = stats.passed + tach_specific;
-                eprintln!(
-                    "[tach:fallback] Fallback completed in {:.1}s",
-                    elapsed.as_secs_f64()
-                );
-                eprintln!(
-                    "[tach:fallback] Final: {} passed, {} failed, {} skipped",
-                    total_effective_pass, real_failures, stats.skipped
-                );
-            }
-
-            real_failures
-        }
-        Err(e) => {
-            if !is_json {
-                eprintln!("[tach:fallback] Failed to run pytest: {}", e);
-            }
-            stats.failed
-        }
-    }
 }
 
 /// Handle the `self-test` subcommand
