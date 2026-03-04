@@ -245,6 +245,13 @@ fn main() -> Result<()> {
     if let Some(mf) = maxfail {
         unsafe { std::env::set_var("TACH_MAXFAIL", mf.to_string()) };
     }
+    if cli.force_toxic {
+        unsafe { std::env::set_var("TACH_FORCE_TOXIC", "1") };
+    }
+    for plugin in &cli.disable_plugins {
+        let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
+        unsafe { std::env::set_var(&key, "1") };
+    }
 
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();

@@ -226,17 +226,15 @@ impl Scheduler {
     /// Sort tests into safe/toxic queues for dual-path execution
     /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
     fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
-        // Sort by file path to group tests from the same module together.
-        // This reduces cross-module state pollution when workers are reused,
-        // since tests from the same file share the same imports and setup.
         tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
 
+        let force_toxic = std::env::var("TACH_FORCE_TOXIC").unwrap_or_default() == "1";
         let mut safe_count = 0usize;
         let mut toxic_count = 0usize;
 
         for (idx, test) in tests.into_iter().enumerate() {
             let test_id = idx as u32;
-            if test.is_toxic {
+            if test.is_toxic || force_toxic {
                 self.toxic_queue.push_back((test_id, test));
                 toxic_count += 1;
             } else {
