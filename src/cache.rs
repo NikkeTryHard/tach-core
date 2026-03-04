@@ -159,4 +159,38 @@ mod tests {
         write_interrupted_cache(dir.path(), &[]);
         assert!(!dir.path().join(".tach_cache/interrupted").exists());
     }
+
+    #[test]
+    fn test_interrupted_cache_preserves_order() {
+        let dir = TempDir::new().unwrap();
+        let ids: Vec<String> = (0..100).map(|i| format!("test_{i}")).collect();
+        write_interrupted_cache(dir.path(), &ids);
+        let loaded = read_interrupted_cache(dir.path());
+        assert_eq!(loaded, ids);
+    }
+
+    #[test]
+    fn test_interrupted_cache_with_special_chars() {
+        let dir = TempDir::new().unwrap();
+        let ids = vec![
+            "test_file.py::TestClass::test_method[param1]".to_string(),
+            "tests/sub dir/test_foo.py::test_bar".to_string(),
+        ];
+        write_interrupted_cache(dir.path(), &ids);
+        let loaded = read_interrupted_cache(dir.path());
+        assert_eq!(loaded, ids);
+    }
+
+    #[test]
+    fn test_clear_nonexistent_interrupted_cache() {
+        let dir = TempDir::new().unwrap();
+        clear_interrupted_cache(dir.path());
+    }
+
+    #[test]
+    fn test_read_interrupted_cache_nonexistent() {
+        let dir = TempDir::new().unwrap();
+        let loaded = read_interrupted_cache(dir.path());
+        assert!(loaded.is_empty());
+    }
 }
