@@ -547,11 +547,29 @@ impl Reporter for HumanReporter {
     }
 
     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+        let secs = duration_ms as f64 / 1000.0;
+        let mut parts = Vec::new();
+        if failed > 0 {
+            parts.push(format!("\x1b[31m{} failed\x1b[0m", failed));
+        }
+        if passed > 0 {
+            parts.push(format!("\x1b[32m{} passed\x1b[0m", passed));
+        }
+        if skipped > 0 {
+            parts.push(format!("\x1b[33m{} skipped\x1b[0m", skipped));
+        }
+        let status_line = if failed > 0 {
+            format!("\x1b[31m=\x1b[0m {} in {:.2}s \x1b[31m=\x1b[0m", parts.join(", "), secs)
+        } else {
+            format!("\x1b[32m=\x1b[0m {} in {:.2}s \x1b[32m=\x1b[0m", parts.join(", "), secs)
+        };
+        let separator = if failed > 0 {
+            "\x1b[31m".to_string() + &"=".repeat(20) + "\x1b[0m"
+        } else {
+            "\x1b[32m".to_string() + &"=".repeat(20) + "\x1b[0m"
+        };
         eprintln!();
-        eprintln!(
-            "[tach:reporter] {} passed, {} failed, {} skipped in {}ms",
-            passed, failed, skipped, duration_ms
-        );
+        eprintln!("{} {} {}", separator, status_line, separator);
     }
 
     fn on_error(&mut self, message: &str) {
