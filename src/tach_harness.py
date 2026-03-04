@@ -18,6 +18,13 @@ import re
 import math
 import logging
 import warnings as warnings_module
+
+
+def _tach_log(msg: bytes) -> None:
+    if os.environ.get("TACH_QUIET") != "1":
+        os.write(2, msg)
+
+
 import pytest
 import _pytest.runner
 import _pytest.main
@@ -455,8 +462,7 @@ def _configure_asyncio_from_pyproject(root_dir: str) -> None:
             EventLoopManager.get_instance().configure(
                 loop_scope=loop_scope, auto_mode=auto_mode
             )
-            os.write(
-                2,
+            _tach_log(
                 f"[tach:harness] Asyncio config: mode={asyncio_mode}, loop_scope={loop_scope}\n".encode(),
             )
     except Exception as e:
@@ -1902,21 +1908,19 @@ def log_plugin_warnings() -> None:
     result = detect_installed_plugins()
 
     if result.get("error"):
-        os.write(2, f"[tach:plugins] Warning: {result['error']}\n".encode())
+        _tach_log(f"[tach:plugins] Warning: {result['error']}\n".encode())
         return
 
     # Log unsupported plugins as warnings
     for plugin, reason in result.get("unsupported", {}).items():
-        os.write(
-            2,
+        _tach_log(
             f"[tach:plugins] WARNING: Plugin '{plugin}' is not supported: {reason}\n".encode(),
         )
 
     # Log unknown plugins as info (they might work)
     unknown = result.get("unknown", [])
     if unknown:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:plugins] INFO: Unknown plugins detected (may or may not work): {', '.join(unknown)}\n".encode(),
         )
 
@@ -1924,8 +1928,7 @@ def log_plugin_warnings() -> None:
     installed_count = len(result.get("installed", []))
     supported_count = len(result.get("supported", []))
     if installed_count > 0:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:plugins] Detected {installed_count} pytest plugins ({supported_count} supported)\n".encode(),
         )
 
@@ -2483,15 +2486,13 @@ def _override_db_session_fixtures(session) -> None:
                     overridden.append(argname)
 
         if overridden:
-            os.write(
-                2,
+            _tach_log(
                 f"[tach:harness] Overrode {len(overridden)} DB session fixtures "
                 f"with no-ops: {', '.join(overridden)} "
                 f"(tach manages DB lifecycle)\n".encode(),
             )
     except Exception as e:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] WARN: DB fixture override failed: {e}\n".encode(),
         )
 
@@ -2557,8 +2558,7 @@ def _trigger_session_fixtures(cfg, session) -> None:
         if not autouse_names:
             return
 
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] Found {len(autouse_names)} session-scoped "
             f"autouse fixtures: {', '.join(autouse_names)}\n".encode(),
         )
@@ -2597,8 +2597,7 @@ def _trigger_session_fixtures(cfg, session) -> None:
                 return None
 
             if _is_db_fixture(name):
-                os.write(
-                    2,
+                _tach_log(
                     f"[tach:harness] Skipping DB fixture: {name}\n".encode(),
                 )
                 executed[name] = None
@@ -2625,13 +2624,11 @@ def _trigger_session_fixtures(cfg, session) -> None:
                     executed[name] = val
                 else:
                     executed[name] = result
-                os.write(
-                    2,
+                _tach_log(
                     f"[tach:harness] Executed session fixture: {name}\n".encode(),
                 )
             except Exception as e:
-                os.write(
-                    2,
+                _tach_log(
                     f"[tach:harness] WARN: Session fixture '{name}' "
                     f"failed: {e}\n".encode(),
                 )
@@ -2659,8 +2656,7 @@ def _trigger_session_fixtures(cfg, session) -> None:
                 overridden_count = 0
                 overridden_count += 1
         if executed:
-            os.write(
-                2,
+            _tach_log(
                 f"[tach:harness] Cached {len(executed)} session fixture results "
                 f"for worker inheritance\n".encode(),
             )
@@ -2678,8 +2674,7 @@ def _trigger_session_fixtures(cfg, session) -> None:
             atexit.register(_teardown)
 
     except Exception as e:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] WARN: Session fixture trigger failed: {e}\n".encode(),
         )
 
@@ -2743,8 +2738,7 @@ def _neutralize_plugin_conflicts(cfg) -> None:
                 asyncio_plugin,
                 keep={"pytest_configure", "pytest_addoption"},
             )
-            os.write(
-                2,
+            _tach_log(
                 b"[tach:harness] pytest-asyncio: kept configure, removed per-test hooks\n",
             )
     except Exception:
@@ -2776,8 +2770,7 @@ def _unblock_django_db(cfg) -> None:
 
         blocker = cfg.stash[blocking_manager_key]
         blocker.unblock()
-        os.write(
-            2,
+        _tach_log(
             b"[tach:harness] DB blocker neutralized (tach manages isolation)\n",
         )
     except (ImportError, KeyError):
@@ -2795,16 +2788,14 @@ def _unblock_django_db(cfg) -> None:
                         and getattr(original, "__name__", "") == "_blocking_wrapper"
                     ):
                         BaseDatabaseWrapper.ensure_connection = original
-                        os.write(
-                            2,
+                        _tach_log(
                             b"[tach:harness] DB blocker neutralized via MRO fallback\n",
                         )
                         break
         except ImportError:
             pass
     except Exception as e:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] WARN: Failed to unblock Django DB: {e}\n".encode(),
         )
 
@@ -2838,8 +2829,7 @@ def _selective_unregister_hooks(pm, plugin, keep: set[str]) -> None:
             wrapper = types.SimpleNamespace(**kept_attrs)
             pm.register(wrapper, name=f"{plugin_name}_tach_stripped")
     except Exception as e:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] WARN: selective unregister failed for {plugin}: {e}\n".encode(),
         )
 
@@ -2860,7 +2850,7 @@ def init_session(root_dir: str):
     """
     global _SESSION, _ITEMS_MAP, _SESSION_HOOK_EFFECTS, _PARAM_FUZZY_INDEX
 
-    os.write(2, f"[tach:harness] init_session: {root_dir}\n".encode())
+    _tach_log(f"[tach:harness] init_session: {root_dir}\n".encode())
 
     # PLUGIN DETECTION (v0.2.0): Warn about unsupported plugins
     log_plugin_warnings()
@@ -2976,8 +2966,7 @@ def init_session(root_dir: str):
     _SESSION_HOOK_EFFECTS = env_effects + sys_path_effects
 
     if _SESSION_HOOK_EFFECTS:
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] Recorded {len(_SESSION_HOOK_EFFECTS)} session hook effects "
             f"({len(env_effects)} env, {len(sys_path_effects)} sys.path)\n".encode(),
         )
@@ -3002,8 +2991,7 @@ def init_session(root_dir: str):
         _SESSION.items = [
             item for item in _SESSION.items if _nodeid_suffix(item.nodeid) in lf_ids
         ]
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] --lf filter: {len(_SESSION.items)}/{original_count} tests\n".encode(),
         )
 
@@ -3014,8 +3002,7 @@ def init_session(root_dir: str):
         failed = [i for i in _SESSION.items if _nodeid_suffix(i.nodeid) in ff_ids]
         rest = [i for i in _SESSION.items if _nodeid_suffix(i.nodeid) not in ff_ids]
         _SESSION.items = failed + rest
-        os.write(
-            2,
+        _tach_log(
             f"[tach:harness] --ff reorder: {len(failed)} failed-first, {len(rest)} rest\n".encode(),
         )
 
@@ -3083,8 +3070,7 @@ def init_session(root_dir: str):
                         )
 
     fuzzy_count = sum(len(v) for v in _PARAM_FUZZY_INDEX.values())
-    os.write(
-        2,
+    _tach_log(
         f"[tach:harness] Pre-collected {len(_ITEMS_MAP)} tests ({fuzzy_count} fuzzy parametrize entries)\n".encode(),
     )
 
