@@ -51,3 +51,62 @@ pub fn read_lastfailed_cache_from(path: &Path) -> Vec<String> {
         Err(_) => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_duration_cache_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let durations = vec![("test_a".to_string(), 100), ("test_b".to_string(), 250)];
+        write_duration_cache(dir.path(), &durations);
+        let loaded = read_duration_cache(dir.path());
+        assert_eq!(loaded.get("test_a"), Some(&100));
+        assert_eq!(loaded.get("test_b"), Some(&250));
+        assert_eq!(loaded.len(), 2);
+    }
+
+    #[test]
+    fn test_duration_cache_empty() {
+        let dir = TempDir::new().unwrap();
+        let loaded = read_duration_cache(dir.path());
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_lastfailed_cache_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let ids = vec!["test_a".to_string(), "test_b".to_string()];
+        write_lastfailed_cache(dir.path(), &ids);
+        let loaded = read_lastfailed_cache(dir.path());
+        assert_eq!(loaded, ids);
+    }
+
+    #[test]
+    fn test_lastfailed_cache_empty_clears_file() {
+        let dir = TempDir::new().unwrap();
+        let ids = vec!["test_a".to_string()];
+        write_lastfailed_cache(dir.path(), &ids);
+        assert!(dir.path().join(".tach_cache/lastfailed").exists());
+
+        write_lastfailed_cache(dir.path(), &[]);
+        assert!(!dir.path().join(".tach_cache/lastfailed").exists());
+    }
+
+    #[test]
+    fn test_lastfailed_cache_from_nonexistent() {
+        let result = read_lastfailed_cache_from(Path::new("/nonexistent/path"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_duration_cache_with_colons_in_name() {
+        let dir = TempDir::new().unwrap();
+        let durations = vec![("test_file::TestClass::test_method".to_string(), 42)];
+        write_duration_cache(dir.path(), &durations);
+        let loaded = read_duration_cache(dir.path());
+        assert_eq!(loaded.get("test_file::TestClass::test_method"), Some(&42));
+    }
+}
