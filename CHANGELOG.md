@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-03-04
+
+### Added
+
+- **Session Header Banner**: pytest-style header showing version and platform
+- **`--confcutdir DIR`**: Stop conftest.py discovery at directory boundary
+- **`-o`/`--override-ini`**: Override ini-file options (pytest -o compat)
+- **Graceful pytest Import Error**: Actionable error message when pytest missing
+
+### Changed
+
+- 5 new edge case tests for GitHub reporter (multiframe, empty, sanitization)
+
 ## [0.4.2] - 2026-03-04
 
 ### Added
