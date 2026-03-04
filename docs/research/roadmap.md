@@ -254,9 +254,9 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0,P2_1,P2_2,P2_3,P5_0,P5_6,P7_4,P8_1 done
-    class P6_0,P6_1,P8_0,P9_2,P9_5,P9_7 done
-    class P5_1 inProgress
-    class P5_3,P5_5,P6_2,P7_0,P7_1,P7_6,P9_6 canStart
+    class P6_0,P6_1,P6_2,P6_4,P8_0,P9_2,P9_5,P9_7 done
+    class P5_1 done
+    class P5_3,P5_5,P6_3,P6_5,P7_0,P7_1,P7_6,P9_6 canStart
     class P2_4,P2_5 done
     class P3_0,P3_1 done
     class P3_2,P3_3 pending
@@ -273,17 +273,18 @@ flowchart TB
 
 **Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🟣 Milestone
 
-**Current Status:**
+**Current Status (v0.5.1):**
 
 - Phase 1 (0.1.x): Complete
 - Phase 2 (0.2.x): Complete - 0.2.0-0.2.5 all done
 - Phase 3 (0.3.x): 0.3.0 + 0.3.1 done, 0.3.2-0.3.3 pending
-- Phase 5 (0.5.x): 0.5.0 (tracebacks + showlocals) done, 0.5.1 in progress, 0.5.6 done
-- Phase 6 (0.6.x): 0.6.0 (config schema) + 0.6.1 (env denylist) done
+- Phase 5 (0.5.x): 0.5.0 (tracebacks + showlocals) + 0.5.1 (debug mode) + 0.5.6 (PEP 669) done
+- Phase 6 (0.6.x): 0.6.0 (config schema) + 0.6.1 (env denylist) + 0.6.2 (toxicity config) + 0.6.4 (scheduler persistence/resume) done
 - Phase 7 (0.7.x): 0.7.4 (TLS calibration) done
-- Phase 8 (0.8.x): 0.8.0 (GitHub Actions) + 0.8.1 (JUnit XML) done
+- Phase 8 (0.8.x): 0.8.0 (GitHub Actions + GITHUB_OUTPUT) + 0.8.1 (JUnit XML) done
 - Phase 9 (0.9.x): 0.9.2 (CleanupGuard) + 0.9.5 (stale cleanup) + 0.9.7 (protocol versioning) done
 - Phase 10: Not started
+- **Additional**: tach init, tach config, --cache-show, ~28 pytest-compat CLI flags, 1003 tests
 
 ---
 

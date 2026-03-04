@@ -6,11 +6,12 @@
 ## [21:40 UTC] Released v0.4.2 (rootdir, import-mode, fallback extract)
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
 ## [22:15 UTC] Released v0.5.0 (init cmd, color, validation)
+## [22:35 UTC] Released v0.5.1 (config cmd, cache-show, 1000 tests)
 
-## [22:35 UTC] Iteration 12 - 1000 TESTS MILESTONE
-- Extracted parse_pytest_summary_failed() from fallback inline code
-- 8 unit tests for pytest summary parsing
-- tach config command for debugging merged configuration
-- --runxfail, --cache-show flags
-- HIT 1000 TESTS (up from 948 at session start)
-- Session total: v0.3.1->v0.5.0, 52 new tests, ~25 CLI flags, 55+ commits
+## [22:45 UTC] Iteration 14
+- feat(0.6.4): Scheduler persistence - resume interrupted runs
+- --resume flag: skip already-completed tests from interrupted run
+- Save completed tests to .tach_cache/interrupted on SIGINT
+- Clear interrupted cache on successful completion
+- 3 new tests, 1003 total passing
+- Session: v0.3.1->v0.5.1, 55 new tests, ~28 CLI flags, 60+ commits, 6 releases

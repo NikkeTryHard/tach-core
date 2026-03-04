@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-03-04
+
+### Added
+
+- **Scheduler Persistence** (0.6.4): `--resume` flag to continue interrupted runs
+- Saves completed test IDs to `.tach_cache/interrupted` on SIGINT
+- Clears interrupted cache on successful completion
+- 3 new cache tests for interrupted state
+
+### Changed
+
+- Updated roadmap status: 14 items now marked done across phases 5-9
+
 ## [0.5.1] - 2026-03-04
 
 ### Added
