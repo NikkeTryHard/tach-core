@@ -7,7 +7,9 @@
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
 ## [22:15 UTC] Released v0.5.0 (init cmd, color, validation)
 
-## [22:25 UTC] Iteration 9
-- --log-file PATH for saving test output to file
-- --timeout-method signal|thread with clap validation
-- 992 tests, 50+ commits on master, 5 releases
+## [22:25 UTC] Iteration 10
+- --runxfail flag wired to pytest
+- --cache-show command to display lastfailed/duration cache contents
+- --log-file and --timeout-method from last iteration
+- 992 tests, 50+ commits, 5 releases
+- Session: v0.3.1->v0.5.0, 44 new tests, ~25 new CLI flags

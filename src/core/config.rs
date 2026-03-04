@@ -494,8 +494,12 @@ pub enum Commands {
     ///   tach completions bash > ~/.bash_completion.d/tach
     ///   tach completions zsh > ~/.zsh/completions/_tach
     ///   tach completions fish > ~/.config/fish/completions/tach.fish
-    /// Initialize [tool.tach] configuration in pyproject.toml
+
+    /// Initialize [tool.tach] configuration in pyproject.toml.
     Init,
+
+    /// Show effective merged configuration (CLI + pyproject.toml).
+    Config,
 
     Completions {
         /// Shell to generate completions for

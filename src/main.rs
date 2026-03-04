@@ -384,6 +384,9 @@ fn main() -> Result<()> {
         Some(Commands::Init) => {
             return handle_init_command(&cwd);
         }
+        Some(Commands::Config) => {
+            return handle_config_command(&cwd, &merged);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -891,6 +894,49 @@ fn handle_cache_show(cwd: &std::path::Path) -> Result<()> {
         eprintln!("durations: (empty)");
     }
 
+    Ok(())
+}
+
+fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -> Result<()> {
+    eprintln!("rootdir: {}", cwd.display());
+    eprintln!("version: {}", env!("CARGO_PKG_VERSION"));
+    eprintln!();
+    eprintln!("[execution]");
+    eprintln!("  workers = {}", merged.workers);
+    eprintln!("  timeout = {}s", merged.timeout);
+    eprintln!("  isolation = {}", merged.isolation_strategy);
+    eprintln!("  force_toxic = {}", merged.force_toxic);
+    eprintln!("  no_isolation = {}", merged.no_isolation);
+    eprintln!("  no_fallback = {}", merged.no_fallback);
+    eprintln!();
+    eprintln!("[selection]");
+    eprintln!("  path = {}", merged.path);
+    eprintln!("  pattern = {}", merged.test_pattern);
+    if let Some(ref k) = merged.keyword {
+        eprintln!("  keyword = {k}");
+    }
+    if let Some(ref m) = merged.markers {
+        eprintln!("  markers = {m}");
+    }
+    eprintln!("  exitfirst = {}", merged.exitfirst);
+    if let Some(mf) = merged.maxfail {
+        eprintln!("  maxfail = {mf}");
+    }
+    eprintln!();
+    eprintln!("[output]");
+    eprintln!("  traceback = {:?}", merged.traceback);
+    eprintln!("  verbose = {}", merged.verbose);
+    eprintln!("  show_locals = {}", merged.show_locals);
+    eprintln!("  no_header = {}", merged.no_header);
+    if let Some(d) = merged.durations {
+        eprintln!("  durations = {d}");
+    }
+    eprintln!();
+    eprintln!("[coverage]");
+    eprintln!("  enabled = {}", merged.coverage);
+    if !merged.coverage_source.is_empty() {
+        eprintln!("  source = {:?}", merged.coverage_source);
+    }
     Ok(())
 }
 
