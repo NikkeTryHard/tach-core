@@ -744,10 +744,18 @@ fn execute_session(
     // Write the lastfailed cache. If fallback ran, use only the REAL failures
     // (tests that failed in both tach and pytest). Otherwise use all tach failures.
     let results_file = cwd.join(".tach_cache/_fallback_results.txt");
-    if results_file.exists() {
-        let real_failures = read_lastfailed_cache_from(&results_file);
+    let results_file_tmp = Path::new("/tmp/_fallback_results.txt");
+    let actual_results = if results_file.exists() {
+        Some(results_file.as_path())
+    } else if results_file_tmp.exists() {
+        Some(results_file_tmp)
+    } else {
+        None
+    };
+    if let Some(rf) = actual_results {
+        let real_failures = read_lastfailed_cache_from(rf);
         write_lastfailed_cache(cwd, &real_failures);
-        let _ = std::fs::remove_file(&results_file);
+        let _ = std::fs::remove_file(rf);
     } else {
         write_lastfailed_cache(cwd, &stats.failed_test_ids);
     }
@@ -812,9 +820,14 @@ fn pytest_fallback_retry(
     // This avoids -k's substring matching (test_foo matches test_foobar)
     // and OS arg length limits on large failure sets.
     let cache_dir = cwd.join(".tach_cache");
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let retry_file = cache_dir.join("_fallback_retry.txt");
-    let runner_file = cache_dir.join("_fallback_runner.py");
+    if let Err(e) = std::fs::create_dir_all(&cache_dir)
+        && !is_json
+    {
+        eprintln!("[tach:fallback] Cannot create cache dir: {}, using /tmp", e);
+    }
+    let fallback_dir = if cache_dir.exists() { &cache_dir } else { Path::new("/tmp") };
+    let retry_file = fallback_dir.join("_fallback_retry.txt");
+    let runner_file = fallback_dir.join("_fallback_runner.py");
     {
         let mut f = match std::fs::File::create(&retry_file) {
             Ok(f) => f,
@@ -830,7 +843,7 @@ fn pytest_fallback_retry(
         }
     }
 
-    let results_file = cache_dir.join("_fallback_results.txt");
+    let results_file = fallback_dir.join("_fallback_results.txt");
     let runner_code = format!(
         r#"import sys, pathlib, pytest
 _IDS = set(pathlib.Path({retry_path:?}).read_text().splitlines())
