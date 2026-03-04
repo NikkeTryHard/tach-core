@@ -2903,6 +2903,14 @@ def init_session(root_dir: str):
         "no:sugar",
     ]
 
+    keyword = os.environ.get("TACH_KEYWORD", "")
+    if keyword:
+        args.extend(["-k", keyword])
+
+    markers = os.environ.get("TACH_MARKERS", "")
+    if markers:
+        args.extend(["-m", markers])
+
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 

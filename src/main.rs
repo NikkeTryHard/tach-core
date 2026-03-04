@@ -230,6 +230,13 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("PYTHONIOENCODING", "utf-8") };
     }
 
+    if let Some(ref keyword) = cli.keyword {
+        unsafe { std::env::set_var("TACH_KEYWORD", keyword) };
+    }
+    if let Some(ref markers) = cli.markers {
+        unsafe { std::env::set_var("TACH_MARKERS", markers) };
+    }
+
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
