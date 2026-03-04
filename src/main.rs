@@ -632,8 +632,26 @@ fn pytest_fallback_retry(
         "--tb=no".to_string(),
         "-q".to_string(),
         "--no-header".to_string(),
+        "--continue-on-collection-errors".to_string(),
     ];
-    args.extend(failed_ids.iter().cloned());
+
+    // Build -k expression from failed test names.
+    // Test IDs from tach are in "ClassName::method" format.
+    // We use pytest's -k expression matching which does substring match.
+    let k_expr: Vec<String> = failed_ids
+        .iter()
+        .filter_map(|id| {
+            // Extract "method" from "Class::method" for unique matching
+            id.split("::").last().map(|s| s.to_string())
+        })
+        .collect();
+
+    if !k_expr.is_empty() {
+        args.push("-k".to_string());
+        args.push(k_expr.join(" or "));
+    }
+
+    args.push(".".to_string());
 
     let output = Command::new("python3")
         .args(&args)
