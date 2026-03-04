@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-04
+
+### Added
+
+- **`--rootdir DIR`**: Override root directory for test discovery (pytest compat)
+- **`--import-mode MODE`**: Python import mode (prepend/append/importlib)
+- **`--sw` (Stepwise)**: Stop on first failure, resume from that test next run
+- **`--no-header`**: Suppress platform/version banner
+- **`--co` alias**: Shorthand for `--collect-only`
+- **`-p no:PLUGIN`**: Pytest-compatible plugin disable syntax
+- 5 verification tests for new CLI features
+
+### Changed
+
+- Extracted `pytest_fallback_retry` into `src/fallback.rs` (main.rs -200 lines)
+- main.rs: 1900 -> 1703 lines after cache + fallback extraction
+
 ## [0.4.1] - 2026-03-04
 
 ### Added
