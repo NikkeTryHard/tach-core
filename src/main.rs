@@ -705,12 +705,13 @@ fn pytest_fallback_retry(
         );
     }
 
-    // Write test names to a file and use a pytest plugin to filter by exact
-    // set membership. This avoids -k's substring matching (test_foo matches
-    // test_foobar) and OS arg length limits on large failure sets.
+    // Write a Python script that runs pytest with exact test name filtering.
+    // This avoids -k's substring matching (test_foo matches test_foobar)
+    // and OS arg length limits on large failure sets.
     let cache_dir = cwd.join(".tach_cache");
     let _ = std::fs::create_dir_all(&cache_dir);
     let retry_file = cache_dir.join("_fallback_retry.txt");
+    let runner_file = cache_dir.join("_fallback_runner.py");
     {
         let mut f = match std::fs::File::create(&retry_file) {
             Ok(f) => f,
@@ -727,43 +728,31 @@ fn pytest_fallback_retry(
         }
     }
 
-
-    let mut args = vec![
-        "-m".to_string(),
-        "pytest".to_string(),
-        "--tb=no".to_string(),
-        "-q".to_string(),
-        "--no-header".to_string(),
-        "--continue-on-collection-errors".to_string(),
-    ];
-
-    // Build -k expression from class::method pairs for more precise matching.
-    // Use "(ClassName and method)" to reduce false positives vs bare method names.
-    let k_parts: Vec<String> = failed_ids
-        .iter()
-        .map(|id| {
-            let parts: Vec<&str> = id.split("::").collect();
-            if parts.len() >= 2 {
-                format!("({} and {})", parts[parts.len() - 2], parts[parts.len() - 1])
-            } else {
-                parts.last().unwrap_or(&id.as_str()).to_string()
-            }
-        })
-        .collect();
-
-    if !k_parts.is_empty() {
-        args.push("-k".to_string());
-        args.push(k_parts.join(" or "));
+    let runner_code = format!(
+        r#"import sys, pathlib, pytest
+_NAMES = set(pathlib.Path({retry_path:?}).read_text().splitlines())
+class _TachFilter:
+    def pytest_collection_modifyitems(self, items):
+        items[:] = [i for i in items if i.name in _NAMES]
+sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
+    "--continue-on-collection-errors", "."], plugins=[_TachFilter()]))
+"#,
+        retry_path = retry_file.display()
+    );
+    if let Err(e) = std::fs::write(&runner_file, &runner_code) {
+        if !is_json {
+            eprintln!("[tach:fallback] Failed to write runner: {}", e);
+        }
+        return stats.failed;
     }
 
-    args.push(".".to_string());
-
     let output = Command::new("python3")
-        .args(&args)
+        .arg(&runner_file)
         .current_dir(cwd)
         .output();
 
     let _ = std::fs::remove_file(&retry_file);
+    let _ = std::fs::remove_file(&runner_file);
 
     match output {
         Ok(result) => {
