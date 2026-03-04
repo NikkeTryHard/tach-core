@@ -397,6 +397,9 @@ fn main() -> Result<()> {
         Some(Commands::Clean) => {
             return handle_clean_command(&cwd);
         }
+        Some(Commands::Fixtures) => {
+            return handle_fixtures_command(&cwd, merged.no_ignore);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1062,6 +1065,30 @@ fn handle_markers_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> 
             println!("@pytest.mark.{marker}");
         }
         eprintln!("\n{} markers found", markers.len());
+    }
+    Ok(())
+}
+
+fn handle_fixtures_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
+    let result = tach_core::discovery::scanner::discover(cwd, no_ignore)?;
+    let mut fixtures = std::collections::BTreeMap::new();
+    for module in &result.modules {
+        for fixture in &module.fixtures {
+            fixtures.entry(fixture.name.clone()).or_insert_with(|| {
+                (
+                    format!("{:?}", fixture.scope),
+                    module.path.display().to_string(),
+                )
+            });
+        }
+    }
+    if fixtures.is_empty() {
+        eprintln!("no fixtures found");
+    } else {
+        for (name, (scope, file)) in &fixtures {
+            println!("{name} [{scope}] -- {file}");
+        }
+        eprintln!("\n{} fixtures found", fixtures.len());
     }
     Ok(())
 }

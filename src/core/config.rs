@@ -512,8 +512,9 @@ pub enum Commands {
 
     Markers,
 
-    /// Remove all .tach_cache files (durations, lastfailed, interrupted).
     Clean,
+
+    Fixtures,
 
     Completions {
         /// Shell to generate completions for
