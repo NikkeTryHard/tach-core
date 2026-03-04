@@ -225,6 +225,10 @@ name = "exit_code_tests"
 path = "rust_tests/exit_code_tests.rs"
 
 [[test]]
+name = "fallback_tests"
+path = "rust_tests/fallback_tests.rs"
+
+[[test]]
 name = "json_schema_tests"
 path = "rust_tests/json_schema_tests.rs"
 

@@ -601,7 +601,7 @@ fn execute_session(
                 target_path
             );
         }
-        return Ok(());
+        std::process::exit(5);
     }
 
     // --- BUILD HOOK REGISTRY ---
