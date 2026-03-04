@@ -510,8 +510,10 @@ pub enum Commands {
     /// Show effective merged configuration (CLI + pyproject.toml).
     Config,
 
-    /// List all discovered markers from test files.
     Markers,
+
+    /// Remove all .tach_cache files (durations, lastfailed, interrupted).
+    Clean,
 
     Completions {
         /// Shell to generate completions for

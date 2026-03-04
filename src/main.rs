@@ -394,6 +394,9 @@ fn main() -> Result<()> {
         Some(Commands::Markers) => {
             return handle_markers_command(&cwd, merged.no_ignore);
         }
+        Some(Commands::Clean) => {
+            return handle_clean_command(&cwd);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1028,6 +1031,17 @@ fn handle_config_json(cwd: &std::path::Path, m: &config::MergedConfig) -> Result
         "no_isolation": m.no_isolation,
     });
     println!("{json}");
+    Ok(())
+}
+
+fn handle_clean_command(cwd: &std::path::Path) -> Result<()> {
+    let cache_dir = cwd.join(".tach_cache");
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)?;
+        eprintln!("Removed {}", cache_dir.display());
+    } else {
+        eprintln!("No cache to clean");
+    }
     Ok(())
 }
 
