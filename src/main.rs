@@ -662,7 +662,16 @@ fn execute_session(
         stats.failed
     };
 
-    write_lastfailed_cache(cwd, &stats.failed_test_ids);
+    // Write the lastfailed cache. If fallback ran, use only the REAL failures
+    // (tests that failed in both tach and pytest). Otherwise use all tach failures.
+    let results_file = cwd.join(".tach_cache/_fallback_results.txt");
+    if results_file.exists() {
+        let real_failures = read_lastfailed_cache_from(&results_file);
+        write_lastfailed_cache(cwd, &real_failures);
+        let _ = std::fs::remove_file(&results_file);
+    } else {
+        write_lastfailed_cache(cwd, &stats.failed_test_ids);
+    }
 
     if final_failed > 0 {
         std::process::exit(1);
@@ -683,8 +692,11 @@ fn write_lastfailed_cache(cwd: &Path, failed_ids: &[String]) {
 }
 
 fn read_lastfailed_cache(cwd: &Path) -> Vec<String> {
-    let cache_file = cwd.join(".tach_cache").join("lastfailed");
-    match std::fs::read_to_string(&cache_file) {
+    read_lastfailed_cache_from(&cwd.join(".tach_cache").join("lastfailed"))
+}
+
+fn read_lastfailed_cache_from(path: &Path) -> Vec<String> {
+    match std::fs::read_to_string(path) {
         Ok(content) => content
             .lines()
             .filter(|l| !l.is_empty())
@@ -738,20 +750,27 @@ fn pytest_fallback_retry(
         }
     }
 
+    let results_file = cache_dir.join("_fallback_results.txt");
     let runner_code = format!(
         r#"import sys, pathlib, pytest
 _IDS = set(pathlib.Path({retry_path:?}).read_text().splitlines())
+_RESULTS = pathlib.Path({results_path:?})
 class _TachFilter:
     def pytest_collection_modifyitems(self, items):
         items[:] = [i for i in items if _suffix(i.nodeid) in _IDS]
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call" and report.failed:
+            with open(_RESULTS, "a") as f:
+                f.write(_suffix(report.nodeid) + "\n")
 def _suffix(nodeid):
-    # Extract "ClassName::method" from "path/file.py::ClassName::method"
     parts = nodeid.split("::")
     return "::".join(parts[1:]) if len(parts) > 1 else nodeid
+_RESULTS.unlink(missing_ok=True)
 sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
     "--continue-on-collection-errors", "."], plugins=[_TachFilter()]))
 "#,
-        retry_path = retry_file.display()
+        retry_path = retry_file.display(),
+        results_path = results_file.display(),
     );
     if let Err(e) = std::fs::write(&runner_file, &runner_code) {
         if !is_json {
