@@ -299,6 +299,9 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
 
+    if !cli.deselect.is_empty() {
+        unsafe { std::env::set_var("TACH_DESELECT", cli.deselect.join("\x1f")) };
+    }
     if let Some(ref confcutdir) = cli.confcutdir {
         unsafe { std::env::set_var("TACH_CONFCUTDIR", confcutdir) };
     }

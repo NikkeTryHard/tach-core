@@ -2966,6 +2966,12 @@ def init_session(root_dir: str):
     if os.environ.get("TACH_RUNXFAIL") == "1":
         args.append("--runxfail")
 
+    deselect = os.environ.get("TACH_DESELECT", "")
+    if deselect:
+        for node_id in deselect.split("\x1f"):
+            if node_id:
+                args.extend(["--deselect", node_id])
+
     log_file = os.environ.get("TACH_LOG_FILE")
     if log_file:
         args.extend(["--log-file", log_file])

@@ -156,6 +156,11 @@ pub struct Cli {
     #[arg(long)]
     pub strict_markers: bool,
 
+    /// Deselect specific tests by node ID (pytest --deselect compat).
+    /// Can be specified multiple times.
+    #[arg(long, value_name = "NODE_ID")]
+    pub deselect: Vec<String>,
+
     #[arg(long)]
     pub runxfail: bool,
 
@@ -1934,5 +1939,26 @@ force_toxic = ["myapp.workers"]
         use clap::Parser;
         let cli = Cli::parse_from(["tach", "--strict-markers", "."]);
         assert!(cli.strict_markers);
+    }
+
+    #[test]
+    fn test_deselect_single() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--deselect", "test_foo.py::test_bar", "."]);
+        assert_eq!(cli.deselect, vec!["test_foo.py::test_bar"]);
+    }
+
+    #[test]
+    fn test_deselect_multiple() {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "tach",
+            "--deselect",
+            "test_a.py::test_1",
+            "--deselect",
+            "test_b.py::test_2",
+            ".",
+        ]);
+        assert_eq!(cli.deselect.len(), 2);
     }
 }
