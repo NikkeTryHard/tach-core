@@ -116,6 +116,29 @@ impl Drop for RunContext {
     }
 }
 
+fn cleanup_stale_run_dirs() {
+    let Ok(entries) = std::fs::read_dir("/tmp") else {
+        return;
+    };
+    let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !name_str.starts_with("tach_run_") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if modified < threshold {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+}
+
 fn main() -> Result<()> {
     // ==========================================================================
     // JEMALLOC VERIFICATION
@@ -168,6 +191,8 @@ fn main() -> Result<()> {
     // symbol in lib.rs. This ensures jemalloc reads the configuration at
     // process startup, before any allocations occur. Setting it here via
     // std::env::set_var() would be too late.
+
+    cleanup_stale_run_dirs();
 
     // Parse CLI arguments and merge with pyproject.toml config
     let cli = Cli::parse();
