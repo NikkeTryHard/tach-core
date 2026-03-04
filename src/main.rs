@@ -219,7 +219,12 @@ fn main() -> Result<()> {
     let is_json = merged.format == OutputFormat::Json;
     let is_watch = merged.watch;
 
-    // SAFETY: all set_var calls happen before worker threads spawn.
+    match cli.color.as_str() {
+        "no" => unsafe { std::env::set_var("NO_COLOR", "1") },
+        "yes" => unsafe { std::env::set_var("FORCE_COLOR", "1") },
+        _ => {}
+    }
+
     if merged.trace {
         unsafe { std::env::set_var("TACH_LOG_LEVEL", "trace") };
         if !is_json {

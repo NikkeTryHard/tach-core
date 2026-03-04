@@ -156,7 +156,8 @@ pub struct Cli {
     #[arg(long)]
     pub strict_markers: bool,
 
-    #[arg(long = "assert", value_name = "MODE")]
+    #[arg(long = "assert", value_name = "MODE",
+          value_parser = clap::builder::PossibleValuesParser::new(["plain", "rewrite"]))]
     pub assert_mode: Option<String>,
 
     /// Test directory or file pattern
@@ -201,6 +202,10 @@ pub struct Cli {
     // =========================================================================
     // Output Control (pytest compatible)
     // =========================================================================
+    #[arg(long, value_name = "WHEN", default_value = "auto",
+          value_parser = clap::builder::PossibleValuesParser::new(["auto", "yes", "no"]))]
+    pub color: String,
+
     /// Increase verbosity (-v for verbose, -vv for very verbose).
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -391,9 +396,8 @@ pub struct Cli {
     // =========================================================================
     // Import Mode
     // =========================================================================
-    /// Python import mode for test modules (pytest --import-mode compat).
-    /// "prepend" (default), "append", or "importlib".
-    #[arg(long, value_name = "MODE", default_value = "prepend")]
+    #[arg(long, value_name = "MODE", default_value = "prepend",
+          value_parser = clap::builder::PossibleValuesParser::new(["prepend", "append", "importlib"]))]
     pub import_mode: String,
 
     /// Override ini-file options (pytest -o compat). E.g. -o "markers=slow: slow tests"
