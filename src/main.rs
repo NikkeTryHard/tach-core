@@ -375,9 +375,10 @@ fn main() -> Result<()> {
             config::generate_completions(shell);
             return Ok(());
         }
-        Some(Commands::Test) | None => {
-            // Continue to test execution below
+        Some(Commands::Init) => {
+            return handle_init_command(&cwd);
         }
+        Some(Commands::Test) | None => {}
     }
 
     // --- DIAGNOSE FLAG (can be combined with any command) ---
@@ -851,7 +852,37 @@ fn execute_session(
     Ok(())
 }
 
-/// Handle the `self-test` subcommand
+fn handle_init_command(cwd: &std::path::Path) -> Result<()> {
+    let pyproject_path = cwd.join("pyproject.toml");
+    if pyproject_path.exists() {
+        let content = std::fs::read_to_string(&pyproject_path)?;
+        if content.contains("[tool.tach]") || content.contains("[tool.tach.") {
+            eprintln!("[tool.tach] already exists in pyproject.toml");
+            return Ok(());
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&pyproject_path)?;
+        std::io::Write::write_all(&mut file, INIT_CONFIG.as_bytes())?;
+        eprintln!("Added [tool.tach] to {}", pyproject_path.display());
+    } else {
+        std::fs::write(&pyproject_path, INIT_CONFIG)?;
+        eprintln!("Created {}", pyproject_path.display());
+    }
+    Ok(())
+}
+
+const INIT_CONFIG: &str = r#"
+[tool.tach]
+timeout = 60
+workers = 0
+isolation_strategy = "auto"
+
+[tool.tach.coverage]
+enabled = false
+source = ["."]
+"#;
+
 fn handle_self_test_command() -> Result<()> {
     let success = tach_core::diagnostics::run_and_print_diagnostics();
     if success {
