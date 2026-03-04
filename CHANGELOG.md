@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-04
+
+### Added
+
+- **JSON Config Output**: `tach --format json config` for IDE integration
+- **Smart `tach init`**: Auto-detect Django/Flask projects and configure defaults
+- **`--runxfail`**: Run xfail tests as normal (pytest compat)
+- **`--cache-show`**: Display lastfailed and duration cache contents
+- **`--log-file PATH`**: Save test log output to file
+- **`--timeout-method signal|thread`**: Timeout implementation method
+- **`--color auto|yes|no`**: Control ANSI output with NO_COLOR/FORCE_COLOR
+- **`--strict-markers`** and **`--assert`**: Additional pytest-compat flags
+- 9 new CLI flag verification tests, config command improvements
+
+### Changed
+
+- `tach config` now shows disabled plugins and database settings sections
+
 ## [0.5.2] - 2026-03-04
 
 ### Added
