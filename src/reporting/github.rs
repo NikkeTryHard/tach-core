@@ -264,4 +264,38 @@ AssertionError"#;
         assert_eq!(r.skipped, 1);
         assert_eq!(r.failures.len(), 1);
     }
+
+    #[test]
+    fn test_extract_line_multiframe_traceback() {
+        let tb = r#"  File "conftest.py", line 10, in setup
+    db.connect()
+  File "tests/test_api.py", line 55, in test_create
+    assert resp.status == 201
+AssertionError"#;
+        assert_eq!(extract_line_from_traceback(tb), Some(55));
+    }
+
+    #[test]
+    fn test_first_error_line_empty_traceback() {
+        assert_eq!(first_error_line(""), "Test failed");
+    }
+
+    #[test]
+    fn test_first_error_line_only_whitespace() {
+        assert_eq!(first_error_line("  \n  \n  "), "Test failed");
+    }
+
+    #[test]
+    fn test_sanitize_annotation_all_special() {
+        let s = "line1\nline2\r100%";
+        assert_eq!(sanitize_annotation(s), "line1%0Aline2%0D100%25");
+    }
+
+    #[test]
+    fn test_github_reporter_unknown_test_id() {
+        let mut r = GitHubReporter::new();
+        r.on_run_start(1);
+        r.on_test_finished("unknown_id", "fail", 10, Some("Error"));
+        assert_eq!(r.failures[0].file, "unknown");
+    }
 }
