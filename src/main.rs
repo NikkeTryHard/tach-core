@@ -209,6 +209,20 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_CREATE_DB", "1") };
     }
 
+    // Ensure UTF-8 locale for all subprocesses and file operations.
+    // Without this, workers forked from the zygote may use ASCII encoding
+    // for filesystem paths and subprocess I/O, breaking non-ASCII tests.
+    // SAFETY: Same as above - called before worker threads spawn.
+    if std::env::var("LANG").unwrap_or_default().is_empty() {
+        unsafe { std::env::set_var("LANG", "C.UTF-8") };
+    }
+    if std::env::var("PYTHONUTF8").unwrap_or_default().is_empty() {
+        unsafe { std::env::set_var("PYTHONUTF8", "1") };
+    }
+    if std::env::var("PYTHONIOENCODING").unwrap_or_default().is_empty() {
+        unsafe { std::env::set_var("PYTHONIOENCODING", "utf-8") };
+    }
+
     // --- LIFECYCLE SETUP ---
     debugger::install_panic_hook();
 
