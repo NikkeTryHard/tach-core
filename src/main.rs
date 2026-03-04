@@ -39,14 +39,11 @@ use uuid::Uuid;
 /// Groups boolean/config parameters to reduce function argument count.
 #[derive(Clone, Copy)]
 struct SessionConfig {
-    /// Enable coverage collection
     coverage_enabled: bool,
-    /// Traceback display style
     traceback_style: TracebackStyle,
-    /// Enable memory profiling
     memory_enabled: bool,
-    /// Skip .ignore/.gitignore patterns
     no_ignore: bool,
+    no_fallback: bool,
 }
 
 // =============================================================================
@@ -286,10 +283,11 @@ fn main() -> Result<()> {
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
         let session_config = SessionConfig {
-            coverage_enabled: false, // Coverage not supported in watch mode
+            coverage_enabled: false,
             traceback_style: cli.traceback,
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
+            no_fallback: cli.no_fallback,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -314,6 +312,7 @@ fn main() -> Result<()> {
             traceback_style: cli.traceback,
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
+            no_fallback: cli.no_fallback,
         },
     )
 }
@@ -594,10 +593,10 @@ fn execute_session(
     // tach-specific failures from real test failures. This makes tach a true
     // drop-in replacement: users get tach's speed for passing tests and
     // pytest's compatibility for edge cases.
-    let final_failed = if !stats.failed_test_ids.is_empty() {
+    let final_failed = if !stats.failed_test_ids.is_empty() && !config.no_fallback {
         pytest_fallback_retry(&stats, cwd, is_json)
     } else {
-        0
+        stats.failed
     };
 
     if final_failed > 0 {

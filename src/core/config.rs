@@ -259,6 +259,14 @@ pub struct Cli {
     #[arg(long)]
     pub no_ignore: bool,
 
+    /// Disable pytest fallback for failed tests.
+    ///
+    /// By default, tach retries failed tests with vanilla pytest to
+    /// distinguish tach-specific failures from real test failures.
+    /// Use this flag to skip the fallback and report raw tach results.
+    #[arg(long)]
+    pub no_fallback: bool,
+
     // =========================================================================
     // Plugin Configuration
     // =========================================================================
