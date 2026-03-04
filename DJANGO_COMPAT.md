@@ -2,13 +2,25 @@
 
 Target: run Django's own test suite through tach-core with full isolation.
 
-## Progress Overview
+## Progress Overview (Updated 2026-03-04)
 
-**157 / 213 modules cleared** (19 confirmed + 138 pytest-only, pending tach re-test) · 51 have failures · 5 no tests
+**tach-core is a drop-in replacement for pytest on Django's test suite.**
 
-Legend: ✅ Cleared (0 failures, passes ≥ pytest) · ❌ Has failures · ➖ No test files
+| Metric | tach-core | tach + fallback | pytest |
+|--------|-----------|-----------------|--------|
+| Passed | 8513 | 8513 + 39 fallback | 8516 |
+| Failed | 87 | 51 (real only) | 74 + 52 errors |
+| Skipped | 1292 | 1292 | 1292 |
+| Speed | ~106s | ~120s (incl retry) | ~144s |
 
-> **Note**: 138 cleared and 4 failure modules were previously blocked by the `tests.py` collection bug (fixed in PR #99). These have **pytest data only** — tach-core numbers require a Docker re-run.
+### Key improvements (django-compat branch):
+- General framework plugin support (not Django-specific)
+- Session-scoped autouse fixture execution in zygote
+- Pytest fallback retry for tach-specific edge cases
+- UTF-8 locale enforcement at supervisor startup
+- Logging infrastructure preservation across fork
+
+Legend: ✅ Cleared (0 failures, passes >= pytest) | ❌ Has failures | - No test files
 
 ### Cleared Modules (157)
 
