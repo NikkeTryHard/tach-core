@@ -1152,14 +1152,12 @@ fn handle_list_command(
     } else {
         for module in &discovery_result.modules {
             for test in &module.tests {
-                eprintln!("{}::{}", module.path.display(), test.name);
+                println!("{}::{}", module.path.display(), test.name);
             }
         }
-        eprintln!();
-        eprintln!(
-            "Discovered {} tests in {} files",
-            discovery_result.test_count(),
-            discovery_result.modules.len()
+        println!(
+            "\n{} tests collected",
+            discovery_result.test_count()
         );
     }
     Ok(())
