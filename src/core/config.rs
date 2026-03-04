@@ -2007,4 +2007,11 @@ force_toxic = ["myapp.workers"]
         assert_eq!(cli.color, "no");
         assert_eq!(cli.rootdir.as_deref(), Some("/tmp"));
     }
+
+    #[test]
+    fn test_pdb_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--pdb", "."]);
+        assert!(cli.pdb);
+    }
 }
