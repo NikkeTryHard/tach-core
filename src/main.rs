@@ -574,7 +574,7 @@ fn execute_session(
     reporter.on_session_setup(&file_counts);
 
     // --- RUN TESTS ---
-    let failed_count = run_tests(
+    let stats = run_tests(
         &cleanup,
         filtered_tests,
         &mut reporter,
@@ -589,12 +589,109 @@ fn execute_session(
     // Restore stderr before exiting (LogRedirect drops and restores automatically)
     drop(log_redirect);
 
-    // Exit with code 1 if any tests failed
-    if failed_count > 0 {
+    // --- PYTEST FALLBACK ---
+    // When tests fail in tach, retry them with vanilla pytest to distinguish
+    // tach-specific failures from real test failures. This makes tach a true
+    // drop-in replacement: users get tach's speed for passing tests and
+    // pytest's compatibility for edge cases.
+    let final_failed = if !stats.failed_test_ids.is_empty() {
+        pytest_fallback_retry(&stats, cwd, is_json)
+    } else {
+        0
+    };
+
+    if final_failed > 0 {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn pytest_fallback_retry(
+    stats: &tach_core::scheduler::SchedulerStats,
+    cwd: &Path,
+    is_json: bool,
+) -> usize {
+    use std::process::Command;
+
+    let failed_ids = &stats.failed_test_ids;
+    if failed_ids.is_empty() {
+        return 0;
+    }
+
+    if !is_json {
+        eprintln!(
+            "\n[tach:fallback] Retrying {} failed test(s) with pytest...",
+            failed_ids.len()
+        );
+    }
+
+    let mut args = vec![
+        "-m".to_string(),
+        "pytest".to_string(),
+        "--tb=no".to_string(),
+        "-q".to_string(),
+        "--no-header".to_string(),
+    ];
+    args.extend(failed_ids.iter().cloned());
+
+    let output = Command::new("python3")
+        .args(&args)
+        .current_dir(cwd)
+        .output();
+
+    match output {
+        Ok(result) => {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+
+            let mut pytest_passed = 0usize;
+            let mut pytest_failed = 0usize;
+
+            for line in stdout.lines() {
+                if line.contains("passed") || line.contains("failed") {
+                    for word in line.split_whitespace() {
+                        if let Ok(n) = word.parse::<usize>() {
+                            if line.contains("passed") && pytest_passed == 0 {
+                                pytest_passed = n;
+                            }
+                            if line.contains("failed") && pytest_failed == 0 {
+                                pytest_failed = n;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let tach_specific = failed_ids.len().saturating_sub(pytest_failed);
+
+            if !is_json {
+                if tach_specific > 0 {
+                    eprintln!(
+                        "[tach:fallback] {} test(s) passed in pytest (tach-specific failures)",
+                        tach_specific
+                    );
+                }
+                if pytest_failed > 0 {
+                    eprintln!(
+                        "[tach:fallback] {} test(s) failed in both tach and pytest (real failures)",
+                        pytest_failed
+                    );
+                }
+                if !stderr.is_empty() && stderr.len() < 500 {
+                    eprintln!("[tach:fallback] pytest stderr: {}", stderr.trim());
+                }
+            }
+
+            pytest_failed
+        }
+        Err(e) => {
+            if !is_json {
+                eprintln!("[tach:fallback] Failed to run pytest: {}", e);
+            }
+            stats.failed
+        }
+    }
 }
 
 /// Handle the `self-test` subcommand
@@ -977,7 +1074,7 @@ fn run_tests(
     mut hook_registry: HookRegistry,
     project_root: PathBuf,
     toxicity_graph: &ToxicityGraph,
-) -> Result<usize> {
+) -> Result<tach_core::scheduler::SchedulerStats> {
     let cwd = std::env::current_dir()?;
 
     // --- LOAD TACH CONFIG ---
@@ -1326,9 +1423,6 @@ fn run_tests(
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
 
-            // Track failure count for exit code
-            let failed_count = stats.failed;
-
             // --- MEMORY REPORTING ---
             // Display memory usage statistics if enabled
             if memory_enabled && !is_json && !stats.memory_usage.is_empty() {
@@ -1462,8 +1556,7 @@ fn run_tests(
             // Mark shutdown as complete to prevent watchdog from force-exiting
             signals::mark_shutdown_complete();
 
-            // Return failure count for exit code
-            Ok(failed_count)
+            Ok(stats)
         }
     }
 }

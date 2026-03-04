@@ -263,6 +263,7 @@ impl Scheduler {
         let mut skipped = 0usize;
         let mut collected = 0usize;
         let mut memory_usage: Vec<(String, u64)> = Vec::new();
+        let mut failed_ids: Vec<String> = Vec::new();
 
         //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
@@ -299,6 +300,7 @@ impl Scheduler {
                         skipped += 1;
                     } else {
                         failed += 1;
+                        failed_ids.push(test_name.clone());
                     }
                     // Track memory usage if available
                     if let Some(rss) = memory_rss {
@@ -326,6 +328,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
 
@@ -363,6 +366,7 @@ impl Scheduler {
             if let Err(e) = self.dispatch_test(&test, test_id, slot) {
                 reporter.on_test_finished(&test.test_name, "fail", 0, Some(&e.to_string()));
                 failed += 1;
+                failed_ids.push(test.test_name.clone());
                 collected += 1;
             }
         }
@@ -380,6 +384,7 @@ impl Scheduler {
                     skipped += 1;
                 } else {
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                 }
                 // Track memory usage if available
                 if let Some(rss) = memory_rss {
@@ -405,6 +410,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
 
@@ -428,6 +434,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
             }
@@ -446,6 +453,7 @@ impl Scheduler {
             skipped,
             duration_ms,
             memory_usage,
+            failed_test_ids: failed_ids,
         })
     }
 
@@ -965,6 +973,7 @@ mod tests {
             skipped: 0,
             duration_ms: 1234,
             memory_usage: vec![],
+            failed_test_ids: vec![],
         };
 
         let debug_str = format!("{:?}", stats);
@@ -983,6 +992,7 @@ mod tests {
             skipped: 0,
             duration_ms: 5000,
             memory_usage: vec![("test_a".to_string(), 1024 * 1024)],
+            failed_test_ids: vec![],
         };
 
         assert_eq!(stats.total, 100);
