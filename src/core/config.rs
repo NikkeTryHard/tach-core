@@ -1967,4 +1967,38 @@ force_toxic = ["myapp.workers"]
         ]);
         assert_eq!(cli.deselect.len(), 2);
     }
+
+    #[test]
+    fn test_count_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--count", "."]);
+        assert!(cli.count);
+    }
+
+    #[test]
+    fn test_all_flags_combined() {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "tach",
+            "-v",
+            "-k",
+            "fast",
+            "-m",
+            "unit",
+            "-x",
+            "--no-header",
+            "--color",
+            "no",
+            "--rootdir",
+            "/tmp",
+            ".",
+        ]);
+        assert_eq!(cli.verbose, 1);
+        assert_eq!(cli.keyword.as_deref(), Some("fast"));
+        assert_eq!(cli.markers.as_deref(), Some("unit"));
+        assert!(cli.exitfirst);
+        assert!(cli.no_header);
+        assert_eq!(cli.color, "no");
+        assert_eq!(cli.rootdir.as_deref(), Some("/tmp"));
+    }
 }
