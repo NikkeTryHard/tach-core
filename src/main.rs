@@ -44,6 +44,7 @@ struct SessionConfig {
     memory_enabled: bool,
     no_ignore: bool,
     no_fallback: bool,
+    last_failed: bool,
 }
 
 // =============================================================================
@@ -302,6 +303,7 @@ fn main() -> Result<()> {
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
             no_fallback: cli.no_fallback,
+            last_failed: cli.last_failed,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -327,6 +329,7 @@ fn main() -> Result<()> {
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
             no_fallback: cli.no_fallback,
+            last_failed: cli.last_failed,
         },
     )
 }
@@ -554,6 +557,34 @@ fn execute_session(
         })
         .collect();
 
+    let filtered_tests = if config.last_failed {
+        let last_failed = read_lastfailed_cache(cwd);
+        if last_failed.is_empty() {
+            if !is_json {
+                eprintln!("[tach:supervisor] No last-failed cache found, running all tests");
+            }
+            filtered_tests
+        } else {
+            let lf_count = last_failed.len();
+            let lf_set: std::collections::HashSet<&str> =
+                last_failed.iter().map(|s| s.as_str()).collect();
+            let lf_filtered: Vec<_> = filtered_tests
+                .into_iter()
+                .filter(|t| lf_set.contains(t.test_name.as_str()))
+                .collect();
+            if !is_json {
+                eprintln!(
+                    "[tach:supervisor] --lf: {} of {} last-failed tests matched",
+                    lf_filtered.len(),
+                    lf_count
+                );
+            }
+            lf_filtered
+        }
+    } else {
+        filtered_tests
+    };
+
     if !is_json {
         eprintln!(
             "[tach:supervisor] Selected {} tests to run (filtered by path: {})",
@@ -613,11 +644,36 @@ fn execute_session(
         stats.failed
     };
 
+    write_lastfailed_cache(cwd, &stats.failed_test_ids);
+
     if final_failed > 0 {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn write_lastfailed_cache(cwd: &Path, failed_ids: &[String]) {
+    let cache_dir = cwd.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cache_file = cache_dir.join("lastfailed");
+    if failed_ids.is_empty() {
+        let _ = std::fs::remove_file(&cache_file);
+    } else {
+        let _ = std::fs::write(&cache_file, failed_ids.join("\n"));
+    }
+}
+
+fn read_lastfailed_cache(cwd: &Path) -> Vec<String> {
+    let cache_file = cwd.join(".tach_cache").join("lastfailed");
+    match std::fs::read_to_string(&cache_file) {
+        Ok(content) => content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 fn pytest_fallback_retry(

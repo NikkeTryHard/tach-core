@@ -158,6 +158,13 @@ pub struct Cli {
     #[arg(short = 'x', long)]
     pub exitfirst: bool,
 
+    /// Re-run only tests that failed in the last run.
+    ///
+    /// Reads the last-failed cache from .tach_cache/lastfailed and
+    /// runs only those tests. Useful for fixing failures iteratively.
+    #[arg(long = "lf")]
+    pub last_failed: bool,
+
     /// Exit after N failures (--maxfail=N).
     #[arg(long, value_name = "N")]
     pub maxfail: Option<usize>,
