@@ -2916,6 +2916,10 @@ def init_session(root_dir: str):
             plugin_name = key[len("TACH_DISABLE_PLUGIN_") :].lower().replace("_", "-")
             args.extend(["-p", f"no:{plugin_name}"])
 
+    extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
+    if extra_args:
+        args.extend(extra_args.split("\x1f"))
+
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 

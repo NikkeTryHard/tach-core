@@ -248,6 +248,12 @@ fn main() -> Result<()> {
     if cli.force_toxic {
         unsafe { std::env::set_var("TACH_FORCE_TOXIC", "1") };
     }
+    if !cli.pytest_args.is_empty() {
+        unsafe { std::env::set_var("TACH_PYTEST_ARGS", cli.pytest_args.join("\x1f")) };
+    }
+    if let Some(timeout) = cli.timeout {
+        unsafe { std::env::set_var("TACH_TIMEOUT", timeout.to_string()) };
+    }
     for plugin in &cli.disable_plugins {
         let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
         unsafe { std::env::set_var(&key, "1") };
@@ -1542,7 +1548,10 @@ fn run_tests(
 
             // --- SCHEDULER ---
             // Use with_config to pass timeout_hook from pyproject.toml
-            let global_timeout = tach_config.timeout();
+            let global_timeout = std::env::var("TACH_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or_else(|| tach_config.timeout());
             let timeout_hook = tach_config.timeout_hook.clone();
             let mut scheduler = Scheduler::with_config(
                 sup_cmd_sock,
