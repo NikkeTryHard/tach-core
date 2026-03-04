@@ -2963,6 +2963,8 @@ def init_session(root_dir: str):
 
     if os.environ.get("TACH_STRICT_MARKERS") == "1":
         args.append("--strict-markers")
+    if os.environ.get("TACH_RUNXFAIL") == "1":
+        args.append("--runxfail")
 
     log_file = os.environ.get("TACH_LOG_FILE")
     if log_file:

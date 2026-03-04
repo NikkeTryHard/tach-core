@@ -156,6 +156,9 @@ pub struct Cli {
     #[arg(long)]
     pub strict_markers: bool,
 
+    #[arg(long)]
+    pub runxfail: bool,
+
     #[arg(long = "assert", value_name = "MODE",
           value_parser = clap::builder::PossibleValuesParser::new(["plain", "rewrite"]))]
     pub assert_mode: Option<String>,
@@ -180,9 +183,11 @@ pub struct Cli {
     #[arg(long = "lf")]
     pub last_failed: bool,
 
-    /// Run last-failed tests first, then the rest.
     #[arg(long = "ff")]
     pub failed_first: bool,
+
+    #[arg(long)]
+    pub cache_show: bool,
 
     /// Exit after N failures (--maxfail=N).
     #[arg(long, value_name = "N")]

@@ -5,12 +5,9 @@
 ## [21:05 UTC] Released v0.4.1 (toxicity, cache module)
 ## [21:40 UTC] Released v0.4.2 (rootdir, import-mode, fallback extract)
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
+## [22:15 UTC] Released v0.5.0 (init cmd, color, validation)
 
-## [22:15 UTC] Released v0.5.0
-- tach init command for starter config generation
-- --color auto|yes|no flag
-- --strict-markers, --assert, --basetemp flags
-- GITHUB_OUTPUT structured output integration
-- clap value_parser validation for --import-mode and --assert
-- 992 tests, 45+ commits, 5 releases
-- Session total: v0.3.1 -> v0.5.0, 44 new tests, ~20 new CLI flags
+## [22:25 UTC] Iteration 9
+- --log-file PATH for saving test output to file
+- --timeout-method signal|thread with clap validation
+- 992 tests, 50+ commits on master, 5 releases

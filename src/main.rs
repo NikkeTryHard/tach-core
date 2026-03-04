@@ -291,6 +291,9 @@ fn main() -> Result<()> {
     if cli.strict_markers {
         unsafe { std::env::set_var("TACH_STRICT_MARKERS", "1") };
     }
+    if cli.runxfail {
+        unsafe { std::env::set_var("TACH_RUNXFAIL", "1") };
+    }
     if !cli.override_ini.is_empty() {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
@@ -390,8 +393,10 @@ fn main() -> Result<()> {
         return handle_diagnose_command();
     }
 
-    // --- COLLECT-ONLY MODE (pytest compatibility) ---
-    // Alias for 'tach list' command
+    if cli.cache_show {
+        return handle_cache_show(&cwd);
+    }
+
     if cli.collect_only {
         return handle_list_command(&cwd, &merged.path, is_json, merged.no_ignore);
     }
@@ -850,6 +855,40 @@ fn execute_session(
 
     if final_failed > 0 {
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn handle_cache_show(cwd: &std::path::Path) -> Result<()> {
+    let cache_dir = cwd.join(".tach_cache");
+    eprintln!("cachedir: {}", cache_dir.display());
+    eprintln!();
+
+    let lastfailed = tach_core::cache::read_lastfailed_cache(cwd);
+    if !lastfailed.is_empty() {
+        eprintln!("lastfailed ({} entries):", lastfailed.len());
+        for id in &lastfailed {
+            eprintln!("  {id}");
+        }
+    } else {
+        eprintln!("lastfailed: (empty)");
+    }
+    eprintln!();
+
+    let durations = tach_core::cache::read_duration_cache(cwd);
+    if !durations.is_empty() {
+        eprintln!("durations ({} entries):", durations.len());
+        let mut sorted: Vec<_> = durations.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (name, ms) in sorted.iter().take(20) {
+            eprintln!("  {ms:>6}ms  {name}");
+        }
+        if sorted.len() > 20 {
+            eprintln!("  ... and {} more", sorted.len() - 20);
+        }
+    } else {
+        eprintln!("durations: (empty)");
     }
 
     Ok(())
