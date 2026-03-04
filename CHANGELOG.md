@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-03-04
+
+### Added
+
+- **`--deselect NODE_ID`**: Exclude specific tests by node ID (multiple allowed)
+- 11 new verification tests for CLI flags
+
+### Fixed
+
+- **JSON Config Output**: Use serde_json instead of hand-crafted format strings
+  to properly escape paths with quotes/backslashes
+- **Dependency Detection**: `has_dependency()` now matches exact package names
+  instead of substring (prevents `django-debug-toolbar` matching `django`)
+
 ## [0.5.3] - 2026-03-04
 
 ### Added
