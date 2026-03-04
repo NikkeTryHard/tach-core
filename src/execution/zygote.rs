@@ -594,7 +594,7 @@ fn spawn_result_collector(
         match socket.read_exact(&mut ready_buf) {
             Ok(_) if ready_buf[0] == MSG_WORKER_READY => {
                 // Worker is ready for reuse - add to pool
-                eprintln!("[tach:zygote] Worker {} ready, adding to pool", pid);
+                
                 if let Ok(mut workers) = IDLE_WORKERS.lock() {
                     workers.push(WorkerHandle { pid, socket });
                 } else {

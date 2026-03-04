@@ -7,8 +7,8 @@
 //! - Writable overlay on project directory
 
 use anyhow::{Context, Result};
-use nix::mount::{MsFlags, mount};
-use nix::sched::{CloneFlags, unshare};
+use nix::mount::{mount, MsFlags};
+use nix::sched::{unshare, CloneFlags};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -52,12 +52,7 @@ pub fn setup_filesystem(worker_id: u32, project_root: &Path) -> Result<()> {
     }
 
     let overlay_disabled = is_overlayfs(project_root);
-    if overlay_disabled {
-        eprintln!(
-            "[tach:isolation] Project root is on overlayfs (Docker detected). \
-             Overlay mounts disabled — using fork-only isolation."
-        );
-    }
+    let _ = overlay_disabled;
 
     // 1. Create new mount AND network namespaces
     unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET)
