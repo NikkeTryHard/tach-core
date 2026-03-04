@@ -974,6 +974,17 @@ fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -
     if !merged.coverage_source.is_empty() {
         eprintln!("  source = {:?}", merged.coverage_source);
     }
+    if !merged.disabled_plugins.is_empty() {
+        eprintln!();
+        eprintln!("[plugins]");
+        eprintln!("  disabled = {:?}", merged.disabled_plugins);
+    }
+    if merged.reuse_db || merged.create_db {
+        eprintln!();
+        eprintln!("[database]");
+        eprintln!("  reuse_db = {}", merged.reuse_db);
+        eprintln!("  create_db = {}", merged.create_db);
+    }
     Ok(())
 }
 
