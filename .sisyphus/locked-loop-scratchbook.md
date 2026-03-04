@@ -1,17 +1,11 @@
 # Locked Loop Scratchbook
 
-## Session: v0.3.1 (948 tests) -> v0.5.3 (1016 tests)
+## Session: v0.3.1 (948 tests) -> v0.5.4 (1018 tests)
 
-### Releases (8 total)
-- v0.4.0: config schema, GitHub Actions, showlocals, stale cleanup, env denylist
-- v0.4.1: toxicity config, cache module
-- v0.4.2: rootdir, import-mode, fallback module extraction
-- v0.4.3: session header, confcutdir, override-ini
-- v0.5.0: init command, color, input validation
-- v0.5.1: config command, cache-show, 1000 test milestone
-- v0.5.2: scheduler persistence (--resume), roadmap update
-- v0.5.3: JSON config, smart init, more pytest-compat flags
+### 9 Releases
+v0.4.0, v0.4.1, v0.4.2, v0.4.3, v0.5.0, v0.5.1, v0.5.2, v0.5.3, v0.5.4
 
-### Latest: [23:05 UTC] Iteration 21
-- 4 new edge case tests for interrupted cache
-- 1016 tests, 80+ commits, 8 releases, ~30 CLI flags
+### Latest: [23:20 UTC] Iteration 25
+- Enriched --co JSON output with fixtures, class_name, timeout
+- v0.5.4 released with --deselect, JSON/dependency detection bugfixes
+- 1018 tests, 95+ commits, 9 releases, ~32 CLI flags

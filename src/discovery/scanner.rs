@@ -3503,4 +3503,40 @@ class AutodiscoverModulesTestCase(unittest.TestCase):
             "AutodiscoverModulesTestCase::test_discover"
         );
     }
+
+    #[test]
+    fn test_json_test_info_serialization() {
+        let info = JsonTestInfo {
+            id: "test_foo.py::test_bar".to_string(),
+            file: "test_foo.py".to_string(),
+            line: 10,
+            is_async: false,
+            markers: vec!["slow".to_string()],
+            fixtures: vec!["db".to_string(), "client".to_string()],
+            class_name: Some("TestClass".to_string()),
+            timeout: Some(30),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"fixtures\":[\"db\",\"client\"]"));
+        assert!(json.contains("\"class_name\":\"TestClass\""));
+        assert!(json.contains("\"timeout\":30"));
+    }
+
+    #[test]
+    fn test_json_test_info_empty_fields_skipped() {
+        let info = JsonTestInfo {
+            id: "test.py::test_x".to_string(),
+            file: "test.py".to_string(),
+            line: 1,
+            is_async: false,
+            markers: vec![],
+            fixtures: vec![],
+            class_name: None,
+            timeout: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("fixtures"));
+        assert!(!json.contains("class_name"));
+        assert!(!json.contains("timeout"));
+    }
 }
