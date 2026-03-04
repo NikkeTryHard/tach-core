@@ -738,7 +738,7 @@ fn execute_session(
     // drop-in replacement: users get tach's speed for passing tests and
     // pytest's compatibility for edge cases.
     let final_failed = if !stats.failed_test_ids.is_empty() && !config.no_fallback {
-        pytest_fallback_retry(&stats, cwd, is_json)
+        pytest_fallback_retry(&stats, cwd, is_json, target_path)
     } else {
         stats.failed
     };
@@ -791,6 +791,7 @@ fn pytest_fallback_retry(
     stats: &tach_core::scheduler::SchedulerStats,
     cwd: &Path,
     is_json: bool,
+    target_path: &str,
 ) -> usize {
     use std::io::Write;
     use std::process::Command;
@@ -848,10 +849,15 @@ def _suffix(nodeid):
     return "::".join(parts[1:]) if len(parts) > 1 else nodeid
 _RESULTS.unlink(missing_ok=True)
 sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
-    "--continue-on-collection-errors", "."], plugins=[_TachFilter()]))
+    "--continue-on-collection-errors", {target:?}], plugins=[_TachFilter()]))
 "#,
         retry_path = retry_file.display(),
         results_path = results_file.display(),
+        target = if target_path.contains("::") {
+            target_path.split("::").next().unwrap_or(".")
+        } else {
+            target_path
+        },
     );
     if let Err(e) = std::fs::write(&runner_file, &runner_code) {
         if !is_json {
