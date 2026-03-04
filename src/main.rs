@@ -407,6 +407,17 @@ fn main() -> Result<()> {
         return handle_cache_show(&cwd);
     }
 
+    if cli.count {
+        let result = tach_core::discovery::scanner::discover(&cwd, merged.no_ignore)?;
+        let count: usize = result.modules.iter().map(|m| m.tests.len()).sum();
+        if is_json {
+            println!("{{\"count\":{count}}}");
+        } else {
+            println!("{count}");
+        }
+        return Ok(());
+    }
+
     if cli.collect_only {
         return handle_list_command(&cwd, &merged.path, is_json, merged.no_ignore);
     }
@@ -946,6 +957,10 @@ fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -
     }
     eprintln!("rootdir: {}", cwd.display());
     eprintln!("version: {}", env!("CARGO_PKG_VERSION"));
+    let pyproject = cwd.join("pyproject.toml");
+    if pyproject.exists() {
+        eprintln!("configfile: {}", pyproject.display());
+    }
     eprintln!();
     eprintln!("[execution]");
     eprintln!("  workers = {}", merged.workers);
