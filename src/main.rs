@@ -259,6 +259,15 @@ fn main() -> Result<()> {
     if let Some(timeout) = cli.timeout {
         unsafe { std::env::set_var("TACH_TIMEOUT", timeout.to_string()) };
     }
+    if let Some((_, node)) = cli.path.split_once("::") {
+        let existing = std::env::var("TACH_KEYWORD").unwrap_or_default();
+        let new_kw = if existing.is_empty() {
+            node.to_string()
+        } else {
+            format!("{existing} and {node}")
+        };
+        unsafe { std::env::set_var("TACH_KEYWORD", &new_kw) };
+    }
     for plugin in &cli.disable_plugins {
         let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
         unsafe { std::env::set_var(&key, "1") };
