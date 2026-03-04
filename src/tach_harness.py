@@ -2911,6 +2911,11 @@ def init_session(root_dir: str):
     if markers:
         args.extend(["-m", markers])
 
+    for key, val in os.environ.items():
+        if key.startswith("TACH_DISABLE_PLUGIN_") and val == "1":
+            plugin_name = key[len("TACH_DISABLE_PLUGIN_") :].lower().replace("_", "-")
+            args.extend(["-p", f"no:{plugin_name}"])
+
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
 
