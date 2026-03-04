@@ -275,7 +275,7 @@ pub struct Cli {
     /// By default, tach retries failed tests with vanilla pytest to
     /// distinguish tach-specific failures from real test failures.
     /// Use this flag to skip the fallback and report raw tach results.
-    #[arg(long)]
+    #[arg(long, env = "TACH_NO_FALLBACK")]
     pub no_fallback: bool,
 
     /// Remove the last-failed cache before running.
