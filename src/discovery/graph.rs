@@ -863,7 +863,7 @@ mod tests {
         std::fs::write(&toxic_file, "import threading\ndef foo(): pass\n").unwrap();
 
         let registry = HookRegistry::new();
-        let mut graph = ToxicityGraph::build(&[toxic_file.clone()], root, &registry);
+        let mut graph = ToxicityGraph::build(std::slice::from_ref(&toxic_file), root, &registry);
 
         assert!(graph.is_toxic(&toxic_file));
 
@@ -881,7 +881,7 @@ mod tests {
         std::fs::write(&safe_file, "x = 1\n").unwrap();
 
         let registry = HookRegistry::new();
-        let mut graph = ToxicityGraph::build(&[safe_file.clone()], root, &registry);
+        let mut graph = ToxicityGraph::build(std::slice::from_ref(&safe_file), root, &registry);
 
         assert!(!graph.is_toxic(&safe_file));
 
