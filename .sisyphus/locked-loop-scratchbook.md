@@ -7,9 +7,10 @@
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
 ## [22:15 UTC] Released v0.5.0 (init cmd, color, validation)
 
-## [22:30 UTC] Iteration 11
-- tach config command: shows effective merged configuration
+## [22:35 UTC] Iteration 12 - 1000 TESTS MILESTONE
+- Extracted parse_pytest_summary_failed() from fallback inline code
+- 8 unit tests for pytest summary parsing
+- tach config command for debugging merged configuration
 - --runxfail, --cache-show flags
-- Verified no panic!/expect() in production code
-- Fixed doc comment placement in Commands enum
-- 992 tests, 55+ commits, 5 releases, v0.3.1->v0.5.0
+- HIT 1000 TESTS (up from 948 at session start)
+- Session total: v0.3.1->v0.5.0, 52 new tests, ~25 CLI flags, 55+ commits

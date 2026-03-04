@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-04
+
+### Added
+
+- **`tach config` Command**: Show effective merged configuration for debugging
+- **`--cache-show`**: Display lastfailed and duration cache contents
+- **`--runxfail`**: Run xfail tests as normal (pytest compat)
+- **`--log-file PATH`**: Save test log output to file
+- **`--timeout-method signal|thread`**: Timeout implementation method
+- **Pytest Summary Parser**: Extracted and tested (8 tests)
+
+### Changed
+
+- Hit **1000 tests** milestone (up from 948 at session start)
+- Refactored fallback module with extracted, tested parser function
+
 ## [0.5.0] - 2026-03-04
 
 ### Added
