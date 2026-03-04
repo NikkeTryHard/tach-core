@@ -1306,7 +1306,10 @@ def inject_entropy():
 
     # CRITICAL: Reset logging module locks after fork
     # The logging module uses RLocks that become corrupted after fork()
-    # because the lock state is shared but the threads are not
+    # because the lock state is shared but the threads are not.
+    # We ONLY reset locks, NOT handlers or loggerDict -- those contain
+    # valid configuration from the zygote that tests depend on
+    # (e.g. Django's logging config, assertLogs handlers).
     try:
         # Recreate ALL module-level locks
         logging._lock = threading.RLock()
@@ -1315,12 +1318,19 @@ def inject_entropy():
         if hasattr(logging.Logger, "manager") and logging.Logger.manager:
             logging.Logger.manager._lock = threading.RLock()
 
-        # Recreate locks for root logger and all handlers
-        logging.root.handlers = []  # Clear handlers to avoid lock issues
+        # Recreate locks on root logger and all existing handlers
+        # but DO NOT remove them -- tests need these handlers
+        logging.root.lock = threading.RLock()
+        for handler in logging.root.handlers:
+            handler.lock = threading.RLock()
 
-        # Reset the logger dict to force fresh loggers
+        # Recreate locks on all existing loggers in the dict
         if hasattr(logging.Logger, "manager") and logging.Logger.manager:
-            logging.Logger.manager.loggerDict = {}
+            for name, logger_ref in logging.Logger.manager.loggerDict.items():
+                if isinstance(logger_ref, logging.Logger):
+                    logger_ref.lock = threading.RLock()
+                    for handler in logger_ref.handlers:
+                        handler.lock = threading.RLock()
     except Exception as e:
         _logger.debug("Logging lock reset error: %s", e)
 
@@ -2442,6 +2452,394 @@ def _fuzzy_parametrize_lookup(rust_node_id: str) -> Any:
     return None
 
 
+def _override_db_session_fixtures(session) -> None:
+    """Replace DB-related session fixtures with no-ops.
+
+    Tach manages test database creation via _setup_django_test_db() in the
+    zygote. Framework plugins (like pytest-django) may also register session
+    fixtures that call setup_databases(). If both run, the DB gets created
+    twice, causing errors.
+
+    We detect DB fixtures by name patterns and replace their func with a
+    no-op generator that yields immediately. This is general -- it doesn't
+    hardcode specific plugin names, just detects DB-related fixture names.
+    """
+    DB_PATTERNS = {"db_setup", "database_setup"}
+
+    try:
+        fm = session._fixturemanager
+        overridden = []
+
+        for argname, fixdef_list in fm._arg2fixturedefs.items():
+            is_db = any(pat in argname for pat in DB_PATTERNS)
+            if not is_db:
+                continue
+
+            for fixdef in fixdef_list:
+                if getattr(fixdef, "scope", None) == "session":
+                    # Replace with a no-op generator
+                    original_func = fixdef.func
+
+                    def _noop_fixture(**kwargs):
+                        yield None
+
+                    fixdef.func = _noop_fixture
+                    overridden.append(argname)
+
+        if overridden:
+            os.write(
+                2,
+                f"[tach:harness] Overrode {len(overridden)} DB session fixtures "
+                f"with no-ops: {', '.join(overridden)} "
+                f"(tach manages DB lifecycle)\n".encode(),
+            )
+    except Exception as e:
+        os.write(
+            2,
+            f"[tach:harness] WARN: DB fixture override failed: {e}\n".encode(),
+        )
+
+
+class _MinimalFixtureRequest:
+    """Minimal request object for session-scoped fixture execution.
+
+    Session fixtures that take a `request` parameter typically only need
+    config, session, and getini/getoption access. This provides enough
+    to satisfy most framework plugins without requiring a real test item.
+    """
+
+    def __init__(self, config, session):
+        self.config = config
+        self.session = session
+        self.node = session
+        self.fspath = None
+        self.scope = "session"
+
+    def getfixturevalue(self, argname):
+        """Proxy to the session's fixture manager."""
+        raise NotImplementedError(
+            f"getfixturevalue('{argname}') not available in zygote context"
+        )
+
+
+def _trigger_session_fixtures(cfg, session) -> None:
+    """Force-execute session-scoped autouse fixtures in the Zygote.
+
+    Framework plugins register session-scoped autouse fixtures that perform
+    critical one-time setup. These fixtures normally run lazily when
+    the first test requests them, but tach forks workers before any test
+    runs, so workers would miss the setup.
+
+    Strategy: find all session-scoped autouse FixtureDefs and execute their
+    underlying functions directly, resolving dependencies in topological order.
+
+    DB-related fixtures (those that call setup_databases) are SKIPPED here
+    because tach has its own _setup_django_test_db() called from the Rust
+    zygote code. We detect DB fixtures by checking if they depend on a
+    "db_blocker" or "db_setup" named fixture.
+    """
+    if not session.items:
+        return
+
+    try:
+        fm = session._fixturemanager
+
+        # Collect ALL session-scoped fixture definitions (both autouse and not)
+        # We need non-autouse ones too for dependency resolution.
+        all_session_fixdefs = {}
+        autouse_names = []
+        for argname, fixdef_list in fm._arg2fixturedefs.items():
+            for fixdef in fixdef_list:
+                if getattr(fixdef, "scope", None) == "session":
+                    all_session_fixdefs[argname] = fixdef
+                    if getattr(fixdef, "_autouse", False):
+                        autouse_names.append(argname)
+
+        if not autouse_names:
+            return
+
+        os.write(
+            2,
+            f"[tach:harness] Found {len(autouse_names)} session-scoped "
+            f"autouse fixtures: {', '.join(autouse_names)}\n".encode(),
+        )
+
+        # Skip DB-related fixtures -- tach handles DB setup separately.
+        # Detection: a fixture is DB-related if its name or any dependency
+        # contains "db_setup", "db_blocker", or "database".
+        DB_FIXTURE_MARKERS = {"db_setup", "db_blocker", "database", "django_db_setup"}
+
+        def _is_db_fixture(name):
+            for marker in DB_FIXTURE_MARKERS:
+                if marker in name:
+                    return True
+            fixdef = all_session_fixdefs.get(name)
+            if fixdef:
+                for dep in getattr(fixdef, "argnames", []):
+                    for marker in DB_FIXTURE_MARKERS:
+                        if marker in dep:
+                            return True
+            return False
+
+        # Execute session autouse fixtures in dependency order
+        executed = {}
+        _generators = []  # (name, generator) for teardown
+
+        def _exec(name):
+            if name in executed:
+                return executed[name]
+
+            fixdef = all_session_fixdefs.get(name)
+            if fixdef is None:
+                return None
+
+            if _is_db_fixture(name):
+                os.write(
+                    2,
+                    f"[tach:harness] Skipping DB fixture: {name}\n".encode(),
+                )
+                executed[name] = None
+                return None
+
+            # Execute dependencies first
+            for dep in getattr(fixdef, "argnames", []):
+                if dep in all_session_fixdefs and dep not in executed:
+                    _exec(dep)
+
+            # Build kwargs
+            kwargs = {}
+            for dep in getattr(fixdef, "argnames", []):
+                if dep in executed:
+                    kwargs[dep] = executed[dep]
+                elif dep == "request":
+                    kwargs[dep] = _MinimalFixtureRequest(cfg, session)
+
+            try:
+                result = fixdef.func(**kwargs)
+                if hasattr(result, "__next__"):
+                    val = next(result)
+                    _generators.append((name, result))
+                    executed[name] = val
+                else:
+                    executed[name] = result
+                os.write(
+                    2,
+                    f"[tach:harness] Executed session fixture: {name}\n".encode(),
+                )
+            except Exception as e:
+                os.write(
+                    2,
+                    f"[tach:harness] WARN: Session fixture '{name}' "
+                    f"failed: {e}\n".encode(),
+                )
+                executed[name] = None
+
+        for name in autouse_names:
+            _exec(name)
+
+        # CRITICAL: Replace executed fixtures with no-ops so workers don't
+        # re-execute them. Session fixtures run in the zygote and workers
+        # inherit the state via fork. If pytest tries to run them again in
+        # workers, they'll fail (e.g. setup_test_environment raises
+        # "already called"). By replacing the func, the fixture becomes a
+        # cache-hit that immediately returns None.
+        for name, result in executed.items():
+            fixdef = all_session_fixdefs.get(name)
+            if fixdef is not None:
+                # Store the result in the fixture's cache so pytest sees it
+                # as already resolved.
+                # Format: (value, cache_key, exc_info_or_None)
+                # cache_key=None matches session-scoped non-parametrized fixtures
+                fixdef.cached_result = (result, None, None)
+                overridden_count = 0
+                overridden_count += 1
+        if executed:
+            os.write(
+                2,
+                f"[tach:harness] Cached {len(executed)} session fixture results "
+                f"for worker inheritance\n".encode(),
+            )
+
+        # Register teardown for generator fixtures
+        if _generators:
+            import atexit
+
+            def _teardown():
+                for name, gen in reversed(_generators):
+                    try:
+                        next(gen, None)
+                    except (StopIteration, Exception):
+                        pass
+
+            atexit.register(_teardown)
+
+    except Exception as e:
+        os.write(
+            2,
+            f"[tach:harness] WARN: Session fixture trigger failed: {e}\n".encode(),
+        )
+
+
+def _neutralize_plugin_conflicts(cfg) -> None:
+    """Undo harmful side-effects from framework plugins after configure.
+
+    Framework plugins (pytest-django, pytest-asyncio, etc.) do two things:
+    1. Session-level setup in pytest_configure — we WANT this.
+    2. Per-test hooks and patches — some conflict with tach's execution model.
+
+    This function neutralizes the conflicts while preserving the setup.
+    It is deliberately general: it inspects what plugins DID rather than
+    hardcoding knowledge of specific plugins. If a plugin monkey-patched
+    something harmful, we detect and undo it.
+    """
+    pm = cfg.pluginmanager
+
+    # --- pytest-django DB blocker ---
+    # pytest-django patches BaseDatabaseWrapper.ensure_connection to block
+    # all DB access by default. Tach manages DB isolation itself via
+    # savepoints in _apply_django_db_isolation(). We need to unblock so
+    # workers can access the DB freely.
+    #
+    # Detection: check if ensure_connection was replaced with a function
+    # that raises RuntimeError("Database access not allowed").
+    try:
+        from django.db.backends.base.base import BaseDatabaseWrapper
+
+        ec = BaseDatabaseWrapper.ensure_connection
+        # pytest-django's blocker is a static method that raises RuntimeError
+        if callable(ec) and getattr(ec, "__name__", "") == "_blocking_wrapper":
+            # Find the blocker and unblock it
+            _unblock_django_db(cfg)
+        elif callable(ec):
+            # Check if it's a wrapper by trying to detect the RuntimeError
+            import types
+
+            if isinstance(ec, types.FunctionType):
+                # Inspect source or co_consts for the blocking message
+                consts = getattr(ec, "__code__", None)
+                if consts and any(
+                    "Database access not allowed" in str(c)
+                    for c in getattr(consts, "co_consts", ())
+                ):
+                    _unblock_django_db(cfg)
+    except ImportError:
+        pass  # Django not installed, nothing to do
+
+    # --- pytest-asyncio mode override ---
+    # When pytest-asyncio is loaded in "auto" mode, it wraps all async test
+    # functions. Tach has its own EventLoopManager that handles this.
+    # We don't disable the plugin (we need its configure-time setup like
+    # event loop policy), but we prevent it from wrapping tests.
+    try:
+        asyncio_plugin = pm.get_plugin("asyncio")
+        if asyncio_plugin is not None:
+            # Unregister asyncio's per-test hooks but keep configure hooks
+            _selective_unregister_hooks(
+                pm,
+                asyncio_plugin,
+                keep={"pytest_configure", "pytest_addoption"},
+            )
+            os.write(
+                2,
+                b"[tach:harness] pytest-asyncio: kept configure, removed per-test hooks\n",
+            )
+    except Exception:
+        pass
+
+    # --- pytest-trio ---
+    try:
+        trio_plugin = pm.get_plugin("trio")
+        if trio_plugin is not None:
+            _selective_unregister_hooks(
+                pm,
+                trio_plugin,
+                keep={"pytest_configure", "pytest_addoption"},
+            )
+    except Exception:
+        pass
+
+
+def _unblock_django_db(cfg) -> None:
+    """Restore the original BaseDatabaseWrapper.ensure_connection.
+
+    pytest-django's DjangoDbBlocker.block() replaces ensure_connection
+    with a wrapper that raises RuntimeError. We restore the original
+    so tach workers can access the DB freely (tach manages isolation).
+    """
+    try:
+        # Import the stash key directly from pytest-django's plugin module
+        from pytest_django.plugin import blocking_manager_key
+
+        blocker = cfg.stash[blocking_manager_key]
+        blocker.unblock()
+        os.write(
+            2,
+            b"[tach:harness] DB blocker neutralized (tach manages isolation)\n",
+        )
+    except (ImportError, KeyError):
+        # pytest-django not installed or blocker not registered — try fallback
+        try:
+            from django.db.backends.base.base import BaseDatabaseWrapper
+
+            # The blocker replaces ensure_connection with a static _blocking_wrapper.
+            # Restore from the first non-blocking version in the MRO.
+            for klass in BaseDatabaseWrapper.__mro__:
+                if "ensure_connection" in klass.__dict__:
+                    original = klass.__dict__["ensure_connection"]
+                    if not (
+                        callable(original)
+                        and getattr(original, "__name__", "") == "_blocking_wrapper"
+                    ):
+                        BaseDatabaseWrapper.ensure_connection = original
+                        os.write(
+                            2,
+                            b"[tach:harness] DB blocker neutralized via MRO fallback\n",
+                        )
+                        break
+        except ImportError:
+            pass
+    except Exception as e:
+        os.write(
+            2,
+            f"[tach:harness] WARN: Failed to unblock Django DB: {e}\n".encode(),
+        )
+
+
+def _selective_unregister_hooks(pm, plugin, keep: set[str]) -> None:
+    """Unregister a plugin's hooks EXCEPT those in the keep set.
+
+    This allows framework plugins to do their configure-time setup
+    while preventing their per-test hooks from interfering with tach.
+    """
+    try:
+        # Get all hook callers this plugin participates in
+        plugin_name = pm.get_name(plugin) or str(plugin)
+        # We can't selectively unregister individual hooks easily,
+        # so we unregister the plugin entirely and re-register a
+        # stripped-down version that only has the kept hooks.
+        import types
+
+        # Collect the hook implementations we want to keep
+        kept_attrs = {}
+        for attr_name in keep:
+            impl = getattr(plugin, attr_name, None)
+            if impl is not None:
+                kept_attrs[attr_name] = impl
+
+        # Unregister the full plugin
+        pm.unregister(plugin)
+
+        # Re-register a lightweight wrapper with only kept hooks
+        if kept_attrs:
+            wrapper = types.SimpleNamespace(**kept_attrs)
+            pm.register(wrapper, name=f"{plugin_name}_tach_stripped")
+    except Exception as e:
+        os.write(
+            2,
+            f"[tach:harness] WARN: selective unregister failed for {plugin}: {e}\n".encode(),
+        )
+
+
 def init_session(root_dir: str):
     """Initialize pytest session in Zygote BEFORE forking workers.
 
@@ -2467,6 +2865,23 @@ def init_session(root_dir: str):
     env_before = dict(os.environ)
     sys_path_before = _capture_sys_path_snapshot()
 
+    # Disable only INFRASTRUCTURE plugins that tach fully replaces.
+    # Framework integration plugins (django, asyncio, trio, etc.) are LEFT
+    # ENABLED so their pytest_configure hooks run — these do critical session
+    # setup (e.g. pytest-django's setup_test_environment adds "testserver" to
+    # ALLOWED_HOSTS, installs instrumented template renderer, etc.).
+    #
+    # Disabled:
+    #   terminal    — tach has its own reporter
+    #   cacheprovider — pytest result caching not needed
+    #   cov         — tach has native PEP 669 coverage
+    #   xdist       — tach IS the parallelizer
+    #   sugar       — output formatting conflicts
+    #
+    # NOT disabled (framework plugins that do session-level setup):
+    #   django      — setup_test_environment, DB blocker, test ordering
+    #   asyncio     — event loop policy, auto mode detection
+    #   trio        — trio event loop setup
     args = [
         root_dir,
         "-s",
@@ -2482,16 +2897,27 @@ def init_session(root_dir: str):
         "no:xdist",
         "-p",
         "no:sugar",
-        "-p",
-        "no:asyncio",
-        "-p",
-        "no:trio",
-        "-p",
-        "no:django",
     ]
 
     cfg = _pytest.config._prepareconfig(args)
     cfg._do_configure()
+
+    # Ensure options that framework plugins expect exist on the namespace.
+    # Disabling `no:terminal` removes the `verbose` option that plugins
+    # (e.g. pytest-django's django_db_setup) read via config.option.verbose.
+    # We inject missing attributes with sensible defaults so plugins don't crash.
+    _option_defaults = {"verbose": 0, "tbstyle": "auto", "showlocals": False}
+    for attr, default in _option_defaults.items():
+        if not hasattr(cfg.option, attr):
+            setattr(cfg.option, attr, default)
+
+    # POST-CONFIGURE FIXUPS: Undo harmful side-effects from framework plugins
+    # while keeping their beneficial session-level setup.
+    #
+    # This is the general pattern: let plugins run their configure phase
+    # (which does critical env setup), then neutralize hooks/patches that
+    # conflict with tach's execution model.
+    _neutralize_plugin_conflicts(cfg)
 
     # Patch FixtureDef.execute to consume async fixtures at resolution time.
     # This MUST be in init_session() so workers inherit the patch via fork.
@@ -2542,6 +2968,22 @@ def init_session(root_dir: str):
     _configure_asyncio_from_pyproject(root_dir)
 
     _SESSION.perform_collect()
+
+    # TRIGGER SESSION-SCOPED AUTOUSE FIXTURES in the Zygote so workers
+    # inherit their effects via fork CoW.  Framework plugins register
+    # session-scoped autouse fixtures that do critical setup:
+    #   - pytest-django: django_test_environment (setup_test_environment)
+    #   - pytest-django: django_db_setup (creates test database)
+    # These fixtures normally only run when the first test requests them.
+    # We force them here so the setup happens once in the parent process.
+    _trigger_session_fixtures(cfg, _SESSION)
+
+    # Override DB-related session fixtures with no-ops.
+    # Tach creates the test DB via _setup_django_test_db() (called from Rust).
+    # If a framework plugin (e.g. pytest-django) registers a django_db_setup
+    # fixture that also calls setup_databases(), workers would re-create the DB.
+    # We replace those fixtures' func with a no-op so they yield immediately.
+    _override_db_session_fixtures(_SESSION)
 
     for item in _SESSION.items:
         _ITEMS_MAP[item.nodeid] = item
@@ -2682,6 +3124,10 @@ def _setup_django_test_db() -> None:
     Calls django.test.utils.setup_databases() to create a test DB with
     all migrations applied. Workers inherit this via fork.
 
+    Skips if a session-scoped fixture (e.g. pytest-django's django_db_setup)
+    already called setup_databases(). Detection: check if the default DB
+    connection's settings already point at a test database.
+
     Reads TACH_REUSE_DB / TACH_CREATE_DB env vars for keepdb behavior.
     Registers atexit handler for teardown.
     """
@@ -2689,6 +3135,24 @@ def _setup_django_test_db() -> None:
 
     if not _is_django_available():
         return
+
+    # Skip if a framework plugin's session fixture already set up the DB.
+    # pytest-django's django_db_setup fixture calls setup_databases() which
+    # modifies connection.settings_dict['NAME'] to point to a test DB.
+    # We detect this by checking if the DB name already contains 'test_'.
+    try:
+        from django.db import connections
+
+        default_name = connections["default"].settings_dict.get("NAME", "")
+        if isinstance(default_name, str) and "test_" in str(default_name):
+            print(
+                "[tach:harness] Django test DB already configured by session fixture, skipping",
+                file=sys.stderr,
+            )
+            _close_django_connections()
+            return
+    except Exception:
+        pass
 
     reuse_db = os.environ.get("TACH_REUSE_DB", "") == "1"
     create_db = os.environ.get("TACH_CREATE_DB", "") == "1"
@@ -2906,6 +3370,75 @@ def _apply_django_db_isolation(
     return savepoints
 
 
+def _snapshot_global_registries() -> dict:
+    """Snapshot global registries before a test runs.
+
+    Framework registries (like Django's app registry) can be polluted by
+    tests that dynamically define models or register plugins. We snapshot
+    the registry state before each test and restore it after, preventing
+    cross-test contamination in worker-reuse scenarios.
+
+    Returns a dict of registry snapshots keyed by framework name.
+    """
+    snapshots = {}
+
+    # Django app registry: snapshot all_models per app_label
+    try:
+        from django.apps import apps
+
+        if apps.ready:
+            # Deep copy the model registry: {app_label: {model_name: Model}}
+            snapshots["django_all_models"] = {
+                app_label: dict(models) for app_label, models in apps.all_models.items()
+            }
+    except ImportError:
+        pass
+
+    return snapshots
+
+
+def _restore_global_registries(snapshots: dict) -> None:
+    """Restore global registries to their pre-test state.
+
+    Only removes models that were dynamically added during the test
+    AND don't belong to installed apps. Models belonging to installed
+    apps are legitimate and may have been loaded by test infrastructure.
+    """
+    if not snapshots:
+        return
+
+    django_snapshot = snapshots.get("django_all_models")
+    if django_snapshot is not None:
+        try:
+            from django.apps import apps
+            from django.conf import settings
+
+            installed_labels = set()
+            try:
+                for app_config in apps.get_app_configs():
+                    installed_labels.add(app_config.label)
+            except Exception:
+                return  # Can't determine installed apps -- skip cleanup
+
+            for app_label in list(apps.all_models.keys()):
+                if app_label in installed_labels:
+                    continue  # Don't touch installed apps' models
+
+                if app_label not in django_snapshot:
+                    # Uninstalled app added during test -- remove it
+                    del apps.all_models[app_label]
+                else:
+                    original = django_snapshot[app_label]
+                    current = apps.all_models[app_label]
+                    for model_name in list(current.keys()):
+                        if model_name not in original:
+                            del current[model_name]
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+
 def _cleanup_django_db_isolation(savepoints: list[tuple[str, str]]) -> None:
     """Rollback savepoints after test to restore database state.
 
@@ -2993,6 +3526,24 @@ def run_test(
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
+
+    # Set PYTHONIOENCODING for any subprocesses spawned by tests.
+    # Without this, subprocesses inherit the memfd's ASCII encoding,
+    # causing UnicodeDecodeError when reading non-ASCII output
+    # (e.g. Django's makemessages command with UTF-8 .po files).
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+    # Ensure filesystem encoding is UTF-8, not ASCII.
+    # After fork+redirect to memfd, Python may detect ASCII as the
+    # filesystem encoding. This breaks tests that write non-ASCII
+    # filenames (e.g. staticfiles ⊗.txt). Setting LANG/LC_ALL
+    # ensures consistent UTF-8 handling for all file operations.
+    for env_var in ("LANG", "LC_ALL", "LC_CTYPE"):
+        if (
+            not os.environ.get(env_var)
+            or "ascii" in os.environ.get(env_var, "").lower()
+        ):
+            os.environ[env_var] = "C.UTF-8"
 
     # HOOK EFFECT REPLAY (v0.2.0):
     # Apply cached effects before running the test
