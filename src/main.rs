@@ -760,11 +760,40 @@ fn execute_session(
         write_lastfailed_cache(cwd, &stats.failed_test_ids);
     }
 
+    if !stats.test_durations.is_empty() {
+        write_duration_cache(cwd, &stats.test_durations);
+    }
+
     if final_failed > 0 {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn write_duration_cache(cwd: &Path, durations: &[(String, u64)]) {
+    let cache_dir = cwd.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cache_file = cache_dir.join("durations");
+    let mut lines = Vec::with_capacity(durations.len());
+    for (name, ms) in durations {
+        lines.push(format!("{}:{}", name, ms));
+    }
+    let _ = std::fs::write(&cache_file, lines.join("\n"));
+}
+
+fn read_duration_cache(cwd: &Path) -> std::collections::HashMap<String, u64> {
+    let cache_file = cwd.join(".tach_cache").join("durations");
+    match std::fs::read_to_string(&cache_file) {
+        Ok(content) => content
+            .lines()
+            .filter_map(|l| {
+                let (name, ms) = l.rsplit_once(':')?;
+                Some((name.to_string(), ms.parse().ok()?))
+            })
+            .collect(),
+        Err(_) => std::collections::HashMap::new(),
+    }
 }
 
 fn write_lastfailed_cache(cwd: &Path, failed_ids: &[String]) {
@@ -1623,6 +1652,11 @@ fn run_tests(
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok());
             scheduler.set_maxfail(maxfail_env);
+
+            let dur_cache = read_duration_cache(&cwd);
+            if !dur_cache.is_empty() {
+                scheduler.set_duration_cache(dur_cache);
+            }
 
             let collection_filtered = std::env::var("TACH_KEYWORD").is_ok()
                 || std::env::var("TACH_MARKERS").is_ok()

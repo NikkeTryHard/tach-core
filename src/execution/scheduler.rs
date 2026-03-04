@@ -126,6 +126,7 @@ pub struct Scheduler {
     reuse_db: bool,
     create_db: bool,
     maxfail: Option<usize>,
+    duration_cache: Option<std::collections::HashMap<String, u64>>,
 }
 
 impl Scheduler {
@@ -216,6 +217,7 @@ impl Scheduler {
             reuse_db,
             create_db,
             maxfail: None,
+            duration_cache: None,
         })
     }
 
@@ -223,10 +225,22 @@ impl Scheduler {
         self.maxfail = maxfail;
     }
 
+    pub fn set_duration_cache(&mut self, cache: std::collections::HashMap<String, u64>) {
+        self.duration_cache = Some(cache);
+    }
+
     /// Sort tests into safe/toxic queues for dual-path execution
     /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
     fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
-        tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+        if let Some(ref cache) = self.duration_cache {
+            tests.sort_by(|a, b| {
+                let da = cache.get(&a.test_name).copied().unwrap_or(0);
+                let db = cache.get(&b.test_name).copied().unwrap_or(0);
+                db.cmp(&da)
+            });
+        } else {
+            tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+        }
 
         let force_toxic = std::env::var("TACH_FORCE_TOXIC").unwrap_or_default() == "1";
         let mut safe_count = 0usize;
