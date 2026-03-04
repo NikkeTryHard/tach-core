@@ -11,8 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-04
+
 ### Added
 
+- **Full pyproject.toml Configuration** (0.6.0): 12 new `[tool.tach]` keys
+  (`keyword`, `markers`, `exitfirst`, `maxfail`, `force_toxic`, `no_fallback`,
+  `no_isolation`, `traceback`, `durations`, `memory`, `no_ignore`, `reuse_db`)
+- **MergedConfig Single Source of Truth**: CLI and file config merge into one
+  struct; CLI always wins over pyproject.toml values
+- **GitHub Actions Integration** (0.8.0): Auto-detect `GITHUB_ACTIONS` env,
+  emit `::error` annotations with file/line, write markdown summary to
+  `$GITHUB_STEP_SUMMARY`
+- **`--showlocals` / `-l` Flag** (0.5.0): Show local variables in tracebacks,
+  forwarded to Python harness via `TACH_SHOWLOCALS` env var
+- **Stale Run Directory Cleanup** (0.9.5): Remove `/tmp/tach_run_*` dirs older
+  than 1 hour on startup to prevent disk leaks from crashed sessions
 - **Pytest Fallback Retry**: Automatically retry failed tests with vanilla pytest
   to distinguish tach-specific failures from real test failures (`--no-fallback` to disable)
 - **Framework Plugin Support**: Let pytest-django, pytest-asyncio, pytest-trio run their
@@ -26,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - assertLogs failures by preserving logging handlers across fork
 - Unicode errors by setting UTF-8 locale at supervisor startup
 - Missing pytest options (verbose, tbstyle) when terminal plugin disabled
+- Duplicate `load_env_from_pyproject` call removed from inner execute_tests
 
 ### Changed
 
