@@ -253,6 +253,9 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub log_file: Option<std::path::PathBuf>,
 
+    #[arg(short = 's', long = "capture-no")]
+    pub no_capture: bool,
+
     // =========================================================================
     // Coverage (pytest-cov compatible)
     // =========================================================================
