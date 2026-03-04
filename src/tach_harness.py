@@ -2964,6 +2964,10 @@ def init_session(root_dir: str):
     if os.environ.get("TACH_STRICT_MARKERS") == "1":
         args.append("--strict-markers")
 
+    basetemp = os.environ.get("TACH_BASETEMP")
+    if basetemp:
+        args.extend(["--basetemp", basetemp])
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

@@ -73,6 +73,7 @@ impl Reporter for GitHubReporter {
 
         emit_annotations(&self.failures);
         write_step_summary(passed, failed, skipped, duration_ms, &self.failures);
+        write_github_output(passed, failed, skipped, duration_ms);
     }
 
     fn on_error(&mut self, message: &str) {
@@ -153,6 +154,29 @@ fn write_step_summary(
         .open(summary_path)
     {
         let _ = file.write_all(md.as_bytes());
+    }
+}
+
+fn write_github_output(passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+    let output_path = match std::env::var("GITHUB_OUTPUT") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+    let total = passed + failed + skipped;
+    let secs = duration_ms as f64 / 1000.0;
+    let result = if failed > 0 { "failure" } else { "success" };
+
+    let output = format!(
+        "total={total}\npassed={passed}\nfailed={failed}\nskipped={skipped}\n\
+         duration={secs:.2}\nresult={result}\n"
+    );
+
+    if let Ok(mut file) = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(output_path)
+    {
+        let _ = file.write_all(output.as_bytes());
     }
 }
 
@@ -297,5 +321,36 @@ AssertionError"#;
         r.on_run_start(1);
         r.on_test_finished("unknown_id", "fail", 10, Some("Error"));
         assert_eq!(r.failures[0].file, "unknown");
+    }
+
+    #[test]
+    fn test_write_github_output_to_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let output_path = dir.path().join("github_output");
+        unsafe { std::env::set_var("GITHUB_OUTPUT", output_path.to_str().unwrap()) };
+
+        write_github_output(10, 2, 3, 5000);
+
+        let content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(content.contains("total=15"));
+        assert!(content.contains("passed=10"));
+        assert!(content.contains("failed=2"));
+        assert!(content.contains("result=failure"));
+
+        unsafe { std::env::remove_var("GITHUB_OUTPUT") };
+    }
+
+    #[test]
+    fn test_write_github_output_success() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let output_path = dir.path().join("github_output2");
+        unsafe { std::env::set_var("GITHUB_OUTPUT", output_path.to_str().unwrap()) };
+
+        write_github_output(10, 0, 1, 3000);
+
+        let content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(content.contains("result=success"));
+
+        unsafe { std::env::remove_var("GITHUB_OUTPUT") };
     }
 }

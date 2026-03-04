@@ -290,6 +290,9 @@ fn main() -> Result<()> {
     if let Some(ref confcutdir) = cli.confcutdir {
         unsafe { std::env::set_var("TACH_CONFCUTDIR", confcutdir) };
     }
+    if let Some(ref basetemp) = cli.basetemp {
+        unsafe { std::env::set_var("TACH_BASETEMP", basetemp) };
+    }
     if cli.import_mode != "prepend" {
         unsafe { std::env::set_var("TACH_IMPORT_MODE", &cli.import_mode) };
     }

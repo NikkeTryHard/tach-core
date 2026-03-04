@@ -400,6 +400,9 @@ pub struct Cli {
     #[arg(short = 'o', long = "override-ini", value_name = "INI")]
     pub override_ini: Vec<String>,
 
+    #[arg(long, value_name = "DIR")]
+    pub basetemp: Option<String>,
+
     // =========================================================================
     // Passthrough Arguments
     // =========================================================================
