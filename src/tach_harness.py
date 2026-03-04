@@ -20,8 +20,11 @@ import logging
 import warnings as warnings_module
 
 
+_TACH_QUIET = os.environ.get("TACH_QUIET") == "1"
+
+
 def _tach_log(msg: bytes) -> None:
-    if os.environ.get("TACH_QUIET") != "1":
+    if not _TACH_QUIET:
         os.write(2, msg)
 
 
@@ -2505,18 +2508,21 @@ class _MinimalFixtureRequest:
     to satisfy most framework plugins without requiring a real test item.
     """
 
-    def __init__(self, config, session):
+    def __init__(self, config, session, resolved=None):
         self.config = config
         self.session = session
         self.node = session
         self.fspath = None
         self.scope = "session"
         self._finalizers = []
+        self._resolved = resolved or {}
 
     def addfinalizer(self, finalizer):
         self._finalizers.append(finalizer)
 
     def getfixturevalue(self, argname):
+        if argname in self._resolved:
+            return self._resolved[argname]
         raise NotImplementedError(
             f"getfixturevalue('{argname}') not available in zygote context"
         )
@@ -2614,7 +2620,7 @@ def _trigger_session_fixtures(cfg, session) -> None:
                 if dep in executed:
                     kwargs[dep] = executed[dep]
                 elif dep == "request":
-                    kwargs[dep] = _MinimalFixtureRequest(cfg, session)
+                    kwargs[dep] = _MinimalFixtureRequest(cfg, session, executed)
 
             try:
                 result = fixdef.func(**kwargs)
