@@ -269,6 +269,7 @@ impl Scheduler {
         let mut collected = 0usize;
         let mut memory_usage: Vec<(String, u64)> = Vec::new();
         let mut failed_ids: Vec<String> = Vec::new();
+        let mut test_durations: Vec<(String, u64)> = Vec::new();
 
         //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
@@ -307,7 +308,7 @@ impl Scheduler {
                         failed += 1;
                         failed_ids.push(test_name.clone());
                     }
-                    // Track memory usage if available
+                    test_durations.push((test_name.clone(), duration_ms));
                     if let Some(rss) = memory_rss {
                         memory_usage.push((test_name, rss));
                     }
@@ -391,13 +392,12 @@ impl Scheduler {
                     failed += 1;
                     failed_ids.push(test_name.clone());
                 }
-                // Track memory usage if available
+                test_durations.push((test_name.clone(), duration_ms));
                 if let Some(rss) = memory_rss {
                     memory_usage.push((test_name, rss));
                 }
                 collected += 1;
             } else {
-                // Check for crashed workers (process died unexpectedly)
                 let crashed = self.detect_crashed_workers();
                 for (test_id, test_name, slot, start_time) in crashed {
                     // Determine crash phase from start_time (no re-locking needed)
@@ -459,6 +459,7 @@ impl Scheduler {
             duration_ms,
             memory_usage,
             failed_test_ids: failed_ids,
+            test_durations,
         })
     }
 
@@ -921,10 +922,9 @@ pub struct SchedulerStats {
     pub failed: usize,
     pub skipped: usize,
     pub duration_ms: u64,
-    /// Memory usage per test (test_name, memory_bytes) - only populated if memory tracking is enabled
     pub memory_usage: Vec<(String, u64)>,
-    /// Node IDs of failed tests for pytest fallback retry
     pub failed_test_ids: Vec<String>,
+    pub test_durations: Vec<(String, u64)>,
 }
 
 // =============================================================================
@@ -979,6 +979,7 @@ mod tests {
             duration_ms: 1234,
             memory_usage: vec![],
             failed_test_ids: vec![],
+            test_durations: vec![],
         };
 
         let debug_str = format!("{:?}", stats);
@@ -998,6 +999,7 @@ mod tests {
             duration_ms: 5000,
             memory_usage: vec![("test_a".to_string(), 1024 * 1024)],
             failed_test_ids: vec![],
+            test_durations: vec![],
         };
 
         assert_eq!(stats.total, 100);

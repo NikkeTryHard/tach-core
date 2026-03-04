@@ -47,6 +47,7 @@ struct SessionConfig {
     last_failed: bool,
     failed_first: bool,
     cache_clear: bool,
+    durations: Option<usize>,
 }
 
 // =============================================================================
@@ -311,6 +312,7 @@ fn main() -> Result<()> {
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
+            durations: cli.durations,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -339,6 +341,7 @@ fn main() -> Result<()> {
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
+            durations: cli.durations,
         },
     )
 }
@@ -648,6 +651,22 @@ fn execute_session(
     )?;
 
     drop(log_redirect);
+
+    if let Some(n) = config.durations
+        && !is_json
+    {
+        let mut sorted = stats.test_durations.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let show = if n == 0 { sorted.len() } else { n.min(sorted.len()) };
+        eprintln!("\n= slowest {} durations =", show);
+        for (name, ms) in sorted.iter().take(show) {
+            if *ms >= 1000 {
+                eprintln!("{:.2}s {}", *ms as f64 / 1000.0, name);
+            } else {
+                eprintln!("{}ms {}", ms, name);
+            }
+        }
+    }
 
     let _ = std::fs::remove_file(cwd.join(".tach_cache/_lf_filter.txt"));
 
