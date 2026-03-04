@@ -28,10 +28,18 @@ def _tach_log(msg: bytes) -> None:
         os.write(2, msg)
 
 
-import pytest
-import _pytest.runner
-import _pytest.main
-import _pytest.config
+try:
+    import pytest
+    import _pytest.runner
+    import _pytest.main
+    import _pytest.config
+except ImportError as _e:
+    sys.stderr.write(
+        f"[tach:harness] FATAL: pytest is not installed ({_e})\n"
+        "  Install it: pip install pytest\n"
+        "  Or: uv add --dev pytest\n"
+    )
+    sys.exit(4)
 from contextlib import contextmanager
 from typing import Any, Optional, Set, Type, Tuple, Union
 
