@@ -1778,4 +1778,66 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--co", "."]);
         assert!(cli.collect_only);
     }
+
+    #[test]
+    fn test_rootdir_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--rootdir", "/tmp/myproject", "."]);
+        assert_eq!(cli.rootdir.as_deref(), Some("/tmp/myproject"));
+    }
+
+    #[test]
+    fn test_confcutdir_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--confcutdir", "src", "."]);
+        assert_eq!(cli.confcutdir.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn test_override_ini_multiple() {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "tach",
+            "-o",
+            "markers=slow: slow tests",
+            "-o",
+            "timeout=30",
+            ".",
+        ]);
+        assert_eq!(cli.override_ini.len(), 2);
+        assert_eq!(cli.override_ini[0], "markers=slow: slow tests");
+        assert_eq!(cli.override_ini[1], "timeout=30");
+    }
+
+    #[test]
+    fn test_import_mode_default() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        assert_eq!(cli.import_mode, "prepend");
+    }
+
+    #[test]
+    fn test_import_mode_importlib() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--import-mode", "importlib", "."]);
+        assert_eq!(cli.import_mode, "importlib");
+    }
+
+    #[test]
+    fn test_retries_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--retries", "3", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert_eq!(merged.retries, Some(3));
+    }
+
+    #[test]
+    fn test_show_locals_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-l", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.show_locals);
+    }
 }

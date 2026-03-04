@@ -203,11 +203,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let cwd = if let Some(ref rootdir) = cli.rootdir {
         let p = std::path::Path::new(rootdir);
-        if p.is_absolute() {
+        let resolved = if p.is_absolute() {
             p.to_path_buf()
         } else {
             std::env::current_dir()?.join(p)
-        }
+        };
+        resolved.canonicalize().unwrap_or(resolved)
     } else {
         std::env::current_dir()?
     };
