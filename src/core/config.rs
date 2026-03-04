@@ -158,6 +158,17 @@ pub struct Cli {
     #[arg(short = 'x', long)]
     pub exitfirst: bool,
 
+    /// Re-run only tests that failed in the last run.
+    ///
+    /// Reads the last-failed cache from .tach_cache/lastfailed and
+    /// runs only those tests. Useful for fixing failures iteratively.
+    #[arg(long = "lf")]
+    pub last_failed: bool,
+
+    /// Run last-failed tests first, then the rest.
+    #[arg(long = "ff")]
+    pub failed_first: bool,
+
     /// Exit after N failures (--maxfail=N).
     #[arg(long, value_name = "N")]
     pub maxfail: Option<usize>,
@@ -258,6 +269,18 @@ pub struct Cli {
     /// *.py to .ignore, which would otherwise hide all tests.
     #[arg(long)]
     pub no_ignore: bool,
+
+    /// Disable pytest fallback for failed tests.
+    ///
+    /// By default, tach retries failed tests with vanilla pytest to
+    /// distinguish tach-specific failures from real test failures.
+    /// Use this flag to skip the fallback and report raw tach results.
+    #[arg(long, env = "TACH_NO_FALLBACK")]
+    pub no_fallback: bool,
+
+    /// Remove the last-failed cache before running.
+    #[arg(long)]
+    pub cache_clear: bool,
 
     // =========================================================================
     // Plugin Configuration

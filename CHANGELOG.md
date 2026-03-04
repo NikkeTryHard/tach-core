@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pytest Fallback Retry**: Automatically retry failed tests with vanilla pytest
+  to distinguish tach-specific failures from real test failures (`--no-fallback` to disable)
+- **Framework Plugin Support**: Let pytest-django, pytest-asyncio, pytest-trio run their
+  session-level setup instead of disabling them
+- **Session Fixture Execution**: Execute session-scoped autouse fixtures in the zygote
+  before fork so workers inherit the setup via CoW
+
+### Fixed
+
+- ALLOWED_HOSTS 400 errors via session fixture execution
+- assertLogs failures by preserving logging handlers across fork
+- Unicode errors by setting UTF-8 locale at supervisor startup
+- Missing pytest options (verbose, tbstyle) when terminal plugin disabled
+
+### Changed
+
+- Django test suite: 1575 failures -> 87 raw / 51 with fallback (93% improvement)
+
 ---
 
 ## [0.2.4] - 2026-02-01

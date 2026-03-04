@@ -135,6 +135,7 @@ fn test_exit_code_failure_on_failing_tests() {
 
     let output = Command::new(&binary)
         .arg("--no-isolation")
+        .arg("--no-fallback")
         .arg("-n")
         .arg("1")
         .arg(&tests_dir)
@@ -142,7 +143,6 @@ fn test_exit_code_failure_on_failing_tests() {
         .output()
         .expect("Failed to execute tach-core");
 
-    // Print output for debugging
     eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
     eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
 
@@ -187,8 +187,8 @@ fn test_exit_code_on_no_tests_found() {
     // This is different from pytest --strict which would fail
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "Expected exit code 0 when no tests found (pytest default behavior)"
+        Some(5),
+        "Expected exit code 5 when no tests collected (pytest ExitCode.NO_TESTS_COLLECTED)"
     );
 }
 
@@ -424,8 +424,8 @@ fn test_exit_code_nonexistent_path() {
     // This documents the current behavior
     let exit_code = output.status.code();
     assert!(
-        exit_code == Some(0) || exit_code == Some(1),
-        "Expected exit code 0 or 1 for nonexistent path, got {:?}",
+        exit_code == Some(5) || exit_code == Some(1),
+        "Expected exit code 5 (no tests) or 1 (error) for nonexistent path, got {:?}",
         exit_code
     );
 }

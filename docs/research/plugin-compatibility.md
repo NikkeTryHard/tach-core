@@ -20,11 +20,16 @@ This document tracks pytest plugin compatibility with Tach's hypervisor-accelera
 
 | Plugin | Version | Isolation Mode | Description |
 |--------|---------|----------------|-------------|
-| pytest-django | >= 4.0 | All | Django test support via marker detection |
-| pytest-asyncio | >= 0.21 | All | Async test support via `is_async` detection |
+| pytest-django | >= 4.0 | All | Full support: session fixtures, DB isolation, setup_test_environment |
+| pytest-asyncio | >= 0.21 | All | Full support: event loop policy, auto mode, async fixtures |
 | pytest-mock | >= 3.0 | All | Mocking fixtures work normally |
 | pytest-env | >= 0.8 | All | Environment variables captured via effect recording |
 | pytest-randomly | >= 3.0 | All | Test randomization works normally |
+| pytest-trio | >= 0.7 | All | Trio event loop support via plugin integration |
+
+> **Note:** Framework plugins (django, asyncio, trio) now load natively instead of
+> being disabled. Their session-level setup runs in the zygote, and conflicting
+> per-test hooks are neutralized. See PR #104 for details.
 
 ### Partially Supported Plugins
 

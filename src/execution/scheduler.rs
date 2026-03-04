@@ -7,14 +7,14 @@
 use crate::hooks::HookRegistry;
 use crate::logcapture::LogCapture;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
-    TestPayload, TestResult, decode_with_limit, encode_with_length,
+    decode_with_limit, encode_with_length, FixtureInfo, TestPayload, TestResult, CMD_EXIT,
+    CMD_FORK, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
 };
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
 use crate::signals;
 use anyhow::Result;
-use nix::sys::signal::{Signal, kill};
+use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -123,10 +123,9 @@ pub struct Scheduler {
     hook_registry: HookRegistry,
     /// Project root directory for resolving hook paths
     project_root: PathBuf,
-    /// Reuse existing test database (--reuse-db)
     reuse_db: bool,
-    /// Force recreation of test database (--create-db)
     create_db: bool,
+    maxfail: Option<usize>,
 }
 
 impl Scheduler {
@@ -216,18 +215,26 @@ impl Scheduler {
             project_root,
             reuse_db,
             create_db,
+            maxfail: None,
         })
+    }
+
+    pub fn set_maxfail(&mut self, maxfail: Option<usize>) {
+        self.maxfail = maxfail;
     }
 
     /// Sort tests into safe/toxic queues for dual-path execution
     /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
-    fn populate_queues(&mut self, tests: Vec<RunnableTest>) {
+    fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
+        tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+        let force_toxic = std::env::var("TACH_FORCE_TOXIC").unwrap_or_default() == "1";
         let mut safe_count = 0usize;
         let mut toxic_count = 0usize;
 
         for (idx, test) in tests.into_iter().enumerate() {
             let test_id = idx as u32;
-            if test.is_toxic {
+            if test.is_toxic || force_toxic {
                 self.toxic_queue.push_back((test_id, test));
                 toxic_count += 1;
             } else {
@@ -263,6 +270,8 @@ impl Scheduler {
         let mut skipped = 0usize;
         let mut collected = 0usize;
         let mut memory_usage: Vec<(String, u64)> = Vec::new();
+        let mut failed_ids: Vec<String> = Vec::new();
+        let mut test_durations: Vec<(String, u64)> = Vec::new();
 
         //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
@@ -272,9 +281,14 @@ impl Scheduler {
 
         // Dispatch tests from queues (safe first, then toxic)
         while let Some((test_id, test)) = self.next_test() {
-            // Check for shutdown signal (Ctrl+C)
             if signals::shutdown_requested() {
                 reporter.on_error("Shutdown requested");
+                break;
+            }
+
+            if let Some(max) = self.maxfail
+                && failed >= max
+            {
                 break;
             }
 
@@ -299,8 +313,9 @@ impl Scheduler {
                         skipped += 1;
                     } else {
                         failed += 1;
+                        failed_ids.push(test_name.clone());
                     }
-                    // Track memory usage if available
+                    test_durations.push((test_name.clone(), duration_ms));
                     if let Some(rss) = memory_rss {
                         memory_usage.push((test_name, rss));
                     }
@@ -326,6 +341,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
 
@@ -363,6 +379,7 @@ impl Scheduler {
             if let Err(e) = self.dispatch_test(&test, test_id, slot) {
                 reporter.on_test_finished(&test.test_name, "fail", 0, Some(&e.to_string()));
                 failed += 1;
+                failed_ids.push(test.test_name.clone());
                 collected += 1;
             }
         }
@@ -380,14 +397,14 @@ impl Scheduler {
                     skipped += 1;
                 } else {
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                 }
-                // Track memory usage if available
+                test_durations.push((test_name.clone(), duration_ms));
                 if let Some(rss) = memory_rss {
                     memory_usage.push((test_name, rss));
                 }
                 collected += 1;
             } else {
-                // Check for crashed workers (process died unexpectedly)
                 let crashed = self.detect_crashed_workers();
                 for (test_id, test_name, slot, start_time) in crashed {
                     // Determine crash phase from start_time (no re-locking needed)
@@ -405,6 +422,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
 
@@ -428,6 +446,7 @@ impl Scheduler {
                         reporter,
                     );
                     failed += 1;
+                    failed_ids.push(test_name.clone());
                     collected += 1;
                 }
             }
@@ -446,6 +465,8 @@ impl Scheduler {
             skipped,
             duration_ms,
             memory_usage,
+            failed_test_ids: failed_ids,
+            test_durations,
         })
     }
 
@@ -908,8 +929,9 @@ pub struct SchedulerStats {
     pub failed: usize,
     pub skipped: usize,
     pub duration_ms: u64,
-    /// Memory usage per test (test_name, memory_bytes) - only populated if memory tracking is enabled
     pub memory_usage: Vec<(String, u64)>,
+    pub failed_test_ids: Vec<String>,
+    pub test_durations: Vec<(String, u64)>,
 }
 
 // =============================================================================
@@ -963,6 +985,8 @@ mod tests {
             skipped: 0,
             duration_ms: 1234,
             memory_usage: vec![],
+            failed_test_ids: vec![],
+            test_durations: vec![],
         };
 
         let debug_str = format!("{:?}", stats);
@@ -981,6 +1005,8 @@ mod tests {
             skipped: 0,
             duration_ms: 5000,
             memory_usage: vec![("test_a".to_string(), 1024 * 1024)],
+            failed_test_ids: vec![],
+            test_durations: vec![],
         };
 
         assert_eq!(stats.total, 100);
@@ -1301,8 +1327,8 @@ mod tests {
     /// set when collecting. Only the first caller to set the flag gets the worker.
     #[test]
     fn test_timeout_worker_collected_once() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
         use std::time::Duration;
 
         // Simulate an ActiveWorker with the proposed timeout_handled field
@@ -1372,8 +1398,8 @@ mod tests {
     /// This test fails compilation until we add the field, then passes.
     #[test]
     fn test_active_worker_with_timeout_handled() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
 
         // Create an ActiveWorker with the new field
         // This test will FAIL TO COMPILE until we add timeout_handled to ActiveWorker
@@ -1415,8 +1441,8 @@ mod tests {
     /// are calling collect_timed_out concurrently.
     #[test]
     fn test_concurrent_timeout_no_race() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
         use std::thread;
 
         // Simulate 10 workers, all timed out
@@ -1509,8 +1535,8 @@ mod tests {
     /// Test that graceful_kill_worker with a valid PID attempts SIGTERM first.
     #[test]
     fn test_graceful_kill_worker_with_pid() {
-        use nix::sys::wait::{WaitPidFlag, waitpid};
-        use nix::unistd::{ForkResult, fork};
+        use nix::sys::wait::{waitpid, WaitPidFlag};
+        use nix::unistd::{fork, ForkResult};
         use std::time::Duration;
 
         // Fork a child that exits immediately

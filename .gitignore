@@ -3,6 +3,7 @@ fuzz/target/
 /.venv
 __pycache__/
 .tach/
+.tach_cache/
 *.pyc
 
 # Local configuration

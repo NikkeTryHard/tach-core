@@ -39,14 +39,17 @@ use uuid::Uuid;
 /// Groups boolean/config parameters to reduce function argument count.
 #[derive(Clone, Copy)]
 struct SessionConfig {
-    /// Enable coverage collection
     coverage_enabled: bool,
-    /// Traceback display style
     traceback_style: TracebackStyle,
-    /// Enable memory profiling
     memory_enabled: bool,
-    /// Skip .ignore/.gitignore patterns
     no_ignore: bool,
+    no_fallback: bool,
+    last_failed: bool,
+    failed_first: bool,
+    cache_clear: bool,
+    durations: Option<usize>,
+    verbose: u8,
+    _quiet: bool,
 }
 
 // =============================================================================
@@ -199,9 +202,12 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_NO_ISOLATION", "1") };
     }
 
-    // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
-    // SAFETY: Same as above - called before worker threads spawn.
-    unsafe { std::env::set_var("TACH_TARGET_PATH", &cli.path) };
+    let target_file_path = if cli.path.contains("::") {
+        cli.path.split("::").next().unwrap_or(&cli.path)
+    } else {
+        &cli.path
+    };
+    unsafe { std::env::set_var("TACH_TARGET_PATH", target_file_path) };
 
     // Set Django test DB flags for Zygote to read during setup_databases()
     // SAFETY: Same as above - called before worker threads spawn.
@@ -210,6 +216,62 @@ fn main() -> Result<()> {
     }
     if cli.create_db {
         unsafe { std::env::set_var("TACH_CREATE_DB", "1") };
+    }
+
+    // Ensure UTF-8 locale for all subprocesses and file operations.
+    // Without this, workers forked from the zygote may use ASCII encoding
+    // for filesystem paths and subprocess I/O, breaking non-ASCII tests.
+    // SAFETY: Same as above - called before worker threads spawn.
+    if std::env::var("LANG").unwrap_or_default().is_empty() {
+        unsafe { std::env::set_var("LANG", "C.UTF-8") };
+    }
+    if std::env::var("PYTHONUTF8").unwrap_or_default().is_empty() {
+        unsafe { std::env::set_var("PYTHONUTF8", "1") };
+    }
+    if std::env::var("PYTHONIOENCODING")
+        .unwrap_or_default()
+        .is_empty()
+    {
+        unsafe { std::env::set_var("PYTHONIOENCODING", "utf-8") };
+    }
+
+    if let Some(ref keyword) = cli.keyword {
+        unsafe { std::env::set_var("TACH_KEYWORD", keyword) };
+    }
+    if let Some(ref markers) = cli.markers {
+        unsafe { std::env::set_var("TACH_MARKERS", markers) };
+    }
+
+    let maxfail = if cli.exitfirst {
+        Some(1)
+    } else {
+        cli.maxfail
+    };
+    if let Some(mf) = maxfail {
+        unsafe { std::env::set_var("TACH_MAXFAIL", mf.to_string()) };
+    }
+    if cli.force_toxic {
+        unsafe { std::env::set_var("TACH_FORCE_TOXIC", "1") };
+    }
+    if !cli.pytest_args.is_empty() {
+        unsafe { std::env::set_var("TACH_PYTEST_ARGS", cli.pytest_args.join("\x1f")) };
+    }
+    if let Some(timeout) = cli.timeout {
+        unsafe { std::env::set_var("TACH_TIMEOUT", timeout.to_string()) };
+    }
+    if let Some((_, node)) = cli.path.split_once("::") {
+        let kw = node.replace("::", " and ");
+        let existing = std::env::var("TACH_KEYWORD").unwrap_or_default();
+        let new_kw = if existing.is_empty() {
+            kw
+        } else {
+            format!("{existing} and {kw}")
+        };
+        unsafe { std::env::set_var("TACH_KEYWORD", &new_kw) };
+    }
+    for plugin in &cli.disable_plugins {
+        let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
+        unsafe { std::env::set_var(&key, "1") };
     }
 
     // --- LIFECYCLE SETUP ---
@@ -286,10 +348,15 @@ fn main() -> Result<()> {
         let cwd_clone = cwd.clone();
         let path_clone = cli.path.clone();
         let session_config = SessionConfig {
-            coverage_enabled: false, // Coverage not supported in watch mode
+            coverage_enabled: false,
             traceback_style: cli.traceback,
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
+            no_fallback: cli.no_fallback,
+            last_failed: cli.last_failed,
+            failed_first: cli.failed_first,
+            cache_clear: cli.cache_clear,
+            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -314,6 +381,11 @@ fn main() -> Result<()> {
             traceback_style: cli.traceback,
             memory_enabled: cli.memory,
             no_ignore: cli.no_ignore,
+            no_fallback: cli.no_fallback,
+            last_failed: cli.last_failed,
+            failed_first: cli.failed_first,
+            cache_clear: cli.cache_clear,
+            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
         },
     )
 }
@@ -329,13 +401,27 @@ fn execute_session(
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
 
+    if config.cache_clear {
+        let cache_dir = cwd.join(".tach_cache");
+        if cache_dir.exists() {
+            let _ = std::fs::remove_dir_all(&cache_dir);
+            if !is_json {
+                eprintln!("[tach:supervisor] Cache cleared");
+            }
+        }
+    }
+
     // Create reporters
     //  Use TachReporter for interactive terminals, DotsReporter for CI
     let mut reporters: Vec<Box<dyn Reporter>> = Vec::new();
     match format {
         OutputFormat::Json => reporters.push(Box::new(JsonReporter)),
         OutputFormat::Human => {
-            if ProgressReporter::should_use_progress_bar() {
+            if config.verbose > 0 {
+                reporters.push(Box::new(DotsReporter::with_traceback_style(
+                    config.traceback_style,
+                )));
+            } else if ProgressReporter::should_use_progress_bar() {
                 let ratatui_reporter =
                     RatatuiReporter::with_traceback_style(config.traceback_style);
                 reporters.push(Box::new(ratatui_reporter));
@@ -518,8 +604,15 @@ fn execute_session(
     }
 
     // --- PATH FILTERING ---
-    // Filter tests to only include those matching the target path
-    let target = std::path::Path::new(target_path);
+    // Handle pytest-style node IDs: "file.py::Class::method"
+    let (file_target, node_filter) = if target_path.contains("::") {
+        let parts: Vec<&str> = target_path.splitn(2, "::").collect();
+        (parts[0].to_string(), Some(parts[1].to_string()))
+    } else {
+        (target_path.to_string(), None)
+    };
+
+    let target = std::path::Path::new(&file_target);
     let target_canonical = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
@@ -532,14 +625,47 @@ fn execute_session(
                 .canonicalize()
                 .unwrap_or_else(|_| test_path.to_path_buf());
 
-            // Match if test is under target directory OR matches exactly
-            test_canonical.starts_with(&target_canonical)
+            let path_matches = test_canonical.starts_with(&target_canonical)
                 || test_canonical == target_canonical
-                ||
-            // Handle relative path matching
-            test_path.starts_with(target)
+                || test_path.starts_with(target);
+
+            if !path_matches {
+                return false;
+            }
+
+            if let Some(ref filter) = node_filter {
+                test.test_name.contains(filter.as_str())
+            } else {
+                true
+            }
         })
         .collect();
+
+    if config.last_failed || config.failed_first {
+        let last_failed = read_lastfailed_cache(cwd);
+        if !last_failed.is_empty() {
+            let cache_dir = cwd.join(".tach_cache");
+            let _ = std::fs::create_dir_all(&cache_dir);
+            let filter_file = cache_dir.join("_lf_filter.txt");
+            let _ = std::fs::write(&filter_file, last_failed.join("\n"));
+            let env_key = if config.last_failed {
+                "TACH_LF_FILE"
+            } else {
+                "TACH_FF_FILE"
+            };
+            unsafe { std::env::set_var(env_key, filter_file.to_string_lossy().as_ref()) };
+            if !is_json {
+                let mode = if config.last_failed { "--lf" } else { "--ff" };
+                eprintln!(
+                    "[tach:supervisor] {}: {} last-failed tests",
+                    mode,
+                    last_failed.len()
+                );
+            }
+        } else if !is_json {
+            eprintln!("[tach:supervisor] No last-failed cache found, running all tests");
+        }
+    }
 
     if !is_json {
         eprintln!(
@@ -556,7 +682,7 @@ fn execute_session(
                 target_path
             );
         }
-        return Ok(());
+        std::process::exit(5);
     }
 
     // --- BUILD HOOK REGISTRY ---
@@ -574,7 +700,7 @@ fn execute_session(
     reporter.on_session_setup(&file_counts);
 
     // --- RUN TESTS ---
-    let failed_count = run_tests(
+    let stats = run_tests(
         &cleanup,
         filtered_tests,
         &mut reporter,
@@ -586,15 +712,234 @@ fn execute_session(
         &toxicity_graph,
     )?;
 
-    // Restore stderr before exiting (LogRedirect drops and restores automatically)
     drop(log_redirect);
 
-    // Exit with code 1 if any tests failed
-    if failed_count > 0 {
+    if let Some(n) = config.durations
+        && !is_json
+    {
+        let mut sorted = stats.test_durations.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let show = if n == 0 { sorted.len() } else { n.min(sorted.len()) };
+        eprintln!("\n= slowest {} durations =", show);
+        for (name, ms) in sorted.iter().take(show) {
+            if *ms >= 1000 {
+                eprintln!("{:.2}s {}", *ms as f64 / 1000.0, name);
+            } else {
+                eprintln!("{}ms {}", ms, name);
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(cwd.join(".tach_cache/_lf_filter.txt"));
+
+    // --- PYTEST FALLBACK ---
+    // When tests fail in tach, retry them with vanilla pytest to distinguish
+    // tach-specific failures from real test failures. This makes tach a true
+    // drop-in replacement: users get tach's speed for passing tests and
+    // pytest's compatibility for edge cases.
+    let final_failed = if !stats.failed_test_ids.is_empty() && !config.no_fallback {
+        pytest_fallback_retry(&stats, cwd, is_json)
+    } else {
+        stats.failed
+    };
+
+    // Write the lastfailed cache. If fallback ran, use only the REAL failures
+    // (tests that failed in both tach and pytest). Otherwise use all tach failures.
+    let results_file = cwd.join(".tach_cache/_fallback_results.txt");
+    if results_file.exists() {
+        let real_failures = read_lastfailed_cache_from(&results_file);
+        write_lastfailed_cache(cwd, &real_failures);
+        let _ = std::fs::remove_file(&results_file);
+    } else {
+        write_lastfailed_cache(cwd, &stats.failed_test_ids);
+    }
+
+    if final_failed > 0 {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn write_lastfailed_cache(cwd: &Path, failed_ids: &[String]) {
+    let cache_dir = cwd.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cache_file = cache_dir.join("lastfailed");
+    if failed_ids.is_empty() {
+        let _ = std::fs::remove_file(&cache_file);
+    } else {
+        let _ = std::fs::write(&cache_file, failed_ids.join("\n"));
+    }
+}
+
+fn read_lastfailed_cache(cwd: &Path) -> Vec<String> {
+    read_lastfailed_cache_from(&cwd.join(".tach_cache").join("lastfailed"))
+}
+
+fn read_lastfailed_cache_from(path: &Path) -> Vec<String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn pytest_fallback_retry(
+    stats: &tach_core::scheduler::SchedulerStats,
+    cwd: &Path,
+    is_json: bool,
+) -> usize {
+    use std::io::Write;
+    use std::process::Command;
+    use std::time::Instant;
+
+    let failed_ids = &stats.failed_test_ids;
+    if failed_ids.is_empty() {
+        return 0;
+    }
+
+    let fallback_start = Instant::now();
+    if !is_json {
+        eprintln!(
+            "\n[tach:fallback] Retrying {} failed test(s) with pytest...",
+            failed_ids.len()
+        );
+    }
+
+    // Write a Python script that runs pytest with exact test name filtering.
+    // This avoids -k's substring matching (test_foo matches test_foobar)
+    // and OS arg length limits on large failure sets.
+    let cache_dir = cwd.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let retry_file = cache_dir.join("_fallback_retry.txt");
+    let runner_file = cache_dir.join("_fallback_runner.py");
+    {
+        let mut f = match std::fs::File::create(&retry_file) {
+            Ok(f) => f,
+            Err(e) => {
+                if !is_json {
+                    eprintln!("[tach:fallback] Failed to create retry file: {}", e);
+                }
+                return stats.failed;
+            }
+        };
+        for id in failed_ids {
+            let _ = writeln!(f, "{}", id);
+        }
+    }
+
+    let results_file = cache_dir.join("_fallback_results.txt");
+    let runner_code = format!(
+        r#"import sys, pathlib, pytest
+_IDS = set(pathlib.Path({retry_path:?}).read_text().splitlines())
+_RESULTS = pathlib.Path({results_path:?})
+class _TachFilter:
+    def pytest_collection_modifyitems(self, items):
+        items[:] = [i for i in items if _suffix(i.nodeid) in _IDS]
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call" and report.failed:
+            with open(_RESULTS, "a") as f:
+                f.write(_suffix(report.nodeid) + "\n")
+def _suffix(nodeid):
+    parts = nodeid.split("::")
+    return "::".join(parts[1:]) if len(parts) > 1 else nodeid
+_RESULTS.unlink(missing_ok=True)
+sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
+    "--continue-on-collection-errors", "."], plugins=[_TachFilter()]))
+"#,
+        retry_path = retry_file.display(),
+        results_path = results_file.display(),
+    );
+    if let Err(e) = std::fs::write(&runner_file, &runner_code) {
+        if !is_json {
+            eprintln!("[tach:fallback] Failed to write runner: {}", e);
+        }
+        return stats.failed;
+    }
+
+    let output = Command::new("python3")
+        .arg(&runner_file)
+        .current_dir(cwd)
+        .output();
+
+    let _ = std::fs::remove_file(&retry_file);
+    let _ = std::fs::remove_file(&runner_file);
+
+    match output {
+        Ok(result) => {
+            if result.status.code() == Some(127) {
+                if !is_json {
+                    eprintln!("[tach:fallback] pytest not found, reporting raw tach results");
+                }
+                return stats.failed;
+            }
+
+            let stdout = String::from_utf8_lossy(&result.stdout);
+
+            let mut pytest_failed = 0usize;
+
+            // Parse pytest's summary line: "N failed, M passed, K error in Xs"
+            for line in stdout.lines().rev() {
+                let line = line.trim();
+                if line.contains(" in ") && (line.contains("passed") || line.contains("failed")) {
+                    for part in line.split(',') {
+                        let words: Vec<&str> = part.split_whitespace().collect();
+                        if let [num, kind, ..] = words.as_slice()
+                            && let Ok(n) = num.parse::<usize>()
+                            && kind.starts_with("failed")
+                        {
+                            pytest_failed = n;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            let real_failure_ids = read_lastfailed_cache_from(&results_file);
+            let real_failures = if real_failure_ids.is_empty() {
+                pytest_failed
+            } else {
+                real_failure_ids.len()
+            };
+            let tach_specific = failed_ids.len().saturating_sub(real_failures);
+
+            if !is_json {
+                if tach_specific > 0 {
+                    eprintln!(
+                        "[tach:fallback] {} test(s) passed in pytest (tach-specific failures)",
+                        tach_specific
+                    );
+                }
+                if real_failures > 0 {
+                    eprintln!(
+                        "[tach:fallback] {} test(s) failed in both tach and pytest (real failures)",
+                        real_failures
+                    );
+                }
+                let elapsed = fallback_start.elapsed();
+                let total_effective_pass = stats.passed + tach_specific;
+                eprintln!(
+                    "[tach:fallback] Fallback completed in {:.1}s",
+                    elapsed.as_secs_f64()
+                );
+                eprintln!(
+                    "[tach:fallback] Final: {} passed, {} failed, {} skipped",
+                    total_effective_pass, real_failures, stats.skipped
+                );
+            }
+
+            real_failures
+        }
+        Err(e) => {
+            if !is_json {
+                eprintln!("[tach:fallback] Failed to run pytest: {}", e);
+            }
+            stats.failed
+        }
+    }
 }
 
 /// Handle the `self-test` subcommand
@@ -977,7 +1322,7 @@ fn run_tests(
     mut hook_registry: HookRegistry,
     project_root: PathBuf,
     toxicity_graph: &ToxicityGraph,
-) -> Result<usize> {
+) -> Result<tach_core::scheduler::SchedulerStats> {
     let cwd = std::env::current_dir()?;
 
     // --- LOAD TACH CONFIG ---
@@ -1241,7 +1586,10 @@ fn run_tests(
 
             // --- SCHEDULER ---
             // Use with_config to pass timeout_hook from pyproject.toml
-            let global_timeout = tach_config.timeout();
+            let global_timeout = std::env::var("TACH_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or_else(|| tach_config.timeout());
             let timeout_hook = tach_config.timeout_hook.clone();
             let mut scheduler = Scheduler::with_config(
                 sup_cmd_sock,
@@ -1256,8 +1604,17 @@ fn run_tests(
                 std::env::var("TACH_CREATE_DB").unwrap_or_default() == "1",
             )?;
 
-            // PYTEST-AUTHORITATIVE MERGE (Issue #98)
-            let runnable_tests = if !collected_tests.is_empty() {
+            let maxfail_env = std::env::var("TACH_MAXFAIL")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok());
+            scheduler.set_maxfail(maxfail_env);
+
+            let collection_filtered = std::env::var("TACH_KEYWORD").is_ok()
+                || std::env::var("TACH_MARKERS").is_ok()
+                || std::env::var("TACH_LF_FILE").is_ok()
+                || std::env::var("TACH_PYTEST_ARGS").is_ok();
+
+            let runnable_tests = if !collected_tests.is_empty() || collection_filtered {
                 let mut rust_index: std::collections::HashMap<String, resolver::RunnableTest> =
                     std::collections::HashMap::new();
                 for test in runnable_tests {
@@ -1325,9 +1682,6 @@ fn run_tests(
             // Shutdown
             scheduler.shutdown()?;
             waitpid(zygote_pid, None)?;
-
-            // Track failure count for exit code
-            let failed_count = stats.failed;
 
             // --- MEMORY REPORTING ---
             // Display memory usage statistics if enabled
@@ -1462,8 +1816,7 @@ fn run_tests(
             // Mark shutdown as complete to prevent watchdog from force-exiting
             signals::mark_shutdown_complete();
 
-            // Return failure count for exit code
-            Ok(failed_count)
+            Ok(stats)
         }
     }
 }
