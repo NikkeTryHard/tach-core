@@ -531,10 +531,6 @@ pub struct TachConfig {
     ///
     /// Format: "module.path:function_name"
     /// Example: "my_package.hooks:on_timeout"
-    ///
-    /// The function receives (test_id: str, test_name: str, timeout_seconds: int)
-    /// and is called in the supervisor when a test times out.
-    /// Hook execution is limited to 5 seconds.
     pub timeout_hook: Option<String>,
 
     /// Plugin configuration
@@ -543,6 +539,57 @@ pub struct TachConfig {
 
     /// Network isolation configuration (Landlock V4+)
     pub network: Option<NetworkConfig>,
+
+    // =========================================================================
+    // Test Selection (pyproject.toml equivalents of CLI flags)
+    // =========================================================================
+    /// Default keyword expression filter (same as -k CLI flag)
+    pub keyword: Option<String>,
+
+    /// Default marker expression filter (same as -m CLI flag)
+    pub markers: Option<String>,
+
+    // =========================================================================
+    // Execution Control
+    // =========================================================================
+    /// Stop on first failure (same as -x CLI flag)
+    pub exitfirst: Option<bool>,
+
+    /// Exit after N failures (same as --maxfail CLI flag)
+    pub maxfail: Option<usize>,
+
+    /// Force toxic mode for all tests (no snapshot reuse)
+    pub force_toxic: Option<bool>,
+
+    /// Disable pytest fallback for failed tests
+    pub no_fallback: Option<bool>,
+
+    /// Disable filesystem/network isolation
+    pub no_isolation: Option<bool>,
+
+    // =========================================================================
+    // Output Control
+    // =========================================================================
+    /// Traceback style: "short", "long", "line", "native", "no"
+    pub traceback: Option<String>,
+
+    /// Show N slowest test durations
+    pub durations: Option<usize>,
+
+    /// Show memory usage per test
+    pub memory: Option<bool>,
+
+    /// Ignore .gitignore/.ignore files during discovery
+    pub no_ignore: Option<bool>,
+
+    // =========================================================================
+    // Django Database
+    // =========================================================================
+    /// Reuse existing test database between runs
+    pub reuse_db: Option<bool>,
+
+    /// Force recreation of test database
+    pub create_db: Option<bool>,
 }
 
 /// Coverage configuration for Tach
@@ -666,74 +713,147 @@ pub fn load_tach_config(root: &Path) -> TachConfig {
     pyproject.tool.and_then(|t| t.tach).unwrap_or_default()
 }
 
-/// Merged configuration from CLI and file
-///
-/// CLI arguments take precedence over file configuration.
+/// Single source of truth: CLI args merged with pyproject.toml [tool.tach].
+/// CLI always wins over file config.
 #[derive(Debug, Clone)]
 pub struct MergedConfig {
+    // Output
     pub format: OutputFormat,
     pub junit_xml: Option<std::path::PathBuf>,
-    pub watch: bool,
-    pub no_isolation: bool,
-    pub coverage: bool,
+    pub traceback: TracebackStyle,
+    pub durations: Option<usize>,
+    pub memory: bool,
+    pub verbose: u8,
+    pub quiet: bool,
+
+    // Test selection
     pub path: String,
     pub test_pattern: String,
+    pub keyword: Option<String>,
+    pub markers: Option<String>,
+
+    // Execution control
+    pub exitfirst: bool,
+    pub maxfail: Option<usize>,
+    pub last_failed: bool,
+    pub failed_first: bool,
+    pub cache_clear: bool,
+    pub watch: bool,
     pub timeout: u64,
     pub workers: usize,
+
+    // Isolation
+    pub no_isolation: bool,
+    pub force_toxic: bool,
     pub isolation_strategy: String,
+    pub network: Option<NetworkConfig>,
+
+    // Coverage
+    pub coverage: bool,
     pub coverage_source: Vec<String>,
     pub coverage_omit: Vec<String>,
     pub coverage_output: String,
     pub coverage_format: String,
+
+    // Plugins
     pub disabled_plugins: Vec<String>,
-    /// Network isolation configuration
-    pub network: Option<NetworkConfig>,
-    /// Reuse existing test database (Django)
+
+    // Tach-specific
+    pub no_fallback: bool,
+    pub no_ignore: bool,
+    pub debug: bool,
+    pub trace: bool,
+    pub timeout_hook: Option<String>,
+
+    // Django
     pub reuse_db: bool,
-    /// Force recreation of test database (Django)
     pub create_db: bool,
 }
 
 impl MergedConfig {
-    /// Merge CLI arguments with file configuration
-    ///
-    /// CLI arguments take precedence over file configuration.
+    /// Merge CLI arguments with file configuration (CLI wins).
     pub fn from_cli_and_file(cli: &Cli, file_config: &TachConfig) -> Self {
-        // Coverage is enabled if CLI flag is set OR file config enables it
         let coverage = cli.coverage || file_config.coverage_enabled();
-
-        // Get coverage config or default
         let cov_config = file_config.coverage.clone().unwrap_or_default();
-
-        // CLI timeout takes precedence over file config
         let timeout = cli.timeout.unwrap_or_else(|| file_config.timeout());
 
-        // Merge disabled plugins from CLI and config file
         let mut disabled_plugins = file_config.plugins.disabled.clone();
         disabled_plugins.extend(cli.disable_plugins.clone());
         disabled_plugins.sort();
         disabled_plugins.dedup();
 
+        let traceback = if cli.traceback != TracebackStyle::default() {
+            cli.traceback
+        } else {
+            file_config.traceback.as_deref()
+                .and_then(parse_traceback_style)
+                .unwrap_or(cli.traceback)
+        };
+
         Self {
             format: cli.format.clone(),
             junit_xml: cli.junit_xml.clone(),
-            watch: cli.watch,
-            no_isolation: cli.no_isolation,
-            coverage,
+            traceback,
+            durations: cli.durations.or(file_config.durations),
+            memory: cli.memory || file_config.memory.unwrap_or(false),
+            verbose: cli.verbose,
+            quiet: cli.quiet,
+
             path: cli.path.clone(),
             test_pattern: file_config.test_pattern().to_string(),
+            keyword: cli.keyword.clone().or_else(|| file_config.keyword.clone()),
+            markers: cli.markers.clone().or_else(|| file_config.markers.clone()),
+
+            exitfirst: cli.exitfirst || file_config.exitfirst.unwrap_or(false),
+            maxfail: cli.maxfail.or(file_config.maxfail),
+            last_failed: cli.last_failed,
+            failed_first: cli.failed_first,
+            cache_clear: cli.cache_clear,
+            watch: cli.watch,
             timeout,
-            workers: file_config.workers(),
+            workers: cli.worker_count().unwrap_or_else(|| file_config.workers()),
+
+            no_isolation: cli.no_isolation || file_config.no_isolation.unwrap_or(false),
+            force_toxic: cli.force_toxic || file_config.force_toxic.unwrap_or(false),
             isolation_strategy: file_config.isolation_strategy().to_string(),
-            coverage_source: cov_config.source.unwrap_or_default(),
+            network: file_config.network.clone(),
+
+            coverage,
+            coverage_source: if cli.cov_source.is_empty() {
+                cov_config.source.unwrap_or_default()
+            } else {
+                cli.cov_source.clone()
+            },
             coverage_omit: cov_config.omit.unwrap_or_default(),
             coverage_output: cov_config.output.unwrap_or_else(|| ".coverage".to_string()),
             coverage_format: cov_config.format.unwrap_or_else(|| "lcov".to_string()),
+
             disabled_plugins,
-            network: file_config.network.clone(),
-            reuse_db: cli.reuse_db,
-            create_db: cli.create_db,
+
+            no_fallback: cli.no_fallback || file_config.no_fallback.unwrap_or(false),
+            no_ignore: cli.no_ignore || file_config.no_ignore.unwrap_or(false),
+            debug: cli.debug,
+            trace: cli.trace,
+            timeout_hook: file_config.timeout_hook.clone(),
+
+            reuse_db: cli.reuse_db || file_config.reuse_db.unwrap_or(false),
+            create_db: cli.create_db || file_config.create_db.unwrap_or(false),
         }
+    }
+
+    pub fn fail_fast(&self) -> bool {
+        self.exitfirst || self.maxfail == Some(1)
+    }
+}
+
+fn parse_traceback_style(s: &str) -> Option<TracebackStyle> {
+    match s {
+        "short" => Some(TracebackStyle::Short),
+        "long" => Some(TracebackStyle::Long),
+        "line" => Some(TracebackStyle::Line),
+        "native" => Some(TracebackStyle::Native),
+        "no" => Some(TracebackStyle::No),
+        _ => None,
     }
 }
 
@@ -1347,5 +1467,121 @@ LITERAL_BRACES = "{{NOT_EXPANDED}}"
         let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
         assert!(merged.reuse_db);
         assert!(!merged.create_db);
+    }
+
+    #[test]
+    fn test_parse_traceback_style_valid() {
+        assert_eq!(parse_traceback_style("short"), Some(TracebackStyle::Short));
+        assert_eq!(parse_traceback_style("long"), Some(TracebackStyle::Long));
+        assert_eq!(parse_traceback_style("line"), Some(TracebackStyle::Line));
+        assert_eq!(parse_traceback_style("native"), Some(TracebackStyle::Native));
+        assert_eq!(parse_traceback_style("no"), Some(TracebackStyle::No));
+        assert_eq!(parse_traceback_style("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_tach_config_full_schema() {
+        let toml_content = r#"
+[tool.tach]
+test_pattern = "tests/**/*.py"
+timeout = 120
+workers = 8
+keyword = "not slow"
+markers = "unit"
+exitfirst = true
+maxfail = 5
+force_toxic = true
+no_fallback = true
+no_isolation = false
+traceback = "short"
+durations = 10
+memory = true
+no_ignore = true
+reuse_db = true
+create_db = false
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+
+        assert_eq!(config.keyword.as_deref(), Some("not slow"));
+        assert_eq!(config.markers.as_deref(), Some("unit"));
+        assert_eq!(config.exitfirst, Some(true));
+        assert_eq!(config.maxfail, Some(5));
+        assert_eq!(config.force_toxic, Some(true));
+        assert_eq!(config.no_fallback, Some(true));
+        assert_eq!(config.no_isolation, Some(false));
+        assert_eq!(config.traceback.as_deref(), Some("short"));
+        assert_eq!(config.durations, Some(10));
+        assert_eq!(config.memory, Some(true));
+        assert_eq!(config.no_ignore, Some(true));
+        assert_eq!(config.reuse_db, Some(true));
+        assert_eq!(config.create_db, Some(false));
+    }
+
+    #[test]
+    fn test_merged_config_cli_wins_over_file() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-k", "fast", "-x", "."]);
+        let file_config = TachConfig {
+            keyword: Some("slow".to_string()),
+            exitfirst: Some(false),
+            maxfail: Some(10),
+            ..Default::default()
+        };
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+
+        assert_eq!(merged.keyword.as_deref(), Some("fast"));
+        assert!(merged.exitfirst);
+        assert_eq!(merged.maxfail, Some(10));
+    }
+
+    #[test]
+    fn test_merged_config_file_provides_defaults() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        let file_config = TachConfig {
+            keyword: Some("unit".to_string()),
+            markers: Some("not integration".to_string()),
+            no_fallback: Some(true),
+            force_toxic: Some(true),
+            durations: Some(5),
+            ..Default::default()
+        };
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+
+        assert_eq!(merged.keyword.as_deref(), Some("unit"));
+        assert_eq!(merged.markers.as_deref(), Some("not integration"));
+        assert!(merged.no_fallback);
+        assert!(merged.force_toxic);
+        assert_eq!(merged.durations, Some(5));
+    }
+
+    #[test]
+    fn test_merged_config_traceback_from_file() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        let file_config = TachConfig {
+            traceback: Some("short".to_string()),
+            ..Default::default()
+        };
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert_eq!(merged.traceback, TracebackStyle::Short);
+    }
+
+    #[test]
+    fn test_merged_config_fail_fast() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-x", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.fail_fast());
+
+        let cli2 = Cli::parse_from(["tach", "--maxfail", "1", "."]);
+        let merged2 = MergedConfig::from_cli_and_file(&cli2, &file_config);
+        assert!(merged2.fail_fast());
+
+        let cli3 = Cli::parse_from(["tach", "."]);
+        let merged3 = MergedConfig::from_cli_and_file(&cli3, &file_config);
+        assert!(!merged3.fail_fast());
     }
 }

@@ -169,51 +169,48 @@ fn main() -> Result<()> {
     // process startup, before any allocations occur. Setting it here via
     // std::env::set_var() would be too late.
 
-    // Parse CLI arguments FIRST
+    // Parse CLI arguments and merge with pyproject.toml config
     let cli = Cli::parse();
-    let is_json = cli.format == OutputFormat::Json;
-    let is_watch = cli.watch;
+    let cwd = std::env::current_dir()?;
+    let file_config = config::load_tach_config(&cwd);
+    config::load_env_from_pyproject(&cwd);
+    let merged = config::MergedConfig::from_cli_and_file(&cli, &file_config);
 
-    // --- DEBUG/TRACE MODE ---
-    // Set environment variables for debug/trace logging so all components can check
-    if cli.trace {
-        // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
-        // This is called during initialization before any worker threads spawn.
+    let is_json = merged.format == OutputFormat::Json;
+    let is_watch = merged.watch;
+
+    // SAFETY: all set_var calls happen before worker threads spawn.
+    if merged.trace {
         unsafe { std::env::set_var("TACH_LOG_LEVEL", "trace") };
         if !is_json {
             eprintln!("[tach:supervisor] Trace logging enabled (maximum verbosity)");
         }
-    } else if cli.debug {
+    } else if merged.debug {
         unsafe { std::env::set_var("TACH_LOG_LEVEL", "debug") };
         if !is_json {
             eprintln!("[tach:supervisor] Debug logging enabled");
         }
     }
 
-    // Set TACH_NO_ISOLATION env var from CLI flag (inherits to all children)
-    if cli.no_isolation {
-        // SAFETY: set_var is unsafe in Rust 2024 due to potential data races.
-        // This is called during initialization before any worker threads spawn.
+    if merged.no_isolation {
         unsafe { std::env::set_var("TACH_NO_ISOLATION", "1") };
     }
 
-    if cli.verbose == 0 {
+    if merged.verbose == 0 {
         unsafe { std::env::set_var("TACH_QUIET", "1") };
     }
 
-    let target_file_path = if cli.path.contains("::") {
-        cli.path.split("::").next().unwrap_or(&cli.path)
+    let target_file_path = if merged.path.contains("::") {
+        merged.path.split("::").next().unwrap_or(&merged.path)
     } else {
-        &cli.path
+        &merged.path
     };
     unsafe { std::env::set_var("TACH_TARGET_PATH", target_file_path) };
 
-    // Set Django test DB flags for Zygote to read during setup_databases()
-    // SAFETY: Same as above - called before worker threads spawn.
-    if cli.reuse_db {
+    if merged.reuse_db {
         unsafe { std::env::set_var("TACH_REUSE_DB", "1") };
     }
-    if cli.create_db {
+    if merged.create_db {
         unsafe { std::env::set_var("TACH_CREATE_DB", "1") };
     }
 
@@ -234,31 +231,29 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("PYTHONIOENCODING", "utf-8") };
     }
 
-    if let Some(ref keyword) = cli.keyword {
+    if let Some(ref keyword) = merged.keyword {
         unsafe { std::env::set_var("TACH_KEYWORD", keyword) };
     }
-    if let Some(ref markers) = cli.markers {
+    if let Some(ref markers) = merged.markers {
         unsafe { std::env::set_var("TACH_MARKERS", markers) };
     }
 
-    let maxfail = if cli.exitfirst {
+    let maxfail = if merged.exitfirst {
         Some(1)
     } else {
-        cli.maxfail
+        merged.maxfail
     };
     if let Some(mf) = maxfail {
         unsafe { std::env::set_var("TACH_MAXFAIL", mf.to_string()) };
     }
-    if cli.force_toxic {
+    if merged.force_toxic {
         unsafe { std::env::set_var("TACH_FORCE_TOXIC", "1") };
     }
     if !cli.pytest_args.is_empty() {
         unsafe { std::env::set_var("TACH_PYTEST_ARGS", cli.pytest_args.join("\x1f")) };
     }
-    if let Some(timeout) = cli.timeout {
-        unsafe { std::env::set_var("TACH_TIMEOUT", timeout.to_string()) };
-    }
-    if let Some((_, node)) = cli.path.split_once("::") {
+    unsafe { std::env::set_var("TACH_TIMEOUT", merged.timeout.to_string()) };
+    if let Some((_, node)) = merged.path.split_once("::") {
         let kw = node.replace("::", " and ");
         let existing = std::env::var("TACH_KEYWORD").unwrap_or_default();
         let new_kw = if existing.is_empty() {
@@ -268,7 +263,7 @@ fn main() -> Result<()> {
         };
         unsafe { std::env::set_var("TACH_KEYWORD", &new_kw) };
     }
-    for plugin in &cli.disable_plugins {
+    for plugin in &merged.disabled_plugins {
         let key = format!("TACH_DISABLE_PLUGIN_{}", plugin.to_uppercase().replace('-', "_"));
         unsafe { std::env::set_var(&key, "1") };
     }
@@ -295,18 +290,16 @@ fn main() -> Result<()> {
         );
     }
 
-    let cwd = std::env::current_dir()?;
-
     // Handle subcommands
     match &cli.command {
         Some(Commands::List { path }) => {
-            return handle_list_command(&cwd, path, is_json, cli.no_ignore);
+            return handle_list_command(&cwd, path, is_json, merged.no_ignore);
         }
         Some(Commands::SelfTest) => {
             return handle_self_test_command();
         }
         Some(Commands::Version) => {
-            return handle_version_command(cli.verbose > 0);
+            return handle_version_command(merged.verbose > 0);
         }
         Some(Commands::Completions { shell }) => {
             config::generate_completions(shell);
@@ -326,13 +319,11 @@ fn main() -> Result<()> {
     // --- COLLECT-ONLY MODE (pytest compatibility) ---
     // Alias for 'tach list' command
     if cli.collect_only {
-        return handle_list_command(&cwd, &cli.path, is_json, cli.no_ignore);
+        return handle_list_command(&cwd, &merged.path, is_json, merged.no_ignore);
     }
 
-    // --- DRY-RUN MODE ---
-    // Discover tests and show what would run without executing
     if cli.dry_run {
-        return handle_dry_run_command(&cwd, is_json, &cli.path, cli.no_ignore);
+        return handle_dry_run_command(&cwd, is_json, &merged.path, merged.no_ignore);
     }
 
     // --- WATCH MODE ---
@@ -341,21 +332,20 @@ fn main() -> Result<()> {
             eprintln!("[tach:supervisor] Warning: JSON output not recommended in watch mode");
         }
 
-        // Clone config values for the closure
-        let junit_path = cli.junit_xml.clone();
-        let format = cli.format.clone();
+        let junit_path = merged.junit_xml.clone();
+        let format = merged.format.clone();
         let cwd_clone = cwd.clone();
-        let path_clone = cli.path.clone();
+        let path_clone = merged.path.clone();
         let session_config = SessionConfig {
             coverage_enabled: false,
-            traceback_style: cli.traceback,
-            memory_enabled: cli.memory,
-            no_ignore: cli.no_ignore,
-            no_fallback: cli.no_fallback,
-            last_failed: cli.last_failed,
-            failed_first: cli.failed_first,
-            cache_clear: cli.cache_clear,
-            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
+            traceback_style: merged.traceback,
+            memory_enabled: merged.memory,
+            no_ignore: merged.no_ignore,
+            no_fallback: merged.no_fallback,
+            last_failed: merged.last_failed,
+            failed_first: merged.failed_first,
+            cache_clear: merged.cache_clear,
+            durations: merged.durations, verbose: merged.verbose, _quiet: merged.quiet,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -369,22 +359,21 @@ fn main() -> Result<()> {
         });
     }
 
-    // --- SINGLE RUN MODE ---
     execute_session(
         &cwd,
-        &cli.format,
-        &cli.junit_xml,
-        &cli.path,
+        &merged.format,
+        &merged.junit_xml,
+        &merged.path,
         SessionConfig {
-            coverage_enabled: cli.coverage,
-            traceback_style: cli.traceback,
-            memory_enabled: cli.memory,
-            no_ignore: cli.no_ignore,
-            no_fallback: cli.no_fallback,
-            last_failed: cli.last_failed,
-            failed_first: cli.failed_first,
-            cache_clear: cli.cache_clear,
-            durations: cli.durations, verbose: cli.verbose, _quiet: cli.quiet,
+            coverage_enabled: merged.coverage,
+            traceback_style: merged.traceback,
+            memory_enabled: merged.memory,
+            no_ignore: merged.no_ignore,
+            no_fallback: merged.no_fallback,
+            last_failed: merged.last_failed,
+            failed_first: merged.failed_first,
+            cache_clear: merged.cache_clear,
+            durations: merged.durations, verbose: merged.verbose, _quiet: merged.quiet,
         },
     )
 }
@@ -1451,9 +1440,6 @@ fn run_tests(
     // --- SOCKET PAIRS ---
     let (sup_cmd_sock, zyg_cmd_sock) = UnixStream::pair()?;
     let (sup_result_sock, zyg_result_sock) = UnixStream::pair()?;
-
-    // --- LOAD CONFIG ---
-    config::load_env_from_pyproject(&cwd);
 
     // --- NO-ISOLATION MODE ---
     // Set env var so workers can check it (must be before fork to inherit)
