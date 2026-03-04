@@ -723,17 +723,20 @@ fn pytest_fallback_retry(
             }
         };
         for id in failed_ids {
-            let method = id.split("::").last().unwrap_or(id);
-            let _ = writeln!(f, "{}", method);
+            let _ = writeln!(f, "{}", id);
         }
     }
 
     let runner_code = format!(
         r#"import sys, pathlib, pytest
-_NAMES = set(pathlib.Path({retry_path:?}).read_text().splitlines())
+_IDS = set(pathlib.Path({retry_path:?}).read_text().splitlines())
 class _TachFilter:
     def pytest_collection_modifyitems(self, items):
-        items[:] = [i for i in items if i.name in _NAMES]
+        items[:] = [i for i in items if _suffix(i.nodeid) in _IDS]
+def _suffix(nodeid):
+    # Extract "ClassName::method" from "path/file.py::ClassName::method"
+    parts = nodeid.split("::")
+    return "::".join(parts[1:]) if len(parts) > 1 else nodeid
 sys.exit(pytest.main(["--tb=no", "-q", "--no-header",
     "--continue-on-collection-errors", "."], plugins=[_TachFilter()]))
 "#,
