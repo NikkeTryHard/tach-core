@@ -1311,26 +1311,22 @@ def inject_entropy():
     # valid configuration from the zygote that tests depend on
     # (e.g. Django's logging config, assertLogs handlers).
     try:
-        # Recreate ALL module-level locks
         logging._lock = threading.RLock()
 
-        # The Manager's lock is the main culprit
         if hasattr(logging.Logger, "manager") and logging.Logger.manager:
             logging.Logger.manager._lock = threading.RLock()
 
-        # Recreate locks on root logger and all existing handlers
-        # but DO NOT remove them -- tests need these handlers
-        logging.root.lock = threading.RLock()
+        # Recreate handler locks (handlers have .lock, loggers do not)
         for handler in logging.root.handlers:
-            handler.lock = threading.RLock()
+            if hasattr(handler, "lock"):
+                handler.lock = threading.RLock()
 
-        # Recreate locks on all existing loggers in the dict
         if hasattr(logging.Logger, "manager") and logging.Logger.manager:
-            for name, logger_ref in logging.Logger.manager.loggerDict.items():
+            for _name, logger_ref in logging.Logger.manager.loggerDict.items():
                 if isinstance(logger_ref, logging.Logger):
-                    logger_ref.lock = threading.RLock()
                     for handler in logger_ref.handlers:
-                        handler.lock = threading.RLock()
+                        if hasattr(handler, "lock"):
+                            handler.lock = threading.RLock()
     except Exception as e:
         _logger.debug("Logging lock reset error: %s", e)
 
@@ -2581,16 +2577,20 @@ def _trigger_session_fixtures(cfg, session) -> None:
                             return True
             return False
 
-        # Execute session autouse fixtures in dependency order
         executed = {}
-        _generators = []  # (name, generator) for teardown
+        _generators = []
+        _in_progress = set()  # Cycle detection
 
         def _exec(name):
             if name in executed:
                 return executed[name]
+            if name in _in_progress:
+                return None  # Break circular dependency
+            _in_progress.add(name)
 
             fixdef = all_session_fixdefs.get(name)
             if fixdef is None:
+                _in_progress.discard(name)
                 return None
 
             if _is_db_fixture(name):
@@ -2599,9 +2599,9 @@ def _trigger_session_fixtures(cfg, session) -> None:
                     f"[tach:harness] Skipping DB fixture: {name}\n".encode(),
                 )
                 executed[name] = None
+                _in_progress.discard(name)
                 return None
 
-            # Execute dependencies first
             for dep in getattr(fixdef, "argnames", []):
                 if dep in all_session_fixdefs and dep not in executed:
                     _exec(dep)
@@ -2633,6 +2633,8 @@ def _trigger_session_fixtures(cfg, session) -> None:
                     f"failed: {e}\n".encode(),
                 )
                 executed[name] = None
+            finally:
+                _in_progress.discard(name)
 
         for name in autouse_names:
             _exec(name)

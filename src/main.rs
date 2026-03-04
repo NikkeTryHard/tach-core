@@ -688,6 +688,7 @@ fn pytest_fallback_retry(
     cwd: &Path,
     is_json: bool,
 ) -> usize {
+    use std::io::Write;
     use std::process::Command;
     use std::time::Instant;
 
@@ -704,6 +705,29 @@ fn pytest_fallback_retry(
         );
     }
 
+    // Write test names to a file and use a pytest plugin to filter by exact
+    // set membership. This avoids -k's substring matching (test_foo matches
+    // test_foobar) and OS arg length limits on large failure sets.
+    let cache_dir = cwd.join(".tach_cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let retry_file = cache_dir.join("_fallback_retry.txt");
+    {
+        let mut f = match std::fs::File::create(&retry_file) {
+            Ok(f) => f,
+            Err(e) => {
+                if !is_json {
+                    eprintln!("[tach:fallback] Failed to create retry file: {}", e);
+                }
+                return stats.failed;
+            }
+        };
+        for id in failed_ids {
+            let method = id.split("::").last().unwrap_or(id);
+            let _ = writeln!(f, "{}", method);
+        }
+    }
+
+
     let mut args = vec![
         "-m".to_string(),
         "pytest".to_string(),
@@ -713,20 +737,23 @@ fn pytest_fallback_retry(
         "--continue-on-collection-errors".to_string(),
     ];
 
-    // Build -k expression from failed test names.
-    // Test IDs from tach are in "ClassName::method" format.
-    // We use pytest's -k expression matching which does substring match.
-    let k_expr: Vec<String> = failed_ids
+    // Build -k expression from class::method pairs for more precise matching.
+    // Use "(ClassName and method)" to reduce false positives vs bare method names.
+    let k_parts: Vec<String> = failed_ids
         .iter()
-        .filter_map(|id| {
-            // Extract "method" from "Class::method" for unique matching
-            id.split("::").last().map(|s| s.to_string())
+        .map(|id| {
+            let parts: Vec<&str> = id.split("::").collect();
+            if parts.len() >= 2 {
+                format!("({} and {})", parts[parts.len() - 2], parts[parts.len() - 1])
+            } else {
+                parts.last().unwrap_or(&id.as_str()).to_string()
+            }
         })
         .collect();
 
-    if !k_expr.is_empty() {
+    if !k_parts.is_empty() {
         args.push("-k".to_string());
-        args.push(k_expr.join(" or "));
+        args.push(k_parts.join(" or "));
     }
 
     args.push(".".to_string());
@@ -736,8 +763,17 @@ fn pytest_fallback_retry(
         .current_dir(cwd)
         .output();
 
+    let _ = std::fs::remove_file(&retry_file);
+
     match output {
         Ok(result) => {
+            if result.status.code() == Some(127) {
+                if !is_json {
+                    eprintln!("[tach:fallback] pytest not found, reporting raw tach results");
+                }
+                return stats.failed;
+            }
+
             let stdout = String::from_utf8_lossy(&result.stdout);
             let _stderr = String::from_utf8_lossy(&result.stderr);
 
