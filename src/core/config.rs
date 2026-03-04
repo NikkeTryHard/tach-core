@@ -1872,4 +1872,67 @@ force_toxic = ["myapp.workers"]
         let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
         assert!(merged.show_locals);
     }
+
+    #[test]
+    fn test_resume_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--resume", "."]);
+        assert!(cli.resume);
+    }
+
+    #[test]
+    fn test_cache_show_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--cache-show", "."]);
+        assert!(cli.cache_show);
+    }
+
+    #[test]
+    fn test_runxfail_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--runxfail", "."]);
+        assert!(cli.runxfail);
+    }
+
+    #[test]
+    fn test_color_flag_default() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        assert_eq!(cli.color, "auto");
+    }
+
+    #[test]
+    fn test_color_flag_no() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--color", "no", "."]);
+        assert_eq!(cli.color, "no");
+    }
+
+    #[test]
+    fn test_log_file_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--log-file", "/tmp/test.log", "."]);
+        assert_eq!(cli.log_file.unwrap().to_str().unwrap(), "/tmp/test.log");
+    }
+
+    #[test]
+    fn test_timeout_method_default() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        assert_eq!(cli.timeout_method, "signal");
+    }
+
+    #[test]
+    fn test_basetemp_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--basetemp", "/tmp/tach_tmp", "."]);
+        assert_eq!(cli.basetemp.as_deref(), Some("/tmp/tach_tmp"));
+    }
+
+    #[test]
+    fn test_strict_markers_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--strict-markers", "."]);
+        assert!(cli.strict_markers);
+    }
 }
