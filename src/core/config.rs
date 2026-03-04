@@ -594,6 +594,9 @@ pub struct TachConfig {
 
     /// Force recreation of test database
     pub create_db: Option<bool>,
+
+    /// Additional env vars to block from [tool.pytest_env] (appended to built-in denylist)
+    pub env_denylist: Option<Vec<String>>,
 }
 
 /// Coverage configuration for Tach
@@ -922,6 +925,11 @@ fn expand_env_vars(value: &str) -> String {
 /// - Python environment hijacking (PYTHONPATH, PYTHONHOME, PYTHONSTARTUP, PYTHONMALLOC)
 /// - Path manipulation (PATH, HOME, USER)
 pub fn load_env_from_pyproject(root: &Path) {
+    let tach_config = load_tach_config(root);
+    load_env_from_pyproject_with_denylist(root, &tach_config);
+}
+
+fn load_env_from_pyproject_with_denylist(root: &Path, tach_config: &TachConfig) {
     /// Environment variables that are blocked for security reasons.
     ///
     /// These variables could be used to:
@@ -970,12 +978,15 @@ pub fn load_env_from_pyproject(root: &Path) {
     if let Some(tool) = pyproject.tool
         && let Some(env_vars) = tool.pytest_env
     {
+        let user_denylist = tach_config.env_denylist.as_deref().unwrap_or(&[]);
         for (key, value) in env_vars {
-            // SECURITY: Block dangerous environment variables
-            if ENV_DENYLIST
+            let is_builtin_blocked = ENV_DENYLIST
                 .iter()
-                .any(|&blocked| key.eq_ignore_ascii_case(blocked))
-            {
+                .any(|&blocked| key.eq_ignore_ascii_case(blocked));
+            let is_user_blocked = user_denylist
+                .iter()
+                .any(|blocked| key.eq_ignore_ascii_case(blocked));
+            if is_builtin_blocked || is_user_blocked {
                 eprintln!(
                     "[tach:config] WARNING: Blocked dangerous env var from pyproject.toml: {}",
                     key
@@ -1594,5 +1605,47 @@ create_db = false
         let cli3 = Cli::parse_from(["tach", "."]);
         let merged3 = MergedConfig::from_cli_and_file(&cli3, &file_config);
         assert!(!merged3.fail_fast());
+    }
+
+    #[test]
+    fn test_user_configurable_env_denylist() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pyproject.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[tool.tach]
+env_denylist = ["MY_SECRET", "API_KEY"]
+
+[tool.pytest_env]
+MY_SECRET = "should_be_blocked"
+SAFE_VAR_99 = "allowed"
+"#,
+        )
+        .unwrap();
+
+        unsafe { std::env::remove_var("MY_SECRET") };
+        unsafe { std::env::remove_var("SAFE_VAR_99") };
+
+        load_env_from_pyproject(temp_dir.path());
+
+        assert!(std::env::var("MY_SECRET").is_err());
+        assert_eq!(std::env::var("SAFE_VAR_99").unwrap(), "allowed");
+
+        unsafe { std::env::remove_var("SAFE_VAR_99") };
+    }
+
+    #[test]
+    fn test_parse_env_denylist_from_toml() {
+        let toml_content = r#"
+[tool.tach]
+env_denylist = ["SECRET_KEY", "DB_PASSWORD"]
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+        assert_eq!(
+            config.env_denylist.unwrap(),
+            vec!["SECRET_KEY", "DB_PASSWORD"]
+        );
     }
 }
