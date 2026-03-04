@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-04
+
+### Added
+
+- **Toxicity Config Overrides** (0.6.2): `[tool.tach.toxicity]` section with
+  `force_safe` and `force_toxic` module lists
+- **pytest-cov Auto-Detection**: Disable pytest-cov and suggest `tach --coverage`
+- **pytest-xdist Auto-Detection**: Disable xdist and suggest `tach -n auto`
+- **`--retries` CLI Flag**: Plumbing for flaky test detection (interface only)
+- **Cache Module**: Extracted duration/lastfailed cache into `src/cache.rs` with 6 tests
+
+### Changed
+
+- Refactored main.rs to use extracted cache module
+
 ## [0.4.0] - 2026-03-04
 
 ### Added
