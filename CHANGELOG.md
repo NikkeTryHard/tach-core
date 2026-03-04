@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-04
+
+### Added
+
+- **`tach init` Command**: Generate starter `[tool.tach]` config in pyproject.toml
+- **`--color auto|yes|no`**: Control ANSI color output (sets NO_COLOR/FORCE_COLOR)
+- **`--strict-markers`**: Raise error on unregistered markers
+- **`--assert plain|rewrite`**: Control assertion rewriting mode
+- **`--basetemp DIR`**: Set pytest temporary directory
+- **GITHUB_OUTPUT Integration**: Write structured test results for downstream steps
+- **Input Validation**: --import-mode and --assert use clap value_parser for clean errors
+
 ## [0.4.3] - 2026-03-04
 
 ### Added
