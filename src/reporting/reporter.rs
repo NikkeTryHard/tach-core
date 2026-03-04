@@ -991,11 +991,26 @@ impl Reporter for DotsReporter {
             eprintln!("{}", "=".repeat(70));
         }
 
-        // Print summary
-        let duration_secs = duration_ms as f64 / 1000.0;
+        let secs = duration_ms as f64 / 1000.0;
+        let mut parts = Vec::new();
+        if failed > 0 {
+            parts.push(format!("\x1b[31m{} failed\x1b[0m", failed));
+        }
+        if passed > 0 {
+            parts.push(format!("\x1b[32m{} passed\x1b[0m", passed));
+        }
+        if skipped > 0 {
+            parts.push(format!("\x1b[33m{} skipped\x1b[0m", skipped));
+        }
+        let color = if failed > 0 { "\x1b[31m" } else { "\x1b[32m" };
+        let reset = "\x1b[0m";
+        let bar = format!("{}{}{}", color, "=".repeat(20), reset);
         eprintln!(
-            "\n[tach:reporter] {} passed, {} failed, {} skipped in {:.2}s",
-            passed, failed, skipped, duration_secs
+            "\n{} {} in {:.2}s {}",
+            bar,
+            parts.join(", "),
+            secs,
+            bar,
         );
     }
 
