@@ -278,6 +278,10 @@ pub struct Cli {
     #[arg(long)]
     pub no_fallback: bool,
 
+    /// Remove the last-failed cache before running.
+    #[arg(long)]
+    pub cache_clear: bool,
+
     // =========================================================================
     // Plugin Configuration
     // =========================================================================

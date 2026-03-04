@@ -46,6 +46,7 @@ struct SessionConfig {
     no_fallback: bool,
     last_failed: bool,
     failed_first: bool,
+    cache_clear: bool,
 }
 
 // =============================================================================
@@ -306,6 +307,7 @@ fn main() -> Result<()> {
             no_fallback: cli.no_fallback,
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
+            cache_clear: cli.cache_clear,
         };
 
         return watch::start_watch_loop(&cwd, move || {
@@ -333,6 +335,7 @@ fn main() -> Result<()> {
             no_fallback: cli.no_fallback,
             last_failed: cli.last_failed,
             failed_first: cli.failed_first,
+            cache_clear: cli.cache_clear,
         },
     )
 }
@@ -347,6 +350,16 @@ fn execute_session(
     config: SessionConfig,
 ) -> Result<()> {
     let is_json = *format == OutputFormat::Json;
+
+    if config.cache_clear {
+        let cache_dir = cwd.join(".tach_cache");
+        if cache_dir.exists() {
+            let _ = std::fs::remove_dir_all(&cache_dir);
+            if !is_json {
+                eprintln!("[tach:supervisor] Cache cleared");
+            }
+        }
+    }
 
     // Create reporters
     //  Use TachReporter for interactive terminals, DotsReporter for CI
