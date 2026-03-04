@@ -129,12 +129,11 @@ fn cleanup_stale_run_dirs() {
         if !name_str.starts_with("tach_run_") {
             continue;
         }
-        if let Ok(meta) = entry.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if modified < threshold {
-                    let _ = std::fs::remove_dir_all(entry.path());
-                }
-            }
+        if let Ok(meta) = entry.metadata()
+            && let Ok(modified) = meta.modified()
+            && modified < threshold
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
 }
