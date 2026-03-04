@@ -91,50 +91,7 @@ fn test_exit_code_success_on_passing_tests() {
 
     let output = Command::new(&binary)
         .arg("--no-isolation")
-        .arg("-n")
-        .arg("1")
-        .arg(&tests_dir)
-        .current_dir(project_root())
-        .output()
-        .expect("Failed to execute tach-core");
-
-    // Print output for debugging if test fails
-    if !output.status.success() {
-        eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    assert!(
-        output.status.success(),
-        "Expected exit code 0 for passing tests, got {:?}",
-        output.status.code()
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "Expected exit code 0 for passing tests"
-    );
-}
-
-#[test]
-fn test_exit_code_failure_on_failing_tests() {
-    // Skip if pytest is not available
-    if !pytest_available() {
-        eprintln!("Skipping test: pytest is not available in the Python environment");
-        return;
-    }
-
-    let binary = tach_binary();
-    let tests_dir = failing_tests_dir();
-
-    // Skip test if tests directory doesn't exist
-    if !tests_dir.exists() {
-        eprintln!("Skipping test: {} does not exist", tests_dir.display());
-        return;
-    }
-
-    let output = Command::new(&binary)
-        .arg("--no-isolation")
+        .arg("--no-fallback")
         .arg("-n")
         .arg("1")
         .arg(&tests_dir)
@@ -145,6 +102,37 @@ fn test_exit_code_failure_on_failing_tests() {
     // Print output for debugging
     eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
     eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+
+    assert!(
+        !output.status.success(),
+        "Expected non-zero exit code for failing tests"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "Expected exit code 1 for failing tests"
+    );
+}
+
+#[test]
+fn test_exit_code_failure_on_failing_tests() {
+    if !pytest_available() {
+        return;
+    }
+    let binary = tach_binary();
+    let tests_dir = failing_tests_dir();
+    if !tests_dir.exists() {
+        return;
+    }
+    let output = Command::new(&binary)
+        .arg("--no-isolation")
+        .arg("--no-fallback")
+        .arg("-n")
+        .arg("1")
+        .arg(&tests_dir)
+        .current_dir(project_root())
+        .output()
+        .expect("Failed to execute tach-core");
 
     assert!(
         !output.status.success(),
@@ -187,8 +175,8 @@ fn test_exit_code_on_no_tests_found() {
     // This is different from pytest --strict which would fail
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "Expected exit code 0 when no tests found (pytest default behavior)"
+        Some(5),
+        "Expected exit code 5 when no tests collected (pytest ExitCode.NO_TESTS_COLLECTED)"
     );
 }
 
@@ -420,12 +408,10 @@ fn test_exit_code_nonexistent_path() {
     eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
     eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
 
-    // Behavior for nonexistent path: either error (1) or no tests found (0)
-    // This documents the current behavior
     let exit_code = output.status.code();
     assert!(
-        exit_code == Some(0) || exit_code == Some(1),
-        "Expected exit code 0 or 1 for nonexistent path, got {:?}",
+        exit_code == Some(5) || exit_code == Some(1),
+        "Expected exit code 5 (no tests) or 1 (error) for nonexistent path, got {:?}",
         exit_code
     );
 }
