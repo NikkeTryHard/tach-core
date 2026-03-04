@@ -1713,4 +1713,49 @@ force_toxic = ["myapp.workers"]
         assert_eq!(tox.force_safe, vec!["myapp.utils", "myapp.helpers"]);
         assert_eq!(tox.force_toxic, vec!["myapp.workers"]);
     }
+
+    #[test]
+    fn test_stepwise_enables_lf_and_exitfirst() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--sw", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.last_failed);
+        assert!(merged.exitfirst);
+    }
+
+    #[test]
+    fn test_p_no_plugin_adds_to_disabled() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-p", "no:sugar", "-p", "no:xdist", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.disabled_plugins.contains(&"sugar".to_string()));
+        assert!(merged.disabled_plugins.contains(&"xdist".to_string()));
+    }
+
+    #[test]
+    fn test_p_without_no_prefix_ignored() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-p", "some_plugin", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.disabled_plugins.is_empty());
+    }
+
+    #[test]
+    fn test_no_header_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--no-header", "."]);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.no_header);
+    }
+
+    #[test]
+    fn test_collect_only_alias() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--co", "."]);
+        assert!(cli.collect_only);
+    }
 }
