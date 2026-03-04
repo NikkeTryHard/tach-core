@@ -151,6 +151,26 @@ impl ToxicityGraph {
         graph
     }
 
+    pub fn apply_overrides(&mut self, force_safe: &[String], force_toxic: &[String]) {
+        for name in force_safe {
+            if let Some(&idx) = self.name_to_node.get(name) {
+                self.graph[idx].is_toxic = false;
+                self.graph[idx].reasons.clear();
+                self.graph[idx]
+                    .reasons
+                    .push("User override: force_safe".to_string());
+            }
+        }
+        for name in force_toxic {
+            if let Some(&idx) = self.name_to_node.get(name) {
+                self.graph[idx].is_toxic = true;
+                self.graph[idx]
+                    .reasons
+                    .push("User override: force_toxic".to_string());
+            }
+        }
+    }
+
     /// Resolve an import string to a NodeIndex if it matches a local module
     fn resolve_import(&self, import: &str, _project_root: &Path) -> Option<&NodeIndex> {
         // Direct match: "app.utils" -> node "app.utils"
@@ -832,5 +852,41 @@ mod tests {
             graph.is_toxic(&helper_path),
             "helper.py should be toxic (imports toxic conftest)"
         );
+    }
+
+    #[test]
+    fn test_apply_overrides_force_safe() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        let toxic_file = root.join("toxic_mod.py");
+        std::fs::write(&toxic_file, "import threading\ndef foo(): pass\n").unwrap();
+
+        let registry = HookRegistry::new();
+        let mut graph = ToxicityGraph::build(&[toxic_file.clone()], root, &registry);
+
+        assert!(graph.is_toxic(&toxic_file));
+
+        graph.apply_overrides(&["toxic_mod".to_string()], &[]);
+
+        assert!(!graph.is_toxic(&toxic_file));
+    }
+
+    #[test]
+    fn test_apply_overrides_force_toxic() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        let safe_file = root.join("safe_mod.py");
+        std::fs::write(&safe_file, "x = 1\n").unwrap();
+
+        let registry = HookRegistry::new();
+        let mut graph = ToxicityGraph::build(&[safe_file.clone()], root, &registry);
+
+        assert!(!graph.is_toxic(&safe_file));
+
+        graph.apply_overrides(&[], &["safe_mod".to_string()]);
+
+        assert!(graph.is_toxic(&safe_file));
     }
 }

@@ -605,6 +605,27 @@ pub struct TachConfig {
 
     /// Additional env vars to block from [tool.pytest_env] (appended to built-in denylist)
     pub env_denylist: Option<Vec<String>>,
+
+    /// Toxicity analysis overrides
+    pub toxicity: Option<ToxicityConfig>,
+}
+
+/// User overrides for module toxicity analysis.
+///
+/// Example pyproject.toml:
+/// ```toml
+/// [tool.tach.toxicity]
+/// force_safe = ["myapp.utils", "myapp.helpers"]
+/// force_toxic = ["myapp.workers"]
+/// ```
+#[derive(Deserialize, Default, Clone, Debug)]
+pub struct ToxicityConfig {
+    /// Modules to force as safe (override toxic -> safe)
+    #[serde(default)]
+    pub force_safe: Vec<String>,
+    /// Modules to force as toxic (override safe -> toxic)
+    #[serde(default)]
+    pub force_toxic: Vec<String>,
 }
 
 /// Coverage configuration for Tach
@@ -1657,5 +1678,19 @@ env_denylist = ["SECRET_KEY", "DB_PASSWORD"]
             config.env_denylist.unwrap(),
             vec!["SECRET_KEY", "DB_PASSWORD"]
         );
+    }
+
+    #[test]
+    fn test_parse_toxicity_config() {
+        let toml_content = r#"
+[tool.tach.toxicity]
+force_safe = ["myapp.utils", "myapp.helpers"]
+force_toxic = ["myapp.workers"]
+"#;
+        let pyproject: PyProject = toml::from_str(toml_content).unwrap();
+        let config = pyproject.tool.unwrap().tach.unwrap();
+        let tox = config.toxicity.unwrap();
+        assert_eq!(tox.force_safe, vec!["myapp.utils", "myapp.helpers"]);
+        assert_eq!(tox.force_toxic, vec!["myapp.workers"]);
     }
 }

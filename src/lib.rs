@@ -59,6 +59,7 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+pub mod cache;
 pub mod core;
 pub mod discovery;
 pub mod execution;

@@ -1,3 +1,7 @@
+use tach_core::cache::{
+    read_duration_cache, read_lastfailed_cache, read_lastfailed_cache_from, write_duration_cache,
+    write_lastfailed_cache,
+};
 use tach_core::config::{self, Cli, Commands, OutputFormat, TracebackStyle};
 use tach_core::coverage;
 use tach_core::debugger::{self, DebugServer};
@@ -499,7 +503,13 @@ fn execute_session(
     }
 
     let start = std::time::Instant::now();
-    let (discovery_result, toxicity_graph) = discover_with_toxicity_options(cwd, config.no_ignore)?;
+    let (discovery_result, mut toxicity_graph) =
+        discover_with_toxicity_options(cwd, config.no_ignore)?;
+
+    let tach_config = tach_core::config::load_tach_config(cwd);
+    if let Some(ref tox) = tach_config.toxicity {
+        toxicity_graph.apply_overrides(&tox.force_safe, &tox.force_toxic);
+    }
 
     reporter.on_phase(
         "scanning",
@@ -804,57 +814,6 @@ fn execute_session(
     }
 
     Ok(())
-}
-
-fn write_duration_cache(cwd: &Path, durations: &[(String, u64)]) {
-    let cache_dir = cwd.join(".tach_cache");
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let cache_file = cache_dir.join("durations");
-    let mut lines = Vec::with_capacity(durations.len());
-    for (name, ms) in durations {
-        lines.push(format!("{}:{}", name, ms));
-    }
-    let _ = std::fs::write(&cache_file, lines.join("\n"));
-}
-
-fn read_duration_cache(cwd: &Path) -> std::collections::HashMap<String, u64> {
-    let cache_file = cwd.join(".tach_cache").join("durations");
-    match std::fs::read_to_string(&cache_file) {
-        Ok(content) => content
-            .lines()
-            .filter_map(|l| {
-                let (name, ms) = l.rsplit_once(':')?;
-                Some((name.to_string(), ms.parse().ok()?))
-            })
-            .collect(),
-        Err(_) => std::collections::HashMap::new(),
-    }
-}
-
-fn write_lastfailed_cache(cwd: &Path, failed_ids: &[String]) {
-    let cache_dir = cwd.join(".tach_cache");
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let cache_file = cache_dir.join("lastfailed");
-    if failed_ids.is_empty() {
-        let _ = std::fs::remove_file(&cache_file);
-    } else {
-        let _ = std::fs::write(&cache_file, failed_ids.join("\n"));
-    }
-}
-
-fn read_lastfailed_cache(cwd: &Path) -> Vec<String> {
-    read_lastfailed_cache_from(&cwd.join(".tach_cache").join("lastfailed"))
-}
-
-fn read_lastfailed_cache_from(path: &Path) -> Vec<String> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => content
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
-            .collect(),
-        Err(_) => Vec::new(),
-    }
 }
 
 fn pytest_fallback_retry(
