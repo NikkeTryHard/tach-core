@@ -448,11 +448,12 @@ fn execute_session(
     // stdout). The child's eprintln! in that path is a secondary diagnostic
     // captured in the log file at /tmp/tach.log.
     let log_redirect =
-        if *format != OutputFormat::Json && ProgressReporter::should_use_progress_bar() {
+        if *format != OutputFormat::Json && config.verbose == 0 {
             match LogRedirect::new() {
                 Ok(redirect) => {
-                    // Only show log path in summary if redirect actually succeeded
-                    reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
+                    if ProgressReporter::should_use_progress_bar() {
+                        reporter.set_log_path(logredirect::DEFAULT_LOG_PATH);
+                    }
                     Some(redirect)
                 }
                 Err(_) => None,

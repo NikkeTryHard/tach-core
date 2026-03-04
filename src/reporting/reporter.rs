@@ -546,7 +546,7 @@ impl Reporter for HumanReporter {
         }
     }
 
-    fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
+     fn on_run_finished(&mut self, passed: usize, failed: usize, skipped: usize, duration_ms: u64) {
         let secs = duration_ms as f64 / 1000.0;
         let mut parts = Vec::new();
         if failed > 0 {
@@ -558,18 +558,10 @@ impl Reporter for HumanReporter {
         if skipped > 0 {
             parts.push(format!("\x1b[33m{} skipped\x1b[0m", skipped));
         }
-        let status_line = if failed > 0 {
-            format!("\x1b[31m=\x1b[0m {} in {:.2}s \x1b[31m=\x1b[0m", parts.join(", "), secs)
-        } else {
-            format!("\x1b[32m=\x1b[0m {} in {:.2}s \x1b[32m=\x1b[0m", parts.join(", "), secs)
-        };
-        let separator = if failed > 0 {
-            "\x1b[31m".to_string() + &"=".repeat(20) + "\x1b[0m"
-        } else {
-            "\x1b[32m".to_string() + &"=".repeat(20) + "\x1b[0m"
-        };
-        eprintln!();
-        eprintln!("{} {} {}", separator, status_line, separator);
+        let color = if failed > 0 { "\x1b[31m" } else { "\x1b[32m" };
+        let reset = "\x1b[0m";
+        let bar = format!("{}{}{}", color, "=".repeat(20), reset);
+        eprintln!("{} {} in {:.2}s {}", bar, parts.join(", "), secs, bar);
     }
 
     fn on_error(&mut self, message: &str) {
@@ -930,12 +922,11 @@ impl Reporter for DotsReporter {
     }
 
     fn on_run_start(&mut self, count: usize) {
-        eprintln!("[tach:reporter] Running {} tests...\n", count);
+        eprintln!("collected {} items\n", count);
     }
 
-    fn on_test_start(&mut self, _id: &str, _file: &str) {
-        // No output on test start
-    }
+    fn on_test_start(&mut self, _id: &str, _file: &str) {}
+
 
     fn on_test_finished(
         &mut self,
@@ -989,6 +980,19 @@ impl Reporter for DotsReporter {
                 }
             }
             eprintln!("{}", "=".repeat(70));
+        }
+
+        if !self.failures.is_empty() {
+            eprintln!("\x1b[36m= short test summary info =\x1b[0m");
+            for f in &self.failures {
+                let err = f.message.lines()
+                    .find(|l| l.contains("Error") || l.starts_with("E "))
+                    .unwrap_or("")
+                    .trim_start_matches("E ")
+                    .trim();
+                let short = if err.len() > 60 { &err[..60] } else { err };
+                eprintln!("\x1b[31mFAILED\x1b[0m {} - {}", f.id, short);
+            }
         }
 
         let secs = duration_ms as f64 / 1000.0;
