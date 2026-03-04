@@ -995,24 +995,21 @@ fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -
 }
 
 fn handle_config_json(cwd: &std::path::Path, m: &config::MergedConfig) -> Result<()> {
-    println!(
-        "{{\"rootdir\":\"{}\",\"version\":\"{}\",\"workers\":{},\"timeout\":{},\
-         \"isolation\":\"{}\",\"path\":\"{}\",\"pattern\":\"{}\",\
-         \"exitfirst\":{},\"coverage\":{},\"no_fallback\":{},\
-         \"force_toxic\":{},\"no_isolation\":{}}}",
-        cwd.display(),
-        env!("CARGO_PKG_VERSION"),
-        m.workers,
-        m.timeout,
-        m.isolation_strategy,
-        m.path,
-        m.test_pattern,
-        m.exitfirst,
-        m.coverage,
-        m.no_fallback,
-        m.force_toxic,
-        m.no_isolation,
-    );
+    let json = serde_json::json!({
+        "rootdir": cwd.display().to_string(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "workers": m.workers,
+        "timeout": m.timeout,
+        "isolation": &m.isolation_strategy,
+        "path": &m.path,
+        "pattern": &m.test_pattern,
+        "exitfirst": m.exitfirst,
+        "coverage": m.coverage,
+        "no_fallback": m.no_fallback,
+        "force_toxic": m.force_toxic,
+        "no_isolation": m.no_isolation,
+    });
+    println!("{json}");
     Ok(())
 }
 
@@ -1061,7 +1058,15 @@ fn detect_project_config(cwd: &std::path::Path) -> String {
 fn has_dependency(cwd: &std::path::Path, name: &str) -> bool {
     let pyproject = cwd.join("pyproject.toml");
     if let Ok(content) = std::fs::read_to_string(pyproject) {
-        return content.contains(name);
+        for line in content.lines() {
+            let t = line.trim().trim_matches('"').trim_matches('\'').trim();
+            if t == name
+                || t.starts_with(&format!("{name}>="))
+                || t.starts_with(&format!("{name}["))
+            {
+                return true;
+            }
+        }
     }
     let req = cwd.join("requirements.txt");
     if let Ok(content) = std::fs::read_to_string(req) {
