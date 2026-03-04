@@ -6,10 +6,11 @@
 ## [21:40 UTC] Released v0.4.2 (rootdir, import-mode, fallback extract)
 ## [21:50 UTC] Released v0.4.3 (session header, confcutdir, override-ini)
 
-## [22:10 UTC] Iteration 6
-- GITHUB_OUTPUT integration (structured outputs for downstream steps)
-- --basetemp DIR flag for temp directory control
-- --strict-markers and --assert flags
-- 2 new GitHub output tests
-- 992 tests (up from 948), 40+ commits on master
-- Session total: 4 releases, 44 new tests, ~15 new CLI flags
+## [22:15 UTC] Released v0.5.0
+- tach init command for starter config generation
+- --color auto|yes|no flag
+- --strict-markers, --assert, --basetemp flags
+- GITHUB_OUTPUT structured output integration
+- clap value_parser validation for --import-mode and --assert
+- 992 tests, 45+ commits, 5 releases
+- Session total: v0.3.1 -> v0.5.0, 44 new tests, ~20 new CLI flags

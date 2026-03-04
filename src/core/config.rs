@@ -233,9 +233,11 @@ pub struct Cli {
     #[arg(long = "tb", value_enum, default_value_t = TracebackStyle::Long, env = "TACH_TB")]
     pub traceback: TracebackStyle,
 
-    /// Show local variables in tracebacks (pytest --showlocals).
     #[arg(long = "showlocals", short = 'l')]
     pub show_locals: bool,
+
+    #[arg(long, value_name = "PATH")]
+    pub log_file: Option<std::path::PathBuf>,
 
     // =========================================================================
     // Coverage (pytest-cov compatible)
@@ -349,6 +351,10 @@ pub struct Cli {
     /// Tests that pass on retry are reported as "flaky" instead of "failed".
     #[arg(long, value_name = "N", env = "TACH_RETRIES")]
     pub retries: Option<u32>,
+
+    #[arg(long, value_name = "METHOD", default_value = "signal",
+          value_parser = clap::builder::PossibleValuesParser::new(["signal", "thread"]))]
+    pub timeout_method: String,
 
     // =========================================================================
     // Diagnostics
