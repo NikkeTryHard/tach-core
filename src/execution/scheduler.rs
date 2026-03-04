@@ -221,7 +221,12 @@ impl Scheduler {
 
     /// Sort tests into safe/toxic queues for dual-path execution
     /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
-    fn populate_queues(&mut self, tests: Vec<RunnableTest>) {
+    fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
+        // Sort by file path to group tests from the same module together.
+        // This reduces cross-module state pollution when workers are reused,
+        // since tests from the same file share the same imports and setup.
+        tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
         let mut safe_count = 0usize;
         let mut toxic_count = 0usize;
 
