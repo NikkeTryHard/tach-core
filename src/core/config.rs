@@ -173,6 +173,11 @@ pub struct Cli {
     #[arg(long, value_name = "N")]
     pub maxfail: Option<usize>,
 
+    /// Stepwise: stop on first failure, resume from that test next run.
+    /// Combines --lf with --exitfirst behavior.
+    #[arg(long = "sw")]
+    pub stepwise: bool,
+
     /// Watch for changes and re-run tests automatically.
     ///
     /// Uses inotify to detect file changes and triggers re-runs.
@@ -189,6 +194,10 @@ pub struct Cli {
     /// Decrease verbosity (quiet mode).
     #[arg(short = 'q', long)]
     pub quiet: bool,
+
+    /// Suppress the header with platform/version info (pytest --no-header compat).
+    #[arg(long)]
+    pub no_header: bool,
 
     /// Output format (also: TACH_FORMAT env var)
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
@@ -760,6 +769,7 @@ pub struct MergedConfig {
     pub show_locals: bool,
     pub durations: Option<usize>,
     pub memory: bool,
+    pub no_header: bool,
     pub verbose: u8,
     pub quiet: bool,
 
@@ -837,6 +847,7 @@ impl MergedConfig {
             show_locals: cli.show_locals,
             durations: cli.durations.or(file_config.durations),
             memory: cli.memory || file_config.memory.unwrap_or(false),
+            no_header: cli.no_header,
             verbose: cli.verbose,
             quiet: cli.quiet,
 
@@ -845,9 +856,9 @@ impl MergedConfig {
             keyword: cli.keyword.clone().or_else(|| file_config.keyword.clone()),
             markers: cli.markers.clone().or_else(|| file_config.markers.clone()),
 
-            exitfirst: cli.exitfirst || file_config.exitfirst.unwrap_or(false),
+            exitfirst: cli.exitfirst || cli.stepwise || file_config.exitfirst.unwrap_or(false),
             maxfail: cli.maxfail.or(file_config.maxfail),
-            last_failed: cli.last_failed,
+            last_failed: cli.last_failed || cli.stepwise,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
             watch: cli.watch,
