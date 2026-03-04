@@ -563,29 +563,23 @@ fn execute_session(
     if config.last_failed || config.failed_first {
         let last_failed = read_lastfailed_cache(cwd);
         if !last_failed.is_empty() {
-            let methods: Vec<String> = last_failed
-                .iter()
-                .filter_map(|id| id.split("::").last().map(|s| s.to_string()))
-                .collect();
-
-            if config.last_failed {
-                let k_expr = methods.join(" or ");
-                unsafe { std::env::set_var("TACH_LF_KEYWORD", &k_expr) };
-                if !is_json {
-                    eprintln!(
-                        "[tach:supervisor] --lf: re-running {} last-failed tests",
-                        last_failed.len()
-                    );
-                }
+            let cache_dir = cwd.join(".tach_cache");
+            let _ = std::fs::create_dir_all(&cache_dir);
+            let filter_file = cache_dir.join("_lf_filter.txt");
+            let _ = std::fs::write(&filter_file, last_failed.join("\n"));
+            let env_key = if config.last_failed {
+                "TACH_LF_FILE"
             } else {
-                let k_expr = methods.join(" or ");
-                unsafe { std::env::set_var("TACH_FF_KEYWORD", &k_expr) };
-                if !is_json {
-                    eprintln!(
-                        "[tach:supervisor] --ff: running {} last-failed tests first",
-                        last_failed.len()
-                    );
-                }
+                "TACH_FF_FILE"
+            };
+            unsafe { std::env::set_var(env_key, filter_file.to_string_lossy().as_ref()) };
+            if !is_json {
+                let mode = if config.last_failed { "--lf" } else { "--ff" };
+                eprintln!(
+                    "[tach:supervisor] {}: {} last-failed tests",
+                    mode,
+                    last_failed.len()
+                );
             }
         } else if !is_json {
             eprintln!("[tach:supervisor] No last-failed cache found, running all tests");

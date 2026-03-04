@@ -2971,25 +2971,29 @@ def init_session(root_dir: str):
 
     _SESSION.perform_collect()
 
-    # --lf filter: if TACH_LF_KEYWORD is set, deselect non-matching items
-    lf_keyword = os.environ.get("TACH_LF_KEYWORD", "")
-    if lf_keyword and _SESSION.items:
-        keywords = set(lf_keyword.split(" or "))
+    def _nodeid_suffix(nodeid: str) -> str:
+        parts = nodeid.split("::")
+        return "::".join(parts[1:]) if len(parts) > 1 else nodeid
+
+    # --lf filter: select only tests whose IDs match the lastfailed cache
+    lf_file = os.environ.get("TACH_LF_FILE", "")
+    if lf_file and os.path.isfile(lf_file) and _SESSION.items:
+        lf_ids = set(open(lf_file).read().splitlines())
         original_count = len(_SESSION.items)
         _SESSION.items = [
-            item for item in _SESSION.items if any(kw in item.nodeid for kw in keywords)
+            item for item in _SESSION.items if _nodeid_suffix(item.nodeid) in lf_ids
         ]
         os.write(
             2,
             f"[tach:harness] --lf filter: {len(_SESSION.items)}/{original_count} tests\n".encode(),
         )
 
-    # --ff reorder: if TACH_FF_KEYWORD is set, move matching items to front
-    ff_keyword = os.environ.get("TACH_FF_KEYWORD", "")
-    if ff_keyword and _SESSION.items:
-        keywords = set(ff_keyword.split(" or "))
-        failed = [i for i in _SESSION.items if any(kw in i.nodeid for kw in keywords)]
-        rest = [i for i in _SESSION.items if not any(kw in i.nodeid for kw in keywords)]
+    # --ff reorder: move lastfailed tests to front of collection
+    ff_file = os.environ.get("TACH_FF_FILE", "")
+    if ff_file and os.path.isfile(ff_file) and _SESSION.items:
+        ff_ids = set(open(ff_file).read().splitlines())
+        failed = [i for i in _SESSION.items if _nodeid_suffix(i.nodeid) in ff_ids]
+        rest = [i for i in _SESSION.items if _nodeid_suffix(i.nodeid) not in ff_ids]
         _SESSION.items = failed + rest
         os.write(
             2,
