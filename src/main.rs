@@ -1571,8 +1571,12 @@ fn run_tests(
                 .and_then(|v| v.parse::<usize>().ok());
             scheduler.set_maxfail(maxfail_env);
 
-            // PYTEST-AUTHORITATIVE MERGE (Issue #98)
-            let runnable_tests = if !collected_tests.is_empty() {
+            let collection_filtered = std::env::var("TACH_KEYWORD").is_ok()
+                || std::env::var("TACH_MARKERS").is_ok()
+                || std::env::var("TACH_LF_FILE").is_ok()
+                || std::env::var("TACH_PYTEST_ARGS").is_ok();
+
+            let runnable_tests = if !collected_tests.is_empty() || collection_filtered {
                 let mut rust_index: std::collections::HashMap<String, resolver::RunnableTest> =
                     std::collections::HashMap::new();
                 for test in runnable_tests {
