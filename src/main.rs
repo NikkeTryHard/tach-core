@@ -202,9 +202,12 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_NO_ISOLATION", "1") };
     }
 
-    // Set TACH_TARGET_PATH for Zygote to know which path to collect tests from
-    // SAFETY: Same as above - called before worker threads spawn.
-    unsafe { std::env::set_var("TACH_TARGET_PATH", &cli.path) };
+    let target_file_path = if cli.path.contains("::") {
+        cli.path.split("::").next().unwrap_or(&cli.path)
+    } else {
+        &cli.path
+    };
+    unsafe { std::env::set_var("TACH_TARGET_PATH", target_file_path) };
 
     // Set Django test DB flags for Zygote to read during setup_databases()
     // SAFETY: Same as above - called before worker threads spawn.
@@ -591,8 +594,15 @@ fn execute_session(
     }
 
     // --- PATH FILTERING ---
-    // Filter tests to only include those matching the target path
-    let target = std::path::Path::new(target_path);
+    // Handle pytest-style node IDs: "file.py::Class::method"
+    let (file_target, node_filter) = if target_path.contains("::") {
+        let parts: Vec<&str> = target_path.splitn(2, "::").collect();
+        (parts[0].to_string(), Some(parts[1].to_string()))
+    } else {
+        (target_path.to_string(), None)
+    };
+
+    let target = std::path::Path::new(&file_target);
     let target_canonical = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
@@ -605,12 +615,19 @@ fn execute_session(
                 .canonicalize()
                 .unwrap_or_else(|_| test_path.to_path_buf());
 
-            // Match if test is under target directory OR matches exactly
-            test_canonical.starts_with(&target_canonical)
+            let path_matches = test_canonical.starts_with(&target_canonical)
                 || test_canonical == target_canonical
-                ||
-            // Handle relative path matching
-            test_path.starts_with(target)
+                || test_path.starts_with(target);
+
+            if !path_matches {
+                return false;
+            }
+
+            if let Some(ref filter) = node_filter {
+                test.test_name.contains(filter.as_str())
+            } else {
+                true
+            }
         })
         .collect();
 
