@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-03-04
+
+### Added
+
+- **`tach markers` Command**: List all discovered pytest markers from test files
+- **Enriched JSON Discovery**: `--co` JSON output now includes fixtures, class_name, timeout
+- **`tach config` Improvements**: Shows plugins and database sections, JSON output support
+- 2 new JSON serialization tests
+
 ## [0.5.4] - 2026-03-04
 
 ### Added
