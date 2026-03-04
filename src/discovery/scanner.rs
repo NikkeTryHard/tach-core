@@ -212,6 +212,12 @@ pub struct JsonTestInfo {
     pub line: usize,
     pub is_async: bool,
     pub markers: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fixtures: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
 }
 
 /// JSON output for discovery listing
@@ -1691,6 +1697,9 @@ pub fn dump_json(result: &DiscoveryResult) -> Result<()> {
                     line: test.line_number,
                     is_async: test.is_async,
                     markers: test.markers.clone(),
+                    fixtures: test.dependencies.clone(),
+                    class_name: None,
+                    timeout: test.timeout_secs,
                 }
             })
         })
