@@ -2923,7 +2923,8 @@ def init_session(root_dir: str):
     # Disabling `no:terminal` removes the `verbose` option that plugins
     # (e.g. pytest-django's django_db_setup) read via config.option.verbose.
     # We inject missing attributes with sensible defaults so plugins don't crash.
-    _option_defaults = {"verbose": 0, "tbstyle": "auto", "showlocals": False}
+    _show_locals = os.environ.get("TACH_SHOWLOCALS") == "1"
+    _option_defaults = {"verbose": 0, "tbstyle": "auto", "showlocals": _show_locals}
     for attr, default in _option_defaults.items():
         if not hasattr(cfg.option, attr):
             setattr(cfg.option, attr, default)

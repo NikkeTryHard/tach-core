@@ -253,6 +253,9 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_PYTEST_ARGS", cli.pytest_args.join("\x1f")) };
     }
     unsafe { std::env::set_var("TACH_TIMEOUT", merged.timeout.to_string()) };
+    if merged.show_locals {
+        unsafe { std::env::set_var("TACH_SHOWLOCALS", "1") };
+    }
     if let Some((_, node)) = merged.path.split_once("::") {
         let kw = node.replace("::", " and ");
         let existing = std::env::var("TACH_KEYWORD").unwrap_or_default();

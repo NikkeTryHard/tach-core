@@ -205,6 +205,10 @@ pub struct Cli {
     #[arg(long = "tb", value_enum, default_value_t = TracebackStyle::Long, env = "TACH_TB")]
     pub traceback: TracebackStyle,
 
+    /// Show local variables in tracebacks (pytest --showlocals).
+    #[arg(long = "showlocals", short = 'l')]
+    pub show_locals: bool,
+
     // =========================================================================
     // Coverage (pytest-cov compatible)
     // =========================================================================
@@ -721,6 +725,7 @@ pub struct MergedConfig {
     pub format: OutputFormat,
     pub junit_xml: Option<std::path::PathBuf>,
     pub traceback: TracebackStyle,
+    pub show_locals: bool,
     pub durations: Option<usize>,
     pub memory: bool,
     pub verbose: u8,
@@ -796,6 +801,7 @@ impl MergedConfig {
             format: cli.format.clone(),
             junit_xml: cli.junit_xml.clone(),
             traceback,
+            show_locals: cli.show_locals,
             durations: cli.durations.or(file_config.durations),
             memory: cli.memory || file_config.memory.unwrap_or(false),
             verbose: cli.verbose,
