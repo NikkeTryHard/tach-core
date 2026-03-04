@@ -391,6 +391,9 @@ fn main() -> Result<()> {
         Some(Commands::Config) => {
             return handle_config_command(&cwd, &merged);
         }
+        Some(Commands::Markers) => {
+            return handle_markers_command(&cwd, merged.no_ignore);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1010,6 +1013,27 @@ fn handle_config_json(cwd: &std::path::Path, m: &config::MergedConfig) -> Result
         "no_isolation": m.no_isolation,
     });
     println!("{json}");
+    Ok(())
+}
+
+fn handle_markers_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
+    let result = tach_core::discovery::scanner::discover(cwd, no_ignore)?;
+    let mut markers = std::collections::BTreeSet::new();
+    for module in &result.modules {
+        for test in &module.tests {
+            for marker in &test.markers {
+                markers.insert(marker.clone());
+            }
+        }
+    }
+    if markers.is_empty() {
+        eprintln!("no markers found");
+    } else {
+        for marker in &markers {
+            println!("@pytest.mark.{marker}");
+        }
+        eprintln!("\n{} markers found", markers.len());
+    }
     Ok(())
 }
 

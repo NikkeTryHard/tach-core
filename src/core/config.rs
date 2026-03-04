@@ -507,6 +507,9 @@ pub enum Commands {
     /// Show effective merged configuration (CLI + pyproject.toml).
     Config,
 
+    /// List all discovered markers from test files.
+    Markers,
+
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
