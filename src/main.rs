@@ -222,7 +222,10 @@ fn main() -> Result<()> {
     if std::env::var("PYTHONUTF8").unwrap_or_default().is_empty() {
         unsafe { std::env::set_var("PYTHONUTF8", "1") };
     }
-    if std::env::var("PYTHONIOENCODING").unwrap_or_default().is_empty() {
+    if std::env::var("PYTHONIOENCODING")
+        .unwrap_or_default()
+        .is_empty()
+    {
         unsafe { std::env::set_var("PYTHONIOENCODING", "utf-8") };
     }
 
