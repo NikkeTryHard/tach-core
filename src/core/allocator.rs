@@ -95,10 +95,6 @@ pub fn verify_jemalloc_active() -> Result<String> {
                 .to_string()
         };
 
-        eprintln!(
-            "[tach:allocator] jemalloc {} verified as active allocator",
-            version
-        );
         Ok(version)
     }
 }

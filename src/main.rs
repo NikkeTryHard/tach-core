@@ -146,12 +146,7 @@ fn main() -> Result<()> {
 
     // Verify jemalloc is active - FATAL if not
     match tach_core::allocator::verify_jemalloc_active() {
-        Ok(version) => {
-            eprintln!(
-                "[tach:supervisor] Jemalloc {} verified - Hypervisor allocator ready",
-                version
-            );
-        }
+        Ok(_version) => {}
         Err(e) => {
             // Use CategorizedError for user-friendly error display
             let suggestion = suggestions::get_suggestion(
