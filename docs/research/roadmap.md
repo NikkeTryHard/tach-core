@@ -254,14 +254,15 @@ flowchart TB
 
     class P1_1,P1_2,P1_3,P1_4,P1_5 done
     class P2_0,P2_1,P2_2,P2_3,P5_0,P5_6,P7_4,P8_1 done
+    class P6_0,P6_1,P8_0,P9_2,P9_5,P9_7 done
     class P5_1 inProgress
-    class P5_3,P5_5,P6_0,P6_2,P7_0,P7_1,P7_6,P8_0,P9_2,P9_5,P9_6,P9_7 canStart
+    class P5_3,P5_5,P6_2,P7_0,P7_1,P7_6,P9_6 canStart
     class P2_4,P2_5 done
     class P3_0,P3_1 done
     class P3_2,P3_3 pending
     class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
     class P5_2,P5_4 pending
-    class P6_1,P6_3,P6_4,P6_5 pending
+    class P6_3,P6_4,P6_5 pending
     class P7_2,P7_3,P7_5,P7_7,P7_8,P7_9 pending
     class P8_2,P8_3,P8_4,P8_5,P8_6 pending
     class P9_0,P9_1,P9_3,P9_4,P9_8 pending
@@ -276,8 +277,12 @@ flowchart TB
 
 - Phase 1 (0.1.x): Complete
 - Phase 2 (0.2.x): Complete - 0.2.0-0.2.5 all done
-- Phases 3-4: Can start - Phase 2 plugin work complete
-- Phases 5-9: **Many items can start NOW** - see blue "Can Start" nodes in flowchart
+- Phase 3 (0.3.x): 0.3.0 + 0.3.1 done, 0.3.2-0.3.3 pending
+- Phase 5 (0.5.x): 0.5.0 (tracebacks + showlocals) done, 0.5.1 in progress, 0.5.6 done
+- Phase 6 (0.6.x): 0.6.0 (config schema) + 0.6.1 (env denylist) done
+- Phase 7 (0.7.x): 0.7.4 (TLS calibration) done
+- Phase 8 (0.8.x): 0.8.0 (GitHub Actions) + 0.8.1 (JUnit XML) done
+- Phase 9 (0.9.x): 0.9.2 (CleanupGuard) + 0.9.5 (stale cleanup) + 0.9.7 (protocol versioning) done
 - Phase 10: Not started
 
 ---
