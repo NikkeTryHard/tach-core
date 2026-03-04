@@ -935,6 +935,9 @@ fn handle_cache_show(cwd: &std::path::Path) -> Result<()> {
 }
 
 fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -> Result<()> {
+    if merged.format == config::OutputFormat::Json {
+        return handle_config_json(cwd, merged);
+    }
     eprintln!("rootdir: {}", cwd.display());
     eprintln!("version: {}", env!("CARGO_PKG_VERSION"));
     eprintln!();
@@ -985,6 +988,28 @@ fn handle_config_command(cwd: &std::path::Path, merged: &config::MergedConfig) -
         eprintln!("  reuse_db = {}", merged.reuse_db);
         eprintln!("  create_db = {}", merged.create_db);
     }
+    Ok(())
+}
+
+fn handle_config_json(cwd: &std::path::Path, m: &config::MergedConfig) -> Result<()> {
+    println!(
+        "{{\"rootdir\":\"{}\",\"version\":\"{}\",\"workers\":{},\"timeout\":{},\
+         \"isolation\":\"{}\",\"path\":\"{}\",\"pattern\":\"{}\",\
+         \"exitfirst\":{},\"coverage\":{},\"no_fallback\":{},\
+         \"force_toxic\":{},\"no_isolation\":{}}}",
+        cwd.display(),
+        env!("CARGO_PKG_VERSION"),
+        m.workers,
+        m.timeout,
+        m.isolation_strategy,
+        m.path,
+        m.test_pattern,
+        m.exitfirst,
+        m.coverage,
+        m.no_fallback,
+        m.force_toxic,
+        m.no_isolation,
+    );
     Ok(())
 }
 
