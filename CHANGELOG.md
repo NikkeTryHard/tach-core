@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-03-04
+
+### Added
+
+- **`tach fixtures` Command**: List all discovered fixtures with scope and source file
+
 ## [0.5.6] - 2026-03-04
 
 ### Added
