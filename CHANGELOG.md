@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-05
+
+### Added
+
+- **`--ignore PATH`**: Exclude specific files/directories from test discovery
+- **`--ignore-glob GLOB`**: Exclude by glob pattern from test discovery
+- Both support multiple values and are wired to pytest harness
+
 ## [0.5.9] - 2026-03-05
 
 ### Added
