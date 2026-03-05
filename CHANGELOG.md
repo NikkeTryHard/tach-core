@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-03-05
+
+### Added
+
+- **`--html PATH`**: Generate HTML test report (pytest-html compat)
+- **`--durations-min SECS`**: Filter durations display by minimum threshold
+
 ## [0.7.3] - 2026-03-05
 
 ### Added
