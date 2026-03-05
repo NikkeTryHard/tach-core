@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-03-05
+
+### Added
+
+- 2 new edge case tests for pytest summary parser (large numbers, xfail/xpass)
+- 1035 tests total (87 new this session)
+
 ## [0.7.4] - 2026-03-05
 
 ### Added
