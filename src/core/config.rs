@@ -2056,4 +2056,18 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--capture-no", "."]);
         assert!(cli.no_capture);
     }
+
+    #[test]
+    fn test_ignore_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--ignore", "vendor/", "--ignore", "legacy/", "."]);
+        assert_eq!(cli.ignore, vec!["vendor/", "legacy/"]);
+    }
+
+    #[test]
+    fn test_ignore_glob_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--ignore-glob", "**/test_slow_*", "."]);
+        assert_eq!(cli.ignore_glob, vec!["**/test_slow_*"]);
+    }
 }
