@@ -173,6 +173,9 @@ pub struct Cli {
     #[arg(long)]
     pub strict_markers: bool,
 
+    #[arg(long = "Werror")]
+    pub warnings_as_errors: bool,
+
     #[arg(long, value_name = "NODE_ID")]
     pub deselect: Vec<String>,
 

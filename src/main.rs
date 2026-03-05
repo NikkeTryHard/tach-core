@@ -301,6 +301,9 @@ fn main() -> Result<()> {
     if cli.pdb {
         unsafe { std::env::set_var("TACH_PDB", "1") };
     }
+    if cli.warnings_as_errors {
+        unsafe { std::env::set_var("TACH_WERROR", "1") };
+    }
     if cli.no_capture {
         unsafe { std::env::set_var("TACH_NO_CAPTURE", "1") };
     }
