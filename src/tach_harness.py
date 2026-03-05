@@ -2986,6 +2986,8 @@ def init_session(root_dir: str):
 
     if os.environ.get("TACH_PDB") == "1":
         args.append("--pdb")
+    if os.environ.get("TACH_NEW_FIRST") == "1":
+        args.append("--nf")
 
     log_file = os.environ.get("TACH_LOG_FILE")
     if log_file:

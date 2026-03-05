@@ -311,6 +311,9 @@ fn main() -> Result<()> {
     if cli.pyargs {
         unsafe { std::env::set_var("TACH_PYARGS", "1") };
     }
+    if cli.new_first {
+        unsafe { std::env::set_var("TACH_NEW_FIRST", "1") };
+    }
     if !cli.deselect.is_empty() {
         unsafe { std::env::set_var("TACH_DESELECT", cli.deselect.join("\x1f")) };
     }

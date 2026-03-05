@@ -199,6 +199,9 @@ pub struct Cli {
     #[arg(long)]
     pub pyargs: bool,
 
+    #[arg(long = "nf")]
+    pub new_first: bool,
+
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,
