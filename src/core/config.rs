@@ -111,6 +111,27 @@ pub enum TracebackStyle {
     # Run with parallel workers
     tach -n auto tests/
 
+    # Resume an interrupted run
+    tach --resume
+
+    # Show effective configuration
+    tach config
+
+    # Initialize tach configuration
+    tach init
+
+    # List discovered fixtures
+    tach fixtures
+
+    # List discovered markers
+    tach markers
+
+    # Drop into pdb on failure
+    tach --pdb
+
+    # Disable output capture
+    tach -s
+
 For more information, visit: https://github.com/NikkeTryHard/tach-core"#
 )]
 pub struct Cli {
