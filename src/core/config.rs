@@ -227,6 +227,9 @@ pub struct Cli {
     #[arg(long)]
     pub cache_show: bool,
 
+    #[arg(long = "sw-skip")]
+    pub stepwise_skip: bool,
+
     /// Exit after N failures (--maxfail=N).
     #[arg(long, value_name = "N")]
     pub maxfail: Option<usize>,
@@ -1009,9 +1012,12 @@ impl MergedConfig {
             keyword: cli.keyword.clone().or_else(|| file_config.keyword.clone()),
             markers: cli.markers.clone().or_else(|| file_config.markers.clone()),
 
-            exitfirst: cli.exitfirst || cli.stepwise || file_config.exitfirst.unwrap_or(false),
+            exitfirst: cli.exitfirst
+                || cli.stepwise
+                || cli.stepwise_skip
+                || file_config.exitfirst.unwrap_or(false),
             maxfail: cli.maxfail.or(file_config.maxfail),
-            last_failed: cli.last_failed || cli.stepwise,
+            last_failed: cli.last_failed || cli.stepwise || cli.stepwise_skip,
             failed_first: cli.failed_first,
             cache_clear: cli.cache_clear,
             watch: cli.watch,
