@@ -189,6 +189,9 @@ pub struct Cli {
     #[arg(long)]
     pub runxfail: bool,
 
+    #[arg(long)]
+    pub doctest_modules: bool,
+
     #[arg(long = "assert", value_name = "MODE",
           value_parser = clap::builder::PossibleValuesParser::new(["plain", "rewrite"]))]
     pub assert_mode: Option<String>,

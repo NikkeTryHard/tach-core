@@ -2999,6 +2999,9 @@ def init_session(root_dir: str):
     if randomly_seed:
         args.extend(["-p", "randomly", "--randomly-seed", randomly_seed])
 
+    if os.environ.get("TACH_DOCTEST_MODULES") == "1":
+        args.append("--doctest-modules")
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

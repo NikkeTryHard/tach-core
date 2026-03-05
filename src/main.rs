@@ -301,6 +301,9 @@ fn main() -> Result<()> {
     if cli.no_capture {
         unsafe { std::env::set_var("TACH_NO_CAPTURE", "1") };
     }
+    if cli.doctest_modules {
+        unsafe { std::env::set_var("TACH_DOCTEST_MODULES", "1") };
+    }
     if !cli.override_ini.is_empty() {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
