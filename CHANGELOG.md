@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-03-05
+
+### Added
+
+- --Werror flag test verification
+- 1036 tests total (88 new this session)
+
 ## [0.7.6] - 2026-03-05
 
 ### Added
