@@ -258,9 +258,11 @@ pub struct Cli {
     #[arg(short = 'q', long)]
     pub quiet: bool,
 
-    /// Suppress the header with platform/version info (pytest --no-header compat).
     #[arg(long)]
     pub no_header: bool,
+
+    #[arg(long, value_name = "LEVEL")]
+    pub log_cli_level: Option<String>,
 
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
     pub format: OutputFormat,

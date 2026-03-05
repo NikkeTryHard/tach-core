@@ -254,6 +254,9 @@ fn main() -> Result<()> {
     if let Some(ref html) = cli.html {
         unsafe { std::env::set_var("TACH_HTML", html.as_os_str()) };
     }
+    if let Some(ref level) = cli.log_cli_level {
+        unsafe { std::env::set_var("TACH_LOG_CLI_LEVEL", level) };
+    }
 
     let target_file_path = if merged.path.contains("::") {
         merged.path.split("::").next().unwrap_or(&merged.path)

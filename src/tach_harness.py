@@ -2999,6 +2999,10 @@ def init_session(root_dir: str):
     if html_report:
         args.extend(["--html", html_report])
 
+    log_cli_level = os.environ.get("TACH_LOG_CLI_LEVEL")
+    if log_cli_level:
+        args.extend(["--log-cli-level", log_cli_level])
+
     basetemp = os.environ.get("TACH_BASETEMP")
     if basetemp:
         args.extend(["--basetemp", basetemp])
