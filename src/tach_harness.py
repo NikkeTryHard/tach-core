@@ -3006,6 +3006,9 @@ def init_session(root_dir: str):
     if extra_args:
         args.extend(extra_args.split("\x1f"))
 
+    if os.environ.get("TACH_PYARGS") == "1":
+        args.append("--pyargs")
+
     if os.environ.get("TACH_NO_CAPTURE") == "1":
         args.extend(["-s"])
 

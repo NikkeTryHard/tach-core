@@ -308,6 +308,9 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_OVERRIDE_INI", cli.override_ini.join("\x1f")) };
     }
 
+    if cli.pyargs {
+        unsafe { std::env::set_var("TACH_PYARGS", "1") };
+    }
     if !cli.deselect.is_empty() {
         unsafe { std::env::set_var("TACH_DESELECT", cli.deselect.join("\x1f")) };
     }

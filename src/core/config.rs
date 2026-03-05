@@ -196,6 +196,9 @@ pub struct Cli {
           value_parser = clap::builder::PossibleValuesParser::new(["plain", "rewrite"]))]
     pub assert_mode: Option<String>,
 
+    #[arg(long)]
+    pub pyargs: bool,
+
     /// Test directory or file pattern
     #[arg(default_value = ".")]
     pub path: String,
