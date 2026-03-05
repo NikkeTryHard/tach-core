@@ -2017,4 +2017,18 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--pdb", "."]);
         assert!(cli.pdb);
     }
+
+    #[test]
+    fn test_no_capture_short_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "-s", "."]);
+        assert!(cli.no_capture);
+    }
+
+    #[test]
+    fn test_no_capture_long_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--capture-no", "."]);
+        assert!(cli.no_capture);
+    }
 }
