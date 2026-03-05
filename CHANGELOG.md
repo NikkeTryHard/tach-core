@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-03-05
+
+### Added
+
+- **`--sw-skip`**: Stepwise with skip first failure on resume
+- **`--tb-short`**: Convenience flag for short tracebacks
+- Updated roadmap status to v0.8.3
+- ~70 CLI flags for complete pytest compatibility
+
 ## [0.8.3] - 2026-03-05
 
 ### Added
