@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-03-05
+
+### Added
+
+- **`--setup-plan`**: Show fixture setup plan without executing
+- **`--setup-show`**: Show fixture setup/teardown during execution
+- **`--setup-only`**: Run only fixture setup, skip tests
+
 ## [0.6.4] - 2026-03-05
 
 ### Added
