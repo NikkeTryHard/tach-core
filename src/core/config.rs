@@ -2117,4 +2117,31 @@ force_toxic = ["myapp.workers"]
         assert!(cli.pyargs);
         assert_eq!(cli.path, "mypackage.tests");
     }
+
+    #[test]
+    fn test_forked_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--forked", "."]);
+        assert!(cli.forked);
+    }
+
+    #[test]
+    fn test_new_first_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--nf", "."]);
+        assert!(cli.new_first);
+    }
+
+    #[test]
+    fn test_setup_flags() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--setup-plan", "."]);
+        assert!(cli.setup_plan);
+
+        let cli2 = Cli::parse_from(["tach", "--setup-show", "."]);
+        assert!(cli2.setup_show);
+
+        let cli3 = Cli::parse_from(["tach", "--setup-only", "."]);
+        assert!(cli3.setup_only);
+    }
 }
