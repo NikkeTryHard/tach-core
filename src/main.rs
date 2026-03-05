@@ -436,6 +436,9 @@ fn main() -> Result<()> {
         Some(Commands::Stats) => {
             return handle_stats_command(&cwd, merged.no_ignore);
         }
+        Some(Commands::Check) => {
+            return handle_check_command(&cwd, &merged);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1179,6 +1182,69 @@ fn handle_stats_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
     if !durations.is_empty() {
         let total_ms: u64 = durations.values().sum();
         eprintln!("  cached time:   {:.1}s", total_ms as f64 / 1000.0);
+    }
+    Ok(())
+}
+
+fn handle_check_command(cwd: &std::path::Path, m: &config::MergedConfig) -> Result<()> {
+    let mut ok = true;
+
+    let python = std::process::Command::new("python3")
+        .arg("--version")
+        .output();
+    match python {
+        Ok(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout);
+            eprintln!("[ok] Python: {}", ver.trim());
+        }
+        _ => {
+            eprintln!("[FAIL] Python3 not found");
+            ok = false;
+        }
+    }
+
+    let pytest = std::process::Command::new("python3")
+        .args(["-c", "import pytest; print(pytest.__version__)"])
+        .output();
+    match pytest {
+        Ok(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout);
+            eprintln!("[ok] pytest: {}", ver.trim());
+        }
+        _ => {
+            eprintln!("[FAIL] pytest not installed");
+            ok = false;
+        }
+    }
+
+    let pyproject = cwd.join("pyproject.toml");
+    if pyproject.exists() {
+        eprintln!("[ok] pyproject.toml found");
+    } else {
+        eprintln!("[warn] No pyproject.toml (run: tach init)");
+    }
+
+    let result = tach_core::discovery::scanner::discover(cwd, m.no_ignore);
+    match result {
+        Ok(r) => {
+            let count: usize = r.modules.iter().map(|m| m.tests.len()).sum();
+            eprintln!(
+                "[ok] Discovery: {} tests in {} files",
+                count,
+                r.modules.len()
+            );
+        }
+        Err(e) => {
+            eprintln!("[FAIL] Discovery error: {e}");
+            ok = false;
+        }
+    }
+
+    if ok {
+        eprintln!("\nAll checks passed");
+    } else {
+        eprintln!("\nSome checks failed");
+        std::process::exit(1);
     }
     Ok(())
 }

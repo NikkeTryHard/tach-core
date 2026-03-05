@@ -565,6 +565,8 @@ pub enum Commands {
 
     Stats,
 
+    Check,
+
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
