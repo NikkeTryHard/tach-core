@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-03-05
+
+### Added
+
+- **Enhanced `tach clean`**: Also removes `__pycache__` directories recursively
+- **CLI Help Examples**: Added examples for all new commands in `--help` output
+
 ## [0.5.8] - 2026-03-04
 
 ### Added
