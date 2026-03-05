@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-05
+
+### Added
+
+- **`tach check`**: Validate Python, pytest, config, and test discovery
+- **`tach stats`**: Show project statistics (tests, async, parametrized, fixtures)
+- 10 subcommands total (init, config, markers, fixtures, clean, stats, check, list, version, completions)
+
 ## [0.7.0] - 2026-03-05
 
 ### Added
