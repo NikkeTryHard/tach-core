@@ -287,6 +287,9 @@ pub struct Cli {
     #[arg(long)]
     pub pdb: bool,
 
+    #[arg(long)]
+    pub tb_short: bool,
+
     #[arg(long, value_name = "PATH")]
     pub log_file: Option<std::path::PathBuf>,
 
@@ -977,6 +980,12 @@ impl MergedConfig {
                 .as_deref()
                 .and_then(parse_traceback_style)
                 .unwrap_or(cli.traceback)
+        };
+
+        let traceback = if cli.tb_short {
+            TracebackStyle::Short
+        } else {
+            traceback
         };
 
         Self {
