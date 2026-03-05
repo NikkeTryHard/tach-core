@@ -973,6 +973,26 @@ fn execute_session(
         write_duration_cache(cwd, &stats.test_durations);
     }
 
+    let mut history = tach_core::cache::TestHistory::load(cwd);
+    history.add_run(tach_core::cache::RunRecord {
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        total: stats.passed + stats.failed + stats.skipped,
+        passed: stats.passed,
+        failed: final_failed,
+        skipped: stats.skipped,
+        duration_ms: stats.duration_ms,
+        test_durations: stats
+            .test_durations
+            .iter()
+            .map(|(n, d)| (n.clone(), *d))
+            .collect(),
+        failed_tests: stats.failed_test_ids.clone(),
+    });
+    history.save(cwd);
+
     if final_failed > 0 {
         std::process::exit(1);
     }
@@ -1200,6 +1220,20 @@ fn handle_stats_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
     if !durations.is_empty() {
         let total_ms: u64 = durations.values().sum();
         eprintln!("  cached time:   {:.1}s", total_ms as f64 / 1000.0);
+    }
+
+    let history = tach_core::cache::TestHistory::load(cwd);
+    if !history.runs.is_empty() {
+        eprintln!();
+        eprintln!("history ({} runs):", history.runs.len());
+        eprintln!("  pass rate:     {:.1}%", history.pass_rate());
+        let flaky = history.flaky_tests();
+        if !flaky.is_empty() {
+            eprintln!("  flaky tests:   {}", flaky.len());
+            for t in flaky.iter().take(5) {
+                eprintln!("    - {t}");
+            }
+        }
     }
     Ok(())
 }

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -74,6 +75,94 @@ pub fn read_interrupted_cache(root: &Path) -> Vec<String> {
 
 pub fn clear_interrupted_cache(root: &Path) {
     let _ = std::fs::remove_file(root.join(".tach_cache/interrupted"));
+}
+
+const MAX_HISTORY_RUNS: usize = 20;
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct TestHistory {
+    pub runs: Vec<RunRecord>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RunRecord {
+    pub timestamp: u64,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub duration_ms: u64,
+    pub test_durations: HashMap<String, u64>,
+    pub failed_tests: Vec<String>,
+}
+
+impl TestHistory {
+    pub fn load(root: &Path) -> Self {
+        let path = root.join(".tach_cache/history.json");
+        match std::fs::read_to_string(&path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    pub fn save(&self, root: &Path) {
+        let cache_dir = root.join(".tach_cache");
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let path = cache_dir.join("history.json");
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    pub fn add_run(&mut self, record: RunRecord) {
+        self.runs.push(record);
+        if self.runs.len() > MAX_HISTORY_RUNS {
+            self.runs.drain(0..self.runs.len() - MAX_HISTORY_RUNS);
+        }
+    }
+
+    pub fn avg_duration(&self, test_name: &str) -> Option<u64> {
+        let mut total = 0u64;
+        let mut count = 0u64;
+        for run in &self.runs {
+            if let Some(&ms) = run.test_durations.get(test_name) {
+                total += ms;
+                count += 1;
+            }
+        }
+        if count > 0 { Some(total / count) } else { None }
+    }
+
+    pub fn flaky_tests(&self) -> Vec<String> {
+        let mut results: HashMap<&str, (usize, usize)> = HashMap::new();
+        for run in &self.runs {
+            for name in run.test_durations.keys() {
+                let entry = results.entry(name.as_str()).or_default();
+                if run.failed_tests.contains(name) {
+                    entry.1 += 1;
+                } else {
+                    entry.0 += 1;
+                }
+            }
+        }
+        results
+            .into_iter()
+            .filter(|(_, (pass, fail))| *pass > 0 && *fail > 0)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    }
+
+    pub fn pass_rate(&self) -> f64 {
+        if self.runs.is_empty() {
+            return 0.0;
+        }
+        let total_passed: usize = self.runs.iter().map(|r| r.passed).sum();
+        let total_tests: usize = self.runs.iter().map(|r| r.total).sum();
+        if total_tests == 0 {
+            return 0.0;
+        }
+        total_passed as f64 / total_tests as f64 * 100.0
+    }
 }
 
 #[cfg(test)]
@@ -192,5 +281,97 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let loaded = read_interrupted_cache(dir.path());
         assert!(loaded.is_empty());
+    }
+
+    fn make_run(passed: usize, failed: usize, durations: &[(&str, u64)]) -> RunRecord {
+        RunRecord {
+            timestamp: 1000,
+            total: passed + failed,
+            passed,
+            failed,
+            skipped: 0,
+            duration_ms: durations.iter().map(|(_, d)| d).sum(),
+            test_durations: durations.iter().map(|(n, d)| (n.to_string(), *d)).collect(),
+            failed_tests: vec![],
+        }
+    }
+
+    #[test]
+    fn test_history_save_load_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let mut history = TestHistory::default();
+        history.add_run(make_run(10, 2, &[("test_a", 100), ("test_b", 200)]));
+        history.save(dir.path());
+
+        let loaded = TestHistory::load(dir.path());
+        assert_eq!(loaded.runs.len(), 1);
+        assert_eq!(loaded.runs[0].passed, 10);
+        assert_eq!(loaded.runs[0].failed, 2);
+    }
+
+    #[test]
+    fn test_history_max_runs_capped() {
+        let mut history = TestHistory::default();
+        for i in 0..30 {
+            history.add_run(RunRecord {
+                timestamp: i,
+                total: 1,
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+                duration_ms: 100,
+                test_durations: HashMap::new(),
+                failed_tests: vec![],
+            });
+        }
+        assert_eq!(history.runs.len(), MAX_HISTORY_RUNS);
+    }
+
+    #[test]
+    fn test_history_avg_duration() {
+        let mut history = TestHistory::default();
+        history.add_run(make_run(1, 0, &[("test_a", 100)]));
+        history.add_run(make_run(1, 0, &[("test_a", 200)]));
+        history.add_run(make_run(1, 0, &[("test_a", 300)]));
+        assert_eq!(history.avg_duration("test_a"), Some(200));
+        assert_eq!(history.avg_duration("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_history_flaky_detection() {
+        let mut history = TestHistory::default();
+        let mut run1 = make_run(2, 0, &[("test_a", 100), ("test_b", 50)]);
+        run1.failed_tests = vec![];
+        history.add_run(run1);
+
+        let mut run2 = make_run(1, 1, &[("test_a", 100), ("test_b", 50)]);
+        run2.failed_tests = vec!["test_a".to_string()];
+        history.add_run(run2);
+
+        let flaky = history.flaky_tests();
+        assert!(flaky.contains(&"test_a".to_string()));
+        assert!(!flaky.contains(&"test_b".to_string()));
+    }
+
+    #[test]
+    fn test_history_pass_rate() {
+        let mut history = TestHistory::default();
+        history.add_run(make_run(8, 2, &[]));
+        history.add_run(make_run(9, 1, &[]));
+        let rate = history.pass_rate();
+        assert!((rate - 85.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_history_empty_pass_rate() {
+        let history = TestHistory::default();
+        assert!((history.pass_rate() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_history_load_nonexistent() {
+        let dir = TempDir::new().unwrap();
+        let history = TestHistory::load(dir.path());
+        assert!(history.runs.is_empty());
     }
 }
