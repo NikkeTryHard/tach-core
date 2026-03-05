@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-05
+
+### Added
+
+- **`--log-cli-level LEVEL`**: Control live logging output level
+- Complete pytest CLI drop-in replacement with ~65 flags
+- 1039 tests (91 new this session), 10 subcommands
+- Session milestone: v0.3.1 -> v0.8.0 (31 releases)
+
 ## [0.7.8] - 2026-03-05
 
 ### Added

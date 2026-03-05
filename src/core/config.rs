@@ -2178,4 +2178,11 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--html", "report.html", "."]);
         assert_eq!(cli.html.unwrap().to_str().unwrap(), "report.html");
     }
+
+    #[test]
+    fn test_log_cli_level_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--log-cli-level", "DEBUG", "."]);
+        assert_eq!(cli.log_cli_level.as_deref(), Some("DEBUG"));
+    }
 }
