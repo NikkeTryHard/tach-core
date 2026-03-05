@@ -2082,4 +2082,11 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--randomly-seed", "12345", "."]);
         assert_eq!(cli.randomly_seed, Some(12345));
     }
+
+    #[test]
+    fn test_doctest_modules_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--doctest-modules", "."]);
+        assert!(cli.doctest_modules);
+    }
 }
