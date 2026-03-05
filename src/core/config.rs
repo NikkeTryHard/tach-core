@@ -376,9 +376,11 @@ pub struct Cli {
     #[arg(short = 'p', value_name = "PLUGIN")]
     pub plugins: Vec<String>,
 
-    /// Show timing for slowest N tests.
     #[arg(long, value_name = "N")]
     pub durations: Option<usize>,
+
+    #[arg(long, value_name = "SECS", default_value_t = 0.005)]
+    pub durations_min: f64,
 
     /// Show memory usage for each test.
     ///
@@ -718,10 +720,8 @@ pub struct TachConfig {
     /// Traceback style: "short", "long", "line", "native", "no"
     pub traceback: Option<String>,
 
-    /// Show N slowest test durations
     pub durations: Option<usize>,
-
-    /// Show memory usage per test
+    pub durations_min: Option<f64>,
     pub memory: Option<bool>,
 
     /// Ignore .gitignore/.ignore files during discovery
@@ -892,6 +892,7 @@ pub struct MergedConfig {
     pub traceback: TracebackStyle,
     pub show_locals: bool,
     pub durations: Option<usize>,
+    pub durations_min: f64,
     pub memory: bool,
     pub no_header: bool,
     pub verbose: u8,
@@ -975,6 +976,11 @@ impl MergedConfig {
             traceback,
             show_locals: cli.show_locals,
             durations: cli.durations.or(file_config.durations),
+            durations_min: if cli.durations_min != 0.005 {
+                cli.durations_min
+            } else {
+                file_config.durations_min.unwrap_or(0.005)
+            },
             memory: cli.memory || file_config.memory.unwrap_or(false),
             no_header: cli.no_header,
             verbose: cli.verbose,
