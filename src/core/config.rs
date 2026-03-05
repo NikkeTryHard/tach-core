@@ -398,10 +398,12 @@ pub struct Cli {
           value_parser = clap::builder::PossibleValuesParser::new(["signal", "thread"]))]
     pub timeout_method: String,
 
+    #[arg(long = "randomly-seed", value_name = "SEED")]
+    pub randomly_seed: Option<u64>,
+
     // =========================================================================
     // Diagnostics
     // =========================================================================
-    /// Run system diagnostics and exit.
     ///
     /// Checks kernel version, userfaultfd, Landlock, Seccomp, Python,
     /// pytest, and performs a quick performance benchmark.

@@ -2995,6 +2995,10 @@ def init_session(root_dir: str):
     if basetemp:
         args.extend(["--basetemp", basetemp])
 
+    randomly_seed = os.environ.get("TACH_RANDOMLY_SEED")
+    if randomly_seed:
+        args.extend(["-p", "randomly", "--randomly-seed", randomly_seed])
+
     extra_args = os.environ.get("TACH_PYTEST_ARGS", "")
     if extra_args:
         args.extend(extra_args.split("\x1f"))

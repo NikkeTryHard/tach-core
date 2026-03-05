@@ -323,6 +323,9 @@ fn main() -> Result<()> {
     if cli.import_mode != "prepend" {
         unsafe { std::env::set_var("TACH_IMPORT_MODE", &cli.import_mode) };
     }
+    if let Some(seed) = cli.randomly_seed {
+        unsafe { std::env::set_var("TACH_RANDOMLY_SEED", seed.to_string()) };
+    }
 
     let maxfail = if merged.exitfirst {
         Some(1)
