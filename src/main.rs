@@ -451,6 +451,9 @@ fn main() -> Result<()> {
         Some(Commands::Check) => {
             return handle_check_command(&cwd, &merged);
         }
+        Some(Commands::Bench) => {
+            return handle_bench_command(&cwd, merged.no_ignore);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1258,6 +1261,26 @@ fn handle_check_command(cwd: &std::path::Path, m: &config::MergedConfig) -> Resu
         eprintln!("\nSome checks failed");
         std::process::exit(1);
     }
+    Ok(())
+}
+
+fn handle_bench_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
+    let start = std::time::Instant::now();
+    let result = tach_core::discovery::scanner::discover(cwd, no_ignore)?;
+    let discovery_ms = start.elapsed().as_millis();
+
+    let test_count: usize = result.modules.iter().map(|m| m.tests.len()).sum();
+    let fixture_count: usize = result.modules.iter().map(|m| m.fixtures.len()).sum();
+
+    eprintln!("Discovery benchmark:");
+    eprintln!("  files:     {}", result.modules.len());
+    eprintln!("  tests:     {test_count}");
+    eprintln!("  fixtures:  {fixture_count}");
+    eprintln!("  time:      {discovery_ms}ms");
+    eprintln!(
+        "  rate:      {:.0} tests/sec",
+        test_count as f64 / (discovery_ms as f64 / 1000.0).max(0.001)
+    );
     Ok(())
 }
 

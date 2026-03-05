@@ -577,6 +577,8 @@ pub enum Commands {
 
     Stats,
 
+    Bench,
+
     Check,
 
     Completions {
