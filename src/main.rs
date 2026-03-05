@@ -1354,7 +1354,8 @@ fn handle_diagnose_command() -> Result<()> {
 
 /// Handle the `version` subcommand
 fn handle_version_command(verbose: bool) -> Result<()> {
-    eprintln!("tach {}", env!("CARGO_PKG_VERSION"));
+    let git_hash = option_env!("GIT_HASH").unwrap_or("unknown");
+    eprintln!("tach {} ({})", env!("CARGO_PKG_VERSION"), git_hash);
     eprintln!("Hypervisor-Accelerated Python Test Runner");
     eprintln!();
 

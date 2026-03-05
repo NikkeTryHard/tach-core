@@ -7,8 +7,17 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    // Re-run if these change
     println!("cargo:rerun-if-env-changed=TACH_ALLOW_NATIVE_BUILD");
+    println!("cargo:rerun-if-changed=.git/HEAD");
+
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        && output.status.success()
+    {
+        let hash = String::from_utf8_lossy(&output.stdout);
+        println!("cargo:rustc-env=GIT_HASH={}", hash.trim());
+    }
 
     // Check if we're allowing native builds (escape hatch for CI)
     if std::env::var("TACH_ALLOW_NATIVE_BUILD").is_ok() {
