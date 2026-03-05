@@ -273,13 +273,15 @@ flowchart TB
 
 **Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🟣 Milestone
 
-**Current Status (v0.5.1):**
+**Current Status (v0.8.3):**
 
 - Phase 1 (0.1.x): Complete
-- Phase 2 (0.2.x): Complete - 0.2.0-0.2.5 all done
-- Phase 3 (0.3.x): 0.3.0 + 0.3.1 done, 0.3.2-0.3.3 pending
-- Phase 5 (0.5.x): 0.5.0 (tracebacks + showlocals) + 0.5.1 (debug mode) + 0.5.6 (PEP 669) done
-- Phase 6 (0.6.x): 0.6.0 (config schema) + 0.6.1 (env denylist) + 0.6.2 (toxicity config) + 0.6.4 (scheduler persistence/resume) done
+- Phase 2 (0.2.x): Complete
+- Phase 3 (0.3.x): 0.3.0 + 0.3.1 done
+- Phase 5 (0.5.x): 0.5.0-0.5.1 + 0.5.6 done
+- Phase 6 (0.6.x): 0.6.0-0.6.4 done
+- Phase 8 (0.8.x): 0.8.0-0.8.3 done (GitHub Actions, JUnit XML, bench, ~68 CLI flags)
+- **Complete pytest CLI drop-in replacement with ~68 flags, 11 subcommands, 1041 tests**
 - Phase 7 (0.7.x): 0.7.4 (TLS calibration) done
 - Phase 8 (0.8.x): 0.8.0 (GitHub Actions + GITHUB_OUTPUT) + 0.8.1 (JUnit XML) done
 - Phase 9 (0.9.x): 0.9.2 (CleanupGuard) + 0.9.5 (stale cleanup) + 0.9.7 (protocol versioning) done
