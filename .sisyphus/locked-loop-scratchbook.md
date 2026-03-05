@@ -1,4 +1,4 @@
 # Locked Loop Scratchbook
 
-## Session: v0.3.1 (948 tests) -> v0.7.5 (1035 tests)
-### 27 Releases, 285+ commits, ~60 CLI flags, 10 subcommands
+## Session: v0.3.1 (948 tests) -> v0.7.6 (1035 tests)
+### 28 Releases, 295+ commits, ~62 CLI flags, 10 subcommands

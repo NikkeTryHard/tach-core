@@ -2155,4 +2155,11 @@ force_toxic = ["myapp.workers"]
         let cli3 = Cli::parse_from(["tach", "--setup-only", "."]);
         assert!(cli3.setup_only);
     }
+
+    #[test]
+    fn test_werror_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--Werror", "."]);
+        assert!(cli.warnings_as_errors);
+    }
 }
