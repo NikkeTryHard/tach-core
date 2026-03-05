@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-05
+
+### Added
+
+- **`--tb=auto`**: Auto-detect traceback style based on context
+- **`--nf`**: Run newly added tests first (pytest-cache compat)
+- Complete pytest CLI compatibility (~52 flags supported)
+
 ## [0.6.6] - 2026-03-05
 
 ### Added
