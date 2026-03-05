@@ -2162,4 +2162,18 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--Werror", "."]);
         assert!(cli.warnings_as_errors);
     }
+
+    #[test]
+    fn test_durations_min_default() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "."]);
+        assert!((cli.durations_min - 0.005).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_html_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--html", "report.html", "."]);
+        assert_eq!(cli.html.unwrap().to_str().unwrap(), "report.html");
+    }
 }
