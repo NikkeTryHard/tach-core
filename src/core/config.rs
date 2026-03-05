@@ -2196,4 +2196,14 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--log-cli-level", "DEBUG", "."]);
         assert_eq!(cli.log_cli_level.as_deref(), Some("DEBUG"));
     }
+
+    #[test]
+    fn test_tb_short_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--tb-short", "."]);
+        assert!(cli.tb_short);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert_eq!(merged.traceback, TracebackStyle::Short);
+    }
 }
