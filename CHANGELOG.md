@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-03-05
+
+### Added
+
+- Comprehensive pytest CLI compat integration test (all ~20 flags combined)
+- 1041 tests total (93 new this session)
+
 ## [0.8.2] - 2026-03-05
 
 ### Added
