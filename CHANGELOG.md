@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-03-05
+
+### Added
+
+- **Quiet Collect Mode**: `--co -q` suppresses test count footer for piping
+- **`--pyargs`**: Import test modules by Python package path
+- **`--doctest-modules`**: Collect and run doctests from Python modules
+
 ## [0.6.3] - 2026-03-05
 
 ### Added
