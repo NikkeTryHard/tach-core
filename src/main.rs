@@ -344,6 +344,9 @@ fn main() -> Result<()> {
     if cli.setup_only {
         unsafe { std::env::set_var("TACH_SETUP_ONLY", "1") };
     }
+    if cli.forked {
+        unsafe { std::env::set_var("TACH_FORKED", "1") };
+    }
 
     let maxfail = if merged.exitfirst {
         Some(1)
