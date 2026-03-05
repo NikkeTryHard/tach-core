@@ -1395,6 +1395,7 @@ fn handle_list_command(
     is_json: bool,
     no_ignore: bool,
 ) -> Result<()> {
+    let quiet = std::env::var("TACH_QUIET").is_ok();
     // Resolve target path (absolute or relative to cwd)
     let target = if std::path::Path::new(target_path).is_absolute() {
         std::path::PathBuf::from(target_path)
@@ -1414,7 +1415,9 @@ fn handle_list_command(
                 println!("{}::{}", module.path.display(), test.name);
             }
         }
-        println!("\n{} tests collected", discovery_result.test_count());
+        if !quiet {
+            println!("\n{} tests collected", discovery_result.test_count());
+        }
     }
     Ok(())
 }
