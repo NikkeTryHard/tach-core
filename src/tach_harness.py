@@ -2993,6 +2993,10 @@ def init_session(root_dir: str):
     if log_file:
         args.extend(["--log-file", log_file])
 
+    html_report = os.environ.get("TACH_HTML")
+    if html_report:
+        args.extend(["--html", html_report])
+
     basetemp = os.environ.get("TACH_BASETEMP")
     if basetemp:
         args.extend(["--basetemp", basetemp])

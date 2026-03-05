@@ -259,9 +259,11 @@ pub struct Cli {
     #[arg(long)]
     pub no_header: bool,
 
-    /// Output format (also: TACH_FORMAT env var)
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, env = "TACH_FORMAT")]
     pub format: OutputFormat,
+
+    #[arg(long, value_name = "PATH")]
+    pub html: Option<std::path::PathBuf>,
 
     /// Traceback formatting style for failures.
     ///
