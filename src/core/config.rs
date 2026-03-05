@@ -2266,4 +2266,22 @@ force_toxic = ["myapp.workers"]
         assert_eq!(cli.import_mode, "importlib");
         assert_eq!(cli.path, "tests/");
     }
+
+    #[test]
+    fn test_sw_skip_enables_lf_and_exitfirst() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--sw-skip", "."]);
+        assert!(cli.stepwise_skip);
+        let file_config = TachConfig::default();
+        let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
+        assert!(merged.last_failed);
+        assert!(merged.exitfirst);
+    }
+
+    #[test]
+    fn test_tb_auto() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--tb", "auto", "."]);
+        assert_eq!(cli.traceback, TracebackStyle::Auto);
+    }
 }
