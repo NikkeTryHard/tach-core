@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-03-05
+
+### Added
+
+- **`--live-log`**: Enable live log output at DEBUG level
+- Created GitHub release notes for all 27 missing versions (v0.4.0-v0.8.6)
+
 ## [0.8.5] - 2026-03-05
 
 ### Added
