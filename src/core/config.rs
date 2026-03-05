@@ -2072,4 +2072,11 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--ignore-glob", "**/test_slow_*", "."]);
         assert_eq!(cli.ignore_glob, vec!["**/test_slow_*"]);
     }
+
+    #[test]
+    fn test_randomly_seed_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--randomly-seed", "12345", "."]);
+        assert_eq!(cli.randomly_seed, Some(12345));
+    }
 }

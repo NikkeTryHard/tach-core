@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-05
+
+### Added
+
+- **`--randomly-seed SEED`**: Test order randomization (pytest-randomly compat)
+- 3 new CLI flag tests (--randomly-seed, --ignore, --ignore-glob)
+
 ## [0.6.0] - 2026-03-05
 
 ### Added
