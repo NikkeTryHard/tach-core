@@ -332,6 +332,15 @@ fn main() -> Result<()> {
     if let Some(seed) = cli.randomly_seed {
         unsafe { std::env::set_var("TACH_RANDOMLY_SEED", seed.to_string()) };
     }
+    if cli.setup_plan {
+        unsafe { std::env::set_var("TACH_SETUP_PLAN", "1") };
+    }
+    if cli.setup_show {
+        unsafe { std::env::set_var("TACH_SETUP_SHOW", "1") };
+    }
+    if cli.setup_only {
+        unsafe { std::env::set_var("TACH_SETUP_ONLY", "1") };
+    }
 
     let maxfail = if merged.exitfirst {
         Some(1)

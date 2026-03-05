@@ -2999,6 +2999,13 @@ def init_session(root_dir: str):
     if randomly_seed:
         args.extend(["-p", "randomly", "--randomly-seed", randomly_seed])
 
+    if os.environ.get("TACH_SETUP_PLAN") == "1":
+        args.append("--setup-plan")
+    if os.environ.get("TACH_SETUP_SHOW") == "1":
+        args.append("--setup-show")
+    if os.environ.get("TACH_SETUP_ONLY") == "1":
+        args.append("--setup-only")
+
     if os.environ.get("TACH_DOCTEST_MODULES") == "1":
         args.append("--doctest-modules")
 

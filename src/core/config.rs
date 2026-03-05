@@ -407,6 +407,15 @@ pub struct Cli {
     #[arg(long = "randomly-seed", value_name = "SEED")]
     pub randomly_seed: Option<u64>,
 
+    #[arg(long)]
+    pub setup_plan: bool,
+
+    #[arg(long)]
+    pub setup_show: bool,
+
+    #[arg(long)]
+    pub setup_only: bool,
+
     // =========================================================================
     // Diagnostics
     // =========================================================================
