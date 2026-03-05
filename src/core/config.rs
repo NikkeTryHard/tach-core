@@ -2092,4 +2092,12 @@ force_toxic = ["myapp.workers"]
         let cli = Cli::parse_from(["tach", "--doctest-modules", "."]);
         assert!(cli.doctest_modules);
     }
+
+    #[test]
+    fn test_pyargs_flag() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["tach", "--pyargs", "mypackage.tests"]);
+        assert!(cli.pyargs);
+        assert_eq!(cli.path, "mypackage.tests");
+    }
 }

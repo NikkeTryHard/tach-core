@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-03-05
+
+### Added
+
+- **`--pyargs`**: Import test modules by Python path instead of file path
+- **`--randomly-seed SEED`**: Test order randomization (pytest-randomly compat)
+- 2 new CLI flag tests (--pyargs, --doctest-modules)
+
 ## [0.6.2] - 2026-03-05
 
 ### Added
