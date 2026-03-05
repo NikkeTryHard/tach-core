@@ -433,6 +433,9 @@ fn main() -> Result<()> {
         Some(Commands::Fixtures) => {
             return handle_fixtures_command(&cwd, merged.no_ignore);
         }
+        Some(Commands::Stats) => {
+            return handle_stats_command(&cwd, merged.no_ignore);
+        }
         Some(Commands::Test) | None => {}
     }
 
@@ -1145,6 +1148,37 @@ fn handle_fixtures_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()>
             println!("{name} [{scope}] -- {file}");
         }
         eprintln!("\n{} fixtures found", fixtures.len());
+    }
+    Ok(())
+}
+
+fn handle_stats_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
+    let result = tach_core::discovery::scanner::discover(cwd, no_ignore)?;
+    let test_count: usize = result.modules.iter().map(|m| m.tests.len()).sum();
+    let fixture_count: usize = result.modules.iter().map(|m| m.fixtures.len()).sum();
+    let file_count = result.modules.len();
+    let mut async_count = 0usize;
+    let mut param_count = 0usize;
+    for module in &result.modules {
+        for test in &module.tests {
+            if test.is_async {
+                async_count += 1;
+            }
+            if test.param_id.is_some() {
+                param_count += 1;
+            }
+        }
+    }
+    eprintln!("tach-core project statistics:");
+    eprintln!("  test files:    {file_count}");
+    eprintln!("  total tests:   {test_count}");
+    eprintln!("  async tests:   {async_count}");
+    eprintln!("  parametrized:  {param_count}");
+    eprintln!("  fixtures:      {fixture_count}");
+    let durations = tach_core::cache::read_duration_cache(cwd);
+    if !durations.is_empty() {
+        let total_ms: u64 = durations.values().sum();
+        eprintln!("  cached time:   {:.1}s", total_ms as f64 / 1000.0);
     }
     Ok(())
 }

@@ -563,6 +563,8 @@ pub enum Commands {
 
     Fixtures,
 
+    Stats,
+
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]

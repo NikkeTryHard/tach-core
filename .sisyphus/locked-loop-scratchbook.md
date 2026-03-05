@@ -1,12 +1,13 @@
 # Locked Loop Scratchbook
 
-## Session: v0.3.1 (948 tests) -> v0.6.5 (1030 tests)
+## Session: v0.3.1 (948 tests) -> v0.7.0 (1030 tests)
 
-### 20 Releases (v0.4.0 -> v0.6.5)
-### Stats (~5 hours)
-- 82 new tests, ~50 CLI flags, 210+ commits
+### 22 Releases (v0.4.0 -> v0.7.0)
+### Stats (~6 hours)
+- 82 new tests, ~52 CLI flags, 225+ commits
 - 8 subcommands, 4 new modules
 
-## [00:55 UTC] New locked loop session
-- Added --nf (new first) flag
-- 1030 tests, continuing to improve
+## [01:10 UTC] v0.7.0 released
+- --tb=auto traceback style
+- --nf (new first) flag
+- ~52 CLI flags for complete pytest compatibility
