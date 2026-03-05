@@ -2206,4 +2206,58 @@ force_toxic = ["myapp.workers"]
         let merged = MergedConfig::from_cli_and_file(&cli, &file_config);
         assert_eq!(merged.traceback, TracebackStyle::Short);
     }
+
+    #[test]
+    fn test_full_pytest_compat_flags() {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "tach",
+            "-v",
+            "-k",
+            "test_foo",
+            "-m",
+            "slow",
+            "-x",
+            "--maxfail",
+            "5",
+            "--lf",
+            "--ff",
+            "--no-header",
+            "--color",
+            "no",
+            "--tb",
+            "short",
+            "-s",
+            "--pdb",
+            "--strict-markers",
+            "--runxfail",
+            "--deselect",
+            "test_skip.py::test_x",
+            "--ignore",
+            "vendor/",
+            "--rootdir",
+            "/tmp",
+            "--import-mode",
+            "importlib",
+            "tests/",
+        ]);
+        assert_eq!(cli.verbose, 1);
+        assert_eq!(cli.keyword.as_deref(), Some("test_foo"));
+        assert_eq!(cli.markers.as_deref(), Some("slow"));
+        assert!(cli.exitfirst);
+        assert_eq!(cli.maxfail, Some(5));
+        assert!(cli.last_failed);
+        assert!(cli.failed_first);
+        assert!(cli.no_header);
+        assert_eq!(cli.color, "no");
+        assert!(cli.no_capture);
+        assert!(cli.pdb);
+        assert!(cli.strict_markers);
+        assert!(cli.runxfail);
+        assert_eq!(cli.deselect, vec!["test_skip.py::test_x"]);
+        assert_eq!(cli.ignore, vec!["vendor/"]);
+        assert_eq!(cli.rootdir.as_deref(), Some("/tmp"));
+        assert_eq!(cli.import_mode, "importlib");
+        assert_eq!(cli.path, "tests/");
+    }
 }
