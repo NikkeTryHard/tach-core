@@ -1049,9 +1049,32 @@ fn handle_clean_command(cwd: &std::path::Path) -> Result<()> {
         std::fs::remove_dir_all(&cache_dir)?;
         eprintln!("Removed {}", cache_dir.display());
     } else {
-        eprintln!("No cache to clean");
+        eprintln!("No .tach_cache to clean");
+    }
+
+    let mut pycache_count = 0usize;
+    clean_pycache_recursive(cwd, &mut pycache_count);
+    if pycache_count > 0 {
+        eprintln!("Removed {} __pycache__ directories", pycache_count);
     }
     Ok(())
+}
+
+fn clean_pycache_recursive(dir: &std::path::Path, count: &mut usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if entry.file_name() == "__pycache__" {
+                let _ = std::fs::remove_dir_all(&path);
+                *count += 1;
+            } else if entry.file_name() != ".git" && entry.file_name() != "node_modules" {
+                clean_pycache_recursive(&path, count);
+            }
+        }
+    }
 }
 
 fn handle_markers_command(cwd: &std::path::Path, no_ignore: bool) -> Result<()> {
