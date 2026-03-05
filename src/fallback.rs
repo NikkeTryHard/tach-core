@@ -223,4 +223,16 @@ mod tests {
                        ======= 2 failed, 8 passed, 1 skipped in 4.2s =======";
         assert_eq!(parse_pytest_summary_failed(output), 2);
     }
+
+    #[test]
+    fn test_parse_pytest_summary_large_numbers() {
+        let output = "======= 1234 failed, 56789 passed in 120.5s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 1234);
+    }
+
+    #[test]
+    fn test_parse_pytest_summary_xfail_xpass() {
+        let output = "======= 1 failed, 10 passed, 2 xfailed, 1 xpassed in 3s =======";
+        assert_eq!(parse_pytest_summary_failed(output), 1);
+    }
 }
