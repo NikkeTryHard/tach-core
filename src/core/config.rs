@@ -177,10 +177,14 @@ pub struct Cli {
     #[arg(long)]
     pub strict_markers: bool,
 
-    /// Deselect specific tests by node ID (pytest --deselect compat).
-    /// Can be specified multiple times.
     #[arg(long, value_name = "NODE_ID")]
     pub deselect: Vec<String>,
+
+    #[arg(long, value_name = "PATH")]
+    pub ignore: Vec<String>,
+
+    #[arg(long, value_name = "GLOB")]
+    pub ignore_glob: Vec<String>,
 
     #[arg(long)]
     pub runxfail: bool,

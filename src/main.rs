@@ -308,6 +308,12 @@ fn main() -> Result<()> {
     if !cli.deselect.is_empty() {
         unsafe { std::env::set_var("TACH_DESELECT", cli.deselect.join("\x1f")) };
     }
+    if !cli.ignore.is_empty() {
+        unsafe { std::env::set_var("TACH_IGNORE", cli.ignore.join("\x1f")) };
+    }
+    if !cli.ignore_glob.is_empty() {
+        unsafe { std::env::set_var("TACH_IGNORE_GLOB", cli.ignore_glob.join("\x1f")) };
+    }
     if let Some(ref confcutdir) = cli.confcutdir {
         unsafe { std::env::set_var("TACH_CONFCUTDIR", confcutdir) };
     }

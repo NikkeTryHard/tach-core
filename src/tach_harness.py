@@ -2972,6 +2972,18 @@ def init_session(root_dir: str):
             if node_id:
                 args.extend(["--deselect", node_id])
 
+    ignore_paths = os.environ.get("TACH_IGNORE", "")
+    if ignore_paths:
+        for path in ignore_paths.split("\x1f"):
+            if path:
+                args.extend(["--ignore", path])
+
+    ignore_globs = os.environ.get("TACH_IGNORE_GLOB", "")
+    if ignore_globs:
+        for glob in ignore_globs.split("\x1f"):
+            if glob:
+                args.extend(["--ignore-glob", glob])
+
     if os.environ.get("TACH_PDB") == "1":
         args.append("--pdb")
 
