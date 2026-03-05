@@ -238,6 +238,7 @@ pub fn format_traceback(traceback: &str, test_id: &str, style: TracebackStyle) -
         TracebackStyle::Native | TracebackStyle::Long => traceback.to_string(),
         TracebackStyle::Line => format_traceback_line(traceback, test_id),
         TracebackStyle::Short => format_traceback_short(traceback),
+        TracebackStyle::Auto => traceback.to_string(),
     }
 }
 

@@ -39,17 +39,13 @@ pub enum Verbosity {
 /// Traceback formatting style (pytest-compatible --tb flag)
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Copy)]
 pub enum TracebackStyle {
-    /// First and last frames only
     Short,
-    /// Full traceback with locals (default)
     #[default]
     Long,
-    /// Single line per failure (file:line: message)
     Line,
-    /// Python's default traceback format (unmodified)
     Native,
-    /// No traceback output
     No,
+    Auto,
 }
 
 /// tach - Hypervisor-Accelerated Python Test Runner
@@ -1032,6 +1028,7 @@ fn parse_traceback_style(s: &str) -> Option<TracebackStyle> {
         "line" => Some(TracebackStyle::Line),
         "native" => Some(TracebackStyle::Native),
         "no" => Some(TracebackStyle::No),
+        "auto" => Some(TracebackStyle::Auto),
         _ => None,
     }
 }
@@ -1666,6 +1663,7 @@ LITERAL_BRACES = "{{NOT_EXPANDED}}"
             Some(TracebackStyle::Native)
         );
         assert_eq!(parse_traceback_style("no"), Some(TracebackStyle::No));
+        assert_eq!(parse_traceback_style("auto"), Some(TracebackStyle::Auto));
         assert_eq!(parse_traceback_style("invalid"), None);
     }
 
