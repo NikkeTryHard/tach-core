@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-03-05
+
+### Added
+
+- 2 new tests (--durations-min, --html)
+- 1038 tests total (90 new this session)
+
 ## [0.7.7] - 2026-03-05
 
 ### Added
