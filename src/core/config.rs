@@ -273,6 +273,9 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub html: Option<std::path::PathBuf>,
 
+    #[arg(long)]
+    pub live_log: bool,
+
     /// Traceback formatting style for failures.
     ///
     /// Controls how Python tracebacks are displayed:

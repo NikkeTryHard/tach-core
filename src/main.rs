@@ -254,6 +254,9 @@ fn main() -> Result<()> {
     if let Some(ref html) = cli.html {
         unsafe { std::env::set_var("TACH_HTML", html.as_os_str()) };
     }
+    if cli.live_log {
+        unsafe { std::env::set_var("TACH_LIVE_LOG", "1") };
+    }
     if let Some(ref level) = cli.log_cli_level {
         unsafe { std::env::set_var("TACH_LOG_CLI_LEVEL", level) };
     }

@@ -2999,6 +2999,9 @@ def init_session(root_dir: str):
     if html_report:
         args.extend(["--html", html_report])
 
+    if os.environ.get("TACH_LIVE_LOG") == "1":
+        args.append("--log-cli-level=DEBUG")
+
     log_cli_level = os.environ.get("TACH_LOG_CLI_LEVEL")
     if log_cli_level:
         args.extend(["--log-cli-level", log_cli_level])
