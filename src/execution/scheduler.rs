@@ -2261,13 +2261,10 @@ mod tests {
         fn on_error(&mut self, _msg: &str) {}
     }
 
-    /// When a test in a scope group fails, all remaining tests after the
-    /// failure point must be reported as "error" with the corruption message.
     #[test]
     fn test_scope_group_remaining_tests_marked_error_on_failure() {
         let mut reporter = MockReporter::new();
 
-        // Simulate a scope group of 5 tests where test index 1 fails
         let group: Vec<(u32, RunnableTest)> = (0..5)
             .map(|i| {
                 (
@@ -2287,12 +2284,10 @@ mod tests {
 
         let group_len = group.len();
         let group_broken = true;
-        let completed_in_group = 2; // Tests 0 and 1 ran; test 1 failed
+        let completed_in_group = 2;
 
-        // This mirrors the recovery logic from lines 628-642
         if group_broken && completed_in_group < group_len {
-            for j in completed_in_group..group_len {
-                let (_, ref remaining_test) = group[j];
+            for (_, remaining_test) in group.iter().skip(completed_in_group) {
                 reporter.on_test_finished(
                     &remaining_test.test_name,
                     "error",
@@ -2302,7 +2297,6 @@ mod tests {
             }
         }
 
-        // Tests 2, 3, 4 should be marked as error
         assert_eq!(reporter.finished.len(), 3);
         for (i, (name, status, dur, msg)) in reporter.finished.iter().enumerate() {
             assert_eq!(name, &format!("test_{}", i + 2));
@@ -2312,8 +2306,7 @@ mod tests {
         }
     }
 
-    /// The `group_broken` flag must cause the inner loop to `break` early,
-    /// skipping dispatch of remaining tests in the group.
+    /// `group_broken` causes early termination of the group dispatch loop.
     #[test]
     fn test_scope_group_broken_flag_terminates_loop() {
         let group: Vec<(u32, RunnableTest)> = (0..4)
@@ -2338,8 +2331,6 @@ mod tests {
         let mut completed_in_group = 0usize;
         let mut dispatched: Vec<String> = Vec::new();
 
-        // Simulate the dispatch loop (lines 483-626)
-        // Test index 1 triggers a failure
         for i in 0..group_len {
             if group_broken {
                 break;
@@ -2348,7 +2339,6 @@ mod tests {
             let (_test_id, ref test) = group[i];
             dispatched.push(test.test_name.clone());
 
-            // Simulate: test_1 fails during dispatch
             if i == 1 {
                 completed_in_group = i + 1;
                 group_broken = true;
@@ -2357,18 +2347,15 @@ mod tests {
             completed_in_group = i + 1;
         }
 
-        // Only test_0 and test_1 should have been dispatched
         assert_eq!(dispatched, vec!["test_0", "test_1"]);
         assert!(group_broken);
         assert_eq!(completed_in_group, 2);
 
-        // Remaining tests (2, 3) would be marked error
         let remaining = group_len - completed_in_group;
         assert_eq!(remaining, 2);
     }
 
-    /// `completed_in_group` must correctly reflect the number of tests that
-    /// were actually processed before the group was abandoned.
+    /// `completed_in_group` tracks how many tests ran before the group was abandoned.
     #[test]
     fn test_scope_group_completed_counter_tracks_progress() {
         let group_len = 6;
@@ -2431,14 +2418,11 @@ mod tests {
             }
 
             assert_eq!(completed_in_group, 6);
-            // No remaining tests to mark as error
             assert_eq!(group_len - completed_in_group, 0);
         }
     }
 
-    /// `next_node_id` must be `Some("file_path::test_name")` for non-last tests
-    /// and `None` for the last test in the group. This keeps pytest scoped
-    /// fixtures alive across sequential tests.
+    /// `next_node_id` format: `"file_path::test_name"` for non-last, `None` for last.
     #[test]
     fn test_scope_group_next_node_id_format() {
         let group: Vec<(u32, RunnableTest)> = vec![
@@ -2482,7 +2466,6 @@ mod tests {
 
         let group_len = group.len();
 
-        // Mirror the next_node_id logic from lines 531-540
         for i in 0..group_len {
             let is_last = i == group_len - 1;
             let next_node_id = if !is_last {
@@ -2542,8 +2525,7 @@ mod tests {
 
         // Recovery block should NOT fire
         if group_broken && completed_in_group < group_len {
-            for j in completed_in_group..group_len {
-                let (_, ref remaining_test) = group[j];
+            for (_, remaining_test) in group.iter().skip(completed_in_group) {
                 reporter.on_test_finished(
                     &remaining_test.test_name,
                     "error",
@@ -2587,8 +2569,7 @@ mod tests {
         let completed_in_group = 1; // Only first test ran (and failed)
 
         if group_broken && completed_in_group < group_len {
-            for j in completed_in_group..group_len {
-                let (_, ref remaining_test) = group[j];
+            for (_, remaining_test) in group.iter().skip(completed_in_group) {
                 reporter.on_test_finished(
                     &remaining_test.test_name,
                     "error",
