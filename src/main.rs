@@ -359,6 +359,9 @@ fn main() -> Result<()> {
     if cli.forked {
         unsafe { std::env::set_var("TACH_FORKED", "1") };
     }
+    if let Some(ref shard) = merged.shard {
+        unsafe { std::env::set_var("TACH_SHARD", shard) };
+    }
 
     let maxfail = if merged.exitfirst {
         Some(1)
@@ -375,6 +378,9 @@ fn main() -> Result<()> {
         unsafe { std::env::set_var("TACH_PYTEST_ARGS", cli.pytest_args.join("\x1f")) };
     }
     unsafe { std::env::set_var("TACH_TIMEOUT", merged.timeout.to_string()) };
+    if let Some(ref shard) = merged.shard {
+        unsafe { std::env::set_var("TACH_SHARD", shard) };
+    }
     if merged.show_locals {
         unsafe { std::env::set_var("TACH_SHOWLOCALS", "1") };
     }
@@ -2057,6 +2063,30 @@ fn run_tests(
                 scheduler.set_duration_cache(dur_cache);
             }
 
+            // Phase 7.5: Adaptive scheduling with history-based duration prediction
+            let history = tach_core::cache::TestHistory::load(&cwd);
+            if !history.runs.is_empty() {
+                let mut hist_durations = std::collections::HashMap::new();
+                for run in &history.runs {
+                    for (name, &ms) in &run.test_durations {
+                        hist_durations
+                            .entry(name.clone())
+                            .and_modify(|e: &mut (u64, u64)| {
+                                e.0 += ms;
+                                e.1 += 1;
+                            })
+                            .or_insert((ms, 1));
+                    }
+                }
+                let avg_durations: std::collections::HashMap<String, u64> = hist_durations
+                    .into_iter()
+                    .map(|(name, (total, count))| (name, total / count))
+                    .collect();
+                if !avg_durations.is_empty() {
+                    scheduler.set_history_durations(avg_durations);
+                }
+            }
+
             let collection_filtered = std::env::var("TACH_KEYWORD").is_ok()
                 || std::env::var("TACH_MARKERS").is_ok()
                 || std::env::var("TACH_LF_FILE").is_ok()
@@ -2122,6 +2152,24 @@ fn run_tests(
                         runnable_tests.len()
                     );
                 }
+                runnable_tests
+            };
+
+            let runnable_tests = if let Ok(shard_spec) = std::env::var("TACH_SHARD") {
+                let (index, total) = config::parse_shard(&shard_spec)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let before = runnable_tests.len();
+                let sharded = config::shard_tests(runnable_tests, index, total, |t| {
+                    format!("{}::{}", t.file_path.to_string_lossy(), t.test_name)
+                });
+                if !is_json {
+                    eprintln!(
+                        "[tach:supervisor] Shard {}/{}: {} of {} tests",
+                        index, total, sharded.len(), before
+                    );
+                }
+                sharded
+            } else {
                 runnable_tests
             };
 

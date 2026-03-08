@@ -436,6 +436,14 @@ pub struct Cli {
     #[arg(long)]
     pub forked: bool,
 
+    /// Run a subset of tests for CI parallelism (e.g., --shard 1/4).
+    ///
+    /// Format: INDEX/TOTAL where INDEX is 1-based shard number and TOTAL is
+    /// the number of parallel CI jobs. Tests are distributed deterministically
+    /// by hash so each shard gets a unique, balanced subset.
+    #[arg(long, value_name = "INDEX/TOTAL")]
+    pub shard: Option<String>,
+
     // =========================================================================
     // Diagnostics
     // =========================================================================
@@ -956,6 +964,9 @@ pub struct MergedConfig {
     pub trace: bool,
     pub timeout_hook: Option<String>,
 
+    // CI
+    pub shard: Option<String>,
+
     // Django
     pub reuse_db: bool,
     pub create_db: bool,
@@ -1053,12 +1064,55 @@ impl MergedConfig {
 
             reuse_db: cli.reuse_db || file_config.reuse_db.unwrap_or(false),
             create_db: cli.create_db || file_config.create_db.unwrap_or(false),
+            shard: cli.shard.clone(),
         }
     }
 
     pub fn fail_fast(&self) -> bool {
         self.exitfirst || self.maxfail == Some(1)
     }
+}
+
+pub fn parse_shard(s: &str) -> Result<(usize, usize), String> {
+    let parts: Vec<&str> = s.split('/').collect();
+    if parts.len() != 2 {
+        return Err(format!("invalid shard format '{}': expected INDEX/TOTAL", s));
+    }
+    let index: usize = parts[0]
+        .parse()
+        .map_err(|_| format!("invalid shard index '{}': must be a positive integer", parts[0]))?;
+    let total: usize = parts[1]
+        .parse()
+        .map_err(|_| format!("invalid shard total '{}': must be a positive integer", parts[1]))?;
+    if total < 1 {
+        return Err(format!("shard total must be >= 1, got {}", total));
+    }
+    if index < 1 {
+        return Err(format!("shard index must be >= 1, got {}", index));
+    }
+    if index > total {
+        return Err(format!(
+            "shard index {} exceeds total {}", index, total
+        ));
+    }
+    Ok((index, total))
+}
+
+pub fn shard_tests<T, F>(tests: Vec<T>, index: usize, total: usize, key_fn: F) -> Vec<T>
+where
+    F: Fn(&T) -> String,
+{
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    tests
+        .into_iter()
+        .filter(|t| {
+            let mut hasher = DefaultHasher::new();
+            key_fn(t).hash(&mut hasher);
+            (hasher.finish() % total as u64) == (index - 1) as u64
+        })
+        .collect()
 }
 
 fn parse_traceback_style(s: &str) -> Option<TracebackStyle> {
@@ -2286,5 +2340,46 @@ force_toxic = ["myapp.workers"]
         use clap::Parser;
         let cli = Cli::parse_from(["tach", "--tb", "auto", "."]);
         assert_eq!(cli.traceback, TracebackStyle::Auto);
+    }
+
+    #[test]
+    fn test_parse_shard_valid() {
+        assert_eq!(parse_shard("1/4"), Ok((1, 4)));
+        assert_eq!(parse_shard("4/4"), Ok((4, 4)));
+        assert_eq!(parse_shard("1/1"), Ok((1, 1)));
+        assert_eq!(parse_shard("3/10"), Ok((3, 10)));
+    }
+
+    #[test]
+    fn test_parse_shard_invalid() {
+        assert!(parse_shard("0/4").is_err());
+        assert!(parse_shard("5/4").is_err());
+        assert!(parse_shard("abc").is_err());
+        assert!(parse_shard("1/0").is_err());
+        assert!(parse_shard("1/2/3").is_err());
+        assert!(parse_shard("a/b").is_err());
+    }
+
+    #[test]
+    fn test_shard_tests_disjoint_and_complete() {
+        let tests: Vec<String> = (0..100).map(|i| format!("test_{}", i)).collect();
+        let total = 4;
+        let mut all_sharded: Vec<String> = Vec::new();
+        for index in 1..=total {
+            let shard = shard_tests(tests.clone(), index, total, |t| t.clone());
+            all_sharded.extend(shard);
+        }
+        all_sharded.sort();
+        let mut original = tests.clone();
+        original.sort();
+        assert_eq!(all_sharded, original);
+    }
+
+    #[test]
+    fn test_shard_tests_deterministic() {
+        let tests: Vec<String> = (0..50).map(|i| format!("module::test_{}", i)).collect();
+        let shard1_a = shard_tests(tests.clone(), 1, 3, |t| t.clone());
+        let shard1_b = shard_tests(tests.clone(), 1, 3, |t| t.clone());
+        assert_eq!(shard1_a, shard1_b);
     }
 }
