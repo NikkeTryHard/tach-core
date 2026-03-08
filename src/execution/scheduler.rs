@@ -2340,12 +2340,11 @@ mod tests {
         let mut completed_in_group = 0usize;
         let mut dispatched: Vec<String> = Vec::new();
 
-        for i in 0..group_len {
+        for (i, (_test_id, test)) in group.iter().enumerate() {
             if group_broken {
                 break;
             }
 
-            let (_test_id, ref test) = group[i];
             dispatched.push(test.test_name.clone());
 
             if i == 1 {
