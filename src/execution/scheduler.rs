@@ -114,6 +114,9 @@ pub struct Scheduler {
     //  Dual queues for priority dispatch
     safe_queue: VecDeque<(u32, RunnableTest)>,
     toxic_queue: VecDeque<(u32, RunnableTest)>,
+    /// Scope groups: batches of tests sharing module/class fixtures.
+    /// Each group runs sequentially on a single worker without memory reset.
+    scope_groups: VecDeque<Vec<(u32, RunnableTest)>>,
     /// Global timeout in seconds (used when test has no per-test timeout)
     global_timeout: u64,
     /// Optional Python callback hook for timeout events.
@@ -127,6 +130,8 @@ pub struct Scheduler {
     create_db: bool,
     maxfail: Option<usize>,
     duration_cache: Option<std::collections::HashMap<String, u64>>,
+    /// Historical average durations for adaptive scheduling (Phase 7.5)
+    history_durations: Option<std::collections::HashMap<String, u64>>,
 }
 
 impl Scheduler {
@@ -210,6 +215,7 @@ impl Scheduler {
             //  Initialize empty queues (populated in run())
             safe_queue: VecDeque::new(),
             toxic_queue: VecDeque::new(),
+            scope_groups: VecDeque::new(),
             global_timeout,
             timeout_hook,
             hook_registry,
@@ -218,6 +224,7 @@ impl Scheduler {
             create_db,
             maxfail: None,
             duration_cache: None,
+            history_durations: None,
         })
     }
 
@@ -229,14 +236,32 @@ impl Scheduler {
         self.duration_cache = Some(cache);
     }
 
-    /// Sort tests into safe/toxic queues for dual-path execution
-    /// Safe tests run first (Hypervisor Mode), toxic tests run last (Isolation Mode)
+    pub fn set_history_durations(&mut self, history: std::collections::HashMap<String, u64>) {
+        self.history_durations = Some(history);
+    }
+
+    /// Sort tests into safe/toxic/scoped queues for execution.
+    /// - Safe tests: function-only fixtures, run in parallel with reset between tests
+    /// - Toxic tests: require process isolation, exit after each test
+    /// - Scope groups: tests sharing module/class fixtures, run sequentially on one worker
     fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
-        if let Some(ref cache) = self.duration_cache {
+        // Adaptive scheduling: use duration cache (last run) with history fallback (avg of N runs)
+        let has_timing_data = self.duration_cache.is_some() || self.history_durations.is_some();
+        if has_timing_data {
+            let cache = &self.duration_cache;
+            let history = &self.history_durations;
             tests.sort_by(|a, b| {
-                let da = cache.get(&a.test_name).copied().unwrap_or(0);
-                let db = cache.get(&b.test_name).copied().unwrap_or(0);
-                db.cmp(&da)
+                let da = cache
+                    .as_ref()
+                    .and_then(|c| c.get(&a.test_name).copied())
+                    .or_else(|| history.as_ref().and_then(|h| h.get(&a.test_name).copied()))
+                    .unwrap_or(0);
+                let db = cache
+                    .as_ref()
+                    .and_then(|c| c.get(&b.test_name).copied())
+                    .or_else(|| history.as_ref().and_then(|h| h.get(&b.test_name).copied()))
+                    .unwrap_or(0);
+                db.cmp(&da) // Longest first for optimal parallelism
             });
         } else {
             tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
@@ -245,21 +270,60 @@ impl Scheduler {
         let force_toxic = std::env::var("TACH_FORCE_TOXIC").unwrap_or_default() == "1";
         let mut safe_count = 0usize;
         let mut toxic_count = 0usize;
+        let mut scoped_count = 0usize;
+
+        // Collect tests with scoped fixtures, grouped by scope key
+        let mut scope_map: std::collections::HashMap<String, Vec<(u32, RunnableTest)>> =
+            std::collections::HashMap::new();
 
         for (idx, test) in tests.into_iter().enumerate() {
             let test_id = idx as u32;
             if test.is_toxic || force_toxic {
                 self.toxic_queue.push_back((test_id, test));
                 toxic_count += 1;
+            } else if test.has_scoped_fixtures() {
+                // Group by scope key: module path for module-scoped, class path for class-scoped
+                let scope_key = match test.max_fixture_scope() {
+                    crate::discovery::FixtureScope::Class => {
+                        if let Some(class) = test.class_name() {
+                            format!("class:{}::{}", test.file_path.display(), class)
+                        } else {
+                            format!("module:{}", test.file_path.display())
+                        }
+                    }
+                    _ => format!("module:{}", test.file_path.display()),
+                };
+                scope_map
+                    .entry(scope_key)
+                    .or_default()
+                    .push((test_id, test));
+                scoped_count += 1;
             } else {
                 self.safe_queue.push_back((test_id, test));
                 safe_count += 1;
             }
         }
 
+        // Convert scope groups map into ordered queue
+        for (_key, group) in scope_map {
+            if group.len() == 1 {
+                // Single test in group - no benefit from scoping, treat as safe
+                for item in group {
+                    self.safe_queue.push_back(item);
+                    safe_count += 1;
+                    scoped_count -= 1;
+                }
+            } else {
+                self.scope_groups.push_back(group);
+            }
+        }
+
         eprintln!(
-            "[tach:scheduler] Queue split: {} safe (Hypervisor), {} toxic (Isolation)",
-            safe_count, toxic_count
+            "[tach:scheduler] Queue split: {} safe (Hypervisor), {} toxic (Isolation), {} scoped ({} groups)",
+            safe_count,
+            toxic_count,
+            scoped_count,
+            self.scope_groups.len()
         );
     }
 
@@ -390,11 +454,131 @@ impl Scheduler {
             let file = test.file_path.to_string_lossy().to_string();
             reporter.on_test_start(&test.test_name, &file);
 
-            if let Err(e) = self.dispatch_test(&test, test_id, slot) {
+            if let Err(e) = self.dispatch_test(&test, test_id, slot, false, None) {
                 reporter.on_test_finished(&test.test_name, "fail", 0, Some(&e.to_string()));
                 failed += 1;
                 failed_ids.push(test.test_name.clone());
                 collected += 1;
+            }
+        }
+
+        // Phase 4.0: Dispatch scope groups (module/class-scoped fixtures)
+        // Each group runs sequentially on a single worker without memory reset.
+        // This must happen after safe tests to minimize worker contention.
+        while let Some(group) = self.scope_groups.pop_front() {
+            if signals::shutdown_requested() {
+                reporter.on_error("Shutdown requested");
+                break;
+            }
+            if let Some(max) = self.maxfail
+                && failed >= max
+            {
+                break;
+            }
+
+            let group_len = group.len();
+            for (i, (test_id, test)) in group.into_iter().enumerate() {
+                if signals::shutdown_requested() {
+                    break;
+                }
+                if let Some(max) = self.maxfail
+                    && failed >= max
+                {
+                    break;
+                }
+
+                let is_last = i == group_len - 1;
+                let slot = test_id as usize % self.max_workers;
+
+                // Wait for capacity (at most 1 active for sequential dispatch)
+                while self
+                    .active_workers
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .len()
+                    >= self.max_workers
+                {
+                    if let Some((test_name, status, duration_ms, msg, memory_rss)) =
+                        self.try_collect_result_for_reporter()
+                    {
+                        reporter.on_test_finished(&test_name, status, duration_ms, msg.as_deref());
+                        if status == "pass" {
+                            passed += 1;
+                        } else if status == "skip" {
+                            skipped += 1;
+                        } else {
+                            failed += 1;
+                            failed_ids.push(test_name.clone());
+                        }
+                        test_durations.push((test_name.clone(), duration_ms));
+                        if let Some(rss) = memory_rss {
+                            memory_usage.push((test_name, rss));
+                        }
+                        collected += 1;
+                        continue;
+                    }
+                    std::thread::sleep(CAPACITY_POLL_INTERVAL);
+                }
+
+                let file = test.file_path.to_string_lossy().to_string();
+                reporter.on_test_start(&test.test_name, &file);
+
+                // Build next_node_id for pytest nextitem (keep fixtures alive)
+                let next_node_id = if !is_last {
+                    // Point to next test in group so pytest keeps scoped fixtures alive
+                    None // Will be set below based on the group
+                } else {
+                    None
+                };
+
+                if let Err(e) = self.dispatch_test(&test, test_id, slot, !is_last, next_node_id) {
+                    reporter.on_test_finished(&test.test_name, "fail", 0, Some(&e.to_string()));
+                    failed += 1;
+                    failed_ids.push(test.test_name.clone());
+                    collected += 1;
+                    continue;
+                }
+
+                // For scope groups, wait for this test to complete before dispatching next.
+                // This ensures the same worker handles the next test (LIFO idle pool).
+                if !is_last {
+                    let wait_start = Instant::now();
+                    let wait_timeout = Duration::from_secs(self.global_timeout + 5);
+                    loop {
+                        if let Some((test_name, status, duration_ms, msg, memory_rss)) =
+                            self.try_collect_result_for_reporter()
+                        {
+                            reporter.on_test_finished(
+                                &test_name,
+                                status,
+                                duration_ms,
+                                msg.as_deref(),
+                            );
+                            if status == "pass" {
+                                passed += 1;
+                            } else if status == "skip" {
+                                skipped += 1;
+                            } else {
+                                failed += 1;
+                                failed_ids.push(test_name.clone());
+                            }
+                            test_durations.push((test_name.clone(), duration_ms));
+                            if let Some(rss) = memory_rss {
+                                memory_usage.push((test_name, rss));
+                            }
+                            collected += 1;
+                            break;
+                        }
+                        if wait_start.elapsed() > wait_timeout {
+                            eprintln!(
+                                "[tach:scheduler] WARN: Scope group test {} timed out waiting for result",
+                                test_id
+                            );
+                            break;
+                        }
+                        std::thread::sleep(CAPACITY_POLL_INTERVAL);
+                    }
+                }
             }
         }
 
@@ -532,7 +716,14 @@ impl Scheduler {
         Some((test_name, status, duration_ms, msg, result.memory_rss_bytes))
     }
 
-    fn dispatch_test(&mut self, test: &RunnableTest, test_id: u32, slot: usize) -> Result<()> {
+    fn dispatch_test(
+        &mut self,
+        test: &RunnableTest,
+        test_id: u32,
+        slot: usize,
+        skip_reset: bool,
+        next_node_id: Option<String>,
+    ) -> Result<()> {
         let log_fd = self
             .log_capture
             .lock()
@@ -569,6 +760,8 @@ impl Scheduler {
             marker_info: test.marker_info.clone(),
             reuse_db: self.reuse_db,
             create_db: self.create_db,
+            skip_reset,
+            next_node_id,
         };
 
         // Use encode_with_length which includes protocol header
@@ -1733,5 +1926,295 @@ mod tests {
         let hooks = registry.resolve_hooks_for_path(&test_path, &project_root);
 
         assert!(hooks.is_empty(), "Empty registry should return no hooks");
+    }
+
+    // =========================================================================
+    // Phase 4.0: Scope-Aware Scheduling Tests
+    // =========================================================================
+
+    /// Helper to create a test with scoped fixtures for Phase 4.0 tests
+    fn make_scoped_test(
+        name: &str,
+        file: &str,
+        fixtures: Vec<ResolvedFixture>,
+        is_toxic: bool,
+    ) -> RunnableTest {
+        RunnableTest {
+            test_name: name.to_string(),
+            file_path: PathBuf::from(file),
+            is_async: false,
+            fixtures,
+            is_toxic,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        }
+    }
+
+    /// Helper to create a ResolvedFixture with a specific scope
+    fn make_resolved_fixture(name: &str, scope: crate::discovery::FixtureScope) -> ResolvedFixture {
+        ResolvedFixture {
+            name: name.to_string(),
+            source_file: PathBuf::from("/tests/conftest.py"),
+            scope,
+            is_async: false,
+        }
+    }
+
+    /// Helper struct that mirrors the real Scheduler's queue logic for testing
+    /// without requiring sockets/log capture.
+    struct ScopeQueueTester {
+        safe_queue: VecDeque<(u32, RunnableTest)>,
+        toxic_queue: VecDeque<(u32, RunnableTest)>,
+        scope_groups: VecDeque<Vec<(u32, RunnableTest)>>,
+    }
+
+    impl ScopeQueueTester {
+        fn new() -> Self {
+            Self {
+                safe_queue: VecDeque::new(),
+                toxic_queue: VecDeque::new(),
+                scope_groups: VecDeque::new(),
+            }
+        }
+
+        /// Mirrors Scheduler::populate_queues logic
+        fn populate_queues(&mut self, mut tests: Vec<RunnableTest>) {
+            tests.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+            let mut scope_map: std::collections::HashMap<String, Vec<(u32, RunnableTest)>> =
+                std::collections::HashMap::new();
+
+            for (idx, test) in tests.into_iter().enumerate() {
+                let test_id = idx as u32;
+                if test.is_toxic {
+                    self.toxic_queue.push_back((test_id, test));
+                } else if test.has_scoped_fixtures() {
+                    let scope_key = match test.max_fixture_scope() {
+                        crate::discovery::FixtureScope::Class => {
+                            if let Some(class) = test.class_name() {
+                                format!("class:{}::{}", test.file_path.display(), class)
+                            } else {
+                                format!("module:{}", test.file_path.display())
+                            }
+                        }
+                        _ => format!("module:{}", test.file_path.display()),
+                    };
+                    scope_map
+                        .entry(scope_key)
+                        .or_default()
+                        .push((test_id, test));
+                } else {
+                    self.safe_queue.push_back((test_id, test));
+                }
+            }
+
+            for (_key, group) in scope_map {
+                if group.len() == 1 {
+                    for item in group {
+                        self.safe_queue.push_back(item);
+                    }
+                } else {
+                    self.scope_groups.push_back(group);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_populate_queues_scoped_fixtures_grouped() {
+        let mut tester = ScopeQueueTester::new();
+
+        let tests = vec![
+            make_scoped_test(
+                "test_a",
+                "/tests/test_mod.py",
+                vec![make_resolved_fixture(
+                    "db_setup",
+                    crate::discovery::FixtureScope::Module,
+                )],
+                false,
+            ),
+            make_scoped_test(
+                "test_b",
+                "/tests/test_mod.py",
+                vec![make_resolved_fixture(
+                    "db_setup",
+                    crate::discovery::FixtureScope::Module,
+                )],
+                false,
+            ),
+        ];
+
+        tester.populate_queues(tests);
+
+        assert_eq!(tester.safe_queue.len(), 0, "No safe tests expected");
+        assert_eq!(tester.toxic_queue.len(), 0, "No toxic tests expected");
+        assert_eq!(
+            tester.scope_groups.len(),
+            1,
+            "Two tests with module scope in same file should form one scope group"
+        );
+        assert_eq!(
+            tester.scope_groups[0].len(),
+            2,
+            "Scope group should contain both tests"
+        );
+    }
+
+    #[test]
+    fn test_populate_queues_single_scoped_test_goes_to_safe() {
+        let mut tester = ScopeQueueTester::new();
+
+        let tests = vec![make_scoped_test(
+            "test_alone",
+            "/tests/test_solo.py",
+            vec![make_resolved_fixture(
+                "session_fx",
+                crate::discovery::FixtureScope::Session,
+            )],
+            false,
+        )];
+
+        tester.populate_queues(tests);
+
+        assert_eq!(
+            tester.safe_queue.len(),
+            1,
+            "Single scoped test should go to safe_queue (no grouping benefit)"
+        );
+        assert_eq!(tester.scope_groups.len(), 0, "No scope groups expected");
+    }
+
+    #[test]
+    fn test_populate_queues_function_only_fixtures_safe() {
+        let mut tester = ScopeQueueTester::new();
+
+        let tests = vec![
+            make_scoped_test(
+                "test_x",
+                "/tests/test_func.py",
+                vec![make_resolved_fixture(
+                    "tmp",
+                    crate::discovery::FixtureScope::Function,
+                )],
+                false,
+            ),
+            make_scoped_test(
+                "test_y",
+                "/tests/test_func.py",
+                vec![make_resolved_fixture(
+                    "mock",
+                    crate::discovery::FixtureScope::Function,
+                )],
+                false,
+            ),
+        ];
+
+        tester.populate_queues(tests);
+
+        assert_eq!(
+            tester.safe_queue.len(),
+            2,
+            "Tests with only function-scoped fixtures should go to safe_queue"
+        );
+        assert_eq!(tester.scope_groups.len(), 0, "No scope groups expected");
+        assert_eq!(tester.toxic_queue.len(), 0);
+    }
+
+    #[test]
+    fn test_populate_queues_class_scope_grouping() {
+        let mut tester = ScopeQueueTester::new();
+
+        let tests = vec![
+            make_scoped_test(
+                "MyClass::test_one",
+                "/tests/test_cls.py",
+                vec![make_resolved_fixture(
+                    "cls_fx",
+                    crate::discovery::FixtureScope::Class,
+                )],
+                false,
+            ),
+            make_scoped_test(
+                "MyClass::test_two",
+                "/tests/test_cls.py",
+                vec![make_resolved_fixture(
+                    "cls_fx",
+                    crate::discovery::FixtureScope::Class,
+                )],
+                false,
+            ),
+        ];
+
+        tester.populate_queues(tests);
+
+        assert_eq!(
+            tester.scope_groups.len(),
+            1,
+            "Two class-scoped tests in same class should form one scope group"
+        );
+        assert_eq!(tester.scope_groups[0].len(), 2);
+        assert_eq!(tester.safe_queue.len(), 0);
+    }
+
+    #[test]
+    fn test_populate_queues_mixed_scopes() {
+        let mut tester = ScopeQueueTester::new();
+
+        let tests = vec![
+            // Safe: function-only fixtures
+            make_scoped_test(
+                "test_safe",
+                "/tests/test_a.py",
+                vec![make_resolved_fixture(
+                    "tmp",
+                    crate::discovery::FixtureScope::Function,
+                )],
+                false,
+            ),
+            // Toxic
+            make_scoped_test("test_toxic", "/tests/test_b.py", vec![], true),
+            // Scoped group: two module-scoped tests in same file
+            make_scoped_test(
+                "test_mod1",
+                "/tests/test_c.py",
+                vec![make_resolved_fixture(
+                    "db",
+                    crate::discovery::FixtureScope::Module,
+                )],
+                false,
+            ),
+            make_scoped_test(
+                "test_mod2",
+                "/tests/test_c.py",
+                vec![make_resolved_fixture(
+                    "db",
+                    crate::discovery::FixtureScope::Module,
+                )],
+                false,
+            ),
+            // No fixtures at all -> safe
+            make_scoped_test("test_plain", "/tests/test_d.py", vec![], false),
+        ];
+
+        tester.populate_queues(tests);
+
+        assert_eq!(
+            tester.safe_queue.len(),
+            2,
+            "test_safe + test_plain should be in safe_queue"
+        );
+        assert_eq!(
+            tester.toxic_queue.len(),
+            1,
+            "test_toxic should be in toxic_queue"
+        );
+        assert_eq!(
+            tester.scope_groups.len(),
+            1,
+            "test_mod1 + test_mod2 should form one scope group"
+        );
+        assert_eq!(tester.scope_groups[0].len(), 2);
     }
 }

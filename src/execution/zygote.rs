@@ -417,6 +417,14 @@ fn worker_loop(socket: UnixStream) {
                     // TOXIC PATH: Exit loop, process will terminate
                     eprintln!("[tach:worker] Toxic test completed, exiting");
                     break;
+                } else if payload.skip_reset {
+                    // SCOPED PATH: Skip reset, keep fixture state for next test in group
+                    eprintln!("[tach:worker] Skip reset (scoped fixtures), signaling READY");
+                    if socket.write_all(&[MSG_WORKER_READY]).is_err() {
+                        eprintln!("[tach:worker] Failed to signal READY after skip_reset");
+                        break;
+                    }
+                    // Continue loop - wait for next command
                 } else {
                     // SAFE PATH: Reset memory and continue loop
                     if let Err(e) = reset_and_signal_ready(&socket) {
@@ -1081,6 +1089,13 @@ if m is not None and not hasattr(m, '__file__'):
                             // Toxic test: exit without reset
                             // This is the Isolation Mode path
                             process::exit(0);
+                        } else if payload.skip_reset {
+                            // Scoped test: signal ready WITHOUT reset (preserve fixture state)
+                            if let Ok(mut sock) = child_sock.try_clone() {
+                                let _ = sock.write_all(&[MSG_WORKER_READY]);
+                            }
+                            worker_loop(child_sock);
+                            process::exit(0);
                         } else {
                             // Safe test: reset memory and enter worker loop
                             // This is the Hypervisor Mode path - worker will be reused
@@ -1576,12 +1591,16 @@ fn run_worker(payload: &TestPayload) -> TestResult {
         // Convert marker_info to Python list of dicts (v0.2.1)
         let marker_info = convert_marker_info_to_py(py, &payload.marker_info)?;
 
-        // Pass file_path, FULL node_id, cached_effects, and marker_info to harness
+        // Convert next_node_id to Python (None or str)
+        let next_node_id = payload.next_node_id.as_deref();
+
+        // Pass file_path, FULL node_id, cached_effects, marker_info, and next_node_id to harness
         let result = run_test.call1((
             &payload.file_path,
             &full_node_id,
             cached_effects,
             marker_info,
+            next_node_id,
         ))?;
         let tuple = result.extract::<(u8, f64, String, bool)>()?;
         Ok(tuple)
@@ -2360,6 +2379,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&original).expect("Serialization should succeed");
@@ -2409,6 +2430,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();

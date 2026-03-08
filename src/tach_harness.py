@@ -3570,6 +3570,7 @@ def run_test(
     node_id: str,
     cached_effects: list[dict[str, Any]] | None = None,
     marker_info: list[dict[str, Any]] | None = None,
+    next_node_id: str | None = None,
 ) -> tuple[int, float, str, bool]:
     """
     Execute a single pytest test item using pre-collected session.
@@ -3586,11 +3587,17 @@ def run_test(
     Parses marker_info to extract @pytest.mark.django_db arguments and applies
     appropriate database isolation using SAVEPOINT/ROLLBACK.
 
+    Fixture Lifecycle (v0.4.0):
+    When next_node_id is provided, the next test item is passed as `nextitem`
+    to runtestprotocol(), telling pytest to keep module/class-scoped fixtures
+    alive instead of tearing them down.
+
     Args:
         file_path: Path to the test file
         node_id: Pytest node ID (e.g., "tests/test_foo.py::test_bar")
         cached_effects: Optional list of effects to apply before test (from TestPayload)
         marker_info: Optional list of marker info dicts with 'name' and 'args' keys
+        next_node_id: Optional node ID of next test in scope group (for fixture persistence)
 
     Returns:
         Tuple of (status, duration, message, thread_leaked)
@@ -3788,8 +3795,15 @@ def run_test(
                             )
 
         try:
+            # Phase 4.0: Look up next item for fixture lifecycle management
+            next_item = None
+            if next_node_id:
+                next_item = _ITEMS_MAP.get(next_node_id)
+                if not next_item:
+                    next_item = _fuzzy_parametrize_lookup(next_node_id)
+
             reports = _pytest.runner.runtestprotocol(
-                target_item, nextitem=None, log=False
+                target_item, nextitem=next_item, log=False
             )
         finally:
             AsyncFixtureWrapper.teardown_function_scope()
