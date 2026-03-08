@@ -4,23 +4,24 @@ use crate::environment::find_site_packages;
 use crate::logcapture::redirect_output;
 use crate::protocol::{
     CMD_EXIT, CMD_FORK, CMD_PING, CMD_RUN_TEST, HEADER_SIZE, MAX_PAYLOAD_SIZE, MSG_PONG, MSG_READY,
-    MSG_WORKER_READY, TestPayload, TestResult, decode_with_limit, encode_with_length,
+    MSG_WORKER_READY, STATUS_CRASH, TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::snapshot::send_fd;
 use anyhow::Result;
-use nix::sys::signal::{SigHandler, Signal, signal};
-use nix::unistd::{ForkResult, fork};
+use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction, signal};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, fork};
 use pyo3::ffi::c_str;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule};
+use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::process;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Instant;
 use userfaultfd::UffdBuilder;
@@ -40,6 +41,123 @@ const TACH_HARNESS_PY: &str = include_str!("../tach_harness.py");
 /// The Zygote is single-threaded after fork, so contention is not a concern.
 static RESET_REGIONS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 static SNAPSHOT_ENABLED: AtomicBool = AtomicBool::new(false);
+
+// =============================================================================
+// SIGCHLD Self-Pipe Pattern for Proactive Crash Detection
+// =============================================================================
+
+/// Write end of the self-pipe for SIGCHLD notification.
+/// The signal handler writes here; the zygote main loop polls the read end.
+/// Set to -1 when not initialized.
+static SIGCHLD_PIPE_WR: AtomicI32 = AtomicI32::new(-1);
+
+/// Async-signal-safe SIGCHLD handler.
+/// Writes one byte to the self-pipe to wake up the zygote event loop.
+/// Uses only async-signal-safe functions (write is POSIX async-signal-safe).
+extern "C" fn sigchld_handler(_sig: libc::c_int) {
+    let fd = SIGCHLD_PIPE_WR.load(Ordering::Relaxed);
+    if fd >= 0 {
+        unsafe {
+            libc::write(fd, &1u8 as *const u8 as *const libc::c_void, 1);
+        }
+    }
+}
+
+/// Drain all bytes from the signal pipe (non-blocking read until EAGAIN).
+fn drain_signal_pipe(pipe_rd: i32) {
+    let mut buf = [0u8; 64];
+    loop {
+        let n = unsafe { libc::read(pipe_rd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n <= 0 {
+            break;
+        }
+    }
+}
+
+/// Reap all dead children and send crash notifications for workers
+/// that died before sending their test results.
+///
+/// This is the core of the proactive crash detection: when SIGCHLD fires,
+/// we reap children with waitpid(WNOHANG) and check if they were active
+/// workers (i.e., hadn't sent results yet). For each such worker, we
+/// construct a STATUS_CRASH TestResult and send it on the result channel.
+fn reap_crashed_workers(
+    active_pids: &Arc<Mutex<HashMap<i32, u32>>>,
+    result_tx: &mpsc::Sender<Vec<u8>>,
+) {
+    loop {
+        match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::Exited(pid, status)) => {
+                let raw_pid = pid.as_raw();
+                let test_id = active_pids
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&raw_pid);
+
+                if let Some(test_id) = test_id {
+                    // Worker died before result collector got the result.
+                    // status != 0 means abnormal exit; status == 0 could be
+                    // a toxic worker that exited normally after sending results
+                    // (race with result_collector removing the PID).
+                    if status != 0 {
+                        let crash_result = TestResult {
+                            test_id,
+                            status: STATUS_CRASH,
+                            duration_ns: 0,
+                            message: format!(
+                                "Worker crashed (SIGCHLD: pid {} exited with status {})",
+                                raw_pid, status
+                            ),
+                            memory_rss_bytes: None,
+                        };
+                        if let Ok(encoded) = encode_with_length(&crash_result) {
+                            let _ = result_tx.send(encoded);
+                        }
+                    }
+                }
+                // If test_id is None, result was already handled by spawn_result_collector
+            }
+            Ok(WaitStatus::Signaled(pid, sig, _core_dumped)) => {
+                let raw_pid = pid.as_raw();
+                let test_id = active_pids
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&raw_pid);
+
+                if let Some(test_id) = test_id {
+                    let crash_result = TestResult {
+                        test_id,
+                        status: STATUS_CRASH,
+                        duration_ns: 0,
+                        message: format!(
+                            "Worker crashed (SIGCHLD: pid {} killed by {})",
+                            raw_pid, sig
+                        ),
+                        memory_rss_bytes: None,
+                    };
+                    if let Ok(encoded) = encode_with_length(&crash_result) {
+                        let _ = result_tx.send(encoded);
+                    }
+                }
+            }
+            Ok(WaitStatus::StillAlive) => {
+                // No more children to reap
+                break;
+            }
+            Ok(_) => {
+                // Stopped/Continued - not relevant, keep reaping
+                continue;
+            }
+            Err(nix::errno::Errno::ECHILD) => {
+                // No children at all
+                break;
+            }
+            Err(_) => {
+                break;
+            }
+        }
+    }
+}
 
 // =============================================================================
 //  Worker Pool for Persistent Workers
@@ -565,6 +683,7 @@ fn spawn_result_collector(
     pid: i32,
     result_tx: mpsc::Sender<Vec<u8>>,
     is_toxic: bool,
+    active_pids: Arc<Mutex<HashMap<i32, u32>>>,
 ) {
     thread::spawn(move || {
         let mut socket = socket;
@@ -573,6 +692,7 @@ fn spawn_result_collector(
         let mut header_buf = [0u8; HEADER_SIZE];
         if socket.read_exact(&mut header_buf).is_err() {
             eprintln!("[tach:zygote] Worker {} crashed before sending result", pid);
+            // Don't remove from active_pids -- SIGCHLD handler will send crash notification
             return;
         }
 
@@ -603,6 +723,13 @@ fn spawn_result_collector(
             eprintln!("[tach:zygote] Result channel closed");
             return;
         }
+
+        // Result successfully forwarded -- remove from active_pids so
+        // SIGCHLD handler won't treat a subsequent normal exit as a crash
+        active_pids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&pid);
 
         // 4. Toxic workers exit here - don't wait for READY signal
         if is_toxic {
@@ -644,8 +771,37 @@ pub fn entrypoint(cmd_socket: UnixStream, result_socket: UnixStream) -> Result<(
         libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
     }
 
-    // Prevent zombies
-    unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }?;
+    // Install SIGCHLD handler with self-pipe pattern (replaces SIG_IGN).
+    // The handler writes to a pipe; the main event loop polls it alongside cmd_socket.
+    // We must call waitpid() to reap children since SIG_IGN is no longer used.
+    let mut pipe_fds = [0i32; 2];
+    if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+        return Err(anyhow::anyhow!("Failed to create SIGCHLD signal pipe"));
+    }
+    let sigchld_pipe_rd = pipe_fds[0];
+    let sigchld_pipe_wr = pipe_fds[1];
+
+    // Make both ends non-blocking so handler never blocks and drain never blocks
+    for fd in &[sigchld_pipe_rd, sigchld_pipe_wr] {
+        unsafe {
+            let flags = libc::fcntl(*fd, libc::F_GETFL);
+            libc::fcntl(*fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+
+    SIGCHLD_PIPE_WR.store(sigchld_pipe_wr, Ordering::SeqCst);
+
+    // SA_NOCLDSTOP: don't fire SIGCHLD for stop/continue, only for exit
+    let sa = SigAction::new(
+        SigHandler::Handler(sigchld_handler),
+        SaFlags::SA_NOCLDSTOP,
+        SigSet::empty(),
+    );
+    unsafe { sigaction(Signal::SIGCHLD, &sa) }?;
+
+    // Track active worker PIDs -> test_ids for crash detection.
+    // Shared between main loop (insert on dispatch) and result collector threads (remove on success).
+    let active_pids: Arc<Mutex<HashMap<i32, u32>>> = Arc::new(Mutex::new(HashMap::new()));
 
     eprintln!("[tach:zygote] Initializing Python...");
     let cwd = env::current_dir()?;
@@ -875,309 +1031,368 @@ if m is not None and not hasattr(m, '__file__'):
         }
     });
 
-    // Command processing loop
+    // Command processing loop with poll() on cmd_socket + SIGCHLD pipe.
+    // poll() lets us react to both supervisor commands and worker crashes without busy-waiting.
+    let cmd_fd = cmd_socket.as_raw_fd();
     let mut cmd_buf = [0u8; 1];
     loop {
-        if cmd_socket.read(&mut cmd_buf).is_err() {
+        let mut fds = [
+            libc::pollfd {
+                fd: cmd_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: sigchld_pipe_rd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+
+        let poll_ret = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        if poll_ret < 0 {
+            let errno = std::io::Error::last_os_error();
+            if errno.raw_os_error() == Some(libc::EINTR) {
+                // Interrupted by signal -- check pipe on next iteration
+                continue;
+            }
+            eprintln!("[tach:zygote] poll() error: {}", errno);
             break;
         }
 
-        match cmd_buf[0] {
-            CMD_FORK => {
-                // Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
-                let mut header_buf = [0u8; HEADER_SIZE];
-                cmd_socket.read_exact(&mut header_buf)?;
+        // Handle SIGCHLD pipe first (reap before processing new commands)
+        if fds[1].revents & libc::POLLIN != 0 {
+            drain_signal_pipe(sigchld_pipe_rd);
+            reap_crashed_workers(&active_pids, &result_tx);
+        }
 
-                // Extract length from bytes 4-7 (little-endian u32)
-                let len = u32::from_le_bytes([
-                    header_buf[4],
-                    header_buf[5],
-                    header_buf[6],
-                    header_buf[7],
-                ]) as usize;
-
-                // OOM protection: Validate size BEFORE allocating
-                // CRITICAL: Return error instead of continue to avoid protocol desync.
-                // If we continue, the unread payload bytes will corrupt subsequent reads.
-                if len > MAX_PAYLOAD_SIZE {
-                    eprintln!(
-                        "[tach:zygote] FATAL: Rejecting oversized payload: {} bytes > {} limit. Protocol error.",
-                        len, MAX_PAYLOAD_SIZE
-                    );
-                    return Err(anyhow::anyhow!(
-                        "Protocol error: payload too large ({} bytes > {} limit)",
-                        len,
-                        MAX_PAYLOAD_SIZE
-                    ));
-                }
-
-                // Allocate buffer for header + payload
-                let mut full_buf = vec![0u8; HEADER_SIZE + len];
-                full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
-                cmd_socket.read_exact(&mut full_buf[HEADER_SIZE..])?;
-
-                let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("[tach:zygote] Deserialize error: {}", e);
-                        continue;
-                    }
-                };
-
-                let is_toxic = payload.is_toxic;
-
-                //  Check for idle worker (only for safe tests)
-                // Also verify the worker is still alive before trying to use it
-                let idle_worker = if !is_toxic {
-                    loop {
-                        let mut workers = IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner());
-                        match workers.pop() {
-                            None => break None,
-                            Some(worker) => {
-                                drop(workers); // Release lock before checking health
-
-                                // Verify process is still alive using kill(pid, 0)
-                                let process_alive = nix::sys::signal::kill(
-                                    nix::unistd::Pid::from_raw(worker.pid),
-                                    None,
-                                )
-                                .is_ok();
-
-                                if !process_alive {
-                                    eprintln!(
-                                        "[tach:zygote] Worker {} died unexpectedly, trying next",
-                                        worker.pid
-                                    );
-                                    continue; // Try next worker
-                                }
-
-                                break Some(worker);
-                            }
-                        }
-                    }
-                } else {
-                    None // Always fork fresh for toxic tests
-                };
-
-                if let Some(mut worker) = idle_worker {
-                    // =========================================================
-                    // REUSE PATH: Dispatch to existing worker
-                    // =========================================================
-                    eprintln!("[tach:zygote] Reusing worker {} for test", worker.pid);
-
-                    // Send CMD_RUN_TEST + full encoded buffer (header + payload) to worker
-                    let dispatch_ok = (|| -> std::io::Result<()> {
-                        worker.socket.write_all(&[CMD_RUN_TEST])?;
-                        worker.socket.write_all(&full_buf)?; // Send full buffer (header + payload)
-                        Ok(())
-                    })();
-
-                    if let Err(e) = dispatch_ok {
-                        eprintln!(
-                            "[tach:zygote] Failed to dispatch to worker {}: {}",
-                            worker.pid, e
-                        );
-                        // Worker died, fall through to fork path
-                        // Don't continue - we need to fork a new worker
-                    } else {
-                        // Successfully dispatched - send PID back and spawn collector
-                        cmd_socket.write_all(&worker.pid.to_le_bytes())?;
-                        spawn_result_collector(
-                            worker.socket,
-                            worker.pid,
-                            result_tx.clone(),
-                            is_toxic,
-                        );
-                        continue;
-                    }
-                }
-
-                // =========================================================
-                // FORK PATH: Create new worker
-                // =========================================================
-                let (parent_sock, child_sock) = UnixStream::pair()?;
-
-                match unsafe { fork() } {
-                    Ok(ForkResult::Parent { child }) => {
-                        drop(child_sock);
-                        // Send PID back on command socket
-                        let child_pid = child.as_raw();
-                        cmd_socket.write_all(&child_pid.to_le_bytes())?;
-
-                        // Use spawn_result_collector instead of inline thread
-                        spawn_result_collector(parent_sock, child_pid, result_tx.clone(), is_toxic);
-                    }
-                    Ok(ForkResult::Child) => {
-                        drop(parent_sock);
-
-                        // 0. DEAD MAN'S SWITCH : If Zygote dies, worker dies
-                        // Must be FIRST - before any resource allocation
-                        unsafe {
-                            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                        }
-
-                        // 1. CRITICAL: Restore default signal handling
-                        // Parent sets SIG_IGN to avoid zombies, but this breaks Command::new()
-                        // because waitpid fails when kernel auto-reaps children
-                        unsafe { signal(Signal::SIGCHLD, SigHandler::SigDfl) }.ok();
-
-                        // 2. ISOLATE filesystem and network (Iron Dome)
-                        // CRITICAL: Fail hard if isolation fails to protect the host
-                        let project_root = std::env::current_dir().unwrap_or_default();
-                        if let Err(e) =
-                            crate::isolation::setup_filesystem(payload.test_id, &project_root)
-                        {
-                            eprintln!(
-                                "[tach:worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}",
-                                e
-                            );
-                            std::process::exit(1);
-                        }
-
-                        // 3. Re-chdir to pick up the overlay mount on project root
-                        // Without this, the CWD handle points to the old mount
-                        let _ = std::env::set_current_dir(&project_root);
-
-                        // 4.  Apply Iron Dome sandbox (Landlock + Seccomp)
-                        // SECURITY SEQUENCE:
-                        //   - Landlock: Restrict filesystem view (ALWAYS applied)
-                        //   - Seccomp: Block dangerous syscalls (ONLY for safe workers)
-                        //
-                        // This must happen AFTER isolation::setup_filesystem() creates the
-                        // overlay mounts, but BEFORE any Python code runs.
-                        //
-                        // Graceful degradation: Log warnings but don't crash on older kernels.
-                        let _sandbox_status = crate::sandbox::apply_iron_dome(
-                            &project_root,
-                            payload.test_id,
-                            payload.is_toxic,
-                        );
-                        // Note: apply_iron_dome logs its own warnings, no need to check result
-
-                        // 5. Redirect stdout/stderr to memfd
-                        if payload.log_fd >= 0 {
-                            let _ = redirect_output(payload.log_fd);
-                        }
-
-                        // 6. Set debug socket path for breakpoint() support
-                        // This enables interactive debugging via TTY proxy
-                        if !payload.debug_socket_path.is_empty() {
-                            Python::attach(|py| -> Result<(), PyErr> {
-                                let harness = py.import("tach_harness")?;
-                                harness
-                                    .getattr("set_debug_socket_path")?
-                                    .call1((&payload.debug_socket_path,))?;
-                                Ok(())
-                            })
-                            .ok(); // Non-fatal if this fails
-                        }
-
-                        // 7. POST-FORK INIT: Snapshot mode handshake
-                        // This performs hygiene (RNG reseed, logging reset) and
-                        // initiates snapshot if TACH_SUPERVISOR_SOCK is set.
-                        // Worker will SIGSTOP here; Supervisor captures snapshot and SIGCONTs.
-                        Python::attach(|py| -> Result<(), PyErr> {
-                            let harness = py.import("tach_harness")?;
-                            harness.getattr("post_fork_init")?.call0()?;
-                            Ok(())
-                        })
-                        .ok(); // Continue even if snapshot fails (graceful degradation)
-
-                        // 8. Run test
-                        let result = run_worker(&payload);
-
-                        // 9. Flush and send result (CRITICAL: BEFORE exit decision)
-                        // Invariant: Scheduler receives result even if worker exits
-                        let _ = std::io::stdout().flush();
-                        if let Ok(result_bytes) = encode_with_length(&result)
-                            && let Ok(mut sock) = child_sock.try_clone()
-                        {
-                            let _ = sock.write_all(&result_bytes);
-                        }
-
-                        // 10.  Dual-path decision based on toxicity
-                        // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
-                        // SAFE PATH: Reset memory and enter worker loop for reuse
-                        if payload.is_toxic {
-                            // Toxic test: exit without reset
-                            // This is the Isolation Mode path
-                            process::exit(0);
-                        } else if payload.skip_reset {
-                            // Scoped test: only enter reuse loop if test passed/skipped
-                            use crate::protocol::{STATUS_PASS, STATUS_SKIP};
-                            if result.status == STATUS_PASS || result.status == STATUS_SKIP {
-                                if let Ok(mut sock) = child_sock.try_clone() {
-                                    let _ = sock.write_all(&[MSG_WORKER_READY]);
-                                }
-                                worker_loop(child_sock);
-                            } else {
-                                eprintln!(
-                                    "[tach:worker] Test failed in scope group (status {}), \
-                                     exiting to protect fixture state",
-                                    result.status
-                                );
-                            }
-                            process::exit(0);
-                        } else {
-                            // Safe test: reset memory and enter worker loop
-                            // This is the Hypervisor Mode path - worker will be reused
-                            if let Err(e) = reset_and_signal_ready(&child_sock) {
-                                eprintln!(
-                                    "[tach:worker] Reset failed after first test: {}, exiting",
-                                    e
-                                );
-                                process::exit(1);
-                            }
-
-                            // Enter worker loop - wait for subsequent tests
-                            worker_loop(child_sock);
-                            process::exit(0);
-                        }
-                    }
-                    Err(e) => eprintln!("[tach:zygote] Fork failed: {}", e),
-                }
-            }
-            CMD_EXIT => {
-                let idle_workers =
-                    std::mem::take(&mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()));
-                let mut worker_pids = Vec::with_capacity(idle_workers.len());
-                for mut worker in idle_workers {
-                    worker_pids.push(worker.pid);
-                    let _ = worker.socket.write_all(&[CMD_EXIT]);
-                }
-
-                // Give threads time to forward final results
-                thread::sleep(std::time::Duration::from_millis(200));
-
-                // Reap any worker processes that haven't exited yet
-                // Using WNOHANG to avoid blocking indefinitely
-                for pid in &worker_pids {
-                    if *pid > 0 {
-                        // Try to kill the process if it's still running
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(*pid),
-                            nix::sys::signal::Signal::SIGTERM,
-                        );
-                    }
-                }
-
-                // Give workers a short grace period to terminate
-                thread::sleep(std::time::Duration::from_millis(100));
-
-                // Force kill any remaining workers
-                for pid in &worker_pids {
-                    if *pid > 0 {
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(*pid),
-                            nix::sys::signal::Signal::SIGKILL,
-                        );
-                    }
-                }
-
+        // Handle cmd_socket
+        if fds[0].revents & libc::POLLIN != 0 {
+            if cmd_socket.read(&mut cmd_buf).is_err() {
                 break;
             }
-            _ => {}
-        }
+
+            match cmd_buf[0] {
+                CMD_FORK => {
+                    // Read protocol header: magic(2) + version(1) + reserved(1) + length(4) = 8 bytes
+                    let mut header_buf = [0u8; HEADER_SIZE];
+                    cmd_socket.read_exact(&mut header_buf)?;
+
+                    // Extract length from bytes 4-7 (little-endian u32)
+                    let len = u32::from_le_bytes([
+                        header_buf[4],
+                        header_buf[5],
+                        header_buf[6],
+                        header_buf[7],
+                    ]) as usize;
+
+                    // OOM protection: Validate size BEFORE allocating
+                    // CRITICAL: Return error instead of continue to avoid protocol desync.
+                    // If we continue, the unread payload bytes will corrupt subsequent reads.
+                    if len > MAX_PAYLOAD_SIZE {
+                        eprintln!(
+                            "[tach:zygote] FATAL: Rejecting oversized payload: {} bytes > {} limit. Protocol error.",
+                            len, MAX_PAYLOAD_SIZE
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Protocol error: payload too large ({} bytes > {} limit)",
+                            len,
+                            MAX_PAYLOAD_SIZE
+                        ));
+                    }
+
+                    // Allocate buffer for header + payload
+                    let mut full_buf = vec![0u8; HEADER_SIZE + len];
+                    full_buf[..HEADER_SIZE].copy_from_slice(&header_buf);
+                    cmd_socket.read_exact(&mut full_buf[HEADER_SIZE..])?;
+
+                    let payload: TestPayload = match decode_with_limit(&full_buf, MAX_PAYLOAD_SIZE)
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("[tach:zygote] Deserialize error: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let is_toxic = payload.is_toxic;
+
+                    //  Check for idle worker (only for safe tests)
+                    // Also verify the worker is still alive before trying to use it
+                    let idle_worker = if !is_toxic {
+                        loop {
+                            let mut workers =
+                                IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner());
+                            match workers.pop() {
+                                None => break None,
+                                Some(worker) => {
+                                    drop(workers); // Release lock before checking health
+
+                                    // Verify process is still alive using kill(pid, 0)
+                                    let process_alive = nix::sys::signal::kill(
+                                        nix::unistd::Pid::from_raw(worker.pid),
+                                        None,
+                                    )
+                                    .is_ok();
+
+                                    if !process_alive {
+                                        eprintln!(
+                                            "[tach:zygote] Worker {} died unexpectedly, trying next",
+                                            worker.pid
+                                        );
+                                        continue; // Try next worker
+                                    }
+
+                                    break Some(worker);
+                                }
+                            }
+                        }
+                    } else {
+                        None // Always fork fresh for toxic tests
+                    };
+
+                    if let Some(mut worker) = idle_worker {
+                        // =========================================================
+                        // REUSE PATH: Dispatch to existing worker
+                        // =========================================================
+                        eprintln!("[tach:zygote] Reusing worker {} for test", worker.pid);
+
+                        // Send CMD_RUN_TEST + full encoded buffer (header + payload) to worker
+                        let dispatch_ok = (|| -> std::io::Result<()> {
+                            worker.socket.write_all(&[CMD_RUN_TEST])?;
+                            worker.socket.write_all(&full_buf)?; // Send full buffer (header + payload)
+                            Ok(())
+                        })();
+
+                        if let Err(e) = dispatch_ok {
+                            eprintln!(
+                                "[tach:zygote] Failed to dispatch to worker {}: {}",
+                                worker.pid, e
+                            );
+                            // Worker died, fall through to fork path
+                            // Don't continue - we need to fork a new worker
+                        } else {
+                            // Successfully dispatched - send PID back and spawn collector
+                            active_pids
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(worker.pid, payload.test_id);
+                            cmd_socket.write_all(&worker.pid.to_le_bytes())?;
+                            spawn_result_collector(
+                                worker.socket,
+                                worker.pid,
+                                result_tx.clone(),
+                                is_toxic,
+                                active_pids.clone(),
+                            );
+                            continue;
+                        }
+                    }
+
+                    // =========================================================
+                    // FORK PATH: Create new worker
+                    // =========================================================
+                    let (parent_sock, child_sock) = UnixStream::pair()?;
+
+                    match unsafe { fork() } {
+                        Ok(ForkResult::Parent { child }) => {
+                            drop(child_sock);
+                            // Send PID back on command socket
+                            let child_pid = child.as_raw();
+                            active_pids
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(child_pid, payload.test_id);
+                            cmd_socket.write_all(&child_pid.to_le_bytes())?;
+
+                            // Use spawn_result_collector instead of inline thread
+                            spawn_result_collector(
+                                parent_sock,
+                                child_pid,
+                                result_tx.clone(),
+                                is_toxic,
+                                active_pids.clone(),
+                            );
+                        }
+                        Ok(ForkResult::Child) => {
+                            drop(parent_sock);
+
+                            // 0. DEAD MAN'S SWITCH : If Zygote dies, worker dies
+                            // Must be FIRST - before any resource allocation
+                            unsafe {
+                                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                            }
+
+                            // Close inherited signal pipe fds (belong to zygote, not worker)
+                            unsafe {
+                                libc::close(sigchld_pipe_rd);
+                                libc::close(sigchld_pipe_wr);
+                            }
+
+                            // 1. CRITICAL: Restore default signal handling
+                            // Parent uses SIGCHLD handler for crash detection; workers need SIG_DFL
+                            // so their own child processes (e.g. subprocess.run) work correctly
+                            unsafe { signal(Signal::SIGCHLD, SigHandler::SigDfl) }.ok();
+
+                            // 2. ISOLATE filesystem and network (Iron Dome)
+                            // CRITICAL: Fail hard if isolation fails to protect the host
+                            let project_root = std::env::current_dir().unwrap_or_default();
+                            if let Err(e) =
+                                crate::isolation::setup_filesystem(payload.test_id, &project_root)
+                            {
+                                eprintln!(
+                                    "[tach:worker] CRITICAL: Isolation failed. Aborting to protect host. Error: {:#}",
+                                    e
+                                );
+                                std::process::exit(1);
+                            }
+
+                            // 3. Re-chdir to pick up the overlay mount on project root
+                            // Without this, the CWD handle points to the old mount
+                            let _ = std::env::set_current_dir(&project_root);
+
+                            // 4.  Apply Iron Dome sandbox (Landlock + Seccomp)
+                            // SECURITY SEQUENCE:
+                            //   - Landlock: Restrict filesystem view (ALWAYS applied)
+                            //   - Seccomp: Block dangerous syscalls (ONLY for safe workers)
+                            //
+                            // This must happen AFTER isolation::setup_filesystem() creates the
+                            // overlay mounts, but BEFORE any Python code runs.
+                            //
+                            // Graceful degradation: Log warnings but don't crash on older kernels.
+                            let _sandbox_status = crate::sandbox::apply_iron_dome(
+                                &project_root,
+                                payload.test_id,
+                                payload.is_toxic,
+                            );
+                            // Note: apply_iron_dome logs its own warnings, no need to check result
+
+                            // 5. Redirect stdout/stderr to memfd
+                            if payload.log_fd >= 0 {
+                                let _ = redirect_output(payload.log_fd);
+                            }
+
+                            // 6. Set debug socket path for breakpoint() support
+                            // This enables interactive debugging via TTY proxy
+                            if !payload.debug_socket_path.is_empty() {
+                                Python::attach(|py| -> Result<(), PyErr> {
+                                    let harness = py.import("tach_harness")?;
+                                    harness
+                                        .getattr("set_debug_socket_path")?
+                                        .call1((&payload.debug_socket_path,))?;
+                                    Ok(())
+                                })
+                                .ok(); // Non-fatal if this fails
+                            }
+
+                            // 7. POST-FORK INIT: Snapshot mode handshake
+                            // This performs hygiene (RNG reseed, logging reset) and
+                            // initiates snapshot if TACH_SUPERVISOR_SOCK is set.
+                            // Worker will SIGSTOP here; Supervisor captures snapshot and SIGCONTs.
+                            Python::attach(|py| -> Result<(), PyErr> {
+                                let harness = py.import("tach_harness")?;
+                                harness.getattr("post_fork_init")?.call0()?;
+                                Ok(())
+                            })
+                            .ok(); // Continue even if snapshot fails (graceful degradation)
+
+                            // 8. Run test
+                            let result = run_worker(&payload);
+
+                            // 9. Flush and send result (CRITICAL: BEFORE exit decision)
+                            // Invariant: Scheduler receives result even if worker exits
+                            let _ = std::io::stdout().flush();
+                            if let Ok(result_bytes) = encode_with_length(&result)
+                                && let Ok(mut sock) = child_sock.try_clone()
+                            {
+                                let _ = sock.write_all(&result_bytes);
+                            }
+
+                            // 10.  Dual-path decision based on toxicity
+                            // TOXIC PATH: Exit immediately (OS cleans up threads, FDs, etc.)
+                            // SAFE PATH: Reset memory and enter worker loop for reuse
+                            if payload.is_toxic {
+                                // Toxic test: exit without reset
+                                // This is the Isolation Mode path
+                                process::exit(0);
+                            } else if payload.skip_reset {
+                                // Scoped test: only enter reuse loop if test passed/skipped
+                                use crate::protocol::{STATUS_PASS, STATUS_SKIP};
+                                if result.status == STATUS_PASS || result.status == STATUS_SKIP {
+                                    if let Ok(mut sock) = child_sock.try_clone() {
+                                        let _ = sock.write_all(&[MSG_WORKER_READY]);
+                                    }
+                                    worker_loop(child_sock);
+                                } else {
+                                    eprintln!(
+                                        "[tach:worker] Test failed in scope group (status {}), \
+                                     exiting to protect fixture state",
+                                        result.status
+                                    );
+                                }
+                                process::exit(0);
+                            } else {
+                                // Safe test: reset memory and enter worker loop
+                                // This is the Hypervisor Mode path - worker will be reused
+                                if let Err(e) = reset_and_signal_ready(&child_sock) {
+                                    eprintln!(
+                                        "[tach:worker] Reset failed after first test: {}, exiting",
+                                        e
+                                    );
+                                    process::exit(1);
+                                }
+
+                                // Enter worker loop - wait for subsequent tests
+                                worker_loop(child_sock);
+                                process::exit(0);
+                            }
+                        }
+                        Err(e) => eprintln!("[tach:zygote] Fork failed: {}", e),
+                    }
+                }
+                CMD_EXIT => {
+                    let idle_workers = std::mem::take(
+                        &mut *IDLE_WORKERS.lock().unwrap_or_else(|e| e.into_inner()),
+                    );
+                    let mut worker_pids = Vec::with_capacity(idle_workers.len());
+                    for mut worker in idle_workers {
+                        worker_pids.push(worker.pid);
+                        let _ = worker.socket.write_all(&[CMD_EXIT]);
+                    }
+
+                    // Give threads time to forward final results
+                    thread::sleep(std::time::Duration::from_millis(200));
+
+                    // Reap any worker processes that haven't exited yet
+                    // Using WNOHANG to avoid blocking indefinitely
+                    for pid in &worker_pids {
+                        if *pid > 0 {
+                            // Try to kill the process if it's still running
+                            let _ = nix::sys::signal::kill(
+                                nix::unistd::Pid::from_raw(*pid),
+                                nix::sys::signal::Signal::SIGTERM,
+                            );
+                        }
+                    }
+
+                    // Give workers a short grace period to terminate
+                    thread::sleep(std::time::Duration::from_millis(100));
+
+                    // Force kill any remaining workers
+                    for pid in &worker_pids {
+                        if *pid > 0 {
+                            let _ = nix::sys::signal::kill(
+                                nix::unistd::Pid::from_raw(*pid),
+                                nix::sys::signal::Signal::SIGKILL,
+                            );
+                        }
+                    }
+
+                    break;
+                }
+                _ => {}
+            }
+        } // if fds[0] POLLIN
     }
 
     Ok(())
@@ -1873,7 +2088,13 @@ mod tests {
         let is_toxic = false; // Safe test - should be pooled
 
         // Spawn the result collector (Zygote side)
-        spawn_result_collector(zygote_sock, fake_pid, result_tx, is_toxic);
+        spawn_result_collector(
+            zygote_sock,
+            fake_pid,
+            result_tx,
+            is_toxic,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         // Simulate worker sending result
         let test_result = TestResult {
@@ -1942,7 +2163,13 @@ mod tests {
         let fake_pid = 99999;
         let is_toxic = true; // Toxic test - should NOT be pooled
 
-        spawn_result_collector(zygote_sock, fake_pid, result_tx, is_toxic);
+        spawn_result_collector(
+            zygote_sock,
+            fake_pid,
+            result_tx,
+            is_toxic,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         // Simulate worker sending result
         let test_result = TestResult {
@@ -2663,5 +2890,195 @@ mod tests {
                 }
             }
         });
+    }
+
+    // =========================================================================
+    // SIGCHLD Self-Pipe + Crash Notification Tests
+    // =========================================================================
+
+    #[test]
+    fn test_sigchld_handler_writes_to_pipe() {
+        let mut pipe_fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+        unsafe {
+            let flags = libc::fcntl(pipe_fds[1], libc::F_GETFL);
+            libc::fcntl(pipe_fds[1], libc::F_SETFL, flags | libc::O_NONBLOCK);
+            let flags = libc::fcntl(pipe_fds[0], libc::F_GETFL);
+            libc::fcntl(pipe_fds[0], libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+
+        let old = SIGCHLD_PIPE_WR.swap(pipe_fds[1], Ordering::SeqCst);
+
+        sigchld_handler(libc::SIGCHLD);
+
+        let mut buf = [0u8; 1];
+        let n = unsafe { libc::read(pipe_fds[0], buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        assert_eq!(n, 1);
+        assert_eq!(buf[0], 1);
+
+        SIGCHLD_PIPE_WR.store(old, Ordering::SeqCst);
+        unsafe {
+            libc::close(pipe_fds[0]);
+            libc::close(pipe_fds[1]);
+        }
+    }
+
+    #[test]
+    fn test_drain_signal_pipe_empties_all_bytes() {
+        let mut pipe_fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+        unsafe {
+            let flags = libc::fcntl(pipe_fds[0], libc::F_GETFL);
+            libc::fcntl(pipe_fds[0], libc::F_SETFL, flags | libc::O_NONBLOCK);
+            let flags = libc::fcntl(pipe_fds[1], libc::F_GETFL);
+            libc::fcntl(pipe_fds[1], libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+
+        // Write 5 bytes (simulating 5 coalesced SIGCHLDs)
+        for _ in 0..5 {
+            unsafe {
+                libc::write(pipe_fds[1], &1u8 as *const u8 as *const libc::c_void, 1);
+            }
+        }
+
+        drain_signal_pipe(pipe_fds[0]);
+
+        // Pipe should be empty now
+        let mut buf = [0u8; 1];
+        let n = unsafe { libc::read(pipe_fds[0], buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        assert!(n <= 0, "Pipe should be empty after drain");
+
+        unsafe {
+            libc::close(pipe_fds[0]);
+            libc::close(pipe_fds[1]);
+        }
+    }
+
+    #[test]
+    fn test_active_pids_tracking() {
+        let active_pids: Arc<Mutex<HashMap<i32, u32>>> = Arc::new(Mutex::new(HashMap::new()));
+
+        active_pids.lock().unwrap().insert(100, 1);
+        active_pids.lock().unwrap().insert(200, 2);
+        active_pids.lock().unwrap().insert(300, 3);
+
+        let removed = active_pids.lock().unwrap().remove(&200);
+        assert_eq!(removed, Some(2));
+        assert!(!active_pids.lock().unwrap().contains_key(&200));
+
+        assert_eq!(active_pids.lock().unwrap().get(&100), Some(&1));
+        assert_eq!(active_pids.lock().unwrap().get(&300), Some(&3));
+    }
+
+    #[test]
+    fn test_crash_notification_encoding() {
+        use crate::protocol::{STATUS_CRASH, TestResult, decode_with_limit, encode_with_length};
+
+        let result = TestResult {
+            test_id: 42,
+            status: STATUS_CRASH,
+            duration_ns: 0,
+            message: "Worker crashed (SIGCHLD: pid 1234 killed by SIGSEGV)".to_string(),
+            memory_rss_bytes: None,
+        };
+
+        let encoded = encode_with_length(&result).unwrap();
+        let decoded: TestResult = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+
+        assert_eq!(decoded.test_id, 42);
+        assert_eq!(decoded.status, STATUS_CRASH);
+        assert!(decoded.message.contains("SIGSEGV"));
+        assert_eq!(decoded.duration_ns, 0);
+    }
+
+    #[test]
+    fn test_reap_crashed_workers_sends_notification_on_abnormal_exit() {
+        use std::time::Duration;
+
+        let active_pids: Arc<Mutex<HashMap<i32, u32>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+        match unsafe { fork() } {
+            Ok(ForkResult::Parent { child }) => {
+                let child_pid = child.as_raw();
+                active_pids.lock().unwrap().insert(child_pid, 99);
+
+                // Wait for child to die, then reap via our function
+                std::thread::sleep(Duration::from_millis(100));
+                reap_crashed_workers(&active_pids, &tx);
+
+                let data = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                let result: TestResult = decode_with_limit(&data, MAX_PAYLOAD_SIZE).unwrap();
+                assert_eq!(result.test_id, 99);
+                assert_eq!(result.status, STATUS_CRASH);
+                assert!(result.message.contains("exited with status 1"));
+
+                assert!(active_pids.lock().unwrap().is_empty());
+            }
+            Ok(ForkResult::Child) => {
+                std::process::exit(1);
+            }
+            Err(e) => panic!("fork failed: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_reap_normal_exit_no_crash_notification() {
+        use std::time::Duration;
+
+        let active_pids: Arc<Mutex<HashMap<i32, u32>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+        match unsafe { fork() } {
+            Ok(ForkResult::Parent { child }) => {
+                let _child_pid = child.as_raw();
+
+                std::thread::sleep(Duration::from_millis(100));
+                reap_crashed_workers(&active_pids, &tx);
+
+                // Should NOT have sent any crash notification
+                let result = rx.recv_timeout(Duration::from_millis(200));
+                assert!(result.is_err(), "No notification for already-handled exit");
+            }
+            Ok(ForkResult::Child) => {
+                std::process::exit(0);
+            }
+            Err(e) => panic!("fork failed: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_reap_signal_death_sends_crash_notification() {
+        use std::time::Duration;
+
+        let active_pids: Arc<Mutex<HashMap<i32, u32>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+        match unsafe { fork() } {
+            Ok(ForkResult::Parent { child }) => {
+                let child_pid = child.as_raw();
+                active_pids.lock().unwrap().insert(child_pid, 77);
+
+                // Kill child with SIGKILL
+                let _ = nix::sys::signal::kill(child, Signal::SIGKILL);
+                std::thread::sleep(Duration::from_millis(100));
+
+                reap_crashed_workers(&active_pids, &tx);
+
+                let data = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                let result: TestResult = decode_with_limit(&data, MAX_PAYLOAD_SIZE).unwrap();
+                assert_eq!(result.test_id, 77);
+                assert_eq!(result.status, STATUS_CRASH);
+                assert!(result.message.contains("killed by"));
+            }
+            Ok(ForkResult::Child) => {
+                // Block until killed
+                std::thread::sleep(Duration::from_secs(10));
+                std::process::exit(0);
+            }
+            Err(e) => panic!("fork failed: {}", e),
+        }
     }
 }
