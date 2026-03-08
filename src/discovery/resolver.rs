@@ -107,6 +107,45 @@ impl RunnableTest {
                     .unwrap_or(false)
         })
     }
+
+    /// Returns true if this test uses any module or class-scoped fixtures.
+    ///
+    /// Tests with scoped fixtures must be grouped with other tests from the same
+    /// module/class so the scheduler can skip memory reset between them, preserving
+    /// fixture state across tests.
+    pub fn has_scoped_fixtures(&self) -> bool {
+        self.fixtures.iter().any(|f| {
+            matches!(
+                f.scope,
+                FixtureScope::Module | FixtureScope::Class | FixtureScope::Session
+            )
+        })
+    }
+
+    /// Returns the highest fixture scope used by this test.
+    /// Session > Module > Class > Function
+    pub fn max_fixture_scope(&self) -> FixtureScope {
+        self.fixtures
+            .iter()
+            .map(|f| &f.scope)
+            .fold(FixtureScope::Function, |acc, scope| match (&acc, scope) {
+                (_, FixtureScope::Session) | (FixtureScope::Session, _) => FixtureScope::Session,
+                (_, FixtureScope::Module) | (FixtureScope::Module, _) => FixtureScope::Module,
+                (_, FixtureScope::Class) | (FixtureScope::Class, _) => FixtureScope::Class,
+                _ => FixtureScope::Function,
+            })
+    }
+
+    /// Returns the class name if this test is a method inside a test class.
+    /// Extracted from test_name format: "ClassName::method_name"
+    pub fn class_name(&self) -> Option<&str> {
+        let parts: Vec<&str> = self.test_name.splitn(2, "::").collect();
+        if parts.len() == 2 {
+            Some(parts[0])
+        } else {
+            None
+        }
+    }
 }
 
 /// A resolved fixture with full context
@@ -944,6 +983,180 @@ mod tests {
             marker_info: vec![],
         };
         assert!(!test.has_django_transaction_marker());
+    }
+
+    // =========================================================================
+    // Phase 4.0: RunnableTest Scope-Aware Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_has_scoped_fixtures_function_only() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_fn".into(),
+            is_async: false,
+            fixtures: vec![ResolvedFixture {
+                name: "tmp".into(),
+                source_file: PathBuf::from("conftest.py"),
+                scope: FixtureScope::Function,
+                is_async: false,
+            }],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert!(
+            !test.has_scoped_fixtures(),
+            "Function-only fixtures should return false"
+        );
+    }
+
+    #[test]
+    fn test_has_scoped_fixtures_module() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_mod".into(),
+            is_async: false,
+            fixtures: vec![ResolvedFixture {
+                name: "db".into(),
+                source_file: PathBuf::from("conftest.py"),
+                scope: FixtureScope::Module,
+                is_async: false,
+            }],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert!(
+            test.has_scoped_fixtures(),
+            "Module-scoped fixture should return true"
+        );
+    }
+
+    #[test]
+    fn test_has_scoped_fixtures_session() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_sess".into(),
+            is_async: false,
+            fixtures: vec![ResolvedFixture {
+                name: "app".into(),
+                source_file: PathBuf::from("conftest.py"),
+                scope: FixtureScope::Session,
+                is_async: false,
+            }],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert!(
+            test.has_scoped_fixtures(),
+            "Session-scoped fixture should return true"
+        );
+    }
+
+    #[test]
+    fn test_max_fixture_scope() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_mixed".into(),
+            is_async: false,
+            fixtures: vec![
+                ResolvedFixture {
+                    name: "a".into(),
+                    source_file: PathBuf::from("conftest.py"),
+                    scope: FixtureScope::Function,
+                    is_async: false,
+                },
+                ResolvedFixture {
+                    name: "b".into(),
+                    source_file: PathBuf::from("conftest.py"),
+                    scope: FixtureScope::Module,
+                    is_async: false,
+                },
+                ResolvedFixture {
+                    name: "c".into(),
+                    source_file: PathBuf::from("conftest.py"),
+                    scope: FixtureScope::Class,
+                    is_async: false,
+                },
+            ],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert_eq!(
+            test.max_fixture_scope(),
+            FixtureScope::Module,
+            "Module > Class > Function, so max should be Module"
+        );
+
+        let session_test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_sess".into(),
+            is_async: false,
+            fixtures: vec![
+                ResolvedFixture {
+                    name: "x".into(),
+                    source_file: PathBuf::from("conftest.py"),
+                    scope: FixtureScope::Module,
+                    is_async: false,
+                },
+                ResolvedFixture {
+                    name: "y".into(),
+                    source_file: PathBuf::from("conftest.py"),
+                    scope: FixtureScope::Session,
+                    is_async: false,
+                },
+            ],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert_eq!(
+            session_test.max_fixture_scope(),
+            FixtureScope::Session,
+            "Session is the highest scope"
+        );
+    }
+
+    #[test]
+    fn test_class_name_extraction() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "TestUsers::test_create".into(),
+            is_async: false,
+            fixtures: vec![],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert_eq!(test.class_name(), Some("TestUsers"));
+    }
+
+    #[test]
+    fn test_class_name_no_class() {
+        let test = RunnableTest {
+            file_path: PathBuf::from("test.py"),
+            test_name: "test_standalone".into(),
+            is_async: false,
+            fixtures: vec![],
+            is_toxic: false,
+            timeout_secs: None,
+            markers: vec![],
+            marker_info: vec![],
+        };
+        assert_eq!(
+            test.class_name(),
+            None,
+            "Plain test name without :: should return None"
+        );
     }
 
     #[test]
