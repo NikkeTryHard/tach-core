@@ -67,6 +67,28 @@ pub struct TestPayload {
     /// Whether to force database recreation (--create-db)
     #[serde(default)]
     pub create_db: bool,
+
+    /// Whether to skip memory reset after this test (Phase 4.0: Fixture Lifecycle)
+    ///
+    /// When true, the worker will NOT call madvise(MADV_DONTNEED) or cleanup_test_modules()
+    /// after executing this test. This preserves module/class-scoped fixture state for the
+    /// next test in the same scope group.
+    ///
+    /// Set by the scheduler when the next test shares module/class-scoped fixtures
+    /// with this test (same file_path for module scope, same class for class scope).
+    #[serde(default)]
+    pub skip_reset: bool,
+
+    /// Node ID of the next test in the same scope group (Phase 4.0: Fixture Lifecycle)
+    ///
+    /// When set, the Python harness passes this as `nextitem` to
+    /// `_pytest.runner.runtestprotocol()`, telling pytest to keep module/class-scoped
+    /// fixtures alive (because there's another test that needs them).
+    ///
+    /// None means "this is the last test in the scope group" (or no scope group),
+    /// which triggers pytest to tear down all fixtures.
+    #[serde(default)]
+    pub next_node_id: Option<String>,
 }
 
 /// Fixture info for payload
@@ -532,6 +554,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -658,6 +682,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -689,6 +715,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
         let encoded = encode_with_length(&payload).unwrap();
 
@@ -773,6 +801,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -826,6 +856,8 @@ mod tests {
             marker_info: marker_info.clone(),
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
@@ -987,12 +1019,91 @@ mod tests {
             marker_info: vec![],
             reuse_db: true,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
         let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
         assert!(decoded.reuse_db);
         assert!(!decoded.create_db);
+    }
+
+    #[test]
+    fn test_payload_skip_reset_serialization() {
+        let payload = TestPayload {
+            test_id: 7,
+            file_path: "test.py".to_string(),
+            test_name: "test_scoped".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
+            marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
+            skip_reset: true,
+            next_node_id: None,
+        };
+
+        let encoded = encode_with_length(&payload).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert!(decoded.skip_reset, "skip_reset=true should roundtrip");
+
+        let payload_false = TestPayload {
+            skip_reset: false,
+            ..payload
+        };
+        let encoded2 = encode_with_length(&payload_false).unwrap();
+        let decoded2: TestPayload = decode_with_limit(&encoded2, MAX_PAYLOAD_SIZE).unwrap();
+        assert!(!decoded2.skip_reset, "skip_reset=false should roundtrip");
+    }
+
+    #[test]
+    fn test_payload_next_node_id_serialization() {
+        let payload_some = TestPayload {
+            test_id: 8,
+            file_path: "test.py".to_string(),
+            test_name: "test_next".to_string(),
+            is_async: false,
+            fixtures: vec![],
+            log_fd: -1,
+            debug_socket_path: String::new(),
+            is_toxic: false,
+            timeout_secs: None,
+            hooks: vec![],
+            cached_effects: vec![],
+            markers: vec![],
+            marker_info: vec![],
+            reuse_db: false,
+            create_db: false,
+            skip_reset: false,
+            next_node_id: Some("tests/test.py::test_next_item".to_string()),
+        };
+
+        let encoded = encode_with_length(&payload_some).unwrap();
+        let decoded: TestPayload = decode_with_limit(&encoded, MAX_PAYLOAD_SIZE).unwrap();
+        assert_eq!(
+            decoded.next_node_id,
+            Some("tests/test.py::test_next_item".to_string()),
+            "next_node_id Some should roundtrip"
+        );
+
+        let payload_none = TestPayload {
+            next_node_id: None,
+            ..payload_some
+        };
+        let encoded2 = encode_with_length(&payload_none).unwrap();
+        let decoded2: TestPayload = decode_with_limit(&encoded2, MAX_PAYLOAD_SIZE).unwrap();
+        assert_eq!(
+            decoded2.next_node_id, None,
+            "next_node_id None should roundtrip"
+        );
     }
 
     #[test]
@@ -1013,6 +1124,8 @@ mod tests {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let encoded = encode_with_length(&payload).unwrap();
