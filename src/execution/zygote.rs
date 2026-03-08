@@ -418,10 +418,23 @@ fn worker_loop(socket: UnixStream) {
                     eprintln!("[tach:worker] Toxic test completed, exiting");
                     break;
                 } else if payload.skip_reset {
-                    // SCOPED PATH: Skip reset, keep fixture state for next test in group
-                    eprintln!("[tach:worker] Skip reset (scoped fixtures), signaling READY");
-                    if socket.write_all(&[MSG_WORKER_READY]).is_err() {
-                        eprintln!("[tach:worker] Failed to signal READY after skip_reset");
+                    // SCOPED PATH: Only continue if test passed/skipped.
+                    // If test failed/crashed/errored, fixture state is corrupted --
+                    // exit so the scheduler detects the broken worker and stops
+                    // dispatching remaining tests in this scope group.
+                    use crate::protocol::{STATUS_PASS, STATUS_SKIP};
+                    if result.status == STATUS_PASS || result.status == STATUS_SKIP {
+                        eprintln!("[tach:worker] Skip reset (scoped fixtures), signaling READY");
+                        if socket.write_all(&[MSG_WORKER_READY]).is_err() {
+                            eprintln!("[tach:worker] Failed to signal READY after skip_reset");
+                            break;
+                        }
+                    } else {
+                        eprintln!(
+                            "[tach:worker] Test failed in scope group (status {}), \
+                             exiting to protect fixture state",
+                            result.status
+                        );
                         break;
                     }
                     // Continue loop - wait for next command
@@ -1090,11 +1103,20 @@ if m is not None and not hasattr(m, '__file__'):
                             // This is the Isolation Mode path
                             process::exit(0);
                         } else if payload.skip_reset {
-                            // Scoped test: signal ready WITHOUT reset (preserve fixture state)
-                            if let Ok(mut sock) = child_sock.try_clone() {
-                                let _ = sock.write_all(&[MSG_WORKER_READY]);
+                            // Scoped test: only enter reuse loop if test passed/skipped
+                            use crate::protocol::{STATUS_PASS, STATUS_SKIP};
+                            if result.status == STATUS_PASS || result.status == STATUS_SKIP {
+                                if let Ok(mut sock) = child_sock.try_clone() {
+                                    let _ = sock.write_all(&[MSG_WORKER_READY]);
+                                }
+                                worker_loop(child_sock);
+                            } else {
+                                eprintln!(
+                                    "[tach:worker] Test failed in scope group (status {}), \
+                                     exiting to protect fixture state",
+                                    result.status
+                                );
                             }
-                            worker_loop(child_sock);
                             process::exit(0);
                         } else {
                             // Safe test: reset memory and enter worker loop
