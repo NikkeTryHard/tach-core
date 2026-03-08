@@ -2698,7 +2698,7 @@ mod tests {
         };
 
         // Simulate the dedup logic: worker not found + STATUS_CRASH -> skip
-        let should_skip = active_workers.get(&crash_result.test_id).is_none()
+        let should_skip = !active_workers.contains_key(&crash_result.test_id)
             && crash_result.status == STATUS_CRASH;
         assert!(
             should_skip,
@@ -2732,7 +2732,7 @@ mod tests {
             memory_rss_bytes: None,
         };
 
-        let should_skip = active_workers.get(&crash_result.test_id).is_none()
+        let should_skip = !active_workers.contains_key(&crash_result.test_id)
             && crash_result.status == STATUS_CRASH;
         assert!(
             !should_skip,
