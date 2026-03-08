@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Python harness passes `nextitem` to `runtestprotocol()` for proper fixture teardown timing
   - `skip_reset` and `next_node_id` fields added to TestPayload protocol
   - `has_scoped_fixtures()`, `max_fixture_scope()`, `class_name()` helpers on RunnableTest
+- **Phase 9.0: SIGCHLD Crash Detection** - Near-instant crash notification
+  - Self-pipe pattern in zygote replaces 50ms polling as primary crash detection
+  - `sigchld_handler` writes to pipe, zygote's `poll()`-based loop detects immediately
+  - `reap_crashed_workers()` calls `waitpid(WNOHANG)` and sends STATUS_CRASH on result channel
+  - `detect_crashed_workers()` preserved as fallback
+  - Crash result dedup prevents double-reporting between SIGCHLD and polling paths
 - **Phase 7.5: Adaptive Scheduling** - Smarter test ordering using historical data
   - Scheduler uses multi-run historical average durations as fallback
   - Longest-first scheduling for optimal parallel worker utilization
@@ -30,7 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Deterministic hash-based test distribution across N parallel CI jobs
   - Each shard gets a unique, balanced subset of tests
   - Compatible with GitHub Actions matrix, CircleCI parallelism, etc.
-- 17 new tests (1067 total, up from 1050)
+- **Scope Group Failure Recovery**: Hardened fixture lifecycle reliability
+  - Worker exits on test failure in skip_reset path to protect fixture state
+  - Scheduler detects failures/crashes within scope groups and aborts remaining tests
+  - Remaining tests in broken group marked as "error" with clear message
+  - Crash detection added inside scope group wait loop (previously missing)
+  - `next_node_id` correctly built from next test in group for pytest nextitem
+- 33 new tests (1083 total, up from 1050)
 
 ## [0.8.6] - 2026-03-05
 

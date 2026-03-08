@@ -15,17 +15,17 @@ gantt
     section Foundation
     0.1.x Core Infrastructure    :done, 2026-01, 2026-02
     section Compatibility
-    0.2.x Plugin Ecosystem       :active, 2026-02, 2026-04
+    0.2.x Plugin Ecosystem       :done, 2026-02, 2026-04
     0.3.x Database Integration   :2026-04, 2026-06
     section Fixtures
-    0.4.x Hierarchical Zygotes   :2026-06, 2026-08
+    0.4.x Hierarchical Zygotes   :done, 2026-06, 2026-08
     0.5.x Developer Experience   :2026-08, 2026-10
     section Performance
     0.6.x Configuration          :2026-10, 2026-12
     0.7.x Memory Snapshotting    :2027-01, 2027-03
     section Platform
     0.8.x CI/CD + Sub-Interpreters :2027-03, 2027-06
-    0.9.x Stability              :2027-06, 2027-08
+    0.9.x Stability              :active, 2027-06, 2027-08
     section Release
     0.10.x Beta 1                :2027-08, 2027-09
     0.11.x Beta 2 + RC           :2027-09, 2027-10
@@ -86,9 +86,9 @@ flowchart TB
 
     subgraph Phase4["Phase 4: Fixture Lifecycle"]
         direction TB
-        P4_0["0.4.0 Session Fixtures<br>(Shared Memory Cache)"]
-        P4_1["0.4.1 Module Fixtures<br>(Boundary Detection)"]
-        P4_2["0.4.2 Class Fixtures"]
+        P4_0["0.4.0 Session Fixtures<br>(Shared Memory Cache) ✅"]
+        P4_1["0.4.1 Module Fixtures<br>(Boundary Detection) ✅"]
+        P4_2["0.4.2 Class Fixtures ✅"]
         P4_3["0.4.3 Autouse Injection<br>(Auto-inject autouse=True)"]
         P4_4["0.4.4 Parametrized Fixtures<br>(Expand params at discovery)"]
         P4_5["0.4.5 Zygote Warmup<br>(Configurable pre-imports)"]
@@ -134,12 +134,12 @@ flowchart TB
 
     subgraph Phase7["Phase 7: Performance"]
         direction TB
-        P7_0["0.7.0 Test History Store<br>(SQLite duration cache)"]
+        P7_0["0.7.0 Test History Store ✅<br>(SQLite duration cache)"]
         P7_1["0.7.1 Memory Optimization<br>(Snapshot Compression)"]
         P7_2["0.7.2 UFFD Write-Protect<br>(Dirty Page Tracking)"]
         P7_3["0.7.3 Vectorized Restore<br>(Batch UFFDIO_COPY)"]
         P7_4["0.7.4 TLS Calibration ✅<br>(Sentinel scan done)"]
-        P7_5["0.7.5 Adaptive Scheduling<br>(Duration Prediction)"]
+        P7_5["0.7.5 Adaptive Scheduling ✅<br>(Duration Prediction)"]
         P7_6["0.7.6 Lazy Loading<br>(On-demand Import)"]
         P7_7["0.7.7 Advanced Snapshots<br>(Kernel LKM Research)"]
         P7_8["0.7.8 UFFD_EVENT_FORK<br>(Fork Tracking)"]
@@ -171,7 +171,7 @@ flowchart TB
 
     subgraph Phase9["Phase 9: Stability"]
         direction TB
-        P9_0["0.9.0 Crash Recovery<br>(SIGCHLD detection)"]
+        P9_0["0.9.0 Crash Recovery ✅<br>(SIGCHLD detection)"]
         P9_1["0.9.1 Signal Routing<br>(Debug mode handling)"]
         P9_2["0.9.2 CleanupGuard<br>(Mutex poison immunity)"]
         P9_3["0.9.3 UFFD FD Limits<br>(Per-worker tracking)"]
@@ -213,7 +213,7 @@ flowchart TB
         F0["1.1.x Maintenance"]
         F1["1.2.x Features"]
         F2["0.12.x Remote Execution"]
-        F3["0.13.x Test Sharding"]
+        F3["0.13.x Test Sharding ✅<br>(Shipped in 0.9.0)"]
         F4["0.14.x Visual Testing"]
         F5["0.15.x AI-Powered"]
         F6["0.16.x Mutation Testing"]
@@ -256,16 +256,19 @@ flowchart TB
     class P2_0,P2_1,P2_2,P2_3,P5_0,P5_6,P7_4,P8_1 done
     class P6_0,P6_1,P6_2,P6_4,P8_0,P9_2,P9_5,P9_7 done
     class P5_1 done
-    class P5_3,P5_5,P6_3,P6_5,P7_0,P7_1,P7_6,P9_6 canStart
+    class P5_3,P5_5,P6_3,P6_5,P7_1,P7_6,P9_6 canStart
     class P2_4,P2_5 done
     class P3_0,P3_1 done
     class P3_2,P3_3 pending
-    class P4_0,P4_1,P4_2,P4_3,P4_4,P4_5,P4_6 pending
+    class P4_0,P4_1,P4_2 done
+    class P4_3,P4_4,P4_5,P4_6 pending
     class P5_2,P5_4 pending
     class P6_3,P6_4,P6_5 pending
-    class P7_2,P7_3,P7_5,P7_7,P7_8,P7_9 pending
+    class P7_0,P7_5 done
+    class P7_2,P7_3,P7_7,P7_8,P7_9 pending
     class P8_2,P8_3,P8_4,P8_5,P8_6 pending
-    class P9_0,P9_1,P9_3,P9_4,P9_8 pending
+    class P9_0 done
+    class P9_1,P9_3,P9_4,P9_8 pending
     class P10_0,P10_1,P10_2,P10_3,P10_4 pending
     class P10_5 milestone
     class F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 pending
@@ -273,20 +276,20 @@ flowchart TB
 
 **Legend:** 🟢 Done | 🟠 In Progress | 🔵 Can Start Now | ⚪ Pending | 🟣 Milestone
 
-**Current Status (v0.8.3):**
+**Current Status (v0.9.0):**
 
 - Phase 1 (0.1.x): Complete
 - Phase 2 (0.2.x): Complete
 - Phase 3 (0.3.x): 0.3.0 + 0.3.1 done
+- Phase 4 (0.4.x): 0.4.0-0.4.2 done (scope-aware fixture lifecycle for session/module/class)
 - Phase 5 (0.5.x): 0.5.0-0.5.1 + 0.5.6 done
 - Phase 6 (0.6.x): 0.6.0-0.6.4 done
-- Phase 8 (0.8.x): 0.8.0-0.8.3 done (GitHub Actions, JUnit XML, bench, ~68 CLI flags)
-- **Complete pytest CLI drop-in replacement with ~68 flags, 11 subcommands, 1041 tests**
-- Phase 7 (0.7.x): 0.7.4 (TLS calibration) done
-- Phase 8 (0.8.x): 0.8.0 (GitHub Actions + GITHUB_OUTPUT) + 0.8.1 (JUnit XML) done
-- Phase 9 (0.9.x): 0.9.2 (CleanupGuard) + 0.9.5 (stale cleanup) + 0.9.7 (protocol versioning) done
+- Phase 7 (0.7.x): 0.7.0 (history store) + 0.7.4 (TLS calibration) + 0.7.5 (adaptive scheduling) done
+- Phase 8 (0.8.x): 0.8.0-0.8.6 done (GitHub Actions, JUnit XML, bench, ~68 CLI flags)
+- Phase 9 (0.9.x): 0.9.0 (SIGCHLD crash detection) + 0.9.2 (CleanupGuard) + 0.9.5 (stale cleanup) + 0.9.7 (protocol versioning) done
+- **Test sharding (--shard) shipped early in 0.9.0 (originally planned post-1.0)**
+- **1083 tests, scope-aware fixtures, SIGCHLD crash detection, adaptive scheduling**
 - Phase 10: Not started
-- **Additional**: tach init, tach config, --cache-show, ~28 pytest-compat CLI flags, 1003 tests
 
 ---
 
@@ -336,12 +339,12 @@ flowchart TB
 
 **Critical (Blocking Adoption)**:
 
-- [ ] **Plugin Shim** (0.2.x): pytest-django, pytest-asyncio, pytest-mock support
-  > Most real-world projects use at least one plugin. Without shims, adoption is blocked.
+- [x] **Plugin Shim** (0.2.x): pytest-django, pytest-asyncio, pytest-mock support
+  > Complete. Session effects, hook interception, marker extraction all working.
 - [ ] **Database Rollback** (0.3.x): Transaction savepoint/rollback for Django ORM, SQLAlchemy
   > Database tests are ~40% of enterprise test suites. Memory snapshots don't restore DB state.
-- [ ] **Session/Module Fixtures** (0.4.x): Fixtures persisting across tests
-  > Expensive setup (DB migrations, API clients) must be cached, not re-run per test.
+- [x] **Session/Module Fixtures** (0.4.x): Fixtures persisting across tests
+  > Complete in 0.9.0. Scope-aware scheduling with skip_reset preserves fixture state across module/class boundaries.
 
 **Important (Adoption Friction)**:
 
@@ -950,6 +953,8 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 
 **Target**: Fixtures that persist for the entire test session.
 
+**Status**: Complete (v0.9.0) - Session-scoped autouse fixtures execute in zygote before fork.
+
 #### Session Fixture Caching
 
 - [ ] Identify session-scoped fixtures at discovery time
@@ -981,6 +986,8 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 
 **Target**: Fixtures that persist for a single module.
 
+**Status**: Complete (v0.9.0) - Scheduler groups tests by module and dispatches sequentially with skip_reset.
+
 #### Module Boundary Detection
 
 - [ ] Group tests by module at scheduling time
@@ -1008,6 +1015,8 @@ The 0.4.x series addresses one of the biggest gaps in the current implementation
 ### 0.4.2 - Class-Scoped Fixtures
 
 **Target**: Fixtures that persist for a test class.
+
+**Status**: Complete (v0.9.0) - Scheduler groups tests by class and dispatches sequentially with skip_reset.
 
 #### Class Boundary Detection
 
