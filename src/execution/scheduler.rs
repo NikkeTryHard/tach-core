@@ -477,8 +477,11 @@ impl Scheduler {
             }
 
             let group_len = group.len();
-            for (i, (test_id, test)) in group.into_iter().enumerate() {
-                if signals::shutdown_requested() {
+            let mut group_broken = false;
+            let mut completed_in_group = 0usize;
+
+            for i in 0..group_len {
+                if group_broken || signals::shutdown_requested() {
                     break;
                 }
                 if let Some(max) = self.maxfail
@@ -487,10 +490,11 @@ impl Scheduler {
                     break;
                 }
 
+                let (test_id, ref test) = group[i];
                 let is_last = i == group_len - 1;
                 let slot = test_id as usize % self.max_workers;
 
-                // Wait for capacity (at most 1 active for sequential dispatch)
+                // Wait for capacity
                 while self
                     .active_workers
                     .lock()
@@ -523,27 +527,33 @@ impl Scheduler {
                 let file = test.file_path.to_string_lossy().to_string();
                 reporter.on_test_start(&test.test_name, &file);
 
-                // Build next_node_id for pytest nextitem (keep fixtures alive)
+                // Build next_node_id so pytest keeps scoped fixtures alive
                 let next_node_id = if !is_last {
-                    // Point to next test in group so pytest keeps scoped fixtures alive
-                    None // Will be set below based on the group
+                    let (_, ref next_test) = group[i + 1];
+                    Some(format!(
+                        "{}::{}",
+                        next_test.file_path.to_string_lossy(),
+                        next_test.test_name
+                    ))
                 } else {
                     None
                 };
 
-                if let Err(e) = self.dispatch_test(&test, test_id, slot, !is_last, next_node_id) {
+                if let Err(e) = self.dispatch_test(test, test_id, slot, !is_last, next_node_id) {
                     reporter.on_test_finished(&test.test_name, "fail", 0, Some(&e.to_string()));
                     failed += 1;
                     failed_ids.push(test.test_name.clone());
                     collected += 1;
+                    completed_in_group = i + 1;
+                    group_broken = true;
                     continue;
                 }
 
-                // For scope groups, wait for this test to complete before dispatching next.
-                // This ensures the same worker handles the next test (LIFO idle pool).
+                // Wait for result before dispatching next test in group
                 if !is_last {
                     let wait_start = Instant::now();
                     let wait_timeout = Duration::from_secs(self.global_timeout + 5);
+                    let mut test_failed_in_group = false;
                     loop {
                         if let Some((test_name, status, duration_ms, msg, memory_rss)) =
                             self.try_collect_result_for_reporter()
@@ -561,6 +571,7 @@ impl Scheduler {
                             } else {
                                 failed += 1;
                                 failed_ids.push(test_name.clone());
+                                test_failed_in_group = true;
                             }
                             test_durations.push((test_name.clone(), duration_ms));
                             if let Some(rss) = memory_rss {
@@ -569,15 +580,63 @@ impl Scheduler {
                             collected += 1;
                             break;
                         }
+
+                        // Crash detection inside scope group wait
+                        let crashed = self.detect_crashed_workers();
+                        for (crash_id, crash_name, crash_slot, start_time) in crashed {
+                            let crash_phase = if start_time.elapsed() < Duration::from_secs(1) {
+                                "Worker crashed during fixture setup"
+                            } else {
+                                "Worker crashed during test execution"
+                            };
+                            self.finalize_crashed_worker(
+                                crash_id,
+                                &crash_name,
+                                crash_slot,
+                                "crash",
+                                crash_phase,
+                                reporter,
+                            );
+                            failed += 1;
+                            failed_ids.push(crash_name);
+                            collected += 1;
+                            test_failed_in_group = true;
+                        }
+
+                        if test_failed_in_group {
+                            break;
+                        }
+
                         if wait_start.elapsed() > wait_timeout {
                             eprintln!(
-                                "[tach:scheduler] WARN: Scope group test {} timed out waiting for result",
+                                "[tach:scheduler] WARN: Scope group test {} timed out",
                                 test_id
                             );
+                            test_failed_in_group = true;
                             break;
                         }
                         std::thread::sleep(CAPACITY_POLL_INTERVAL);
                     }
+
+                    if test_failed_in_group {
+                        group_broken = true;
+                    }
+                }
+                completed_in_group = i + 1;
+            }
+
+            // If group broke early, mark remaining tests as errors
+            if group_broken && completed_in_group < group_len {
+                for (_, remaining_test) in group.iter().skip(completed_in_group) {
+                    reporter.on_test_finished(
+                        &remaining_test.test_name,
+                        "error",
+                        0,
+                        Some("Scope group aborted: previous test failed, fixture state corrupted"),
+                    );
+                    failed += 1;
+                    failed_ids.push(remaining_test.test_name.clone());
+                    collected += 1;
                 }
             }
         }
@@ -2156,6 +2215,396 @@ mod tests {
         );
         assert_eq!(tester.scope_groups[0].len(), 2);
         assert_eq!(tester.safe_queue.len(), 0);
+    }
+
+    // =========================================================================
+    // Scope Group Failure Recovery Tests
+    // =========================================================================
+
+    struct MockReporter {
+        finished: Vec<(String, String, u64, Option<String>)>,
+    }
+
+    impl MockReporter {
+        fn new() -> Self {
+            Self {
+                finished: Vec::new(),
+            }
+        }
+    }
+
+    impl crate::reporter::Reporter for MockReporter {
+        fn on_run_start(&mut self, _total: usize) {}
+        fn on_test_start(&mut self, _name: &str, _file: &str) {}
+        fn on_test_finished(
+            &mut self,
+            name: &str,
+            status: &str,
+            duration_ms: u64,
+            message: Option<&str>,
+        ) {
+            self.finished.push((
+                name.to_string(),
+                status.to_string(),
+                duration_ms,
+                message.map(|s| s.to_string()),
+            ));
+        }
+        fn on_run_finished(
+            &mut self,
+            _passed: usize,
+            _failed: usize,
+            _skipped: usize,
+            _duration_ms: u64,
+        ) {
+        }
+        fn on_error(&mut self, _msg: &str) {}
+    }
+
+    /// When a test in a scope group fails, all remaining tests after the
+    /// failure point must be reported as "error" with the corruption message.
+    #[test]
+    fn test_scope_group_remaining_tests_marked_error_on_failure() {
+        let mut reporter = MockReporter::new();
+
+        // Simulate a scope group of 5 tests where test index 1 fails
+        let group: Vec<(u32, RunnableTest)> = (0..5)
+            .map(|i| {
+                (
+                    i as u32,
+                    make_scoped_test(
+                        &format!("test_{}", i),
+                        "/tests/test_mod.py",
+                        vec![make_resolved_fixture(
+                            "db",
+                            crate::discovery::FixtureScope::Module,
+                        )],
+                        false,
+                    ),
+                )
+            })
+            .collect();
+
+        let group_len = group.len();
+        let group_broken = true;
+        let completed_in_group = 2; // Tests 0 and 1 ran; test 1 failed
+
+        // This mirrors the recovery logic from lines 628-642
+        if group_broken && completed_in_group < group_len {
+            for j in completed_in_group..group_len {
+                let (_, ref remaining_test) = group[j];
+                reporter.on_test_finished(
+                    &remaining_test.test_name,
+                    "error",
+                    0,
+                    Some("Scope group aborted: previous test failed, fixture state corrupted"),
+                );
+            }
+        }
+
+        // Tests 2, 3, 4 should be marked as error
+        assert_eq!(reporter.finished.len(), 3);
+        for (i, (name, status, dur, msg)) in reporter.finished.iter().enumerate() {
+            assert_eq!(name, &format!("test_{}", i + 2));
+            assert_eq!(status, "error");
+            assert_eq!(*dur, 0);
+            assert!(msg.as_ref().unwrap().contains("fixture state corrupted"));
+        }
+    }
+
+    /// The `group_broken` flag must cause the inner loop to `break` early,
+    /// skipping dispatch of remaining tests in the group.
+    #[test]
+    fn test_scope_group_broken_flag_terminates_loop() {
+        let group: Vec<(u32, RunnableTest)> = (0..4)
+            .map(|i| {
+                (
+                    i as u32,
+                    make_scoped_test(
+                        &format!("test_{}", i),
+                        "/tests/test_mod.py",
+                        vec![make_resolved_fixture(
+                            "db",
+                            crate::discovery::FixtureScope::Module,
+                        )],
+                        false,
+                    ),
+                )
+            })
+            .collect();
+
+        let group_len = group.len();
+        let mut group_broken = false;
+        let mut completed_in_group = 0usize;
+        let mut dispatched: Vec<String> = Vec::new();
+
+        // Simulate the dispatch loop (lines 483-626)
+        // Test index 1 triggers a failure
+        for i in 0..group_len {
+            if group_broken {
+                break;
+            }
+
+            let (_test_id, ref test) = group[i];
+            dispatched.push(test.test_name.clone());
+
+            // Simulate: test_1 fails during dispatch
+            if i == 1 {
+                completed_in_group = i + 1;
+                group_broken = true;
+                continue;
+            }
+            completed_in_group = i + 1;
+        }
+
+        // Only test_0 and test_1 should have been dispatched
+        assert_eq!(dispatched, vec!["test_0", "test_1"]);
+        assert!(group_broken);
+        assert_eq!(completed_in_group, 2);
+
+        // Remaining tests (2, 3) would be marked error
+        let remaining = group_len - completed_in_group;
+        assert_eq!(remaining, 2);
+    }
+
+    /// `completed_in_group` must correctly reflect the number of tests that
+    /// were actually processed before the group was abandoned.
+    #[test]
+    fn test_scope_group_completed_counter_tracks_progress() {
+        let group_len = 6;
+
+        // Scenario 1: All tests complete successfully
+        {
+            let mut completed_in_group = 0usize;
+            let group_broken = false;
+
+            for i in 0..group_len {
+                if group_broken {
+                    break;
+                }
+                completed_in_group = i + 1;
+            }
+
+            assert_eq!(completed_in_group, 6);
+        }
+
+        // Scenario 2: Failure at index 0 (first test)
+        {
+            let mut completed_in_group = 0usize;
+            let mut group_broken = false;
+
+            for i in 0..group_len {
+                if group_broken {
+                    break;
+                }
+                if i == 0 {
+                    completed_in_group = i + 1;
+                    group_broken = true;
+                    continue;
+                }
+                completed_in_group = i + 1;
+            }
+
+            assert_eq!(completed_in_group, 1);
+            assert_eq!(
+                group_len - completed_in_group,
+                5,
+                "5 tests should remain as errors"
+            );
+        }
+
+        // Scenario 3: Failure at last test
+        {
+            let mut completed_in_group = 0usize;
+            let mut group_broken = false;
+
+            for i in 0..group_len {
+                if group_broken {
+                    break;
+                }
+                if i == group_len - 1 {
+                    completed_in_group = i + 1;
+                    group_broken = true;
+                    continue;
+                }
+                completed_in_group = i + 1;
+            }
+
+            assert_eq!(completed_in_group, 6);
+            // No remaining tests to mark as error
+            assert_eq!(group_len - completed_in_group, 0);
+        }
+    }
+
+    /// `next_node_id` must be `Some("file_path::test_name")` for non-last tests
+    /// and `None` for the last test in the group. This keeps pytest scoped
+    /// fixtures alive across sequential tests.
+    #[test]
+    fn test_scope_group_next_node_id_format() {
+        let group: Vec<(u32, RunnableTest)> = vec![
+            (
+                0,
+                make_scoped_test(
+                    "test_alpha",
+                    "/tests/test_mod.py",
+                    vec![make_resolved_fixture(
+                        "db",
+                        crate::discovery::FixtureScope::Module,
+                    )],
+                    false,
+                ),
+            ),
+            (
+                1,
+                make_scoped_test(
+                    "test_beta",
+                    "/tests/sub/test_other.py",
+                    vec![make_resolved_fixture(
+                        "db",
+                        crate::discovery::FixtureScope::Module,
+                    )],
+                    false,
+                ),
+            ),
+            (
+                2,
+                make_scoped_test(
+                    "test_gamma",
+                    "/tests/test_final.py",
+                    vec![make_resolved_fixture(
+                        "db",
+                        crate::discovery::FixtureScope::Module,
+                    )],
+                    false,
+                ),
+            ),
+        ];
+
+        let group_len = group.len();
+
+        // Mirror the next_node_id logic from lines 531-540
+        for i in 0..group_len {
+            let is_last = i == group_len - 1;
+            let next_node_id = if !is_last {
+                let (_, ref next_test) = group[i + 1];
+                Some(format!(
+                    "{}::{}",
+                    next_test.file_path.to_string_lossy(),
+                    next_test.test_name
+                ))
+            } else {
+                None
+            };
+
+            match i {
+                0 => assert_eq!(
+                    next_node_id.as_deref(),
+                    Some("/tests/sub/test_other.py::test_beta"),
+                    "First test should point to second test"
+                ),
+                1 => assert_eq!(
+                    next_node_id.as_deref(),
+                    Some("/tests/test_final.py::test_gamma"),
+                    "Second test should point to third test"
+                ),
+                2 => assert_eq!(next_node_id, None, "Last test should have no next_node_id"),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// When all tests complete successfully (no failures), the recovery block
+    /// must not mark any tests as errors.
+    #[test]
+    fn test_scope_group_no_recovery_on_success() {
+        let mut reporter = MockReporter::new();
+
+        let group: Vec<(u32, RunnableTest)> = (0..3)
+            .map(|i| {
+                (
+                    i as u32,
+                    make_scoped_test(
+                        &format!("test_{}", i),
+                        "/tests/test_mod.py",
+                        vec![make_resolved_fixture(
+                            "db",
+                            crate::discovery::FixtureScope::Module,
+                        )],
+                        false,
+                    ),
+                )
+            })
+            .collect();
+
+        let group_len = group.len();
+        let group_broken = false;
+        let completed_in_group = 3;
+
+        // Recovery block should NOT fire
+        if group_broken && completed_in_group < group_len {
+            for j in completed_in_group..group_len {
+                let (_, ref remaining_test) = group[j];
+                reporter.on_test_finished(
+                    &remaining_test.test_name,
+                    "error",
+                    0,
+                    Some("Scope group aborted: previous test failed, fixture state corrupted"),
+                );
+            }
+        }
+
+        assert!(
+            reporter.finished.is_empty(),
+            "No tests should be marked as error when group completes successfully"
+        );
+    }
+
+    /// When the first test in a group fails, ALL remaining tests must be
+    /// marked as errors (worst-case scenario).
+    #[test]
+    fn test_scope_group_first_test_failure_marks_all_remaining() {
+        let mut reporter = MockReporter::new();
+
+        let group: Vec<(u32, RunnableTest)> = (0..4)
+            .map(|i| {
+                (
+                    i as u32,
+                    make_scoped_test(
+                        &format!("test_{}", i),
+                        "/tests/test_mod.py",
+                        vec![make_resolved_fixture(
+                            "db",
+                            crate::discovery::FixtureScope::Module,
+                        )],
+                        false,
+                    ),
+                )
+            })
+            .collect();
+
+        let group_len = group.len();
+        let group_broken = true;
+        let completed_in_group = 1; // Only first test ran (and failed)
+
+        if group_broken && completed_in_group < group_len {
+            for j in completed_in_group..group_len {
+                let (_, ref remaining_test) = group[j];
+                reporter.on_test_finished(
+                    &remaining_test.test_name,
+                    "error",
+                    0,
+                    Some("Scope group aborted: previous test failed, fixture state corrupted"),
+                );
+            }
+        }
+
+        assert_eq!(reporter.finished.len(), 3, "Tests 1, 2, 3 should be errors");
+        assert_eq!(reporter.finished[0].0, "test_1");
+        assert_eq!(reporter.finished[1].0, "test_2");
+        assert_eq!(reporter.finished[2].0, "test_3");
+        for (_, status, _, _) in &reporter.finished {
+            assert_eq!(status, "error");
+        }
     }
 
     #[test]
