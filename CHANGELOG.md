@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-08
+
+### Added
+
+- **Phase 4.0: Scope-Aware Fixture Lifecycle** - The biggest feature for pytest compatibility
+  - Module-scoped and class-scoped fixtures now persist across tests in the same scope
+  - Workers skip memory reset between tests sharing module/class fixtures
+  - Scheduler groups scoped tests and dispatches them sequentially to the same worker
+  - Python harness passes `nextitem` to `runtestprotocol()` for proper fixture teardown timing
+  - `skip_reset` and `next_node_id` fields added to TestPayload protocol
+  - `has_scoped_fixtures()`, `max_fixture_scope()`, `class_name()` helpers on RunnableTest
+- **Phase 7.5: Adaptive Scheduling** - Smarter test ordering using historical data
+  - Scheduler uses multi-run historical average durations as fallback
+  - Longest-first scheduling for optimal parallel worker utilization
+  - History loaded from test history store (`.tach_cache/history.json`)
+- **`--shard INDEX/TOTAL`**: Test sharding for CI parallelism
+  - Deterministic hash-based test distribution across N parallel CI jobs
+  - Each shard gets a unique, balanced subset of tests
+  - Compatible with GitHub Actions matrix, CircleCI parallelism, etc.
+- 17 new tests (1067 total, up from 1050)
+
 ## [0.8.6] - 2026-03-05
 
 ### Added
