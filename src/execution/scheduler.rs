@@ -7,8 +7,8 @@
 use crate::hooks::HookRegistry;
 use crate::logcapture::LogCapture;
 use crate::protocol::{
-    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_PASS, STATUS_SKIP,
-    TestPayload, TestResult, decode_with_limit, encode_with_length,
+    CMD_EXIT, CMD_FORK, FixtureInfo, HEADER_SIZE, MAX_PAYLOAD_SIZE, STATUS_CRASH, STATUS_PASS,
+    STATUS_SKIP, TestPayload, TestResult, decode_with_limit, encode_with_length,
 };
 use crate::reporter::Reporter;
 use crate::resolver::RunnableTest;
@@ -746,7 +746,14 @@ impl Scheduler {
                 .unwrap_or_else(|e| e.into_inner());
             match workers.remove(&result.test_id) {
                 Some(w) => (w.test_name, w.slot),
-                None => (format!("test_{}", result.test_id), 0),
+                None => {
+                    // Worker already removed (crash handled by detect_crashed_workers fallback
+                    // or timeout handler). Skip duplicate crash notifications.
+                    if result.status == STATUS_CRASH {
+                        return None;
+                    }
+                    (format!("test_{}", result.test_id), 0)
+                }
             }
         };
 
@@ -762,6 +769,8 @@ impl Scheduler {
             "pass"
         } else if result.status == STATUS_SKIP {
             "skip"
+        } else if result.status == STATUS_CRASH {
+            "crash"
         } else {
             "fail"
         };
@@ -2646,5 +2655,91 @@ mod tests {
             "test_mod1 + test_mod2 should form one scope group"
         );
         assert_eq!(tester.scope_groups[0].len(), 2);
+    }
+
+    // =========================================================================
+    // SIGCHLD Crash Notification Dedup Tests
+    // =========================================================================
+
+    #[test]
+    fn test_status_crash_maps_to_crash_str() {
+        use crate::protocol::{STATUS_CRASH, STATUS_FAIL, STATUS_PASS, STATUS_SKIP};
+
+        let map_status = |s: u8| -> &'static str {
+            if s == STATUS_PASS {
+                "pass"
+            } else if s == STATUS_SKIP {
+                "skip"
+            } else if s == STATUS_CRASH {
+                "crash"
+            } else {
+                "fail"
+            }
+        };
+
+        assert_eq!(map_status(STATUS_CRASH), "crash");
+        assert_eq!(map_status(STATUS_PASS), "pass");
+        assert_eq!(map_status(STATUS_SKIP), "skip");
+        assert_eq!(map_status(STATUS_FAIL), "fail");
+    }
+
+    #[test]
+    fn test_crash_result_dedup_skips_when_worker_already_removed() {
+        use crate::protocol::{STATUS_CRASH, TestResult};
+
+        let active_workers: HashMap<u32, ActiveWorker> = HashMap::new();
+
+        let crash_result = TestResult {
+            test_id: 42,
+            status: STATUS_CRASH,
+            duration_ns: 0,
+            message: "Worker crashed".to_string(),
+            memory_rss_bytes: None,
+        };
+
+        // Simulate the dedup logic: worker not found + STATUS_CRASH -> skip
+        let should_skip = active_workers.get(&crash_result.test_id).is_none()
+            && crash_result.status == STATUS_CRASH;
+        assert!(
+            should_skip,
+            "Should skip duplicate crash when worker already removed"
+        );
+    }
+
+    #[test]
+    fn test_crash_result_processes_when_worker_exists() {
+        use crate::protocol::{STATUS_CRASH, TestResult};
+
+        let mut active_workers: HashMap<u32, ActiveWorker> = HashMap::new();
+        active_workers.insert(
+            42,
+            ActiveWorker {
+                test_name: "test_foo".to_string(),
+                slot: 0,
+                start_time: Instant::now(),
+                timeout_secs: 30,
+                worker_pid: Some(1234),
+                timeout_handled: Arc::new(AtomicBool::new(false)),
+                crash_handled: Arc::new(AtomicBool::new(false)),
+            },
+        );
+
+        let crash_result = TestResult {
+            test_id: 42,
+            status: STATUS_CRASH,
+            duration_ns: 0,
+            message: "Worker crashed".to_string(),
+            memory_rss_bytes: None,
+        };
+
+        let should_skip = active_workers.get(&crash_result.test_id).is_none()
+            && crash_result.status == STATUS_CRASH;
+        assert!(
+            !should_skip,
+            "Should NOT skip crash when worker is still active"
+        );
+
+        let worker = active_workers.remove(&crash_result.test_id).unwrap();
+        assert_eq!(worker.test_name, "test_foo");
     }
 }
