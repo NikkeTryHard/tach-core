@@ -1076,14 +1076,23 @@ impl MergedConfig {
 pub fn parse_shard(s: &str) -> Result<(usize, usize), String> {
     let parts: Vec<&str> = s.split('/').collect();
     if parts.len() != 2 {
-        return Err(format!("invalid shard format '{}': expected INDEX/TOTAL", s));
+        return Err(format!(
+            "invalid shard format '{}': expected INDEX/TOTAL",
+            s
+        ));
     }
-    let index: usize = parts[0]
-        .parse()
-        .map_err(|_| format!("invalid shard index '{}': must be a positive integer", parts[0]))?;
-    let total: usize = parts[1]
-        .parse()
-        .map_err(|_| format!("invalid shard total '{}': must be a positive integer", parts[1]))?;
+    let index: usize = parts[0].parse().map_err(|_| {
+        format!(
+            "invalid shard index '{}': must be a positive integer",
+            parts[0]
+        )
+    })?;
+    let total: usize = parts[1].parse().map_err(|_| {
+        format!(
+            "invalid shard total '{}': must be a positive integer",
+            parts[1]
+        )
+    })?;
     if total < 1 {
         return Err(format!("shard total must be >= 1, got {}", total));
     }
@@ -1091,9 +1100,7 @@ pub fn parse_shard(s: &str) -> Result<(usize, usize), String> {
         return Err(format!("shard index must be >= 1, got {}", index));
     }
     if index > total {
-        return Err(format!(
-            "shard index {} exceeds total {}", index, total
-        ));
+        return Err(format!("shard index {} exceeds total {}", index, total));
     }
     Ok((index, total))
 }

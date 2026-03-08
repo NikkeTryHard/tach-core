@@ -2156,8 +2156,8 @@ fn run_tests(
             };
 
             let runnable_tests = if let Ok(shard_spec) = std::env::var("TACH_SHARD") {
-                let (index, total) = config::parse_shard(&shard_spec)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let (index, total) =
+                    config::parse_shard(&shard_spec).map_err(|e| anyhow::anyhow!(e))?;
                 let before = runnable_tests.len();
                 let sharded = config::shard_tests(runnable_tests, index, total, |t| {
                     format!("{}::{}", t.file_path.to_string_lossy(), t.test_name)
@@ -2165,7 +2165,10 @@ fn run_tests(
                 if !is_json {
                     eprintln!(
                         "[tach:supervisor] Shard {}/{}: {} of {} tests",
-                        index, total, sharded.len(), before
+                        index,
+                        total,
+                        sharded.len(),
+                        before
                     );
                 }
                 sharded
