@@ -152,6 +152,8 @@ proptest! {
             marker_info: vec![],
             reuse_db: false,
             create_db: false,
+            skip_reset: false,
+            next_node_id: None,
         };
 
         let serialized = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).expect("Failed to serialize");

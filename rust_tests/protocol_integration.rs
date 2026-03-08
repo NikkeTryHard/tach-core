@@ -28,6 +28,8 @@ fn test_serialize_test_payload() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");
@@ -110,6 +112,8 @@ fn test_roundtrip_test_payload() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     let encoded = encode_with_length(&original).expect("Should serialize");
@@ -189,6 +193,8 @@ fn test_empty_fixtures_payload() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize empty fixtures");
@@ -213,6 +219,8 @@ fn test_async_payload() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     let encoded = encode_with_length(&payload).expect("Should serialize");

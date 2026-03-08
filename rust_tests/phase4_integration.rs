@@ -156,6 +156,8 @@ fn test_payload_is_toxic_propagation() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     let toxic_payload = TestPayload {
@@ -174,6 +176,8 @@ fn test_payload_is_toxic_propagation() {
         marker_info: vec![],
         reuse_db: false,
         create_db: false,
+        skip_reset: false,
+        next_node_id: None,
     };
 
     // Verify is_toxic is correctly set
