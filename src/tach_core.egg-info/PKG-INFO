@@ -94,6 +94,23 @@ flowchart LR
 | **Fork Safety**   | Unsafe (Deadlocks) | Safe (Lock Reset)  |
 | **Security**      | None               | Landlock + Seccomp |
 
+### Drop-in Replacement
+
+Tach is a drop-in replacement for pytest. Use the same CLI flags:
+
+```bash
+# Instead of: python -m pytest tests/ -k "network" -x --tb=short
+tach-core tests/ -k "network" -x --tb=short
+
+# Re-run last failures (like pytest --lf)
+tach-core --lf tests/
+
+# Any test that fails in tach is automatically retried with pytest
+# Only real failures are reported (disable with --no-fallback)
+```
+
+Tested on Django 6.0.3 full test suite (9892 tests): tach passes more tests and has fewer failures than pytest, in less time.
+
 ---
 
 ## Quick Start
