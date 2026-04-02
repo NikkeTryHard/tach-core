@@ -89,7 +89,6 @@ def run_tach_with_perf(test_dir: str, no_isolation: bool = True) -> PerfMeasurem
     """
     cmd = [str(TACH_BINARY)]
 
-    # Add --no-isolation for environments without CAP_SYS_ADMIN
     if no_isolation:
         cmd.append("--no-isolation")
 
@@ -97,6 +96,25 @@ def run_tach_with_perf(test_dir: str, no_isolation: bool = True) -> PerfMeasurem
 
     env = os.environ.copy()
     env["PYO3_PYTHON"] = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+
+    python_lib_dir = subprocess.run(
+        [
+            str(PROJECT_ROOT / ".venv" / "bin" / "python3"),
+            "-c",
+            "import sysconfig; print(sysconfig.get_config_var('LIBDIR') or '')",
+        ],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if python_lib_dir:
+        env["LD_LIBRARY_PATH"] = (
+            python_lib_dir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+        )
+
+    env["PYTHONPATH"] = (
+        str(PROJECT_ROOT / "tests") + os.pathsep + env.get("PYTHONPATH", "")
+    )
+    env.setdefault("DJANGO_SETTINGS_MODULE", "django_project.settings")
 
     # Reset child resource tracking
     _ = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -221,6 +239,7 @@ TEST_SUITES = [
     ("gauntlet_db", "tests/gauntlet_db"),
     ("gauntlet_numpy", "tests/gauntlet_numpy"),
     ("gauntlet_coverage", "tests/gauntlet_coverage"),
+    ("benchmark_django", "tests/benchmark_django"),
 ]
 
 
@@ -402,6 +421,128 @@ class TestCombinedPerf:
             if name not in timing_baselines and name not in memory_baselines:
                 print("  (no baselines recorded)")
 
-        print("\n" + "=" * 60)
+        print("\\n" + "=" * 60)
         print("Run with UPDATE_PERF_BASELINE=1 to update baselines")
         print("=" * 60)
+
+
+# =============================================================================
+# pytest-xdist comparison
+# =============================================================================
+
+XDIST_WORKERS = int(os.environ.get("BENCH_WORKERS", "4"))
+
+XDIST_SUITES = [
+    ("benchmark_django", "tests/benchmark_django"),
+]
+
+
+def run_pytest_with_perf(test_dir: str, workers: int = 0) -> PerfMeasurement:
+    """Run pytest (optionally with xdist) and measure wall time + memory."""
+    python = str(PROJECT_ROOT / ".venv" / "bin" / "python3")
+    cmd = [python, "-m", "pytest", str(PROJECT_ROOT / test_dir), "-q", "--tb=no"]
+
+    if workers > 0:
+        cmd += ["-n", str(workers)]
+    else:
+        cmd += ["-p", "no:xdist"]
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(PROJECT_ROOT / "tests") + os.pathsep + env.get("PYTHONPATH", "")
+    )
+    env["DJANGO_SETTINGS_MODULE"] = "django_project.settings"
+
+    _ = resource.getrusage(resource.RUSAGE_CHILDREN)
+
+    start_time = time.perf_counter()
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        timeout=600,
+    )
+
+    end_time = time.perf_counter()
+    elapsed_ms = (end_time - start_time) * 1000
+    peak_memory_kb = get_peak_memory_kb()
+
+    test_count = 0
+    output = result.stdout + result.stderr
+    match = re.search(r"(\d+)\s+(?:tests?|passed|failed|error)", output, re.I)
+    if match:
+        test_count = int(match.group(1))
+
+    return PerfMeasurement(
+        timing_ms=elapsed_ms,
+        memory_kb=peak_memory_kb,
+        test_count=test_count,
+        return_code=result.returncode,
+    )
+
+
+class TestXdistComparison:
+    """Compare tach-core against pytest-xdist on Django benchmarks."""
+
+    BASELINES_FILE = BASELINES_DIR / "xdist_comparison.json"
+
+    @classmethod
+    def setup_class(cls):
+        if not TACH_BINARY.exists():
+            raise RuntimeError(
+                f"tach-core binary not found at {TACH_BINARY}\nBuild with: cargo build"
+            )
+        cls.baselines = load_baselines(cls.BASELINES_FILE)
+        cls.new_measurements = {}
+
+    @classmethod
+    def teardown_class(cls):
+        if UPDATE_BASELINE and cls.new_measurements:
+            updated = {**cls.baselines, **cls.new_measurements}
+            save_baselines(cls.BASELINES_FILE, updated)
+            print(f"\n[perf] Updated xdist comparison baselines: {cls.BASELINES_FILE}")
+
+    @pytest.mark.parametrize("name,test_dir", XDIST_SUITES)
+    def test_tach_vs_xdist(self, name: str, test_dir: str):
+        tach_result = run_tach_with_perf(test_dir)
+        pytest_serial = run_pytest_with_perf(test_dir, workers=0)
+        pytest_xdist = run_pytest_with_perf(test_dir, workers=XDIST_WORKERS)
+
+        speedup_vs_serial = (
+            pytest_serial.timing_ms / tach_result.timing_ms
+            if tach_result.timing_ms > 0
+            else 0
+        )
+        speedup_vs_xdist = (
+            pytest_xdist.timing_ms / tach_result.timing_ms
+            if tach_result.timing_ms > 0
+            else 0
+        )
+
+        self.new_measurements[name] = {
+            "tach_ms": tach_result.timing_ms,
+            "pytest_serial_ms": pytest_serial.timing_ms,
+            "pytest_xdist_ms": pytest_xdist.timing_ms,
+            "xdist_workers": XDIST_WORKERS,
+            "speedup_vs_serial": round(speedup_vs_serial, 2),
+            "speedup_vs_xdist": round(speedup_vs_xdist, 2),
+            "tach_tests": tach_result.test_count,
+            "pytest_tests": pytest_serial.test_count,
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+        print(f"\n[perf] {name} comparison:")
+        print(
+            f"  pytest serial:     {pytest_serial.timing_ms:.0f}ms ({pytest_serial.test_count} tests)"
+        )
+        print(
+            f"  pytest-xdist({XDIST_WORKERS}w): {pytest_xdist.timing_ms:.0f}ms ({pytest_xdist.test_count} tests)"
+        )
+        print(
+            f"  tach-core:         {tach_result.timing_ms:.0f}ms ({tach_result.test_count} tests)"
+        )
+        print(f"  speedup vs serial: {speedup_vs_serial:.2f}x")
+        print(f"  speedup vs xdist:  {speedup_vs_xdist:.2f}x")

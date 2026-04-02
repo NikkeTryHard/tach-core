@@ -1,0 +1,13 @@
+{
+  "benchmark_django": {
+    "pytest_serial_ms": 1703.7942399911117,
+    "pytest_tests": 150,
+    "pytest_xdist_ms": 1071.6969180066371,
+    "recorded_at": "2026-04-02T00:44:21Z",
+    "speedup_vs_serial": 0.44,
+    "speedup_vs_xdist": 0.28,
+    "tach_ms": 3832.7716899948427,
+    "tach_tests": 4107,
+    "xdist_workers": 4
+  }
+}
