@@ -17,7 +17,7 @@ use anyhow::Result;
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::collections::{HashMap, VecDeque};
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -132,6 +132,8 @@ pub struct Scheduler {
     duration_cache: Option<std::collections::HashMap<String, u64>>,
     /// Historical average durations for adaptive scheduling (Phase 7.5)
     history_durations: Option<std::collections::HashMap<String, u64>>,
+    /// Cached session effects -- computed once, reused for every test dispatch
+    cached_session_effects: Vec<crate::hooks::HookEffect>,
 }
 
 impl Scheduler {
@@ -225,6 +227,7 @@ impl Scheduler {
             maxfail: None,
             duration_cache: None,
             history_durations: None,
+            cached_session_effects: Vec::new(),
         })
     }
 
@@ -353,6 +356,8 @@ impl Scheduler {
 
         //  Populate dual queues (safe first, toxic last)
         self.populate_queues(tests);
+
+        self.cached_session_effects = self.hook_registry.get_session_effects();
 
         // Emit run_start event
         reporter.on_run_start(total);
@@ -804,9 +809,7 @@ impl Scheduler {
             .hook_registry
             .resolve_hooks_for_path(&test.file_path, &self.project_root);
 
-        // Get session-level cached effects for replay in workers (v0.2.0 Hook Interception)
-        // These effects (from pytest_configure) are applied before each test runs
-        let cached_effects = self.hook_registry.get_session_effects();
+        let cached_effects = self.cached_session_effects.clone();
 
         let payload = TestPayload {
             test_id,
@@ -835,9 +838,23 @@ impl Scheduler {
         // Use encode_with_length which includes protocol header
         let encoded = encode_with_length(&payload)?;
 
-        self.cmd_socket.write_all(&[CMD_FORK])?;
-        // Write the full encoded buffer (header + payload)
-        self.cmd_socket.write_all(&encoded)?;
+        let cmd = [CMD_FORK];
+        let bufs = [IoSlice::new(&cmd), IoSlice::new(&encoded)];
+        let mut written = 0usize;
+        let total = 1 + encoded.len();
+        while written < total {
+            let n = if written == 0 {
+                self.cmd_socket.write_vectored(&bufs)?
+            } else if written == 1 {
+                self.cmd_socket.write(&encoded)?
+            } else {
+                self.cmd_socket.write(&encoded[(written - 1)..])?
+            };
+            if n == 0 {
+                return Err(anyhow::anyhow!("short write to zygote command socket"));
+            }
+            written += n;
+        }
 
         let mut pid_buf = [0u8; 4];
         match self.cmd_socket.read_exact(&mut pid_buf) {

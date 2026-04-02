@@ -59,6 +59,12 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+#[cfg(all(not(target_env = "msvc"), not(test)))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+pub static malloc_conf: &[u8] =
+    b"background_thread:true,max_background_threads:2,dirty_decay_ms:100,muzzy_decay_ms:100,narenas:4,metadata_thp:auto,abort_conf:false\0";
+
 pub mod cache;
 pub mod core;
 pub mod discovery;
@@ -113,35 +119,26 @@ pub use execution::zygote;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use crate::discovery::DiscoveryResult;
 use crate::graph::ToxicityGraph;
 
-/// Collect all Python files in a directory (excluding hidden dirs, __pycache__, etc.)
 fn collect_all_py_files(root: &Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
-        .into_iter()
+    use ignore::WalkBuilder;
+
+    WalkBuilder::new(root)
+        .standard_filters(true)
+        .build()
         .filter_map(|e| e.ok())
         .filter(|e| {
             let path = e.path();
-            // Include only .py files
-            if path.extension().is_none_or(|ext| ext != "py") {
-                return false;
-            }
-            // Get path relative to root to avoid filtering out files when root
-            // itself is under a dot-prefixed directory (e.g., /tmp/.tmpXXX)
-            let rel_path = match path.strip_prefix(root) {
-                Ok(p) => p,
-                Err(_) => return true, // Keep files we can't make relative
-            };
-            // Exclude hidden directories, __pycache__, .git, etc. within the project
-            !rel_path.ancestors().any(|p| {
-                p.file_name().is_some_and(|name| {
-                    let n = name.to_string_lossy();
-                    n.starts_with('.') || n == "__pycache__" || n == "target" || n == "node_modules"
+            path.extension().is_some_and(|ext| ext == "py")
+                && !path.ancestors().any(|p| {
+                    p.file_name().is_some_and(|name| {
+                        let n = name.to_string_lossy();
+                        n == "__pycache__" || n == "target" || n == "node_modules"
+                    })
                 })
-            })
         })
         .map(|e| e.path().to_path_buf())
         .collect()

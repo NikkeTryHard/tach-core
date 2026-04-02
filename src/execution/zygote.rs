@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule};
 use std::collections::HashMap;
 use std::env;
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::process;
@@ -717,8 +717,9 @@ fn spawn_result_collector(
         }
 
         // 3. Forward result to Supervisor (header + payload)
-        let mut full = header_buf.to_vec();
-        full.extend(result_buf);
+        let mut full = Vec::with_capacity(HEADER_SIZE + result_len);
+        full.extend_from_slice(&header_buf);
+        full.extend_from_slice(&result_buf);
         if result_tx.send(full).is_err() {
             eprintln!("[tach:zygote] Result channel closed");
             return;
@@ -1159,8 +1160,26 @@ if m is not None and not hasattr(m, '__file__'):
 
                         // Send CMD_RUN_TEST + full encoded buffer (header + payload) to worker
                         let dispatch_ok = (|| -> std::io::Result<()> {
-                            worker.socket.write_all(&[CMD_RUN_TEST])?;
-                            worker.socket.write_all(&full_buf)?; // Send full buffer (header + payload)
+                            let cmd = [CMD_RUN_TEST];
+                            let bufs = [IoSlice::new(&cmd), IoSlice::new(&full_buf)];
+                            let mut written = 0usize;
+                            let total = 1 + full_buf.len();
+                            while written < total {
+                                let n = if written == 0 {
+                                    worker.socket.write_vectored(&bufs)?
+                                } else if written == 1 {
+                                    worker.socket.write(&full_buf)?
+                                } else {
+                                    worker.socket.write(&full_buf[(written - 1)..])?
+                                };
+                                if n == 0 {
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::WriteZero,
+                                        "short write to worker socket",
+                                    ));
+                                }
+                                written += n;
+                            }
                             Ok(())
                         })();
 
