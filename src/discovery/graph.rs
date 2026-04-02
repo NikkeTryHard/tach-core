@@ -13,6 +13,7 @@
 use crate::analysis::{ToxicityReport, analyze_file};
 use crate::hooks::HookRegistry;
 use petgraph::graph::{DiGraph, NodeIndex};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,42 +78,46 @@ impl ToxicityGraph {
         // Step 1: Index all files and create nodes
         let mut reports: HashMap<PathBuf, ToxicityReport> = HashMap::new();
 
-        for path in paths {
-            // Compute dotted module name from path
-            let module_name = path_to_module_name(path, project_root);
+        let analyzed: Vec<_> = paths
+            .par_iter()
+            .filter_map(|path| {
+                // Compute dotted module name from path
+                let module_name = path_to_module_name(path, project_root);
 
-            // Read and analyze file
-            let source = match fs::read(path) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(_) => continue, // Skip unreadable files
-            };
+                // Read and analyze file
+                let source = fs::read(path).ok()?;
+                let source = String::from_utf8_lossy(&source).into_owned();
+                let mut report = analyze_file(&source, path);
 
-            let mut report = analyze_file(&source, path);
-
-            // Check for toxic hooks in this file
-            // Canonicalize path to match how hooks are stored in registry (from discovery)
-            let canonical_path = path.canonicalize().unwrap_or_else(|e| {
-                eprintln!(
-                    "[tach:graph] Warning: Failed to canonicalize path {:?}: {}",
-                    path, e
-                );
-                path.to_path_buf()
-            });
-            if registry.file_has_toxic_hooks(&canonical_path) {
-                if !report.is_toxic {
-                    report.is_toxic = true;
-                }
-                // Add reason for each toxic hook
-                for hook in registry.get_hooks_for_file(&canonical_path) {
-                    if hook.spec.modifies_global_state {
-                        report.reasons.push(format!(
-                            "Contains toxic hook '{}' (modifies global state)",
-                            hook.spec.name
-                        ));
+                // Check for toxic hooks in this file
+                // Canonicalize path to match how hooks are stored in registry (from discovery)
+                let canonical_path = path.canonicalize().unwrap_or_else(|e| {
+                    eprintln!(
+                        "[tach:graph] Warning: Failed to canonicalize path {:?}: {}",
+                        path, e
+                    );
+                    path.to_path_buf()
+                });
+                if registry.file_has_toxic_hooks(&canonical_path) {
+                    if !report.is_toxic {
+                        report.is_toxic = true;
+                    }
+                    // Add reason for each toxic hook
+                    for hook in registry.get_hooks_for_file(&canonical_path) {
+                        if hook.spec.modifies_global_state {
+                            report.reasons.push(format!(
+                                "Contains toxic hook '{}' (modifies global state)",
+                                hook.spec.name
+                            ));
+                        }
                     }
                 }
-            }
 
+                Some((path.clone(), canonical_path, module_name, report))
+            })
+            .collect();
+
+        for (path, canonical_path, module_name, report) in analyzed {
             // Create node
             let node = ModuleNode {
                 name: module_name.clone(),
@@ -124,8 +129,9 @@ impl ToxicityGraph {
             let idx = graph.graph.add_node(node);
             graph.name_to_node.insert(module_name, idx);
             graph.path_to_node.insert(path.clone(), idx);
+            graph.path_to_node.insert(canonical_path, idx);
 
-            reports.insert(path.clone(), report);
+            reports.insert(path, report);
         }
 
         // Step 2: Build edges from import relationships
@@ -199,23 +205,23 @@ impl ToxicityGraph {
         loop {
             let mut changed = false;
 
-            // Collect edges to avoid borrow issues
-            let edges: Vec<(NodeIndex, NodeIndex)> = self
-                .graph
-                .edge_indices()
-                .filter_map(|e| self.graph.edge_endpoints(e))
-                .collect();
+            let node_indices: Vec<_> = self.graph.node_indices().collect();
+            for from_idx in node_indices {
+                if self.graph[from_idx].is_toxic {
+                    continue;
+                }
 
-            for (from_idx, to_idx) in edges {
-                let to_toxic = self.graph[to_idx].is_toxic;
-                let to_name = self.graph[to_idx].name.clone();
-
-                if to_toxic && !self.graph[from_idx].is_toxic {
-                    self.graph[from_idx].is_toxic = true;
-                    self.graph[from_idx]
-                        .reasons
-                        .push(format!("Imports toxic module '{}'", to_name));
-                    changed = true;
+                let neighbors: Vec<_> = self.graph.neighbors(from_idx).collect();
+                for to_idx in neighbors {
+                    if self.graph[to_idx].is_toxic {
+                        let to_name = self.graph[to_idx].name.clone();
+                        self.graph[from_idx].is_toxic = true;
+                        self.graph[from_idx]
+                            .reasons
+                            .push(format!("Imports toxic module '{}'", to_name));
+                        changed = true;
+                        break;
+                    }
                 }
             }
 

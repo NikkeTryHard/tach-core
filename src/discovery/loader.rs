@@ -14,6 +14,8 @@ use dashmap::DashMap;
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -351,6 +353,76 @@ impl BytecodeCompiler {
         Ok(())
     }
 
+    fn compile_many_to_cache(
+        &self,
+        sources_and_caches: &[(PathBuf, PathBuf)],
+    ) -> Result<HashMap<PathBuf, String>> {
+        if sources_and_caches.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        for (_, cache) in sources_and_caches {
+            if let Some(parent) = cache.parent() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        let script = r#"
+import py_compile
+import sys
+
+failed = False
+args = sys.argv[1:]
+for i in range(0, len(args), 2):
+    source = args[i]
+    cache = args[i + 1]
+    try:
+        py_compile.compile(source, cache, doraise=True)
+    except Exception as e:
+        failed = True
+        print(f"TACH_COMPILE_ERROR\t{source}\t{e}", file=sys.stderr)
+
+sys.exit(0 if not failed else 3)
+"#;
+
+        let mut args = Vec::with_capacity(1 + sources_and_caches.len() * 2);
+        args.push("-c".to_string());
+        args.push(script.to_string());
+        for (source, cache) in sources_and_caches {
+            args.push(source.to_string_lossy().into_owned());
+            args.push(cache.to_string_lossy().into_owned());
+        }
+
+        let output = Command::new(&self.python_exe).args(&args).output()?;
+
+        let mut failures = HashMap::new();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for line in stderr.lines() {
+            if let Some(rest) = line.strip_prefix("TACH_COMPILE_ERROR\t") {
+                let mut parts = rest.splitn(2, '\t');
+                if let (Some(source), Some(message)) = (parts.next(), parts.next()) {
+                    failures.insert(PathBuf::from(source), message.to_string());
+                }
+            }
+        }
+
+        if !output.status.success() && failures.is_empty() {
+            return Err(anyhow!(
+                "Batch compilation failed: {}",
+                {
+                    let trimmed = stderr.trim();
+                    if trimmed.is_empty() {
+                        "unknown error"
+                    } else {
+                        trimmed
+                    }
+                }
+            ));
+        }
+
+        Ok(failures)
+    }
+
     /// Read .pyc file and strip the 16-byte header
     fn read_and_strip_header(&self, pyc_path: &Path) -> Result<Vec<u8>> {
         let data = fs::read(pyc_path)?;
@@ -370,37 +442,95 @@ impl BytecodeCompiler {
     ///
     /// Logs warnings for compilation failures but continues.
     pub fn compile_batch(&self, files: &[PathBuf], registry: &ModuleRegistry) -> usize {
-        let mut success_count = 0;
+        let python_files: Vec<PathBuf> = files
+            .iter()
+            .filter(|file| file.extension().is_some_and(|e| e == "py"))
+            .cloned()
+            .collect();
 
-        for file in files {
-            // Skip non-.py files
-            if file.extension().is_none_or(|e| e != "py") {
-                continue;
-            }
+        let stale_files: Vec<(PathBuf, PathBuf)> = python_files
+            .iter()
+            .filter_map(|file| {
+                let cache_path = self.cache_path(file);
+                let needs_compile = if self.is_cache_stale(file, &cache_path) {
+                    true
+                } else {
+                    match self.validate_magic(&cache_path) {
+                        Ok(true) => false,
+                        Ok(false) => {
+                            eprintln!(
+                                "[tach:loader] Magic mismatch for {}, recompiling",
+                                file.display()
+                            );
+                            true
+                        }
+                        Err(_) => true,
+                    }
+                };
 
-            match self.compile(file) {
-                Ok(bytecode) => {
-                    let name = self.path_to_module_name(file);
-                    let is_package = file.file_name().is_some_and(|n| n == "__init__.py");
+                needs_compile.then_some((file.clone(), cache_path))
+            })
+            .collect();
 
-                    registry.insert(BytecodeEntry {
-                        name: name.clone(),
-                        source_path: file.clone(),
-                        bytecode,
-                        is_package,
-                    });
-
-                    success_count += 1;
+        let mut compile_failures = HashMap::new();
+        if !stale_files.is_empty() {
+            match self.compile_many_to_cache(&stale_files) {
+                Ok(failures) => {
+                    compile_failures = failures;
                 }
                 Err(e) => {
-                    // Graceful fallback: log warning, continue
                     eprintln!(
-                        "[tach:loader] WARN: Failed to compile {}: {}",
+                        "[tach:loader] WARN: Batch compilation failed, falling back to per-file compile: {}",
+                        e
+                    );
+                    for (source, cache) in &stale_files {
+                        if let Err(err) = self.compile_to_cache(source, cache) {
+                            compile_failures.insert(source.clone(), err.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        let failed_sources: HashSet<PathBuf> = compile_failures.keys().cloned().collect();
+        let compiled: Vec<(PathBuf, Vec<u8>)> = python_files
+            .par_iter()
+            .filter(|file| !failed_sources.contains(*file))
+            .filter_map(|file| match self.read_and_strip_header(&self.cache_path(file)) {
+                Ok(bytecode) => Some((file.clone(), bytecode)),
+                Err(e) => {
+                    eprintln!(
+                        "[tach:loader] WARN: Failed to load compiled cache {}: {}",
                         file.display(),
                         e
                     );
+                    None
                 }
-            }
+            })
+            .collect();
+
+        for (source, error) in compile_failures {
+            eprintln!(
+                "[tach:loader] WARN: Failed to compile {}: {}",
+                source.display(),
+                error
+            );
+        }
+
+        let mut success_count = 0;
+
+        for (file, bytecode) in compiled {
+            let name = self.path_to_module_name(&file);
+            let is_package = file.file_name().is_some_and(|n| n == "__init__.py");
+
+            registry.insert(BytecodeEntry {
+                name: name.clone(),
+                source_path: file,
+                bytecode,
+                is_package,
+            });
+
+            success_count += 1;
         }
 
         eprintln!(

@@ -808,16 +808,29 @@ fn execute_session(
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
 
-    let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
-        .into_iter()
-        .filter(|test| {
+    // Pre-canonicalize all test paths once instead of per-test in the filter loop.
+    // This eliminates ~500K lstat+readlink syscalls that dominated the profile.
+    let test_canonicals: Vec<(PathBuf, usize)> = runnable_tests
+        .iter()
+        .enumerate()
+        .map(|(i, test)| {
             let test_path = std::path::Path::new(&test.file_path);
-            let test_canonical = test_path
+            let canonical = test_path
                 .canonicalize()
                 .unwrap_or_else(|_| test_path.to_path_buf());
+            (canonical, i)
+        })
+        .collect();
+
+    let filtered_tests: Vec<resolver::RunnableTest> = runnable_tests
+        .into_iter()
+        .enumerate()
+        .filter(|(i, test)| {
+            let test_path = std::path::Path::new(&test.file_path);
+            let test_canonical = &test_canonicals[*i].0;
 
             let path_matches = test_canonical.starts_with(&target_canonical)
-                || test_canonical == target_canonical
+                || test_canonical == &target_canonical
                 || test_path.starts_with(target);
 
             if !path_matches {
@@ -830,6 +843,7 @@ fn execute_session(
                 true
             }
         })
+        .map(|(_, test)| test)
         .collect();
 
     if config.last_failed || config.failed_first {
