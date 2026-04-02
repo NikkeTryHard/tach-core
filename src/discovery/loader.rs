@@ -407,17 +407,14 @@ sys.exit(0 if not failed else 3)
         }
 
         if !output.status.success() && failures.is_empty() {
-            return Err(anyhow!(
-                "Batch compilation failed: {}",
-                {
-                    let trimmed = stderr.trim();
-                    if trimmed.is_empty() {
-                        "unknown error"
-                    } else {
-                        trimmed
-                    }
+            return Err(anyhow!("Batch compilation failed: {}", {
+                let trimmed = stderr.trim();
+                if trimmed.is_empty() {
+                    "unknown error"
+                } else {
+                    trimmed
                 }
-            ));
+            }));
         }
 
         Ok(failures)
@@ -496,17 +493,19 @@ sys.exit(0 if not failed else 3)
         let compiled: Vec<(PathBuf, Vec<u8>)> = python_files
             .par_iter()
             .filter(|file| !failed_sources.contains(*file))
-            .filter_map(|file| match self.read_and_strip_header(&self.cache_path(file)) {
-                Ok(bytecode) => Some((file.clone(), bytecode)),
-                Err(e) => {
-                    eprintln!(
-                        "[tach:loader] WARN: Failed to load compiled cache {}: {}",
-                        file.display(),
-                        e
-                    );
-                    None
-                }
-            })
+            .filter_map(
+                |file| match self.read_and_strip_header(&self.cache_path(file)) {
+                    Ok(bytecode) => Some((file.clone(), bytecode)),
+                    Err(e) => {
+                        eprintln!(
+                            "[tach:loader] WARN: Failed to load compiled cache {}: {}",
+                            file.display(),
+                            e
+                        );
+                        None
+                    }
+                },
+            )
             .collect();
 
         for (source, error) in compile_failures {
